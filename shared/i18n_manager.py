@@ -62,6 +62,10 @@ TEXTS: Dict[str, Dict[str, str]] = {
         "menu.file": "File",
         "menu.file.open": "Open Workspace",
         "menu.file.close": "Close Workspace",
+        "menu.file.recent": "Recent Projects",
+        "menu.file.recent.clear": "Clear Recent",
+        "menu.file.recent.empty": "No Recent Projects",
+        "menu.file.recent.not_exist": "(Not Exist)",
         "menu.file.save": "Save",
         "menu.file.save_all": "Save All",
         "menu.file.exit": "Exit",
@@ -70,6 +74,7 @@ TEXTS: Dict[str, Dict[str, str]] = {
         "menu.edit": "Edit",
         "menu.edit.undo": "Undo",
         "menu.edit.redo": "Redo",
+        "menu.edit.undo_iteration": "Undo Iteration",
         "menu.edit.cut": "Cut",
         "menu.edit.copy": "Copy",
         "menu.edit.paste": "Paste",
@@ -130,6 +135,9 @@ TEXTS: Dict[str, Dict[str, str]] = {
         "status.connected": "Connected",
         "status.disconnected": "Disconnected",
         "status.open_workspace": "Please open a workspace folder",
+        "status.readonly": "READ ONLY",
+        "status.workspace": "Workspace",
+        "status.no_project": "No project opened",
         
         # 面板标题
         "panel.file_browser": "File Browser",
@@ -159,6 +167,20 @@ TEXTS: Dict[str, Dict[str, str]] = {
         "hint.drag_file": "Drag and drop files here",
         "hint.enter_message": "Enter your message...",
         "hint.select_file": "Select a file to view",
+        "hint.open_workspace": "Open a workspace to get started",
+        
+        # 按钮 - 工作区
+        "btn.open_workspace": "Open Workspace",
+        
+        # 文件浏览器
+        "file_browser.refresh": "Refresh",
+        "file_browser.collapse_all": "Collapse All",
+        "file_browser.open_in_editor": "Open in Editor",
+        "file_browser.show_in_system": "Show in System",
+        "file_browser.copy_path": "Copy Path",
+        "file_browser.delete": "Delete",
+        "file_browser.new_file": "New File",
+        "file_browser.new_folder": "New Folder",
         
         # 工作流
         "workflow.iteration": "Iteration",
@@ -177,6 +199,10 @@ TEXTS: Dict[str, Dict[str, str]] = {
         "menu.file": "文件",
         "menu.file.open": "打开工作文件夹",
         "menu.file.close": "关闭工作文件夹",
+        "menu.file.recent": "最近打开",
+        "menu.file.recent.clear": "清除记录",
+        "menu.file.recent.empty": "无最近项目",
+        "menu.file.recent.not_exist": "(不存在)",
         "menu.file.save": "保存",
         "menu.file.save_all": "全部保存",
         "menu.file.exit": "退出",
@@ -185,6 +211,7 @@ TEXTS: Dict[str, Dict[str, str]] = {
         "menu.edit": "编辑",
         "menu.edit.undo": "撤销",
         "menu.edit.redo": "重做",
+        "menu.edit.undo_iteration": "撤回本次迭代",
         "menu.edit.cut": "剪切",
         "menu.edit.copy": "复制",
         "menu.edit.paste": "粘贴",
@@ -245,6 +272,9 @@ TEXTS: Dict[str, Dict[str, str]] = {
         "status.connected": "已连接",
         "status.disconnected": "已断开",
         "status.open_workspace": "请先打开工作文件夹",
+        "status.readonly": "只读",
+        "status.workspace": "工作区",
+        "status.no_project": "未打开项目",
         
         # 面板标题
         "panel.file_browser": "文件浏览器",
@@ -274,6 +304,20 @@ TEXTS: Dict[str, Dict[str, str]] = {
         "hint.drag_file": "拖放文件到此处",
         "hint.enter_message": "输入您的消息...",
         "hint.select_file": "选择文件以查看",
+        "hint.open_workspace": "打开工作区以开始",
+        
+        # 按钮 - 工作区
+        "btn.open_workspace": "打开工作区",
+        
+        # 文件浏览器
+        "file_browser.refresh": "刷新",
+        "file_browser.collapse_all": "折叠全部",
+        "file_browser.open_in_editor": "在编辑器中打开",
+        "file_browser.show_in_system": "在系统中显示",
+        "file_browser.copy_path": "复制路径",
+        "file_browser.delete": "删除",
+        "file_browser.new_file": "新建文件",
+        "file_browser.new_folder": "新建文件夹",
         
         # 工作流
         "workflow.iteration": "迭代",

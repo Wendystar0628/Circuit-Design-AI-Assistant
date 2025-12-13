@@ -166,9 +166,10 @@ class ConfigManager:
             # 加密字段返回解密后的值
             if key in ENCRYPTED_FIELDS:
                 encrypted_value = self._config.get(key, "")
-                if encrypted_value:
-                    return self._decrypt(encrypted_value)
-                return default
+                # 空值处理：空字符串直接返回默认值，不触发解密逻辑
+                if not encrypted_value:
+                    return default if default is not None else ""
+                return self._decrypt(encrypted_value)
             
             return self._config.get(key, default)
     
@@ -186,9 +187,12 @@ class ConfigManager:
         with self._lock:
             old_value = self._config.get(key)
             
-            # 加密字段存储加密后的值
-            if key in ENCRYPTED_FIELDS and value:
-                self._config[key] = self._encrypt(value)
+            # 加密字段处理：只有非空值才加密存储，空值直接存储空字符串
+            if key in ENCRYPTED_FIELDS:
+                if value:
+                    self._config[key] = self._encrypt(value)
+                else:
+                    self._config[key] = ""
             else:
                 self._config[key] = value
             
@@ -209,10 +213,13 @@ class ConfigManager:
         with self._lock:
             result = self._config.copy()
             
-            # 解密敏感字段
+            # 解密敏感字段（只有非空值才解密）
             for field in ENCRYPTED_FIELDS:
-                if result.get(field):
-                    result[field] = self._decrypt(result[field])
+                encrypted_value = result.get(field, "")
+                if encrypted_value:
+                    result[field] = self._decrypt(encrypted_value)
+                else:
+                    result[field] = ""
             
             return result
     
@@ -444,7 +451,7 @@ class ConfigManager:
             ciphertext: Base64 编码的密文
             
         Returns:
-            明文
+            明文，解密失败时返回空字符串
         """
         if not ciphertext:
             return ""
@@ -465,14 +472,18 @@ class ConfigManager:
             try:
                 return base64.b64decode(ciphertext.encode()).decode()
             except Exception:
-                return ciphertext
+                # 无法解码，可能是损坏的数据，返回空字符串
+                return ""
                 
         except Exception as e:
             # 解密失败，可能是旧格式或损坏的数据
-            self._log_error(f"解密失败: {e}")
+            # 静默处理，不记录错误日志（避免用户困惑）
+            # 返回空字符串，让用户重新输入
             try:
                 return base64.b64decode(ciphertext.encode()).decode()
             except Exception:
+                # 完全无法解密，返回空字符串
+                # 用户需要重新输入 API Key
                 return ""
     
     # ============================================================

@@ -12,5 +12,15 @@
 """
 
 from application.bootstrap import run
+from application.project_service import (
+    ProjectService,
+    ProjectStatus,
+    ProjectInfo,
+)
 
-__all__ = ["run"]
+__all__ = [
+    "run",
+    "ProjectService",
+    "ProjectStatus",
+    "ProjectInfo",
+]

@@ -298,21 +298,33 @@ def _delayed_init():
             _logger.info("Phase 3.1 WorkerManager 初始化完成")
 
         # --------------------------------------------------------
-        # 3.2 FileManager 初始化（阶段二实现，此处预留）
+        # 3.2 FileManager 初始化
         # 依赖：Logger、EventBus
         # 职责：提供统一文件操作接口
         # --------------------------------------------------------
-        # TODO: 阶段二实现后取消注释
-        # from infrastructure.persistence.file_manager import FileManager
-        # from shared.service_names import SVC_FILE_MANAGER
-        # file_manager = FileManager()
-        # ServiceLocator.register(SVC_FILE_MANAGER, file_manager)
-        # if _logger:
-        #     _logger.info("Phase 3.2 FileManager 初始化完成")
-        print("[Phase 3.2] FileManager 初始化 - 阶段二实现")
+        from infrastructure.persistence.file_manager import FileManager
+        from shared.service_names import SVC_FILE_MANAGER
+        file_manager = FileManager()
+        # 启动时清理过期临时文件
+        file_manager.cleanup_temp_files()
+        ServiceLocator.register(SVC_FILE_MANAGER, file_manager)
+        if _logger:
+            _logger.info("Phase 3.2 FileManager 初始化完成")
 
         # --------------------------------------------------------
-        # 3.3 发布 EVENT_INIT_COMPLETE 事件
+        # 3.3 ProjectService 初始化
+        # 依赖：FileManager、AppState、EventBus
+        # 职责：管理工作文件夹的初始化和状态
+        # --------------------------------------------------------
+        from application.project_service import ProjectService
+        from shared.service_names import SVC_PROJECT_SERVICE
+        project_service = ProjectService()
+        ServiceLocator.register(SVC_PROJECT_SERVICE, project_service)
+        if _logger:
+            _logger.info("Phase 3.3 ProjectService 初始化完成")
+
+        # --------------------------------------------------------
+        # 3.5 发布 EVENT_INIT_COMPLETE 事件
         # 通知所有订阅者初始化完成
         # --------------------------------------------------------
         from shared.service_locator import ServiceLocator
@@ -321,7 +333,7 @@ def _delayed_init():
         event_bus = ServiceLocator.get(SVC_EVENT_BUS)
         event_bus.publish(EVENT_INIT_COMPLETE, {"timestamp": time.time()})
         if _logger:
-            _logger.info("Phase 3.3 EVENT_INIT_COMPLETE 已发布")
+            _logger.info("Phase 3.5 EVENT_INIT_COMPLETE 已发布")
 
         print("=" * 50)
         print("初始化完成！应用已就绪。")
@@ -357,6 +369,43 @@ def _show_fatal_error(message: str):
     except Exception:
         # 如果 PyQt6 也失败了，回退到控制台输出
         print(f"[FATAL] {message}")
+
+
+def _install_qt_message_filter():
+    """
+    安装 Qt 消息过滤器
+    
+    过滤无害的 Qt 内部警告消息，如字体初始化警告
+    """
+    from PyQt6.QtCore import qInstallMessageHandler, QtMsgType
+    
+    # 需要过滤的警告消息模式
+    _filtered_warnings = [
+        "QFont::setPointSize: Point size <= 0",  # Qt 字体初始化时的无害警告
+    ]
+    
+    def qt_message_handler(msg_type: QtMsgType, context, message: str):
+        """自定义 Qt 消息处理器"""
+        # 检查是否需要过滤
+        for pattern in _filtered_warnings:
+            if pattern in message:
+                return  # 静默忽略
+        
+        # 其他消息正常输出
+        if msg_type == QtMsgType.QtDebugMsg:
+            print(f"[Qt Debug] {message}")
+        elif msg_type == QtMsgType.QtInfoMsg:
+            print(f"[Qt Info] {message}")
+        elif msg_type == QtMsgType.QtWarningMsg:
+            print(f"[Qt Warning] {message}")
+        elif msg_type == QtMsgType.QtCriticalMsg:
+            print(f"[Qt Critical] {message}")
+        elif msg_type == QtMsgType.QtFatalMsg:
+            print(f"[Qt Fatal] {message}")
+    
+    qInstallMessageHandler(qt_message_handler)
+    if _logger:
+        _logger.debug("Qt 消息过滤器已安装")
 
 
 def _setup_exception_hook():
@@ -441,6 +490,9 @@ def run() -> int:
     # Phase 2: GUI 框架初始化
     # ============================================================
     print("\n[Phase 2] GUI 框架初始化...")
+
+    # 2.0 安装 Qt 消息过滤器（过滤无害的 Qt 内部警告）
+    _install_qt_message_filter()
 
     # 2.1 创建 QApplication 实例
     from PyQt6.QtWidgets import QApplication

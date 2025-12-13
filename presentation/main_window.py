@@ -3,35 +3,37 @@
 主窗口类（骨架版）- 应用程序主窗口框架
 
 职责：
-- 建立三栏+下栏的 QSplitter 嵌套布局结构
-- 创建菜单栏、工具栏、状态栏骨架
-- 各面板区域使用 QWidget 占位
-- 实现国际化支持和语言切换
+- 窗口布局管理、面板协调
+- 欢迎遮罩层
+- 窗口状态持久化
+- 事件订阅与分发
+
+委托关系：
+- 菜单栏创建委托给 MenuManager
+- 工具栏创建委托给 ToolbarManager
+- 状态栏创建委托给 StatusbarManager
 
 初始化顺序：
 - Phase 2.2，依赖 ServiceLocator（获取 I18nManager 等）
 
 设计原则：
+- 单一职责：主窗口类仅负责布局协调和事件处理
 - 延迟获取 ServiceLocator 中的服务
 - 所有用户可见文本通过 i18n_manager.get_text() 获取
-- 实现 retranslate_ui() 方法支持语言切换
 """
 
 from typing import Optional, Dict, Any
 
 from PyQt6.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QSplitter, QLabel, QMenuBar, QMenu, QToolBar,
-    QStatusBar, QPushButton, QComboBox, QFileDialog,
-    QMessageBox
+    QMainWindow, QWidget, QVBoxLayout,
+    QSplitter, QLabel, QFileDialog, QMessageBox
 )
-from PyQt6.QtCore import Qt, QSize
-from PyQt6.QtGui import QAction, QIcon
+from PyQt6.QtCore import Qt
 
+from presentation.menu_manager import MenuManager
+from presentation.toolbar_manager import ToolbarManager
+from presentation.statusbar_manager import StatusbarManager
 
-# ============================================================
-# 主窗口类
-# ============================================================
 
 class MainWindow(QMainWindow):
     """
@@ -45,35 +47,31 @@ class MainWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        
+
         # 延迟获取的服务
         self._i18n_manager = None
         self._config_manager = None
         self._app_state = None
         self._event_bus = None
         self._logger = None
+        self._project_service = None
+        
+        # 管理器实例
+        self._menu_manager: Optional[MenuManager] = None
+        self._toolbar_manager: Optional[ToolbarManager] = None
+        self._statusbar_manager: Optional[StatusbarManager] = None
         
         # UI 组件引用
-        self._actions: Dict[str, QAction] = {}
-        self._menus: Dict[str, QMenu] = {}
         self._panels: Dict[str, QWidget] = {}
         self._splitters: Dict[str, QSplitter] = {}
         
-        # 状态栏组件
-        self._status_label: Optional[QLabel] = None
-        self._iteration_label: Optional[QLabel] = None
-        self._worker_label: Optional[QLabel] = None
-        
-        # 欢迎遮罩层
-        self._welcome_overlay: Optional[QWidget] = None
+
         
         # 初始化 UI
         self._setup_window()
         self._setup_central_widget()
-        self._setup_menu_bar()
-        self._setup_tool_bar()
-        self._setup_status_bar()
-        self._setup_welcome_overlay()
+        self._setup_managers()
+        self._connect_panel_signals()
         
         # 应用国际化文本
         self.retranslate_ui()
@@ -84,9 +82,9 @@ class MainWindow(QMainWindow):
         # 恢复窗口状态
         self._restore_window_state()
         
-        # 检查是否需要显示欢迎遮罩
-        self._check_welcome_overlay()
-
+        # 延迟恢复会话状态（等待窗口显示后执行）
+        from PyQt6.QtCore import QTimer
+        QTimer.singleShot(100, self._restore_session_state)
 
     # ============================================================
     # 延迟获取服务
@@ -151,12 +149,23 @@ class MainWindow(QMainWindow):
                 pass
         return self._logger
 
+    @property
+    def project_service(self):
+        """延迟获取 ProjectService"""
+        if self._project_service is None:
+            try:
+                from shared.service_locator import ServiceLocator
+                from shared.service_names import SVC_PROJECT_SERVICE
+                self._project_service = ServiceLocator.get_optional(SVC_PROJECT_SERVICE)
+            except Exception:
+                pass
+        return self._project_service
+
     def _get_text(self, key: str, default: Optional[str] = None) -> str:
         """获取国际化文本"""
         if self.i18n_manager:
             return self.i18n_manager.get_text(key, default)
         return default if default else key
-
 
     # ============================================================
     # 窗口初始化
@@ -199,23 +208,30 @@ class MainWindow(QMainWindow):
         self._setup_splitter_sizes()
 
     def _create_panel_placeholders(self):
-        """创建面板占位部件"""
-        # 左栏 - 文件浏览器
-        self._panels["file_browser"] = self._create_placeholder_panel("panel.file_browser")
+        """创建面板部件"""
+        # 左栏 - 文件浏览器（使用实际组件）
+        from presentation.panels.file_browser_panel import FileBrowserPanel
+        self._panels["file_browser"] = FileBrowserPanel()
         self._panels["file_browser"].setMinimumWidth(150)
         self._splitters["horizontal"].addWidget(self._panels["file_browser"])
         
-        # 中栏 - 代码编辑器
-        self._panels["code_editor"] = self._create_placeholder_panel("panel.code_editor")
+        # 中栏 - 代码编辑器（使用实际组件）
+        from presentation.panels.code_editor_panel import CodeEditorPanel
+        self._panels["code_editor"] = CodeEditorPanel()
         self._panels["code_editor"].setMinimumWidth(400)
         self._splitters["horizontal"].addWidget(self._panels["code_editor"])
         
-        # 右栏 - 对话面板
+        # 连接文件浏览器和代码编辑器
+        self._panels["file_browser"].file_selected.connect(
+            self._panels["code_editor"].load_file
+        )
+        
+        # 右栏 - 对话面板（占位）
         self._panels["chat"] = self._create_placeholder_panel("panel.chat")
         self._panels["chat"].setMinimumWidth(250)
         self._splitters["horizontal"].addWidget(self._panels["chat"])
         
-        # 下栏 - 仿真结果
+        # 下栏 - 仿真结果（占位）
         self._panels["simulation"] = self._create_placeholder_panel("panel.simulation")
         self._panels["simulation"].setMinimumHeight(100)
         self._splitters["vertical"].addWidget(self._panels["simulation"])
@@ -256,389 +272,57 @@ class MainWindow(QMainWindow):
 
 
     # ============================================================
-    # 菜单栏
+    # 管理器初始化
     # ============================================================
 
-    def _setup_menu_bar(self):
-        """设置菜单栏"""
-        menubar = self.menuBar()
+    def _setup_managers(self):
+        """初始化各管理器并创建 UI 组件"""
+        # 准备回调函数
+        callbacks = {
+            "on_open_workspace": self._on_open_workspace,
+            "on_close_workspace": self._on_close_workspace,
+            "on_save_file": self._on_save_file,
+            "on_save_all_files": self._on_save_all_files,
+            "on_editor_undo": self._on_editor_undo,
+            "on_editor_redo": self._on_editor_redo,
+            "on_undo_iteration": self._on_undo_iteration,
+            "on_toggle_panel": self._toggle_panel,
+            "on_api_config": self._on_api_config,
+            "on_help_docs": self._on_help_docs,
+            "on_about": self._on_about,
+        }
         
-        # 文件菜单
-        self._menus["file"] = menubar.addMenu("")
-        self._setup_file_menu()
+        # 菜单栏管理器
+        self._menu_manager = MenuManager(self)
+        self._menu_manager.setup_menus(callbacks)
         
-        # 编辑菜单
-        self._menus["edit"] = menubar.addMenu("")
-        self._setup_edit_menu()
+        # 工具栏管理器
+        self._toolbar_manager = ToolbarManager(self)
+        self._toolbar_manager.setup_toolbar(callbacks)
         
-        # 视图菜单
-        self._menus["view"] = menubar.addMenu("")
-        self._setup_view_menu()
-        
-        # 仿真菜单
-        self._menus["simulation"] = menubar.addMenu("")
-        self._setup_simulation_menu()
-        
-        # 知识库菜单
-        self._menus["knowledge"] = menubar.addMenu("")
-        self._setup_knowledge_menu()
-        
-        # 工具菜单
-        self._menus["tools"] = menubar.addMenu("")
-        self._setup_tools_menu()
-        
-        # 帮助菜单
-        self._menus["help"] = menubar.addMenu("")
-        self._setup_help_menu()
-
-    def _setup_file_menu(self):
-        """设置文件菜单"""
-        menu = self._menus["file"]
-        
-        # 打开工作文件夹
-        self._actions["file_open"] = QAction(self)
-        self._actions["file_open"].triggered.connect(self._on_open_workspace)
-        menu.addAction(self._actions["file_open"])
-        
-        # 关闭工作文件夹（灰显）
-        self._actions["file_close"] = QAction(self)
-        self._actions["file_close"].setEnabled(False)
-        menu.addAction(self._actions["file_close"])
-        
-        menu.addSeparator()
-        
-        # 保存（灰显）
-        self._actions["file_save"] = QAction(self)
-        self._actions["file_save"].setEnabled(False)
-        menu.addAction(self._actions["file_save"])
-        
-        # 全部保存（灰显）
-        self._actions["file_save_all"] = QAction(self)
-        self._actions["file_save_all"].setEnabled(False)
-        menu.addAction(self._actions["file_save_all"])
-        
-        menu.addSeparator()
-        
-        # 退出
-        self._actions["file_exit"] = QAction(self)
-        self._actions["file_exit"].triggered.connect(self.close)
-        menu.addAction(self._actions["file_exit"])
-
-    def _setup_edit_menu(self):
-        """设置编辑菜单"""
-        menu = self._menus["edit"]
-        
-        # 撤销（灰显）
-        self._actions["edit_undo"] = QAction(self)
-        self._actions["edit_undo"].setEnabled(False)
-        menu.addAction(self._actions["edit_undo"])
-        
-        # 重做（灰显）
-        self._actions["edit_redo"] = QAction(self)
-        self._actions["edit_redo"].setEnabled(False)
-        menu.addAction(self._actions["edit_redo"])
-        
-        menu.addSeparator()
-        
-        # 剪切（灰显）
-        self._actions["edit_cut"] = QAction(self)
-        self._actions["edit_cut"].setEnabled(False)
-        menu.addAction(self._actions["edit_cut"])
-        
-        # 复制（灰显）
-        self._actions["edit_copy"] = QAction(self)
-        self._actions["edit_copy"].setEnabled(False)
-        menu.addAction(self._actions["edit_copy"])
-        
-        # 粘贴（灰显）
-        self._actions["edit_paste"] = QAction(self)
-        self._actions["edit_paste"].setEnabled(False)
-        menu.addAction(self._actions["edit_paste"])
-
-    def _setup_view_menu(self):
-        """设置视图菜单"""
-        menu = self._menus["view"]
-        
-        # 文件浏览器（可勾选）
-        self._actions["view_file_browser"] = QAction(self)
-        self._actions["view_file_browser"].setCheckable(True)
-        self._actions["view_file_browser"].setChecked(True)
-        self._actions["view_file_browser"].triggered.connect(
-            lambda checked: self._toggle_panel("file_browser", checked)
-        )
-        menu.addAction(self._actions["view_file_browser"])
-        
-        # 代码编辑器（可勾选）
-        self._actions["view_code_editor"] = QAction(self)
-        self._actions["view_code_editor"].setCheckable(True)
-        self._actions["view_code_editor"].setChecked(True)
-        self._actions["view_code_editor"].triggered.connect(
-            lambda checked: self._toggle_panel("code_editor", checked)
-        )
-        menu.addAction(self._actions["view_code_editor"])
-        
-        # 对话面板（可勾选）
-        self._actions["view_chat_panel"] = QAction(self)
-        self._actions["view_chat_panel"].setCheckable(True)
-        self._actions["view_chat_panel"].setChecked(True)
-        self._actions["view_chat_panel"].triggered.connect(
-            lambda checked: self._toggle_panel("chat", checked)
-        )
-        menu.addAction(self._actions["view_chat_panel"])
-        
-        # 仿真结果（可勾选）
-        self._actions["view_simulation"] = QAction(self)
-        self._actions["view_simulation"].setCheckable(True)
-        self._actions["view_simulation"].setChecked(True)
-        self._actions["view_simulation"].triggered.connect(
-            lambda checked: self._toggle_panel("simulation", checked)
-        )
-        menu.addAction(self._actions["view_simulation"])
-
-
-    def _setup_simulation_menu(self):
-        """设置仿真菜单"""
-        menu = self._menus["simulation"]
-        
-        # 运行仿真（灰显，阶段四启用）
-        self._actions["sim_run"] = QAction(self)
-        self._actions["sim_run"].setEnabled(False)
-        menu.addAction(self._actions["sim_run"])
-        
-        # 停止仿真（灰显，阶段四启用）
-        self._actions["sim_stop"] = QAction(self)
-        self._actions["sim_stop"].setEnabled(False)
-        menu.addAction(self._actions["sim_stop"])
-
-    def _setup_knowledge_menu(self):
-        """设置知识库菜单"""
-        menu = self._menus["knowledge"]
-        
-        # 导入文档（灰显，阶段四启用）
-        self._actions["knowledge_import"] = QAction(self)
-        self._actions["knowledge_import"].setEnabled(False)
-        menu.addAction(self._actions["knowledge_import"])
-        
-        # 重建索引（灰显，阶段四启用）
-        self._actions["knowledge_rebuild"] = QAction(self)
-        self._actions["knowledge_rebuild"].setEnabled(False)
-        menu.addAction(self._actions["knowledge_rebuild"])
-
-    def _setup_tools_menu(self):
-        """设置工具菜单"""
-        menu = self._menus["tools"]
-        
-        # 配置大模型API
-        self._actions["tools_api_config"] = QAction(self)
-        self._actions["tools_api_config"].triggered.connect(self._on_api_config)
-        menu.addAction(self._actions["tools_api_config"])
-        
-        # 压缩上下文（灰显）
-        self._actions["tools_compress"] = QAction(self)
-        self._actions["tools_compress"].setEnabled(False)
-        menu.addAction(self._actions["tools_compress"])
-
-    def _setup_help_menu(self):
-        """设置帮助菜单"""
-        menu = self._menus["help"]
-        
-        # 文档
-        self._actions["help_docs"] = QAction(self)
-        self._actions["help_docs"].triggered.connect(self._on_help_docs)
-        menu.addAction(self._actions["help_docs"])
-        
-        # 关于
-        self._actions["help_about"] = QAction(self)
-        self._actions["help_about"].triggered.connect(self._on_about)
-        menu.addAction(self._actions["help_about"])
+        # 状态栏管理器
+        self._statusbar_manager = StatusbarManager(self)
+        self._statusbar_manager.setup_statusbar()
 
     # ============================================================
-    # 工具栏
+    # 面板信号连接
     # ============================================================
 
-    def _setup_tool_bar(self):
-        """设置工具栏"""
-        toolbar = QToolBar()
-        toolbar.setMovable(False)
-        toolbar.setIconSize(QSize(24, 24))
-        self.addToolBar(toolbar)
-        
-        # 打开工作文件夹
-        self._actions["toolbar_open"] = QAction(self)
-        self._actions["toolbar_open"].triggered.connect(self._on_open_workspace)
-        toolbar.addAction(self._actions["toolbar_open"])
-        
-        # 保存（灰显）
-        self._actions["toolbar_save"] = QAction(self)
-        self._actions["toolbar_save"].setEnabled(False)
-        toolbar.addAction(self._actions["toolbar_save"])
-        
-        toolbar.addSeparator()
-        
-        # 运行仿真（灰显）
-        self._actions["toolbar_run"] = QAction(self)
-        self._actions["toolbar_run"].setEnabled(False)
-        toolbar.addAction(self._actions["toolbar_run"])
-        
-        # 停止仿真（灰显）
-        self._actions["toolbar_stop"] = QAction(self)
-        self._actions["toolbar_stop"].setEnabled(False)
-        toolbar.addAction(self._actions["toolbar_stop"])
-        
-        toolbar.addSeparator()
-        
-        # 撤销（灰显）
-        self._actions["toolbar_undo"] = QAction(self)
-        self._actions["toolbar_undo"].setEnabled(False)
-        toolbar.addAction(self._actions["toolbar_undo"])
-        
-        # 重做（灰显）
-        self._actions["toolbar_redo"] = QAction(self)
-        self._actions["toolbar_redo"].setEnabled(False)
-        toolbar.addAction(self._actions["toolbar_redo"])
-
-
-    # ============================================================
-    # 状态栏
-    # ============================================================
-
-    def _setup_status_bar(self):
-        """设置状态栏（多分区布局）"""
-        statusbar = self.statusBar()
-        
-        # 左侧：任务状态文本
-        self._status_label = QLabel()
-        self._status_label.setMinimumWidth(200)
-        statusbar.addWidget(self._status_label, 1)
-        
-        # 中间：当前迭代信息（阶段五显示）
-        self._iteration_label = QLabel()
-        self._iteration_label.setMinimumWidth(150)
-        self._iteration_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        statusbar.addWidget(self._iteration_label)
-        
-        # 右侧：Worker 状态指示器（阶段三显示）
-        self._worker_label = QLabel()
-        self._worker_label.setMinimumWidth(100)
-        self._worker_label.setAlignment(Qt.AlignmentFlag.AlignRight)
-        statusbar.addPermanentWidget(self._worker_label)
-
-    # ============================================================
-    # 欢迎遮罩层
-    # ============================================================
-
-    def _setup_welcome_overlay(self):
-        """设置欢迎遮罩层"""
-        self._welcome_overlay = QWidget(self)
-        self._welcome_overlay.setStyleSheet(
-            "background-color: rgba(0, 0, 0, 0.5);"
-        )
-        
-        # 遮罩层布局
-        overlay_layout = QVBoxLayout(self._welcome_overlay)
-        overlay_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        
-        # 欢迎卡片
-        welcome_card = QWidget()
-        welcome_card.setFixedSize(400, 300)
-        welcome_card.setStyleSheet(
-            "background-color: white; border-radius: 10px; padding: 20px;"
-        )
-        overlay_layout.addWidget(welcome_card)
-        
-        # 卡片内容布局
-        card_layout = QVBoxLayout(welcome_card)
-        card_layout.setSpacing(20)
-        card_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        
-        # 欢迎标题
-        title_label = QLabel()
-        title_label.setProperty("welcome_title", True)
-        title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title_label.setStyleSheet("font-size: 24px; font-weight: bold; color: #333;")
-        card_layout.addWidget(title_label)
-        
-        # 欢迎说明
-        desc_label = QLabel()
-        desc_label.setProperty("welcome_desc", True)
-        desc_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        desc_label.setStyleSheet("font-size: 14px; color: #666;")
-        desc_label.setWordWrap(True)
-        card_layout.addWidget(desc_label)
-        
-        card_layout.addStretch()
-        
-        # 选择工作文件夹按钮
-        open_btn = QPushButton()
-        open_btn.setProperty("welcome_open_btn", True)
-        open_btn.setFixedHeight(40)
-        open_btn.setStyleSheet(
-            "QPushButton { background-color: #4CAF50; color: white; "
-            "border: none; border-radius: 5px; font-size: 14px; }"
-            "QPushButton:hover { background-color: #45a049; }"
-        )
-        open_btn.clicked.connect(self._on_open_workspace)
-        card_layout.addWidget(open_btn)
-        
-        # 最近打开下拉列表
-        recent_combo = QComboBox()
-        recent_combo.setProperty("welcome_recent", True)
-        recent_combo.setFixedHeight(35)
-        recent_combo.currentIndexChanged.connect(self._on_recent_project_selected)
-        card_layout.addWidget(recent_combo)
-        
-        # 初始隐藏
-        self._welcome_overlay.hide()
-
-    def _check_welcome_overlay(self):
-        """检查是否需要显示欢迎遮罩"""
-        # 检查 AppState 中是否有已打开的项目
-        has_project = False
-        if self.app_state:
-            from shared.app_state import STATE_PROJECT_PATH
-            project_path = self.app_state.get(STATE_PROJECT_PATH)
-            has_project = project_path is not None and project_path != ""
-        
-        if not has_project:
-            self._show_welcome_overlay()
-        else:
-            self._hide_welcome_overlay()
-
-    def _show_welcome_overlay(self):
-        """显示欢迎遮罩层"""
-        if self._welcome_overlay:
-            self._welcome_overlay.setGeometry(self.centralWidget().geometry())
-            self._welcome_overlay.raise_()
-            self._welcome_overlay.show()
-            self._update_recent_projects()
-
-    def _hide_welcome_overlay(self):
-        """隐藏欢迎遮罩层"""
-        if self._welcome_overlay:
-            self._welcome_overlay.hide()
-
-    def _update_recent_projects(self):
-        """更新最近打开项目列表"""
-        recent_combo = self._welcome_overlay.findChild(
-            QComboBox, "", Qt.FindChildOption.FindChildrenRecursively
-        )
-        if not recent_combo:
-            return
-        
-        recent_combo.clear()
-        recent_combo.addItem(self._get_text("hint.select_file", "Select recent project..."))
-        
-        # 从配置读取最近项目
-        if self.config_manager:
-            recent_projects = self.config_manager.get("recent_projects", [])
-            for project in recent_projects[:5]:
-                recent_combo.addItem(project)
-
-    def resizeEvent(self, event):
-        """窗口大小变化时调整遮罩层"""
-        super().resizeEvent(event)
-        if self._welcome_overlay and self._welcome_overlay.isVisible():
-            self._welcome_overlay.setGeometry(self.centralWidget().geometry())
+    def _connect_panel_signals(self):
+        """连接面板信号"""
+        # 连接代码编辑器面板的打开工作区请求信号
+        if "code_editor" in self._panels:
+            self._panels["code_editor"].open_workspace_requested.connect(
+                self._on_open_workspace
+            )
+            # 连接撤销/重做状态变化信号
+            self._panels["code_editor"].undo_redo_state_changed.connect(
+                self._on_undo_redo_state_changed
+            )
+            # 连接可编辑文件状态变化信号（用于启用/禁用保存按钮）
+            self._panels["code_editor"].editable_file_state_changed.connect(
+                self._on_editable_file_state_changed
+            )
 
 
     # ============================================================
@@ -650,114 +334,34 @@ class MainWindow(QMainWindow):
         # 窗口标题
         self.setWindowTitle(self._get_text("app.title", "Circuit AI Design Assistant"))
         
-        # 菜单标题
-        self._menus["file"].setTitle(self._get_text("menu.file", "File"))
-        self._menus["edit"].setTitle(self._get_text("menu.edit", "Edit"))
-        self._menus["view"].setTitle(self._get_text("menu.view", "View"))
-        self._menus["simulation"].setTitle(self._get_text("menu.simulation", "Simulation"))
-        self._menus["knowledge"].setTitle(self._get_text("menu.knowledge", "Knowledge Base"))
-        self._menus["tools"].setTitle(self._get_text("menu.tools", "Tools"))
-        self._menus["help"].setTitle(self._get_text("menu.help", "Help"))
+        # 调用各管理器的 retranslate_ui 方法
+        if self._menu_manager:
+            self._menu_manager.retranslate_ui()
+            self._update_recent_menu()
         
-        # 文件菜单项
-        self._actions["file_open"].setText(self._get_text("menu.file.open", "Open Workspace"))
-        self._actions["file_close"].setText(self._get_text("menu.file.close", "Close Workspace"))
-        self._actions["file_save"].setText(self._get_text("menu.file.save", "Save"))
-        self._actions["file_save_all"].setText(self._get_text("menu.file.save_all", "Save All"))
-        self._actions["file_exit"].setText(self._get_text("menu.file.exit", "Exit"))
+        if self._toolbar_manager:
+            self._toolbar_manager.retranslate_ui()
         
-        # 编辑菜单项
-        self._actions["edit_undo"].setText(self._get_text("menu.edit.undo", "Undo"))
-        self._actions["edit_redo"].setText(self._get_text("menu.edit.redo", "Redo"))
-        self._actions["edit_cut"].setText(self._get_text("menu.edit.cut", "Cut"))
-        self._actions["edit_copy"].setText(self._get_text("menu.edit.copy", "Copy"))
-        self._actions["edit_paste"].setText(self._get_text("menu.edit.paste", "Paste"))
-        
-        # 视图菜单项
-        self._actions["view_file_browser"].setText(
-            self._get_text("menu.view.file_browser", "File Browser")
-        )
-        self._actions["view_code_editor"].setText(
-            self._get_text("menu.view.code_editor", "Code Editor")
-        )
-        self._actions["view_chat_panel"].setText(
-            self._get_text("menu.view.chat_panel", "Chat Panel")
-        )
-        self._actions["view_simulation"].setText(
-            self._get_text("menu.view.simulation", "Simulation Results")
-        )
-        
-        # 仿真菜单项
-        self._actions["sim_run"].setText(self._get_text("menu.simulation.run", "Run Simulation"))
-        self._actions["sim_stop"].setText(self._get_text("menu.simulation.stop", "Stop Simulation"))
-        
-        # 知识库菜单项
-        self._actions["knowledge_import"].setText(
-            self._get_text("menu.knowledge.import", "Import Documents")
-        )
-        self._actions["knowledge_rebuild"].setText(
-            self._get_text("menu.knowledge.rebuild", "Rebuild Index")
-        )
-        
-        # 工具菜单项
-        self._actions["tools_api_config"].setText(
-            self._get_text("menu.tools.api_config", "API Configuration")
-        )
-        self._actions["tools_compress"].setText(
-            self._get_text("menu.tools.compress_context", "Compress Context")
-        )
-        
-        # 帮助菜单项
-        self._actions["help_docs"].setText(self._get_text("menu.help.documentation", "Documentation"))
-        self._actions["help_about"].setText(self._get_text("menu.help.about", "About"))
-        
-        # 工具栏按钮
-        self._actions["toolbar_open"].setText(self._get_text("menu.file.open", "Open"))
-        self._actions["toolbar_save"].setText(self._get_text("btn.save", "Save"))
-        self._actions["toolbar_run"].setText(self._get_text("menu.simulation.run", "Run"))
-        self._actions["toolbar_stop"].setText(self._get_text("btn.stop", "Stop"))
-        self._actions["toolbar_undo"].setText(self._get_text("menu.edit.undo", "Undo"))
-        self._actions["toolbar_redo"].setText(self._get_text("menu.edit.redo", "Redo"))
-        
-        # 状态栏
-        self._status_label.setText(self._get_text("status.ready", "Ready"))
+        if self._statusbar_manager:
+            self._statusbar_manager.retranslate_ui()
         
         # 面板占位文本
         self._update_panel_placeholders()
-        
-        # 欢迎遮罩层
-        self._update_welcome_overlay_texts()
 
     def _update_panel_placeholders(self):
         """更新面板占位文本"""
-        for panel_name, panel in self._panels.items():
-            label = panel.findChild(QLabel)
-            if label:
-                title_key = label.property("title_key")
-                if title_key:
-                    title = self._get_text(title_key, panel_name)
-                    hint = self._get_text("status.open_workspace", "Please open a workspace folder")
-                    label.setText(f"{title}\n\n{hint}")
+        placeholder_panels = ["chat", "simulation"]
+        for panel_name in placeholder_panels:
+            panel = self._panels.get(panel_name)
+            if panel:
+                label = panel.findChild(QLabel)
+                if label:
+                    title_key = label.property("title_key")
+                    if title_key:
+                        title = self._get_text(title_key, panel_name)
+                        hint = self._get_text("status.open_workspace", "Please open a workspace folder")
+                        label.setText(f"{title}\n\n{hint}")
 
-    def _update_welcome_overlay_texts(self):
-        """更新欢迎遮罩层文本"""
-        if not self._welcome_overlay:
-            return
-        
-        # 查找并更新标题
-        for child in self._welcome_overlay.findChildren(QLabel):
-            if child.property("welcome_title"):
-                child.setText(self._get_text("app.title", "Circuit AI Design Assistant"))
-            elif child.property("welcome_desc"):
-                child.setText(self._get_text(
-                    "status.open_workspace", 
-                    "Please open a workspace folder to get started"
-                ))
-        
-        # 更新按钮文本
-        for child in self._welcome_overlay.findChildren(QPushButton):
-            if child.property("welcome_open_btn"):
-                child.setText(self._get_text("menu.file.open", "Open Workspace"))
 
 
     # ============================================================
@@ -767,8 +371,14 @@ class MainWindow(QMainWindow):
     def _subscribe_events(self):
         """订阅事件"""
         if self.event_bus:
-            from shared.event_types import EVENT_LANGUAGE_CHANGED
+            from shared.event_types import (
+                EVENT_LANGUAGE_CHANGED,
+                EVENT_STATE_PROJECT_OPENED,
+                EVENT_STATE_PROJECT_CLOSED
+            )
             self.event_bus.subscribe(EVENT_LANGUAGE_CHANGED, self._on_language_changed)
+            self.event_bus.subscribe(EVENT_STATE_PROJECT_OPENED, self._on_project_opened)
+            self.event_bus.subscribe(EVENT_STATE_PROJECT_CLOSED, self._on_project_closed)
 
     def _on_language_changed(self, event_data: Dict[str, Any]):
         """语言变更事件处理"""
@@ -799,12 +409,10 @@ class MainWindow(QMainWindow):
         splitter_sizes = self.config_manager.get("splitter_sizes")
         if splitter_sizes:
             try:
-                # 验证水平分割器大小（确保每个面板都有最小宽度）
                 if "horizontal" in splitter_sizes:
                     h_sizes = splitter_sizes["horizontal"]
-                    # 检查是否所有值都大于最小值（避免面板被压缩到不可见）
                     if isinstance(h_sizes, list) and len(h_sizes) == 3:
-                        min_sizes = [150, 400, 250]  # 左栏、中栏、右栏最小宽度
+                        min_sizes = [150, 400, 250]
                         valid_sizes = all(
                             isinstance(s, (int, float)) and s >= min_sizes[i] 
                             for i, s in enumerate(h_sizes)
@@ -812,11 +420,9 @@ class MainWindow(QMainWindow):
                         if valid_sizes:
                             self._splitters["horizontal"].setSizes(h_sizes)
                 
-                # 验证垂直分割器大小（确保每个区域都有最小高度）
                 if "vertical" in splitter_sizes:
                     v_sizes = splitter_sizes["vertical"]
                     if isinstance(v_sizes, list) and len(v_sizes) == 2:
-                        # 上部最小 400，下部最小 100
                         valid_sizes = (
                             isinstance(v_sizes[0], (int, float)) and v_sizes[0] >= 400 and
                             isinstance(v_sizes[1], (int, float)) and v_sizes[1] >= 100
@@ -831,13 +437,12 @@ class MainWindow(QMainWindow):
         if panel_visibility and isinstance(panel_visibility, dict):
             for panel_name, visible in panel_visibility.items():
                 if panel_name in self._panels:
-                    # 确保 visible 是布尔值
                     is_visible = bool(visible) if visible is not None else True
                     self._panels[panel_name].setVisible(is_visible)
                     # 同步菜单勾选状态
-                    action_key = f"view_{panel_name}"
-                    if action_key in self._actions:
-                        self._actions[action_key].setChecked(is_visible)
+                    if self._menu_manager:
+                        action_key = f"view_{panel_name}"
+                        self._menu_manager.set_action_checked(action_key, is_visible)
 
     def _save_window_state(self):
         """保存窗口状态"""
@@ -848,11 +453,10 @@ class MainWindow(QMainWindow):
         geo = self.geometry()
         self.config_manager.set("window_geometry", [geo.x(), geo.y(), geo.width(), geo.height()])
         
-        # 保存分割器比例（只保存有效值）
+        # 保存分割器比例
         h_sizes = self._splitters["horizontal"].sizes()
         v_sizes = self._splitters["vertical"].sizes()
         
-        # 验证分割器大小是否有效（避免保存 0 值）
         if all(s > 0 for s in h_sizes) and all(s > 0 for s in v_sizes):
             self.config_manager.set("splitter_sizes", {
                 "horizontal": h_sizes,
@@ -864,11 +468,92 @@ class MainWindow(QMainWindow):
         for panel_name, panel in self._panels.items():
             panel_visibility[panel_name] = panel.isVisible()
         self.config_manager.set("panel_visibility", panel_visibility)
+        
+        # 保存会话状态
+        self._save_session_state()
+
+    def _save_session_state(self):
+        """保存会话状态（项目路径、打开的文件）"""
+        if not self.config_manager:
+            return
+        
+        # 保存当前项目路径
+        project_path = None
+        if self.app_state:
+            from shared.app_state import STATE_PROJECT_PATH
+            project_path = self.app_state.get(STATE_PROJECT_PATH)
+        self.config_manager.set("last_project_path", project_path)
+        
+        # 保存编辑器中打开的文件列表和当前激活的标签页
+        if "code_editor" in self._panels:
+            editor_panel = self._panels["code_editor"]
+            if hasattr(editor_panel, 'get_open_files'):
+                open_files = editor_panel.get_open_files()
+                self.config_manager.set("open_files", open_files)
+            if hasattr(editor_panel, 'get_current_file'):
+                current_file = editor_panel.get_current_file()
+                self.config_manager.set("active_file", current_file)
+
+    def _restore_session_state(self):
+        """恢复会话状态（项目路径、打开的文件）"""
+        if not self.config_manager:
+            return
+        
+        import os
+        
+        # 恢复上次打开的项目
+        last_project = self.config_manager.get("last_project_path")
+        if last_project and os.path.isdir(last_project):
+            self._open_project(last_project)
+            
+            # 延迟恢复打开的文件（等待项目初始化完成）
+            from PyQt6.QtCore import QTimer
+            QTimer.singleShot(200, self._restore_open_files)
+        else:
+            # 无项目时清空保存的文件列表
+            self.config_manager.set("open_files", [])
+            self.config_manager.set("active_file", None)
+
+    def _restore_open_files(self):
+        """恢复编辑器中打开的文件"""
+        if not self.config_manager:
+            return
+        
+        import os
+        
+        # 获取保存的文件列表
+        open_files = self.config_manager.get("open_files", [])
+        active_file = self.config_manager.get("active_file")
+        
+        if not open_files or "code_editor" not in self._panels:
+            return
+        
+        editor_panel = self._panels["code_editor"]
+        
+        # 依次打开文件
+        for file_path in open_files:
+            if file_path and os.path.isfile(file_path):
+                editor_panel.load_file(file_path)
+        
+        # 切换到上次激活的文件
+        if active_file and os.path.isfile(active_file):
+            if hasattr(editor_panel, 'switch_to_file'):
+                editor_panel.switch_to_file(active_file)
+        
+        # 延迟重置所有文件的修改状态（确保 UI 完全加载后执行）
+        from PyQt6.QtCore import QTimer
+        QTimer.singleShot(100, lambda: self._reset_all_modification_states(editor_panel))
+
+    def _reset_all_modification_states(self, editor_panel):
+        """重置所有打开文件的修改状态"""
+        if hasattr(editor_panel, 'reset_all_modification_states'):
+            editor_panel.reset_all_modification_states()
 
     def closeEvent(self, event):
         """窗口关闭事件"""
         self._save_window_state()
         super().closeEvent(event)
+
 
     # ============================================================
     # 面板显示/隐藏
@@ -879,6 +564,37 @@ class MainWindow(QMainWindow):
         if panel_name in self._panels:
             self._panels[panel_name].setVisible(visible)
 
+    # ============================================================
+    # 辅助方法
+    # ============================================================
+
+    def _get_recent_projects(self) -> list:
+        """获取最近项目列表"""
+        recent_projects = []
+        if self.project_service:
+            recent_projects = self.project_service.get_recent_projects(filter_invalid=False)
+        elif self.config_manager:
+            import os
+            paths = self.config_manager.get("recent_projects", [])
+            for path in paths[:10]:
+                recent_projects.append({
+                    "path": path,
+                    "name": os.path.basename(path),
+                    "exists": os.path.isdir(path),
+                })
+        return recent_projects
+
+    def _update_recent_menu(self):
+        """更新最近打开子菜单"""
+        if not self._menu_manager:
+            return
+        
+        recent_projects = self._get_recent_projects()
+        callbacks = {
+            "on_recent_click": self._on_recent_project_clicked,
+            "on_clear_recent": self._on_clear_recent_projects,
+        }
+        self._menu_manager.update_recent_menu(recent_projects, callbacks)
 
     # ============================================================
     # 菜单/工具栏动作处理
@@ -901,55 +617,197 @@ class MainWindow(QMainWindow):
         if self.logger:
             self.logger.info(f"Opening workspace: {folder_path}")
         
-        # 更新 AppState
-        if self.app_state:
-            from shared.app_state import STATE_PROJECT_PATH, STATE_PROJECT_INITIALIZED
-            self.app_state.set(STATE_PROJECT_PATH, folder_path)
-            self.app_state.set(STATE_PROJECT_INITIALIZED, True)
+        if self.project_service:
+            success, msg = self.project_service.initialize_project(folder_path)
+            if not success:
+                QMessageBox.warning(
+                    self,
+                    self._get_text("dialog.error.title", "Error"),
+                    msg
+                )
+                return
+            if self.logger:
+                self.logger.info(f"Project initialized: {msg}")
+        else:
+            if self.app_state:
+                from shared.app_state import STATE_PROJECT_PATH, STATE_PROJECT_INITIALIZED
+                self.app_state.set(STATE_PROJECT_PATH, folder_path)
+                self.app_state.set(STATE_PROJECT_INITIALIZED, True)
+            
+            if self.event_bus:
+                from shared.event_types import EVENT_STATE_PROJECT_OPENED
+                import os
+                self.event_bus.publish(EVENT_STATE_PROJECT_OPENED, {
+                    "path": folder_path,
+                    "name": os.path.basename(folder_path),
+                    "is_existing": False,
+                    "has_history": False,
+                    "status": "ready",
+                })
+
+    def _on_close_workspace(self):
+        """关闭工作文件夹"""
+        if self.project_service:
+            success, msg = self.project_service.close_project()
+            if not success:
+                QMessageBox.warning(
+                    self,
+                    self._get_text("dialog.error.title", "Error"),
+                    msg
+                )
+                return
+            if self.logger:
+                self.logger.info(f"Project closed: {msg}")
+        else:
+            if self.app_state:
+                from shared.app_state import STATE_PROJECT_PATH, STATE_PROJECT_INITIALIZED
+                self.app_state.set(STATE_PROJECT_PATH, None)
+                self.app_state.set(STATE_PROJECT_INITIALIZED, False)
+            
+            if self.event_bus:
+                from shared.event_types import EVENT_STATE_PROJECT_CLOSED
+                self.event_bus.publish(EVENT_STATE_PROJECT_CLOSED, {"path": None})
+
+    def _on_project_opened(self, event_data: Dict[str, Any]):
+        """项目打开事件处理"""
+        data = event_data.get("data", {})
+        if isinstance(data, dict):
+            project_path = data.get("path", "")
+        else:
+            project_path = ""
         
-        # 添加到最近项目
-        self._add_to_recent_projects(folder_path)
+        # 启用相关功能 - 菜单
+        if self._menu_manager:
+            self._menu_manager.set_action_enabled("file_close", True)
+            self._menu_manager.set_action_enabled("file_save", True)
+            self._menu_manager.set_action_enabled("file_save_all", True)
         
-        # 隐藏欢迎遮罩
-        self._hide_welcome_overlay()
-        
-        # 启用相关功能
-        self._actions["file_close"].setEnabled(True)
+        # 启用相关功能 - 工具栏
+        if self._toolbar_manager:
+            self._toolbar_manager.set_action_enabled("toolbar_save", True)
+            self._toolbar_manager.set_action_enabled("toolbar_save_all", True)
         
         # 更新状态栏
-        self._status_label.setText(f"{self._get_text('status.ready', 'Ready')} - {folder_path}")
+        if self._statusbar_manager:
+            self._statusbar_manager.set_project_info(project_path)
+        
+        # 更新最近打开菜单
+        self._update_recent_menu()
+        
+        if self.logger:
+            self.logger.info(f"Project opened event received: {project_path}")
 
-    def _add_to_recent_projects(self, folder_path: str):
-        """添加到最近项目列表"""
-        if not self.config_manager:
-            return
+    def _on_project_closed(self, event_data: Dict[str, Any]):
+        """项目关闭事件处理"""
+        # 禁用相关功能 - 菜单
+        if self._menu_manager:
+            self._menu_manager.set_action_enabled("file_close", False)
+            self._menu_manager.set_action_enabled("file_save", False)
+            self._menu_manager.set_action_enabled("file_save_all", False)
         
-        recent = self.config_manager.get("recent_projects", [])
+        # 禁用相关功能 - 工具栏
+        if self._toolbar_manager:
+            self._toolbar_manager.set_action_enabled("toolbar_save", False)
+            self._toolbar_manager.set_action_enabled("toolbar_save_all", False)
         
-        # 移除已存在的相同路径
-        if folder_path in recent:
-            recent.remove(folder_path)
+        # 更新状态栏
+        if self._statusbar_manager:
+            self._statusbar_manager.set_project_info(None)
         
-        # 添加到开头
-        recent.insert(0, folder_path)
+        # 关闭代码编辑器中的所有文件
+        if "code_editor" in self._panels:
+            self._panels["code_editor"].close_all_tabs()
         
-        # 保留最多 5 个
-        recent = recent[:5]
-        
-        self.config_manager.set("recent_projects", recent)
+        if self.logger:
+            self.logger.info("Project closed event received")
 
-    def _on_recent_project_selected(self, index: int):
-        """最近项目选择"""
-        if index <= 0:
-            return
+    def _on_recent_project_clicked(self, path: str):
+        """点击最近项目"""
+        import os
+        if os.path.isdir(path):
+            if self.project_service:
+                success, msg = self.project_service.switch_project(path)
+                if not success:
+                    QMessageBox.warning(
+                        self,
+                        self._get_text("dialog.error.title", "Error"),
+                        msg
+                    )
+            else:
+                self._open_project(path)
+        else:
+            reply = QMessageBox.question(
+                self,
+                self._get_text("dialog.confirm.title", "Confirm"),
+                f"Path does not exist: {path}\n\nRemove from recent list?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                if self.project_service:
+                    self.project_service.remove_from_recent(path)
+                self._update_recent_menu()
+
+    def _on_clear_recent_projects(self):
+        """清除最近项目记录"""
+        if self.project_service:
+            self.project_service.clear_recent_projects()
+        elif self.config_manager:
+            self.config_manager.set("recent_projects", [])
         
-        recent_combo = self._welcome_overlay.findChild(
-            QComboBox, "", Qt.FindChildOption.FindChildrenRecursively
+        self._update_recent_menu()
+
+    def _on_save_file(self):
+        """保存当前文件"""
+        if "code_editor" in self._panels:
+            self._panels["code_editor"].save_file()
+
+    def _on_save_all_files(self):
+        """保存所有已修改的文件"""
+        if "code_editor" in self._panels:
+            saved_count = self._panels["code_editor"].save_all_files()
+            if self.logger:
+                self.logger.info(f"Save all: {saved_count} file(s) saved")
+
+    def _on_editor_undo(self):
+        """编辑器级别撤销（Ctrl+Z）"""
+        if "code_editor" in self._panels:
+            editor = self._panels["code_editor"]
+            if hasattr(editor, 'undo'):
+                editor.undo()
+
+    def _on_editor_redo(self):
+        """编辑器级别重做（Ctrl+Y）"""
+        if "code_editor" in self._panels:
+            editor = self._panels["code_editor"]
+            if hasattr(editor, 'redo'):
+                editor.redo()
+
+    def _on_undo_iteration(self):
+        """撤回本次迭代（迭代级别，阶段四实现）"""
+        # TODO: 阶段四实现，调用 undo_manager.restore_snapshot()
+        QMessageBox.information(
+            self,
+            self._get_text("menu.edit.undo_iteration", "Undo Iteration"),
+            "Undo iteration will be implemented in Phase 4"
         )
-        if recent_combo:
-            folder_path = recent_combo.itemText(index)
-            if folder_path:
-                self._open_project(folder_path)
+
+    def _on_undo_redo_state_changed(self, can_undo: bool, can_redo: bool):
+        """撤销/重做状态变化处理"""
+        if self._menu_manager:
+            self._menu_manager.set_action_enabled("edit_undo", can_undo)
+            self._menu_manager.set_action_enabled("edit_redo", can_redo)
+
+    def _on_editable_file_state_changed(self, has_editable_file: bool):
+        """可编辑文件状态变化处理（用于启用/禁用保存按钮）"""
+        # 启用/禁用菜单保存按钮
+        if self._menu_manager:
+            self._menu_manager.set_action_enabled("file_save", has_editable_file)
+            self._menu_manager.set_action_enabled("file_save_all", has_editable_file)
+        
+        # 启用/禁用工具栏保存按钮
+        if self._toolbar_manager:
+            self._toolbar_manager.set_action_enabled("toolbar_save", has_editable_file)
+            self._toolbar_manager.set_action_enabled("toolbar_save_all", has_editable_file)
 
     def _on_api_config(self):
         """打开 API 配置对话框"""
@@ -959,7 +817,6 @@ class MainWindow(QMainWindow):
 
     def _on_help_docs(self):
         """打开文档"""
-        # TODO: 打开文档链接
         QMessageBox.information(
             self,
             self._get_text("menu.help.documentation", "Documentation"),

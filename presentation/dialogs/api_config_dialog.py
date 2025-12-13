@@ -438,15 +438,8 @@ class ApiConfigDialog(QDialog):
 
     def _validate_config(self) -> bool:
         """校验配置"""
-        # API Key 不能为空
-        if not self._api_key_edit.text().strip():
-            QMessageBox.warning(
-                self,
-                self._get_text("dialog.warning", "Warning"),
-                self._get_text("dialog.api_config.error.empty_api_key", "API Key cannot be empty")
-            )
-            self._api_key_edit.setFocus()
-            return False
+        # API Key 可以为空（用户可以稍后配置）
+        # 不再强制要求填写 API Key
         
         # 超时值必须 > 0
         if self._timeout_spin.value() <= 0:

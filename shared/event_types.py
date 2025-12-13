@@ -47,9 +47,18 @@ EVENT_UI_REQUEST_SIMULATION = "ui_request_simulation"
 # ============================================================
 
 # 项目打开
+# 携带数据：
+#   - path: str - 项目路径
+#   - name: str - 项目名称
+#   - is_existing: bool - 是否为已有项目（存在 checkpoints.sqlite3）
+#   - has_history: bool - 是否有历史对话和迭代记录
+#   - status: str - 项目状态（ready/degraded）
+#   - degraded: bool - 是否为降级模式
 EVENT_STATE_PROJECT_OPENED = "state_project_opened"
 
 # 项目关闭
+# 携带数据：
+#   - path: str - 关闭的项目路径
 EVENT_STATE_PROJECT_CLOSED = "state_project_closed"
 
 # 配置变更

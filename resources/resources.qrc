@@ -1,0 +1,37 @@
+<!DOCTYPE RCC>
+<RCC version="1.0">
+    <qresource prefix="/">
+        <!-- 样式表 -->
+        <file>styles/main.qss</file>
+        
+        <!-- 工具栏图标 (24x24) -->
+        <file>icons/toolbar/folder_open.svg</file>
+        <file>icons/toolbar/save.svg</file>
+        <file>icons/toolbar/play.svg</file>
+        <file>icons/toolbar/stop.svg</file>
+        <file>icons/toolbar/undo.svg</file>
+        <file>icons/toolbar/redo.svg</file>
+        
+        <!-- 面板图标 (20x20) -->
+        <file>icons/panel/file_browser.svg</file>
+        <file>icons/panel/code_editor.svg</file>
+        <file>icons/panel/chat.svg</file>
+        <file>icons/panel/simulation.svg</file>
+        
+        <!-- 状态图标 (16x16) -->
+        <file>icons/status/success.svg</file>
+        <file>icons/status/error.svg</file>
+        <file>icons/status/warning.svg</file>
+        <file>icons/status/loading.svg</file>
+        
+        <!-- 文件类型图标 (16x16) -->
+        <file>icons/file/circuit.svg</file>
+        <file>icons/file/folder.svg</file>
+        <file>icons/file/file.svg</file>
+        <file>icons/file/image.svg</file>
+        
+        <!-- 菜单图标 (16x16) -->
+        <file>icons/menu/settings.svg</file>
+        <file>icons/menu/help.svg</file>
+    </qresource>
+</RCC>

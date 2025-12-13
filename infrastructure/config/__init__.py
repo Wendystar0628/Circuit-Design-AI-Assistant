@@ -1,0 +1,57 @@
+# Configuration Management
+"""
+配置管理模块
+
+包含：
+- settings.py: 默认设置常量
+- config_manager.py: 配置统一访问管理器
+"""
+
+from .settings import (
+    # 工作流默认值
+    DEFAULT_MAX_ITERATIONS,
+    DEFAULT_STAGNATION_THRESHOLD,
+    DEFAULT_CONTEXT_LIMIT_RATIO,
+    # LLM 默认值
+    DEFAULT_TIMEOUT,
+    DEFAULT_STREAMING,
+    # RAG 默认值
+    DEFAULT_CHUNK_SIZE,
+    DEFAULT_CHUNK_OVERLAP,
+    # 路径常量
+    GLOBAL_CONFIG_DIR,
+    GLOBAL_CONFIG_FILE,
+    GLOBAL_LOG_DIR,
+    WORK_FOLDER_HIDDEN_DIR,
+    # 国际化常量
+    DEFAULT_LANGUAGE,
+    SUPPORTED_LANGUAGES,
+    # 配置字段名
+    CONFIG_LANGUAGE,
+    CONFIG_LLM_PROVIDER,
+    CONFIG_API_KEY,
+    CONFIG_TIMEOUT,
+    CONFIG_STREAMING,
+    # 默认配置模板
+    DEFAULT_CONFIG,
+)
+
+from .config_manager import ConfigManager
+
+__all__ = [
+    "ConfigManager",
+    "DEFAULT_MAX_ITERATIONS",
+    "DEFAULT_STAGNATION_THRESHOLD",
+    "DEFAULT_CONTEXT_LIMIT_RATIO",
+    "DEFAULT_TIMEOUT",
+    "DEFAULT_STREAMING",
+    "DEFAULT_CHUNK_SIZE",
+    "DEFAULT_CHUNK_OVERLAP",
+    "GLOBAL_CONFIG_DIR",
+    "GLOBAL_CONFIG_FILE",
+    "GLOBAL_LOG_DIR",
+    "WORK_FOLDER_HIDDEN_DIR",
+    "DEFAULT_LANGUAGE",
+    "SUPPORTED_LANGUAGES",
+    "DEFAULT_CONFIG",
+]

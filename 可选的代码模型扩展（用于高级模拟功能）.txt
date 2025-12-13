@@ -1,0 +1,11 @@
+1.创建目标目录：以管理员模式在powershell中运行：
+New-Item -ItemType Directory -Force -Path "C:\Spice64\lib\ngspice"
+
+2.手动复制 .cm 文件，在路径\vendor\ngspice\win64\Spice64_dll\lib\ngspice中找到以下6个文件：
+analog.cm
+digital.cm
+spice2poly.cm
+table.cm
+xtradev.cm
+xtraevt.cm
+复制到C:\Spice64\lib\ngspice路径

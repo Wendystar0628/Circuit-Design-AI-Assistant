@@ -1,0 +1,274 @@
+# Event Type Constants
+"""
+事件类型常量定义
+
+职责：
+- 集中定义所有事件类型常量
+- 避免字符串硬编码
+- 作为 EventBus 发布和订阅事件的键
+
+设计原则：
+- 纯常量定义，不依赖任何其他模块
+- 所有事件名使用 EVENT_ 前缀
+- 按功能模块分组组织
+- 命名规范：EVENT_{模块}_{动作}，全大写下划线分隔
+
+使用示例：
+    from shared.event_types import EVENT_INIT_COMPLETE
+    event_bus.subscribe(EVENT_INIT_COMPLETE, on_init_complete)
+    event_bus.publish(EVENT_INIT_COMPLETE, {"timestamp": time.time()})
+"""
+
+# ============================================================
+# 初始化事件
+# ============================================================
+
+# 启动阶段完成通知
+EVENT_INIT_PHASE_COMPLETE = "init_phase_complete"
+
+# 所有初始化完成
+EVENT_INIT_COMPLETE = "init_complete"
+
+# ============================================================
+# UI 交互事件
+# ============================================================
+
+# 用户选择文件
+EVENT_UI_FILE_SELECTED = "ui_file_selected"
+
+# 用户发送消息
+EVENT_UI_SEND_MESSAGE = "ui_send_message"
+
+# 用户请求仿真
+EVENT_UI_REQUEST_SIMULATION = "ui_request_simulation"
+
+# ============================================================
+# 状态变更事件
+# ============================================================
+
+# 项目打开
+EVENT_STATE_PROJECT_OPENED = "state_project_opened"
+
+# 项目关闭
+EVENT_STATE_PROJECT_CLOSED = "state_project_closed"
+
+# 配置变更
+EVENT_STATE_CONFIG_CHANGED = "state_config_changed"
+
+# 迭代状态更新
+EVENT_STATE_ITERATION_UPDATED = "state_iteration_updated"
+
+
+# ============================================================
+# Worker 事件
+# ============================================================
+
+# Worker 启动
+EVENT_WORKER_STARTED = "worker_started"
+
+# Worker 进度更新
+EVENT_WORKER_PROGRESS = "worker_progress"
+
+# Worker 完成
+EVENT_WORKER_COMPLETE = "worker_complete"
+
+# Worker 错误
+EVENT_WORKER_ERROR = "worker_error"
+
+# ============================================================
+# LLM 事件
+# ============================================================
+
+# LLM 流式输出块
+EVENT_LLM_CHUNK = "llm_chunk"
+
+# LLM 完成
+EVENT_LLM_COMPLETE = "llm_complete"
+
+# LLM 工具调用
+EVENT_LLM_TOOL_CALL = "llm_tool_call"
+
+# ============================================================
+# 仿真事件
+# ============================================================
+
+# 仿真开始
+EVENT_SIM_STARTED = "sim_started"
+
+# 仿真完成
+EVENT_SIM_COMPLETE = "sim_complete"
+
+# 仿真错误
+EVENT_SIM_ERROR = "sim_error"
+
+# ============================================================
+# RAG 事件
+# ============================================================
+
+# RAG 索引开始
+EVENT_RAG_INDEX_STARTED = "rag_index_started"
+
+# RAG 索引进度
+EVENT_RAG_INDEX_PROGRESS = "rag_index_progress"
+
+# RAG 索引完成
+EVENT_RAG_INDEX_COMPLETE = "rag_index_complete"
+
+# RAG 检索完成
+EVENT_RAG_SEARCH_COMPLETE = "rag_search_complete"
+
+# ============================================================
+# 上下文压缩事件
+# ============================================================
+
+# 请求压缩上下文
+EVENT_CONTEXT_COMPRESS_REQUESTED = "context_compress_requested"
+
+# 压缩预览就绪
+EVENT_CONTEXT_COMPRESS_PREVIEW_READY = "context_compress_preview_ready"
+
+# 压缩完成
+EVENT_CONTEXT_COMPRESS_COMPLETE = "context_compress_complete"
+
+
+# ============================================================
+# 错误处理事件
+# ============================================================
+
+# 错误发生
+EVENT_ERROR_OCCURRED = "error_occurred"
+
+# 错误恢复
+EVENT_ERROR_RECOVERED = "error_recovered"
+
+# ============================================================
+# 文件操作事件
+# ============================================================
+
+# 文件变更
+EVENT_FILE_CHANGED = "file_changed"
+
+# 文件锁定
+EVENT_FILE_LOCKED = "file_locked"
+
+# 文件解锁
+EVENT_FILE_UNLOCKED = "file_unlocked"
+
+# ============================================================
+# 外部服务事件
+# ============================================================
+
+# 熔断器打开
+EVENT_SERVICE_CIRCUIT_OPEN = "service_circuit_open"
+
+# 熔断器关闭
+EVENT_SERVICE_CIRCUIT_CLOSE = "service_circuit_close"
+
+# ============================================================
+# 国际化事件
+# ============================================================
+
+# 语言切换
+EVENT_LANGUAGE_CHANGED = "language_changed"
+
+# ============================================================
+# 迭代确认事件
+# ============================================================
+
+# 等待用户确认
+EVENT_ITERATION_AWAITING_CONFIRMATION = "iteration_awaiting_confirmation"
+
+# 用户确认继续
+EVENT_ITERATION_USER_CONFIRMED = "iteration_user_confirmed"
+
+# 用户停止
+EVENT_ITERATION_USER_STOPPED = "iteration_user_stopped"
+
+# 自动继续
+EVENT_ITERATION_AUTO_CONTINUED = "iteration_auto_continued"
+
+# ============================================================
+# 工作流锁定事件
+# ============================================================
+
+# 工作流锁定
+EVENT_WORKFLOW_LOCKED = "workflow_locked"
+
+# 工作流解锁
+EVENT_WORKFLOW_UNLOCKED = "workflow_unlocked"
+
+
+# ============================================================
+# 关键事件列表（需要特殊保护）
+# ============================================================
+
+CRITICAL_EVENTS = [
+    EVENT_ITERATION_AWAITING_CONFIRMATION,
+    EVENT_WORKFLOW_LOCKED,
+    EVENT_WORKFLOW_UNLOCKED,
+    EVENT_ERROR_OCCURRED,
+]
+
+
+# ============================================================
+# 模块导出
+# ============================================================
+
+__all__ = [
+    # 初始化事件
+    "EVENT_INIT_PHASE_COMPLETE",
+    "EVENT_INIT_COMPLETE",
+    # UI 交互事件
+    "EVENT_UI_FILE_SELECTED",
+    "EVENT_UI_SEND_MESSAGE",
+    "EVENT_UI_REQUEST_SIMULATION",
+    # 状态变更事件
+    "EVENT_STATE_PROJECT_OPENED",
+    "EVENT_STATE_PROJECT_CLOSED",
+    "EVENT_STATE_CONFIG_CHANGED",
+    "EVENT_STATE_ITERATION_UPDATED",
+    # Worker 事件
+    "EVENT_WORKER_STARTED",
+    "EVENT_WORKER_PROGRESS",
+    "EVENT_WORKER_COMPLETE",
+    "EVENT_WORKER_ERROR",
+    # LLM 事件
+    "EVENT_LLM_CHUNK",
+    "EVENT_LLM_COMPLETE",
+    "EVENT_LLM_TOOL_CALL",
+    # 仿真事件
+    "EVENT_SIM_STARTED",
+    "EVENT_SIM_COMPLETE",
+    "EVENT_SIM_ERROR",
+    # RAG 事件
+    "EVENT_RAG_INDEX_STARTED",
+    "EVENT_RAG_INDEX_PROGRESS",
+    "EVENT_RAG_INDEX_COMPLETE",
+    "EVENT_RAG_SEARCH_COMPLETE",
+    # 上下文压缩事件
+    "EVENT_CONTEXT_COMPRESS_REQUESTED",
+    "EVENT_CONTEXT_COMPRESS_PREVIEW_READY",
+    "EVENT_CONTEXT_COMPRESS_COMPLETE",
+    # 错误处理事件
+    "EVENT_ERROR_OCCURRED",
+    "EVENT_ERROR_RECOVERED",
+    # 文件操作事件
+    "EVENT_FILE_CHANGED",
+    "EVENT_FILE_LOCKED",
+    "EVENT_FILE_UNLOCKED",
+    # 外部服务事件
+    "EVENT_SERVICE_CIRCUIT_OPEN",
+    "EVENT_SERVICE_CIRCUIT_CLOSE",
+    # 国际化事件
+    "EVENT_LANGUAGE_CHANGED",
+    # 迭代确认事件
+    "EVENT_ITERATION_AWAITING_CONFIRMATION",
+    "EVENT_ITERATION_USER_CONFIRMED",
+    "EVENT_ITERATION_USER_STOPPED",
+    "EVENT_ITERATION_AUTO_CONTINUED",
+    # 工作流锁定事件
+    "EVENT_WORKFLOW_LOCKED",
+    "EVENT_WORKFLOW_UNLOCKED",
+    # 关键事件列表
+    "CRITICAL_EVENTS",
+]

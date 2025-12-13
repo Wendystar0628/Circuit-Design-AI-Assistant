@@ -1,0 +1,92 @@
+# Circuit Design AI - Git Ignore
+# ==============================
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+ENV/
+env/
+.venv/
+circuit/
+
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Project-specific hidden directories
+# Work folder system directory (contains checkpoints, iteration history)
+.circuit_ai/
+
+# Global config directory (contains API keys)
+# Note: This is typically at ~/.circuit_design_ai/
+# Listed here for reference, actual path is outside repo
+
+# SQLite checkpoint databases
+*.sqlite3
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Logs
+logs/
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+.temp/
+temp/
+
+# OS-specific
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# ngspice binaries (large files, download separately)
+vendor/ngspice/win64/*.exe
+vendor/ngspice/win64/*.dll
+vendor/ngspice/linux64/*.so
+vendor/ngspice/macos/*.dylib
+
+# Large Models
+vendor/models/
+
+
+# Test artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+tests/
+
+
+# Build artifacts
+*.spec

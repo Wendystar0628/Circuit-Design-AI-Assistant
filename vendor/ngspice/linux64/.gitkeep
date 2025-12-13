@@ -1,0 +1,3 @@
+# Linux 64-bit ngspice shared library
+# Place libngspice.so here
+# Install via package manager or compile from source

@@ -1,0 +1,3 @@
+# macOS ngspice shared library
+# Place libngspice.dylib here
+# Install via Homebrew: brew install ngspice

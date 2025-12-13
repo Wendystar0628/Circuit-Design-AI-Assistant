@@ -1,0 +1,43 @@
+# Circuit Design AI - Dependencies
+# ================================
+
+# GUI Framework
+PyQt6>=6.5.0
+
+# Circuit Simulation
+PySpice>=1.5
+
+# Workflow Orchestration (LangGraph)
+# NOTE: Refer to local LangGraph/ project for latest API
+langgraph>=0.2.0
+langgraph-checkpoint-sqlite>=1.0.0
+langchain-core>=0.2.0
+
+# Vector Database & Embeddings
+chromadb>=0.4.0
+sentence-transformers>=3.3.0  # Required for ModernBERT support
+transformers>=4.48.0  # Required for ModernBERT architecture
+
+# Document Processing
+pdfplumber>=0.10.0
+
+# Visualization
+matplotlib>=3.7.0
+
+# Token Counting
+tiktoken>=0.5.0
+
+# HTTP Client (LLM API calls)
+httpx>=0.25.0
+
+# Encryption (API key storage)
+cryptography>=41.0.0
+
+# File System Monitoring
+watchdog>=3.0.0
+
+# Markdown Rendering (chat panel)
+markdown>=3.5.0
+
+# Utilities
+numpy>=1.24.0

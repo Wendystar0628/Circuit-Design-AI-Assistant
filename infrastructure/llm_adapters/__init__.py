@@ -1,12 +1,52 @@
 # LLM Adapters
 """
-LLM提供商适配器模块
+LLM 提供商适配器模块
 
-包含：
-- base_adapter.py: 适配器基类
-- gemini_adapter.py: Gemini适配器
-- openai_adapter.py: OpenAI适配器
-- claude_adapter.py: Claude适配器
-- qwen_adapter.py: Qwen适配器
-- deepseek_adapter.py: DeepSeek适配器
+设计说明：
+- LLM 客户端是外部服务的适配器，按 DDD 原则属于基础设施层
+- 封装与各 LLM 提供商 API 的交互细节，为领域层提供统一接口
+
+目录结构：
+- base_client.py: 客户端抽象基类，定义统一接口
+- zhipu/: 智谱 GLM 适配器目录（当前版本实现）
+  - zhipu_client.py: 智谱客户端主类
+  - zhipu_request_builder.py: 请求体构建
+  - zhipu_response_parser.py: 响应解析
+  - zhipu_stream_handler.py: 流式处理
+
+后续扩展：
+- openai/: OpenAI 适配器目录
+- claude/: Claude 适配器目录
+- gemini/: Gemini 适配器目录
+- qwen/: Qwen 适配器目录
+- deepseek/: DeepSeek 适配器目录
 """
+
+from infrastructure.llm_adapters.base_client import (
+    BaseLLMClient,
+    ModelInfo,
+    ChatResponse,
+    StreamChunk,
+    LLMError,
+    APIError,
+    AuthError,
+    RateLimitError,
+    ContextOverflowError,
+    ResponseParseError,
+)
+
+__all__ = [
+    # 基类
+    "BaseLLMClient",
+    # 数据结构
+    "ModelInfo",
+    "ChatResponse",
+    "StreamChunk",
+    # 异常类型
+    "LLMError",
+    "APIError",
+    "AuthError",
+    "RateLimitError",
+    "ContextOverflowError",
+    "ResponseParseError",
+]

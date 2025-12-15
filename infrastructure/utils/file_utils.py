@@ -36,7 +36,20 @@ from typing import Optional, Union
 # SPICE 文件扩展名
 # ============================================================
 
-SPICE_EXTENSIONS = {'.cir', '.sp', '.spice', '.net', '.lib', '.mod', '.sub'}
+# 可仿真的 SPICE 文件扩展名
+SPICE_EXTENSIONS = {'.cir', '.sp', '.spice', '.net', '.ckt'}
+
+# SPICE 库文件扩展名（不可直接仿真）
+SPICE_LIB_EXTENSIONS = {'.lib', '.mod', '.sub'}
+
+# 所有 SPICE 相关文件扩展名
+ALL_SPICE_EXTENSIONS = SPICE_EXTENSIONS | SPICE_LIB_EXTENSIONS
+
+# ============================================================
+# Python 文件扩展名
+# ============================================================
+
+PYTHON_EXTENSIONS = {'.py'}
 
 # ============================================================
 # 图片文件扩展名
@@ -200,18 +213,93 @@ def get_file_name(path: Union[str, Path]) -> str:
 
 def is_spice_file(path: Union[str, Path]) -> bool:
     """
-    判断是否为SPICE文件
+    判断是否为可仿真的 SPICE 文件
     
-    支持的扩展名：.cir, .sp, .spice, .net, .lib, .mod, .sub
+    支持的扩展名：.cir, .sp, .spice, .net, .ckt
     
     Args:
         path: 文件路径
         
     Returns:
-        bool: 是否为SPICE文件
+        bool: 是否为可仿真的 SPICE 文件
     """
     ext = get_file_extension(path)
     return ext in SPICE_EXTENSIONS
+
+
+def is_spice_lib_file(path: Union[str, Path]) -> bool:
+    """
+    判断是否为 SPICE 库文件（不可直接仿真）
+    
+    支持的扩展名：.lib, .mod, .sub
+    
+    Args:
+        path: 文件路径
+        
+    Returns:
+        bool: 是否为 SPICE 库文件
+    """
+    ext = get_file_extension(path)
+    return ext in SPICE_LIB_EXTENSIONS
+
+
+def is_any_spice_file(path: Union[str, Path]) -> bool:
+    """
+    判断是否为任意 SPICE 相关文件（包括库文件）
+    
+    支持的扩展名：.cir, .sp, .spice, .net, .ckt, .lib, .mod, .sub
+    
+    Args:
+        path: 文件路径
+        
+    Returns:
+        bool: 是否为 SPICE 相关文件
+    """
+    ext = get_file_extension(path)
+    return ext in ALL_SPICE_EXTENSIONS
+
+
+def is_python_file(path: Union[str, Path]) -> bool:
+    """
+    判断是否为 Python 文件
+    
+    支持的扩展名：.py
+    
+    Args:
+        path: 文件路径
+        
+    Returns:
+        bool: 是否为 Python 文件
+    """
+    ext = get_file_extension(path)
+    return ext in PYTHON_EXTENSIONS
+
+
+def is_simulatable_file(
+    path: Union[str, Path],
+    supported_extensions: Optional[set] = None
+) -> bool:
+    """
+    判断是否为可仿真文件
+    
+    根据已注册执行器支持的扩展名判断。
+    如果未提供 supported_extensions，则使用默认的 SPICE 和 Python 扩展名。
+    
+    Args:
+        path: 文件路径
+        supported_extensions: 支持的扩展名集合（可选，从 executor_registry 获取）
+        
+    Returns:
+        bool: 是否为可仿真文件
+    """
+    ext = get_file_extension(path)
+    
+    if supported_extensions is not None:
+        return ext in supported_extensions
+    
+    # 默认支持 SPICE 文件和 Python 脚本
+    default_extensions = SPICE_EXTENSIONS | PYTHON_EXTENSIONS
+    return ext in default_extensions
 
 
 def is_image_file(path: Union[str, Path]) -> bool:
@@ -345,10 +433,14 @@ def get_file_type(path: Union[str, Path]) -> str:
         path: 文件路径
         
     Returns:
-        str: 文件类型描述（spice/image/markdown/word/pdf/text/binary）
+        str: 文件类型描述（spice/spice_lib/python/image/markdown/word/pdf/text/binary）
     """
     if is_spice_file(path):
         return "spice"
+    elif is_spice_lib_file(path):
+        return "spice_lib"
+    elif is_python_file(path):
+        return "python"
     elif is_image_file(path):
         return "image"
     elif is_markdown_file(path):
@@ -527,6 +619,9 @@ def get_unique_path(
 __all__ = [
     # 常量
     "SPICE_EXTENSIONS",
+    "SPICE_LIB_EXTENSIONS",
+    "ALL_SPICE_EXTENSIONS",
+    "PYTHON_EXTENSIONS",
     "IMAGE_EXTENSIONS",
     "TEXT_EXTENSIONS",
     "MARKDOWN_EXTENSIONS",
@@ -542,6 +637,10 @@ __all__ = [
     "get_file_name",
     # 文件类型判断
     "is_spice_file",
+    "is_spice_lib_file",
+    "is_any_spice_file",
+    "is_python_file",
+    "is_simulatable_file",
     "is_image_file",
     "is_text_file",
     "is_markdown_file",

@@ -38,7 +38,14 @@ ZHIPU_MODELS: List[str] = [
 ]
 
 # 搜索供应商列表
-SEARCH_PROVIDERS: List[str] = ["Brave", "Bing", "Serper"]
+# 智谱内置搜索：无需额外配置，使用 LLM 的 API Key
+# Google：需要 API Key + 搜索引擎 ID（cx）
+# Bing：需要 API Key
+SEARCH_PROVIDERS: List[Dict[str, str]] = [
+    {"id": "zhipu_web_search", "name": "智谱内置搜索"},
+    {"id": "google", "name": "Google"},
+    {"id": "bing", "name": "Bing"},
+]
 
 # 语言选项
 LANGUAGE_OPTIONS: Dict[str, str] = {
@@ -81,9 +88,13 @@ class ApiConfigDialog(QDialog):
         self._streaming_check: Optional[QCheckBox] = None
         self._timeout_spin: Optional[QSpinBox] = None
         self._deep_think_check: Optional[QCheckBox] = None
+        self._thinking_timeout_spin: Optional[QSpinBox] = None
         self._web_search_check: Optional[QCheckBox] = None
         self._search_provider_combo: Optional[QComboBox] = None
         self._search_api_key_edit: Optional[QLineEdit] = None
+        self._search_api_key_label: Optional[QLabel] = None
+        self._google_cx_edit: Optional[QLineEdit] = None
+        self._google_cx_label: Optional[QLabel] = None
         self._test_btn: Optional[QPushButton] = None
         self._status_label: Optional[QLabel] = None
         self._save_btn: Optional[QPushButton] = None
@@ -277,10 +288,22 @@ class ApiConfigDialog(QDialog):
         
         # 深度思考
         self._deep_think_check = QCheckBox()
+        self._deep_think_check.setChecked(True)  # 默认开启
+        self._deep_think_check.stateChanged.connect(self._on_deep_think_changed)
         
         deep_think_label = QLabel()
         deep_think_label.setProperty("label_type", "deep_think")
         layout.addRow(deep_think_label, self._deep_think_check)
+        
+        # 深度思考超时（仅深度思考启用时显示）
+        self._thinking_timeout_spin = QSpinBox()
+        self._thinking_timeout_spin.setRange(60, 600)
+        self._thinking_timeout_spin.setValue(300)
+        self._thinking_timeout_spin.setSuffix(" s")
+        
+        thinking_timeout_label = QLabel()
+        thinking_timeout_label.setProperty("label_type", "thinking_timeout")
+        layout.addRow(thinking_timeout_label, self._thinking_timeout_spin)
         
         return group
 
@@ -301,21 +324,35 @@ class ApiConfigDialog(QDialog):
         # 搜索供应商
         self._search_provider_combo = QComboBox()
         for provider in SEARCH_PROVIDERS:
-            self._search_provider_combo.addItem(provider)
+            self._search_provider_combo.addItem(provider["name"], provider["id"])
         self._search_provider_combo.setEnabled(False)
+        self._search_provider_combo.currentIndexChanged.connect(self._on_search_provider_changed)
         
         provider_label = QLabel()
         provider_label.setProperty("label_type", "search_provider")
         layout.addRow(provider_label, self._search_provider_combo)
         
-        # 搜索 API Key
+        # 搜索 API Key（智谱内置搜索时隐藏）
         self._search_api_key_edit = QLineEdit()
         self._search_api_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
         self._search_api_key_edit.setEnabled(False)
         
-        api_key_label = QLabel()
-        api_key_label.setProperty("label_type", "search_api_key")
-        layout.addRow(api_key_label, self._search_api_key_edit)
+        self._search_api_key_label = QLabel()
+        self._search_api_key_label.setProperty("label_type", "search_api_key")
+        layout.addRow(self._search_api_key_label, self._search_api_key_edit)
+        
+        # Google 搜索引擎 ID（仅选择 Google 时显示）
+        self._google_cx_edit = QLineEdit()
+        self._google_cx_edit.setEnabled(False)
+        self._google_cx_edit.setPlaceholderText("Google Custom Search Engine ID")
+        
+        self._google_cx_label = QLabel()
+        self._google_cx_label.setProperty("label_type", "google_cx")
+        layout.addRow(self._google_cx_label, self._google_cx_edit)
+        
+        # 初始状态：隐藏 Google cx 输入框
+        self._google_cx_label.setVisible(False)
+        self._google_cx_edit.setVisible(False)
         
         return group
 
@@ -389,22 +426,34 @@ class ApiConfigDialog(QDialog):
         self._timeout_spin.setValue(timeout)
         
         # 深度思考
-        deep_think = self.config_manager.get("enable_thinking", False)
+        deep_think = self.config_manager.get("enable_thinking", True)  # 默认开启
         self._deep_think_check.setChecked(deep_think)
+        
+        # 深度思考超时
+        thinking_timeout = self.config_manager.get("thinking_timeout", 300)
+        self._thinking_timeout_spin.setValue(thinking_timeout)
+        self._thinking_timeout_spin.setEnabled(deep_think)
         
         # 联网搜索
         web_search = self.config_manager.get("enable_web_search", False)
         self._web_search_check.setChecked(web_search)
         
-        # 搜索供应商
-        search_provider = self.config_manager.get("web_search_provider", "Brave")
-        index = self._search_provider_combo.findText(search_provider)
+        # 搜索供应商（使用 id 匹配）
+        search_provider = self.config_manager.get("web_search_provider", "zhipu_web_search")
+        index = self._search_provider_combo.findData(search_provider)
         if index >= 0:
             self._search_provider_combo.setCurrentIndex(index)
         
         # 搜索 API Key
         search_api_key = self.config_manager.get("web_search_api_key", "")
         self._search_api_key_edit.setText(search_api_key)
+        
+        # Google 搜索引擎 ID
+        google_cx = self.config_manager.get("google_search_cx", "")
+        self._google_cx_edit.setText(google_cx)
+        
+        # 根据搜索供应商更新 UI 可见性
+        self._on_search_provider_changed(self._search_provider_combo.currentIndex())
         
         # 更新验证状态
         self._update_validation_status("not_verified", "")
@@ -427,9 +476,11 @@ class ApiConfigDialog(QDialog):
         self.config_manager.set("streaming", self._streaming_check.isChecked())
         self.config_manager.set("timeout", self._timeout_spin.value())
         self.config_manager.set("enable_thinking", self._deep_think_check.isChecked())
+        self.config_manager.set("thinking_timeout", self._thinking_timeout_spin.value())
         self.config_manager.set("enable_web_search", self._web_search_check.isChecked())
-        self.config_manager.set("web_search_provider", self._search_provider_combo.currentText())
+        self.config_manager.set("web_search_provider", self._search_provider_combo.currentData())
         self.config_manager.set("web_search_api_key", self._search_api_key_edit.text())
+        self.config_manager.set("google_search_cx", self._google_cx_edit.text())
         
         if self.logger:
             self.logger.info("API configuration saved")
@@ -465,11 +516,54 @@ class ApiConfigDialog(QDialog):
             self.i18n_manager.set_language(lang_code)
             self.retranslate_ui()
 
+    def _on_deep_think_changed(self, state: int):
+        """深度思考开关变化"""
+        enabled = state == Qt.CheckState.Checked.value
+        self._thinking_timeout_spin.setEnabled(enabled)
+
     def _on_web_search_changed(self, state: int):
         """联网搜索开关变化"""
         enabled = state == Qt.CheckState.Checked.value
         self._search_provider_combo.setEnabled(enabled)
-        self._search_api_key_edit.setEnabled(enabled)
+        
+        # 根据当前选择的供应商更新 UI
+        if enabled:
+            self._on_search_provider_changed(self._search_provider_combo.currentIndex())
+        else:
+            self._search_api_key_edit.setEnabled(False)
+            self._google_cx_edit.setEnabled(False)
+            self._google_cx_label.setVisible(False)
+            self._google_cx_edit.setVisible(False)
+
+    def _on_search_provider_changed(self, index: int):
+        """搜索供应商变化"""
+        provider_id = self._search_provider_combo.currentData()
+        web_search_enabled = self._web_search_check.isChecked()
+        
+        if provider_id == "zhipu_web_search":
+            # 智谱内置搜索：无需额外配置
+            self._search_api_key_label.setVisible(False)
+            self._search_api_key_edit.setVisible(False)
+            self._search_api_key_edit.setEnabled(False)
+            self._google_cx_label.setVisible(False)
+            self._google_cx_edit.setVisible(False)
+            self._google_cx_edit.setEnabled(False)
+        elif provider_id == "google":
+            # Google：需要 API Key + 搜索引擎 ID
+            self._search_api_key_label.setVisible(True)
+            self._search_api_key_edit.setVisible(True)
+            self._search_api_key_edit.setEnabled(web_search_enabled)
+            self._google_cx_label.setVisible(True)
+            self._google_cx_edit.setVisible(True)
+            self._google_cx_edit.setEnabled(web_search_enabled)
+        elif provider_id == "bing":
+            # Bing：仅需要 API Key
+            self._search_api_key_label.setVisible(True)
+            self._search_api_key_edit.setVisible(True)
+            self._search_api_key_edit.setEnabled(web_search_enabled)
+            self._google_cx_label.setVisible(False)
+            self._google_cx_edit.setVisible(False)
+            self._google_cx_edit.setEnabled(False)
 
     def _on_test_connection(self):
         """测试连接（阶段三实现）"""
@@ -578,12 +672,16 @@ class ApiConfigDialog(QDialog):
                 label.setText(self._get_text("dialog.api_config.label.timeout", "Timeout"))
             elif label_type == "deep_think":
                 label.setText(self._get_text("dialog.api_config.label.deep_think", "Deep Thinking"))
+            elif label_type == "thinking_timeout":
+                label.setText(self._get_text("dialog.api_config.label.thinking_timeout", "Thinking Timeout"))
             elif label_type == "web_search":
                 label.setText(self._get_text("dialog.api_config.label.web_search", "Enable Web Search"))
             elif label_type == "search_provider":
                 label.setText(self._get_text("dialog.api_config.label.search_provider", "Search Provider"))
             elif label_type == "search_api_key":
                 label.setText(self._get_text("dialog.api_config.label.search_api_key", "Search API Key"))
+            elif label_type == "google_cx":
+                label.setText(self._get_text("dialog.api_config.label.google_cx", "Search Engine ID (cx)"))
         
         # 按钮文本
         self._test_btn.setText(

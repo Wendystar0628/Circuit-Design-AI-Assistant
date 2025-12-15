@@ -188,6 +188,31 @@ TEXTS: Dict[str, Dict[str, str]] = {
         "workflow.auto_continue": "Auto continue",
         "workflow.stopped": "Stopped",
         "workflow.completed": "Completed",
+        
+        # 工具栏 - 仿真按钮
+        "toolbar.run_auto": "Auto Run",
+        "toolbar.run_auto_tip": "Auto-detect main circuit and run simulation",
+        "toolbar.run_select": "Select Run",
+        "toolbar.run_select_tip": "Select simulation file and run",
+        
+        # 工作流模式（菜单项）
+        "menu.settings.mode_auto": "Auto Mode",
+        "menu.settings.mode_manual": "Manual Mode",
+        "menu.settings.mode_auto_tip": "Auto run simulation and continue to next iteration",
+        "menu.settings.mode_manual_tip": "Manual control: click to run simulation and start next iteration",
+        "status.mode_auto": "Mode: Auto",
+        "status.mode_manual": "Mode: Manual",
+        "status.mode_switch_disabled": "Cannot switch mode while workflow is running",
+        
+        # 选择主电路对话框
+        "dialog.select_circuit.title": "Select Simulation File",
+        "dialog.select_circuit.hint": "Please select the main circuit file to run simulation",
+        "dialog.select_circuit.hint_multiple": "Multiple main circuits detected, please select one",
+        "dialog.select_circuit.run": "Run",
+        
+        # 主电路标注
+        "file_browser.main_circuit_marker": "★",
+        "file_browser.main_circuit_tooltip": "Detected as main circuit (top-level circuit file)",
     },
 
     LANG_ZH_CN: {
@@ -325,6 +350,31 @@ TEXTS: Dict[str, Dict[str, str]] = {
         "workflow.auto_continue": "自动继续",
         "workflow.stopped": "已停止",
         "workflow.completed": "已完成",
+        
+        # 工具栏 - 仿真按钮
+        "toolbar.run_auto": "自动运行",
+        "toolbar.run_auto_tip": "自动检测主电路并运行仿真",
+        "toolbar.run_select": "选择运行",
+        "toolbar.run_select_tip": "选择仿真文件并运行",
+        
+        # 工作流模式（菜单项）
+        "menu.settings.mode_auto": "自动模式",
+        "menu.settings.mode_manual": "手动模式",
+        "menu.settings.mode_auto_tip": "自动运行仿真并继续下一轮迭代",
+        "menu.settings.mode_manual_tip": "手动控制：点击运行仿真和开始下一轮",
+        "status.mode_auto": "模式：自动",
+        "status.mode_manual": "模式：手动",
+        "status.mode_switch_disabled": "工作流运行中，无法切换模式",
+        
+        # 选择主电路对话框
+        "dialog.select_circuit.title": "选择仿真文件",
+        "dialog.select_circuit.hint": "请选择要运行仿真的主电路文件",
+        "dialog.select_circuit.hint_multiple": "检测到多个可能的主电路，请选择一个",
+        "dialog.select_circuit.run": "运行",
+        
+        # 主电路标注
+        "file_browser.main_circuit_marker": "★",
+        "file_browser.main_circuit_tooltip": "检测为主电路（顶层电路文件）",
     },
 }
 

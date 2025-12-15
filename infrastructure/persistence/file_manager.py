@@ -44,132 +44,19 @@ from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-# ============================================================
-# 自定义异常类
-# ============================================================
-
-
-class FileManagerError(Exception):
-    """文件管理器基础异常"""
-    pass
-
-
-class PathSecurityError(FileManagerError):
-    """路径安全校验失败"""
-    
-    def __init__(self, path: str, reason: str):
-        self.path = path
-        self.reason = reason
-        super().__init__(f"路径安全校验失败: {path} - {reason}")
-
-
-class FileExistsError(FileManagerError):
-    """文件已存在且内容不同"""
-    
-    def __init__(self, path: str):
-        self.path = path
-        super().__init__(
-            f"文件已存在且内容不同: {path}\n"
-            f"如需覆盖，请使用 update_file() 方法"
-        )
-
-
-class DirectoryCreationError(FileManagerError):
-    """目录创建失败"""
-    
-    def __init__(self, path: str, reason: str):
-        self.path = path
-        self.reason = reason
-        super().__init__(f"目录创建失败: {path} - {reason}")
-
-
-class SearchNotFoundError(FileManagerError):
-    """搜索内容未找到"""
-    
-    def __init__(self, path: str, search_preview: str):
-        self.path = path
-        self.search_preview = search_preview
-        super().__init__(
-            f"搜索内容未找到: {path}\n"
-            f"搜索内容摘要: {search_preview[:100]}..."
-        )
-
-
-class MultipleMatchError(FileManagerError):
-    """搜索内容匹配多处"""
-    
-    def __init__(self, path: str, match_count: int, positions: List[int]):
-        self.path = path
-        self.match_count = match_count
-        self.positions = positions
-        super().__init__(
-            f"搜索内容匹配 {match_count} 处: {path}\n"
-            f"匹配位置: {positions}\n"
-            f"请指定 occurrence 参数或使用更精确的搜索内容"
-        )
-
-
-class FileLockTimeoutError(FileManagerError):
-    """文件锁获取超时"""
-    
-    def __init__(self, path: str, timeout: float):
-        self.path = path
-        self.timeout = timeout
-        super().__init__(f"文件锁获取超时 ({timeout}s): {path}")
-
-
-class FileOperationError(FileManagerError):
-    """文件操作失败"""
-    
-    def __init__(self, operation: str, path: str, reason: str):
-        self.operation = operation
-        self.path = path
-        self.reason = reason
-        super().__init__(f"文件操作失败 [{operation}]: {path} - {reason}")
-
-
-# ============================================================
-# 文件锁管理
-# ============================================================
-
-
-class FileLock:
-    """
-    文件锁 - 防止并发写入
-    
-    使用 threading.Lock 实现进程内锁定
-    """
-    
-    def __init__(self, path: str, timeout: float = 5.0):
-        self.path = path
-        self.timeout = timeout
-        self._lock = threading.Lock()
-        self._acquired = False
-    
-    def acquire(self) -> bool:
-        """
-        获取文件锁
-        
-        Returns:
-            bool: 是否成功获取
-        """
-        self._acquired = self._lock.acquire(timeout=self.timeout)
-        return self._acquired
-    
-    def release(self) -> None:
-        """释放文件锁"""
-        if self._acquired:
-            self._lock.release()
-            self._acquired = False
-    
-    def __enter__(self):
-        if not self.acquire():
-            raise FileLockTimeoutError(self.path, self.timeout)
-        return self
-    
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.release()
-        return False
+# 从子模块导入异常类和文件锁
+from .file_exceptions import (
+    FileManagerError,
+    PathSecurityError,
+    FileExistsError,
+    DirectoryCreationError,
+    SearchNotFoundError,
+    MultipleMatchError,
+    LineRangeError,
+    FileLockTimeoutError,
+    FileOperationError,
+)
+from .file_lock import FileLock
 
 
 # ============================================================
@@ -257,6 +144,36 @@ class FileManager:
             Path: 工作目录路径，未设置时返回 None
         """
         return self._work_dir
+    
+    def resolve_path(self, relative_path: Union[str, Path]) -> Path:
+        """
+        将相对路径转换为绝对路径（基于工作目录）
+        
+        此方法供外部调用，用于将 LLM 生成的相对路径转换为实际路径。
+        例如：'subcircuits/opamp.cir' → '{work_dir}/subcircuits/opamp.cir'
+        
+        Args:
+            relative_path: 相对路径
+            
+        Returns:
+            Path: 绝对路径
+        """
+        return self._resolve_path(relative_path)
+    
+    def to_relative_path(self, absolute_path: Union[str, Path]) -> str:
+        """
+        将绝对路径转换为相对路径（用于显示和存储）
+        
+        此方法用于将绝对路径转换为相对于工作目录的路径，
+        确保项目可移植，不同用户打开同一项目时路径自动适配。
+        
+        Args:
+            absolute_path: 绝对路径
+            
+        Returns:
+            str: 相对路径，若无法转换则返回原路径字符串
+        """
+        return self.get_relative_path(absolute_path)
     
     def _resolve_path(self, path: Union[str, Path]) -> Path:
         """
@@ -626,8 +543,9 @@ class FileManager:
         search: str,
         replace: str,
         occurrence: int = 1,
+        fuzzy: bool = False,
         encoding: str = 'utf-8'
-    ) -> int:
+    ) -> Union[int, Tuple[int, str]]:
         """
         定位修改文件内容
         
@@ -638,10 +556,12 @@ class FileManager:
             search: 搜索内容
             replace: 替换内容
             occurrence: 匹配第几处（默认1，0表示全部）
+            fuzzy: 是否启用模糊匹配（默认 False）
             encoding: 文本编码
             
         Returns:
-            int: 替换次数
+            int: 替换次数（fuzzy=False 时）
+            Tuple[int, str]: (替换次数, 实际匹配到的原始内容)（fuzzy=True 时）
             
         Raises:
             FileNotFoundError: 文件不存在
@@ -664,6 +584,13 @@ class FileManager:
                 # 读取文件内容
                 content = resolved.read_text(encoding=encoding)
                 
+                # 模糊匹配模式
+                if fuzzy:
+                    return self._patch_file_fuzzy(
+                        resolved, content, search, replace, occurrence, encoding
+                    )
+                
+                # 精确匹配模式
                 # 幂等性检查
                 if search not in content:
                     # 检查 replace 是否已存在
@@ -746,6 +673,234 @@ class FileManager:
                 log_file_operation("patch", str(resolved), success=False)
             raise FileOperationError("patch", str(resolved), str(e))
     
+    def _normalize_whitespace(self, text: str) -> str:
+        """
+        规范化空白字符（用于模糊匹配）
+        
+        - 将连续空白字符替换为单个空格
+        - 移除行尾空格
+        - 移除空行
+        """
+        import re
+        # 移除行尾空格
+        lines = [line.rstrip() for line in text.split('\n')]
+        # 移除空行
+        lines = [line for line in lines if line.strip()]
+        # 将连续空白替换为单个空格
+        normalized = '\n'.join(lines)
+        normalized = re.sub(r'[ \t]+', ' ', normalized)
+        return normalized
+    
+    def _calculate_similarity(self, text1: str, text2: str) -> float:
+        """
+        计算两个文本的相似度（0.0 - 1.0）
+        
+        使用 SequenceMatcher 计算相似度
+        """
+        from difflib import SequenceMatcher
+        return SequenceMatcher(None, text1, text2).ratio()
+    
+    def _patch_file_fuzzy(
+        self,
+        resolved: Path,
+        content: str,
+        search: str,
+        replace: str,
+        occurrence: int,
+        encoding: str
+    ) -> Tuple[int, str]:
+        """
+        模糊匹配模式的文件修改
+        
+        - 忽略空白字符差异
+        - 使用相似度匹配（阈值 0.9）
+        
+        Returns:
+            Tuple[int, str]: (替换次数, 实际匹配到的原始内容)
+        """
+        SIMILARITY_THRESHOLD = 0.9
+        
+        # 规范化搜索内容
+        normalized_search = self._normalize_whitespace(search)
+        search_lines = len(search.strip().split('\n'))
+        
+        # 幂等性检查：检查 replace 是否已存在
+        normalized_replace = self._normalize_whitespace(replace)
+        normalized_content = self._normalize_whitespace(content)
+        
+        if normalized_replace in normalized_content:
+            if self.logger:
+                self.logger.debug(f"文件已是目标状态（模糊匹配），跳过修改: {resolved}")
+            return (0, "")
+        
+        # 按行分割内容，寻找最相似的内容块
+        content_lines = content.split('\n')
+        best_match = None
+        best_similarity = 0.0
+        best_start_line = -1
+        
+        # 滑动窗口搜索
+        for i in range(len(content_lines) - search_lines + 1):
+            window = '\n'.join(content_lines[i:i + search_lines])
+            normalized_window = self._normalize_whitespace(window)
+            
+            similarity = self._calculate_similarity(normalized_search, normalized_window)
+            
+            if similarity > best_similarity:
+                best_similarity = similarity
+                best_match = window
+                best_start_line = i
+        
+        # 检查是否达到相似度阈值
+        if best_similarity < SIMILARITY_THRESHOLD:
+            raise SearchNotFoundError(
+                str(resolved),
+                f"模糊匹配失败，最高相似度 {best_similarity:.2%} < 阈值 {SIMILARITY_THRESHOLD:.0%}\n"
+                f"搜索内容: {search[:100]}..."
+            )
+        
+        if self.logger:
+            self.logger.debug(
+                f"模糊匹配成功: 相似度 {best_similarity:.2%}, "
+                f"行 {best_start_line + 1}-{best_start_line + search_lines}"
+            )
+        
+        # 执行替换
+        new_lines = (
+            content_lines[:best_start_line] +
+            replace.split('\n') +
+            content_lines[best_start_line + search_lines:]
+        )
+        new_content = '\n'.join(new_lines)
+        
+        # 原子性写入
+        temp_path = resolved.with_suffix(resolved.suffix + '.tmp')
+        temp_path.write_text(new_content, encoding=encoding)
+        os.replace(str(temp_path), str(resolved))
+        
+        # 记录日志
+        if self.logger:
+            from infrastructure.utils.logger import log_file_operation
+            log_file_operation("patch_fuzzy", str(resolved), len(new_content), success=True)
+        
+        # 发布事件
+        self._publish_file_changed(resolved, "update", len(new_content))
+        
+        return (1, best_match)
+    
+    def patch_file_by_line(
+        self,
+        path: Union[str, Path],
+        start_line: int,
+        end_line: int,
+        new_content: str,
+        encoding: str = 'utf-8'
+    ) -> str:
+        """
+        按行号范围修改文件内容
+        
+        通过行号范围定位并替换文件内容。
+        适用场景：文件中存在重复内容（如多个同名参数），仅靠内容匹配无法精确定位。
+        
+        Args:
+            path: 文件路径
+            start_line: 起始行号（从 1 开始）
+            end_line: 结束行号（包含该行）
+            new_content: 替换内容
+            encoding: 文本编码
+            
+        Returns:
+            str: 被替换的原始内容
+            
+        Raises:
+            FileNotFoundError: 文件不存在
+            LineRangeError: 行号超出范围
+            PathSecurityError: 路径安全校验失败
+            FileLockTimeoutError: 文件锁获取超时
+        """
+        resolved = self._resolve_path(path)
+        self._validate_path_security(resolved)
+        
+        if not resolved.exists():
+            raise FileNotFoundError(f"文件不存在: {resolved}")
+        
+        # 获取文件锁
+        lock = self._get_lock(str(resolved))
+        
+        try:
+            with lock:
+                # 读取文件内容，按行分割
+                content = resolved.read_text(encoding=encoding)
+                lines = content.split('\n')
+                total_lines = len(lines)
+                
+                # 校验行号范围有效性
+                if start_line < 1 or end_line < start_line:
+                    raise LineRangeError(str(resolved), start_line, end_line, total_lines)
+                
+                if end_line > total_lines:
+                    raise LineRangeError(str(resolved), start_line, end_line, total_lines)
+                
+                # 提取指定行范围的原始内容（行号从 1 开始，转换为索引从 0 开始）
+                original_lines = lines[start_line - 1:end_line]
+                original_content = '\n'.join(original_lines)
+                
+                # 幂等性检查：原始内容与 new_content 比对
+                if original_content == new_content:
+                    if self.logger:
+                        self.logger.debug(f"文件内容未变化，跳过修改: {resolved}")
+                    return original_content
+                
+                # 替换指定行范围
+                new_lines = new_content.split('\n')
+                result_lines = (
+                    lines[:start_line - 1] +
+                    new_lines +
+                    lines[end_line:]
+                )
+                new_file_content = '\n'.join(result_lines)
+                
+                # 原子性写入
+                temp_path = resolved.with_suffix(resolved.suffix + '.tmp')
+                temp_path.write_text(new_file_content, encoding=encoding)
+                os.replace(str(temp_path), str(resolved))
+                
+                # 记录日志
+                if self.logger:
+                    from infrastructure.utils.logger import log_file_operation
+                    log_file_operation(
+                        "patch_by_line",
+                        str(resolved),
+                        len(new_file_content),
+                        success=True
+                    )
+                    self.logger.debug(
+                        f"按行号修改成功: {resolved}, "
+                        f"行 {start_line}-{end_line}, "
+                        f"原始 {len(original_lines)} 行 → 新 {len(new_lines)} 行"
+                    )
+                
+                # 发布事件
+                self._publish_file_changed(resolved, "update", len(new_file_content))
+                
+                return original_content
+                
+        except (LineRangeError, FileLockTimeoutError):
+            raise
+        except Exception as e:
+            # 清理临时文件
+            temp_path = resolved.with_suffix(resolved.suffix + '.tmp')
+            if temp_path.exists():
+                try:
+                    temp_path.unlink()
+                except Exception:
+                    pass
+            
+            if self.logger:
+                from infrastructure.utils.logger import log_file_operation
+                log_file_operation("patch_by_line", str(resolved), success=False)
+            raise FileOperationError("patch_by_line", str(resolved), str(e))
+
     def update_file(
         self,
         path: Union[str, Path],
@@ -829,6 +984,67 @@ class FileManager:
                 from infrastructure.utils.logger import log_file_operation
                 log_file_operation("update", str(resolved), success=False)
             raise FileOperationError("update", str(resolved), str(e))
+
+    def rewrite_file(
+        self,
+        path: Union[str, Path],
+        content: str,
+        encoding: str = 'utf-8'
+    ) -> bool:
+        """
+        小文件整体重写
+        
+        适用于行数较少的文件（≤150行），直接用新内容替换整个文件。
+        与 update_file 的区别：文件不存在时自动创建。
+        
+        Args:
+            path: 文件路径
+            content: 完整的新文件内容
+            encoding: 文本编码
+            
+        Returns:
+            bool: 是否成功
+            
+        Raises:
+            PathSecurityError: 路径安全校验失败
+            DirectoryCreationError: 父目录创建失败
+        """
+        resolved = self._resolve_path(path)
+        self._validate_path_security(resolved)
+        
+        # 确保父目录存在
+        try:
+            resolved.parent.mkdir(parents=True, exist_ok=True)
+        except Exception as e:
+            raise DirectoryCreationError(str(resolved.parent), str(e))
+        
+        # 幂等性检查
+        if resolved.exists():
+            try:
+                existing_content = self.read_file(resolved, encoding=encoding)
+                if self._compute_hash(existing_content) == self._compute_hash(content):
+                    if self.logger:
+                        self.logger.debug(f"文件内容未变化，跳过重写: {resolved}")
+                    return True
+            except Exception:
+                pass  # 读取失败时继续执行写入
+        
+        # 原子性写入
+        try:
+            result = self.write_file(resolved, content, encoding)
+            
+            # 记录日志
+            if self.logger:
+                from infrastructure.utils.logger import log_file_operation
+                log_file_operation("rewrite", str(resolved), len(content), success=True)
+            
+            return result
+            
+        except Exception as e:
+            if self.logger:
+                from infrastructure.utils.logger import log_file_operation
+                log_file_operation("rewrite", str(resolved), success=False)
+            raise FileOperationError("rewrite", str(resolved), str(e))
 
     def delete_file(self, path: Union[str, Path]) -> bool:
         """
@@ -1230,14 +1446,15 @@ class FileManager:
 __all__ = [
     # 主类
     "FileManager",
+    # 从子模块重新导出（保持向后兼容）
     "FileLock",
-    # 异常类
     "FileManagerError",
     "PathSecurityError",
     "FileExistsError",
     "DirectoryCreationError",
     "SearchNotFoundError",
     "MultipleMatchError",
+    "LineRangeError",
     "FileLockTimeoutError",
     "FileOperationError",
 ]

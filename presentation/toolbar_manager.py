@@ -119,13 +119,47 @@ class ToolbarManager:
         
         self._toolbar.addSeparator()
         
-        # 运行仿真（灰显，阶段四启用）
-        self._actions["toolbar_run"] = QAction(self._main_window)
-        self._actions["toolbar_run"].setIcon(self._load_icon("play"))
-        self._actions["toolbar_run"].setEnabled(False)
-        self._toolbar.addAction(self._actions["toolbar_run"])
+        # ============================================================
+        # 仿真按钮设计（阶段四实现）
+        # ============================================================
+        # 
+        # **三层分离说明**：
+        # - 按钮控制的是"文件选择方式"（自动扫描 vs 手动选择）
+        # - 与"仿真执行方式"（SPICE vs Python）无关
+        # - 系统根据选中文件的扩展名自动选择对应的执行器
+        #
+        # **两种仿真触发方式**：
+        # - [▶ 自动运行] 按钮：使用 AutoScanStrategy 自动扫描并执行
+        # - [📁 选择运行] 按钮：使用 ManualSelectStrategy 弹出对话框选择
+        #
+        # **按钮状态管理**：
+        # - 仿真运行中两个运行按钮均禁用，停止按钮启用
+        # - 工作流锁定时（workflow_locked = True）两个运行按钮均禁用
+        # ============================================================
         
-        # 停止仿真（灰显，阶段四启用）
+        # [▶ 自动运行] 按钮（灰显，阶段四启用）
+        # 点击时调用 simulation_service.run_with_auto_detect()
+        # - 使用被引用分析法扫描项目中的可仿真文件
+        # - 检测到唯一主电路时，直接启动仿真
+        # - 检测到多个主电路时，自动弹出选择对话框让用户选择
+        # - 适用场景：常规仿真运行，自动模式工作流中使用此方式
+        self._actions["toolbar_run_auto"] = QAction(self._main_window)
+        self._actions["toolbar_run_auto"].setIcon(self._load_icon("play"))
+        self._actions["toolbar_run_auto"].setEnabled(False)
+        self._toolbar.addAction(self._actions["toolbar_run_auto"])
+        
+        # [📁 选择运行] 按钮（灰显，阶段四启用）
+        # 点击时调用 simulation_service.run_with_manual_select()
+        # - 弹出 select_simulation_file_dialog 对话框
+        # - 对话框显示所有支持的文件类型（从 executor_registry 获取）
+        # - 用户选择文件后，根据扩展名自动选择执行器并启动仿真
+        # - 适用场景：用户希望明确指定仿真文件，或运行 Python 脚本
+        self._actions["toolbar_run_select"] = QAction(self._main_window)
+        self._actions["toolbar_run_select"].setIcon(self._load_icon("folder_play"))
+        self._actions["toolbar_run_select"].setEnabled(False)
+        self._toolbar.addAction(self._actions["toolbar_run_select"])
+        
+        # [停止] 按钮（灰显，阶段四启用）
         self._actions["toolbar_stop"] = QAction(self._main_window)
         self._actions["toolbar_stop"].setIcon(self._load_icon("stop"))
         self._actions["toolbar_stop"].setEnabled(False)
@@ -158,8 +192,11 @@ class ToolbarManager:
         self._actions["toolbar_save_all"].setText(self._get_text("menu.file.save_all", "Save All"))
         self._actions["toolbar_save_all"].setToolTip(self._get_text("menu.file.save_all", "Save All"))
         
-        self._actions["toolbar_run"].setText(self._get_text("menu.simulation.run", "Run"))
-        self._actions["toolbar_run"].setToolTip(self._get_text("menu.simulation.run", "Run Simulation"))
+        self._actions["toolbar_run_auto"].setText(self._get_text("toolbar.run_auto", "Auto Run"))
+        self._actions["toolbar_run_auto"].setToolTip(self._get_text("toolbar.run_auto_tip", "Auto-detect main circuit and run simulation"))
+        
+        self._actions["toolbar_run_select"].setText(self._get_text("toolbar.run_select", "Select Run"))
+        self._actions["toolbar_run_select"].setToolTip(self._get_text("toolbar.run_select_tip", "Select simulation file and run"))
         
         self._actions["toolbar_stop"].setText(self._get_text("btn.stop", "Stop"))
         self._actions["toolbar_stop"].setToolTip(self._get_text("menu.simulation.stop", "Stop Simulation"))

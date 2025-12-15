@@ -110,6 +110,48 @@ EVENT_SIM_COMPLETE = "sim_complete"
 # 仿真错误
 EVENT_SIM_ERROR = "sim_error"
 
+# 主电路变更
+EVENT_MAIN_CIRCUIT_CHANGED = "main_circuit_changed"
+
+# 电路分析完成
+EVENT_CIRCUIT_ANALYSIS_COMPLETE = "circuit_analysis_complete"
+
+# 仿真需要用户选择主电路（检测到多个候选）
+# 携带数据：
+#   - candidates: list - 候选主电路文件路径列表
+#   - reason: str - 触发原因（"multiple_main_circuits"）
+EVENT_SIMULATION_NEED_SELECTION = "simulation_need_selection"
+
+# 仿真未找到主电路
+# 携带数据：
+#   - reason: str - 触发原因（"no_main_circuit"）
+EVENT_SIMULATION_NO_MAIN_CIRCUIT = "simulation_no_main_circuit"
+
+# 仿真执行失败（错误已收集，准备下一轮修复）
+# 携带数据：
+#   - error_type: str - 错误类型
+#   - error_message: str - 错误信息
+#   - file: str - 错误文件（可选）
+#   - line: int - 错误行号（可选）
+EVENT_SIMULATION_ERROR_COLLECTED = "simulation_error_collected"
+
+# 主电路检测完成（项目打开或文件变更后）
+# 携带数据：
+#   - candidates: list - 主电路候选文件路径列表
+#   - count: int - 候选数量
+EVENT_MAIN_CIRCUIT_DETECTED = "main_circuit_detected"
+
+# 仿真执行器注册
+# 携带数据：
+#   - name: str - 执行器名称
+#   - extensions: list - 支持的文件扩展名列表
+EVENT_EXECUTOR_REGISTERED = "executor_registered"
+
+# 仿真执行器注销
+# 携带数据：
+#   - name: str - 执行器名称
+EVENT_EXECUTOR_UNREGISTERED = "executor_unregistered"
+
 # ============================================================
 # RAG 事件
 # ============================================================
@@ -138,6 +180,16 @@ EVENT_CONTEXT_COMPRESS_PREVIEW_READY = "context_compress_preview_ready"
 
 # 压缩完成
 EVENT_CONTEXT_COMPRESS_COMPLETE = "context_compress_complete"
+
+# ============================================================
+# 对话管理事件
+# ============================================================
+
+# 对话重置（新开对话）
+EVENT_CONVERSATION_RESET = "conversation_reset"
+
+# 对话归档
+EVENT_CONVERSATION_ARCHIVED = "conversation_archived"
 
 
 # ============================================================
@@ -193,9 +245,6 @@ EVENT_ITERATION_USER_CONFIRMED = "iteration_user_confirmed"
 # 用户停止
 EVENT_ITERATION_USER_STOPPED = "iteration_user_stopped"
 
-# 自动继续
-EVENT_ITERATION_AUTO_CONTINUED = "iteration_auto_continued"
-
 # ============================================================
 # 工作流锁定事件
 # ============================================================
@@ -249,6 +298,14 @@ __all__ = [
     "EVENT_SIM_STARTED",
     "EVENT_SIM_COMPLETE",
     "EVENT_SIM_ERROR",
+    "EVENT_MAIN_CIRCUIT_CHANGED",
+    "EVENT_CIRCUIT_ANALYSIS_COMPLETE",
+    "EVENT_SIMULATION_NEED_SELECTION",
+    "EVENT_SIMULATION_NO_MAIN_CIRCUIT",
+    "EVENT_SIMULATION_ERROR_COLLECTED",
+    "EVENT_MAIN_CIRCUIT_DETECTED",
+    "EVENT_EXECUTOR_REGISTERED",
+    "EVENT_EXECUTOR_UNREGISTERED",
     # RAG 事件
     "EVENT_RAG_INDEX_STARTED",
     "EVENT_RAG_INDEX_PROGRESS",
@@ -258,6 +315,9 @@ __all__ = [
     "EVENT_CONTEXT_COMPRESS_REQUESTED",
     "EVENT_CONTEXT_COMPRESS_PREVIEW_READY",
     "EVENT_CONTEXT_COMPRESS_COMPLETE",
+    # 对话管理事件
+    "EVENT_CONVERSATION_RESET",
+    "EVENT_CONVERSATION_ARCHIVED",
     # 错误处理事件
     "EVENT_ERROR_OCCURRED",
     "EVENT_ERROR_RECOVERED",
@@ -274,7 +334,6 @@ __all__ = [
     "EVENT_ITERATION_AWAITING_CONFIRMATION",
     "EVENT_ITERATION_USER_CONFIRMED",
     "EVENT_ITERATION_USER_STOPPED",
-    "EVENT_ITERATION_AUTO_CONTINUED",
     # 工作流锁定事件
     "EVENT_WORKFLOW_LOCKED",
     "EVENT_WORKFLOW_UNLOCKED",

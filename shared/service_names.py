@@ -60,6 +60,13 @@ SVC_DESIGN_WORKFLOW = "design_workflow"
 SVC_TOOL_EXECUTOR = "tool_executor"
 
 # ============================================================
+# 基础设施层服务 - LLM 适配器
+# ============================================================
+
+# LLM 客户端 - 大模型 API 调用
+SVC_LLM_CLIENT = "llm_client"
+
+# ============================================================
 # 领域层服务
 # ============================================================
 
@@ -81,6 +88,12 @@ SVC_VECTOR_STORE = "vector_store"
 # 代码索引器 - 工作区代码索引
 SVC_CODE_INDEXER = "code_indexer"
 
+# 仿真服务 - 电路仿真协调
+SVC_SIMULATION_SERVICE = "simulation_service"
+
+# 执行器注册表 - 仿真执行器管理
+SVC_EXECUTOR_REGISTRY = "executor_registry"
+
 
 # ============================================================
 # 模块导出
@@ -96,6 +109,7 @@ __all__ = [
     # 基础设施层
     "SVC_CONFIG_MANAGER",
     "SVC_FILE_MANAGER",
+    "SVC_LLM_CLIENT",
     # 应用层
     "SVC_PROJECT_SERVICE",
     "SVC_DESIGN_WORKFLOW",
@@ -107,4 +121,6 @@ __all__ = [
     "SVC_ITERATION_TRACKER",
     "SVC_VECTOR_STORE",
     "SVC_CODE_INDEXER",
+    "SVC_SIMULATION_SERVICE",
+    "SVC_EXECUTOR_REGISTRY",
 ]

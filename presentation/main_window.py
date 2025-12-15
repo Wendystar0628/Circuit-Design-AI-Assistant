@@ -613,7 +613,14 @@ class MainWindow(QMainWindow):
             self._open_project(folder)
 
     def _open_project(self, folder_path: str):
-        """打开项目"""
+        """
+        打开项目
+        
+        每次打开项目（包括启动时恢复上次打开的项目）都会：
+        1. 调用 project_service.initialize_project() 初始化项目
+        2. 自动检查并补全目录结构（.circuit_ai/ 和推荐目录）
+        3. 若目录部分存在则仅补全缺失部分，不覆盖已有内容
+        """
         if self.logger:
             self.logger.info(f"Opening workspace: {folder_path}")
         
@@ -629,6 +636,10 @@ class MainWindow(QMainWindow):
             if self.logger:
                 self.logger.info(f"Project initialized: {msg}")
         else:
+            # 降级处理：project_service 不可用时的备用逻辑
+            # 手动创建目录结构
+            self._create_project_structure_fallback(folder_path)
+            
             if self.app_state:
                 from shared.app_state import STATE_PROJECT_PATH, STATE_PROJECT_INITIALIZED
                 self.app_state.set(STATE_PROJECT_PATH, folder_path)
@@ -644,6 +655,38 @@ class MainWindow(QMainWindow):
                     "has_history": False,
                     "status": "ready",
                 })
+    
+    def _create_project_structure_fallback(self, folder_path: str) -> None:
+        """
+        降级处理：手动创建项目目录结构
+        
+        当 project_service 不可用时，手动创建必要的目录结构。
+        此方法确保即使在降级模式下，目录结构也能正确创建。
+        
+        Args:
+            folder_path: 项目根目录路径
+        """
+        from pathlib import Path
+        
+        path = Path(folder_path)
+        
+        # 创建 .circuit_ai/ 隐藏目录
+        hidden_dir = path / ".circuit_ai"
+        try:
+            hidden_dir.mkdir(parents=True, exist_ok=True)
+            (hidden_dir / "undo_snapshots").mkdir(parents=True, exist_ok=True)
+        except Exception as e:
+            if self.logger:
+                self.logger.warning(f"创建隐藏目录失败: {e}")
+        
+        # 创建推荐目录结构
+        recommended_dirs = ["parameters", "subcircuits", "uploads", "simulation_results"]
+        for dir_name in recommended_dirs:
+            try:
+                (path / dir_name).mkdir(parents=True, exist_ok=True)
+            except Exception as e:
+                if self.logger:
+                    self.logger.warning(f"创建推荐目录失败: {dir_name} - {e}")
 
     def _on_close_workspace(self):
         """关闭工作文件夹"""

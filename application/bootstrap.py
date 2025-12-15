@@ -70,8 +70,8 @@ if not _models_init_success:
     for model_type, error in get_configuration_errors().items():
         print(f"  - {error}")
 else:
-    embedding_status = "✓ 本地可用" if is_embedding_available() else "需联网下载"
-    reranker_status = "✓ 本地可用" if is_reranker_available() else "需联网下载"
+    embedding_status = "[OK] 本地可用" if is_embedding_available() else "需联网下载"
+    reranker_status = "[OK] 本地可用" if is_reranker_available() else "需联网下载"
     print("[Phase -1.2] AI 模型配置完成")
     print(f"  - 嵌入模型: {embedding_status}")
     print(f"  - 重排序模型: {reranker_status}")

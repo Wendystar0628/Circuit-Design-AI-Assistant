@@ -9,7 +9,7 @@
 
 from .settings import (
     # 工作流默认值
-    DEFAULT_MAX_ITERATIONS,
+    DEFAULT_MAX_CHECKPOINTS,
     DEFAULT_STAGNATION_THRESHOLD,
     DEFAULT_CONTEXT_LIMIT_RATIO,
     # LLM 默认值
@@ -40,7 +40,7 @@ from .config_manager import ConfigManager
 
 __all__ = [
     "ConfigManager",
-    "DEFAULT_MAX_ITERATIONS",
+    "DEFAULT_MAX_CHECKPOINTS",
     "DEFAULT_STAGNATION_THRESHOLD",
     "DEFAULT_CONTEXT_LIMIT_RATIO",
     "DEFAULT_TIMEOUT",

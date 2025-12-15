@@ -11,7 +11,7 @@ from pathlib import Path
 # 工作流相关默认值
 # ============================================================
 
-DEFAULT_MAX_ITERATIONS = 20          # 最大迭代次数
+DEFAULT_MAX_CHECKPOINTS = 20         # 最大检查点次数
 DEFAULT_STAGNATION_THRESHOLD = 3     # 停滞判断阈值（连续N次无改进则停止）
 DEFAULT_CONTEXT_LIMIT_RATIO = 0.8    # 上下文占用触发总结的阈值（80%）
 

@@ -53,12 +53,11 @@ STATE_PROJECT_INITIALIZED = "project_initialized"
 
 # UI 状态
 STATE_CURRENT_FILE = "current_file"
-STATE_SELECTED_ITERATION = "selected_iteration"
 
 # 工作流状态
 STATE_WORKFLOW_RUNNING = "workflow_running"
 STATE_CURRENT_NODE = "current_node"
-STATE_ITERATION_COUNT = "iteration_count"
+STATE_CHECKPOINT_COUNT = "checkpoint_count"
 STATE_WORKFLOW_LOCKED = "workflow_locked"
 
 # 配置状态
@@ -75,7 +74,7 @@ STATE_EVENT_MAP = {
     STATE_PROJECT_PATH: EVENT_STATE_PROJECT_OPENED,
     STATE_PROJECT_INITIALIZED: EVENT_STATE_PROJECT_OPENED,
     STATE_WORKFLOW_LOCKED: None,  # 特殊处理
-    STATE_ITERATION_COUNT: EVENT_STATE_ITERATION_UPDATED,
+    STATE_CHECKPOINT_COUNT: EVENT_STATE_ITERATION_UPDATED,
     STATE_CURRENT_NODE: EVENT_STATE_ITERATION_UPDATED,
     STATE_LLM_CONFIGURED: EVENT_STATE_CONFIG_CHANGED,
     STATE_RAG_ENABLED: EVENT_STATE_CONFIG_CHANGED,
@@ -128,11 +127,10 @@ class AppState:
             STATE_PROJECT_INITIALIZED: False,
             # UI 状态
             STATE_CURRENT_FILE: None,
-            STATE_SELECTED_ITERATION: None,
             # 工作流状态
             STATE_WORKFLOW_RUNNING: False,
             STATE_CURRENT_NODE: None,
-            STATE_ITERATION_COUNT: 0,
+            STATE_CHECKPOINT_COUNT: 0,
             STATE_WORKFLOW_LOCKED: False,
             # 配置状态
             STATE_LLM_CONFIGURED: False,
@@ -418,9 +416,9 @@ class AppState:
         return self.get(STATE_WORKFLOW_LOCKED, False)
 
     @property
-    def iteration_count(self) -> int:
-        """当前迭代次数"""
-        return self.get(STATE_ITERATION_COUNT, 0)
+    def checkpoint_count(self) -> int:
+        """当前检查点次数"""
+        return self.get(STATE_CHECKPOINT_COUNT, 0)
 
     @property
     def is_init_complete(self) -> bool:
@@ -439,10 +437,9 @@ __all__ = [
     "STATE_PROJECT_PATH",
     "STATE_PROJECT_INITIALIZED",
     "STATE_CURRENT_FILE",
-    "STATE_SELECTED_ITERATION",
     "STATE_WORKFLOW_RUNNING",
     "STATE_CURRENT_NODE",
-    "STATE_ITERATION_COUNT",
+    "STATE_CHECKPOINT_COUNT",
     "STATE_WORKFLOW_LOCKED",
     "STATE_LLM_CONFIGURED",
     "STATE_RAG_ENABLED",

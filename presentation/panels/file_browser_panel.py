@@ -47,6 +47,7 @@ ALLOWED_EXTENSIONS = {
     '.md', '.markdown',        # Markdown 文件
     '.docx',                   # Word 文档
     '.pdf',                    # PDF 文档
+    '.py',                     # Python 文件
 }
 
 # 隐藏的目录名

@@ -47,11 +47,7 @@ SEARCH_PROVIDERS: List[Dict[str, str]] = [
     {"id": "bing", "name": "Bing"},
 ]
 
-# 语言选项
-LANGUAGE_OPTIONS: Dict[str, str] = {
-    "en_US": "English",
-    "zh_CN": "中文（简体）",
-}
+
 
 
 # ============================================================
@@ -63,12 +59,13 @@ class ApiConfigDialog(QDialog):
     API配置对话框
     
     功能：
-    - 界面语言选择
     - 智谱GLM API配置
     - API Key 和 Base URL 设置
     - 模型选择
     - 高级选项（流式输出、超时、深度思考、联网搜索）
     - 测试连接（阶段三实现）
+    
+    注意：语言切换功能已移至菜单栏"语言"菜单
     """
 
     def __init__(self, parent: Optional[QWidget] = None):
@@ -81,7 +78,6 @@ class ApiConfigDialog(QDialog):
         self._logger = None
         
         # UI 组件引用
-        self._language_combo: Optional[QComboBox] = None
         self._api_key_edit: Optional[QLineEdit] = None
         self._base_url_edit: Optional[QLineEdit] = None
         self._model_combo: Optional[QComboBox] = None
@@ -189,9 +185,6 @@ class ApiConfigDialog(QDialog):
         main_layout = QVBoxLayout(self)
         main_layout.setSpacing(15)
         
-        # 语言设置组
-        main_layout.addWidget(self._create_language_group())
-        
         # LLM 配置组
         main_layout.addWidget(self._create_llm_group())
         
@@ -208,24 +201,6 @@ class ApiConfigDialog(QDialog):
         
         # 按钮区域
         main_layout.addWidget(self._create_button_area())
-
-    def _create_language_group(self) -> QGroupBox:
-        """创建语言设置组"""
-        group = QGroupBox()
-        group.setProperty("group_type", "language")
-        layout = QFormLayout(group)
-        
-        # 界面语言
-        self._language_combo = QComboBox()
-        for code, name in LANGUAGE_OPTIONS.items():
-            self._language_combo.addItem(name, code)
-        self._language_combo.currentIndexChanged.connect(self._on_language_changed)
-        
-        label = QLabel()
-        label.setProperty("label_type", "language")
-        layout.addRow(label, self._language_combo)
-        
-        return group
 
     def _create_llm_group(self) -> QGroupBox:
         """创建 LLM 配置组"""
@@ -397,12 +372,6 @@ class ApiConfigDialog(QDialog):
         if not self.config_manager:
             return
         
-        # 语言
-        language = self.config_manager.get("language", "en_US")
-        index = self._language_combo.findData(language)
-        if index >= 0:
-            self._language_combo.setCurrentIndex(index)
-        
         # API Key
         api_key = self.config_manager.get("api_key", "")
         self._api_key_edit.setText(api_key)
@@ -468,7 +437,6 @@ class ApiConfigDialog(QDialog):
             return False
         
         # 保存配置
-        self.config_manager.set("language", self._language_combo.currentData())
         self.config_manager.set("llm_provider", "智谱GLM")
         self.config_manager.set("api_key", self._api_key_edit.text())
         self.config_manager.set("base_url", self._base_url_edit.text())
@@ -508,13 +476,6 @@ class ApiConfigDialog(QDialog):
     # ============================================================
     # 事件处理
     # ============================================================
-
-    def _on_language_changed(self, index: int):
-        """语言切换"""
-        lang_code = self._language_combo.currentData()
-        if lang_code and self.i18n_manager:
-            self.i18n_manager.set_language(lang_code)
-            self.retranslate_ui()
 
     def _on_deep_think_changed(self, state: int):
         """深度思考开关变化"""
@@ -646,9 +607,7 @@ class ApiConfigDialog(QDialog):
         # 组标题
         for group in self.findChildren(QGroupBox):
             group_type = group.property("group_type")
-            if group_type == "language":
-                group.setTitle(self._get_text("dialog.api_config.group.language", "Language"))
-            elif group_type == "llm":
+            if group_type == "llm":
                 group.setTitle(self._get_text("dialog.api_config.group.llm", "Zhipu GLM Configuration"))
             elif group_type == "advanced":
                 group.setTitle(self._get_text("dialog.api_config.group.advanced", "Advanced Options"))
@@ -658,9 +617,7 @@ class ApiConfigDialog(QDialog):
         # 标签文本
         for label in self.findChildren(QLabel):
             label_type = label.property("label_type")
-            if label_type == "language":
-                label.setText(self._get_text("dialog.api_config.label.language", "Interface Language"))
-            elif label_type == "api_key":
+            if label_type == "api_key":
                 label.setText(self._get_text("dialog.api_config.label.api_key", "API Key"))
             elif label_type == "base_url":
                 label.setText(self._get_text("dialog.api_config.label.base_url", "Base URL"))

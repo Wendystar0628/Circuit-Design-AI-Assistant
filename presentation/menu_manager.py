@@ -18,7 +18,7 @@
 from typing import Dict, Optional, Callable, Any
 
 from PyQt6.QtWidgets import QMainWindow, QMenu, QMenuBar
-from PyQt6.QtGui import QAction
+from PyQt6.QtGui import QAction, QActionGroup
 
 
 class MenuManager:
@@ -91,6 +91,10 @@ class MenuManager:
         # 工具菜单
         self._menus["tools"] = menubar.addMenu("")
         self._setup_tools_menu()
+        
+        # 语言菜单
+        self._menus["language"] = menubar.addMenu("")
+        self._setup_language_menu()
         
         # 帮助菜单
         self._menus["help"] = menubar.addMenu("")
@@ -277,6 +281,65 @@ class MenuManager:
         self._actions["tools_compress"].setEnabled(False)
         menu.addAction(self._actions["tools_compress"])
 
+    def _setup_language_menu(self) -> None:
+        """设置语言菜单"""
+        menu = self._menus["language"]
+        
+        # 创建动作组实现单选互斥
+        self._language_group = QActionGroup(self._main_window)
+        self._language_group.setExclusive(True)
+        
+        # English
+        self._actions["lang_en"] = QAction("English", self._main_window)
+        self._actions["lang_en"].setCheckable(True)
+        self._actions["lang_en"].setData("en_US")
+        self._actions["lang_en"].triggered.connect(lambda: self._on_language_selected("en_US"))
+        self._language_group.addAction(self._actions["lang_en"])
+        menu.addAction(self._actions["lang_en"])
+        
+        # 简体中文
+        self._actions["lang_zh"] = QAction("简体中文", self._main_window)
+        self._actions["lang_zh"].setCheckable(True)
+        self._actions["lang_zh"].setData("zh_CN")
+        self._actions["lang_zh"].triggered.connect(lambda: self._on_language_selected("zh_CN"))
+        self._language_group.addAction(self._actions["lang_zh"])
+        menu.addAction(self._actions["lang_zh"])
+        
+        # 设置当前语言的勾选状态
+        self._update_language_check()
+
+    def _on_language_selected(self, lang_code: str) -> None:
+        """
+        语言选择回调
+        
+        Args:
+            lang_code: 语言代码（如 "en_US"、"zh_CN"）
+        """
+        try:
+            from shared.service_locator import ServiceLocator
+            from shared.service_names import SVC_I18N_MANAGER
+            i18n_manager = ServiceLocator.get_optional(SVC_I18N_MANAGER)
+            if i18n_manager:
+                i18n_manager.set_language(lang_code)
+        except Exception:
+            pass
+
+    def _update_language_check(self) -> None:
+        """更新语言菜单的勾选状态"""
+        try:
+            from shared.service_locator import ServiceLocator
+            from shared.service_names import SVC_I18N_MANAGER
+            i18n_manager = ServiceLocator.get_optional(SVC_I18N_MANAGER)
+            if i18n_manager:
+                current_lang = i18n_manager.get_current_language()
+                if current_lang == "en_US":
+                    self._actions["lang_en"].setChecked(True)
+                elif current_lang == "zh_CN":
+                    self._actions["lang_zh"].setChecked(True)
+        except Exception:
+            # 默认选中英文
+            self._actions["lang_en"].setChecked(True)
+
     def _setup_help_menu(self) -> None:
         """设置帮助菜单"""
         menu = self._menus["help"]
@@ -302,7 +365,11 @@ class MenuManager:
         self._menus["simulation"].setTitle(self._get_text("menu.simulation", "Simulation"))
         self._menus["knowledge"].setTitle(self._get_text("menu.knowledge", "Knowledge Base"))
         self._menus["tools"].setTitle(self._get_text("menu.tools", "Tools"))
+        self._menus["language"].setTitle(self._get_text("menu.language", "Language"))
         self._menus["help"].setTitle(self._get_text("menu.help", "Help"))
+        
+        # 更新语言菜单勾选状态
+        self._update_language_check()
         
         # 文件菜单项
         self._actions["file_open"].setText(self._get_text("menu.file.open", "Open Workspace"))

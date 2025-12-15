@@ -3,6 +3,7 @@
 国际化管理器 - 统一管理多语言文本和语言切换
 
 职责：
+- 从外部 JSON 文件加载多语言文本
 - 提供多语言文本获取接口
 - 管理语言切换和 UI 刷新通知
 - 与 ConfigManager 集成持久化语言设置
@@ -12,7 +13,7 @@
 
 设计原则：
 - 延迟获取 ConfigManager 和 EventBus，避免初始化顺序问题
-- 采用预制文本字典方案，无需外部翻译文件
+- 从 resources/i18n/ 目录加载 JSON 文件
 - 语言切换通过 EventBus 通知所有 UI 组件
 
 使用示例：
@@ -23,11 +24,17 @@
     # 获取文本
     title = i18n.get_text("app.title")
     
+    # 带变量的文本
+    error_msg = i18n.get_text("error.file_not_found", path="/some/path")
+    
     # 切换语言
     i18n.set_language("zh_CN")
 """
 
-from typing import Dict, List, Optional
+import json
+import os
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 from shared.event_types import EVENT_LANGUAGE_CHANGED
 
@@ -49,337 +56,6 @@ LANGUAGE_NAMES = {
 
 
 # ============================================================
-# 文本字典
-# ============================================================
-
-TEXTS: Dict[str, Dict[str, str]] = {
-    LANG_EN_US: {
-        # 应用标题
-        "app.title": "Circuit AI Design Assistant",
-        "app.version": "Version",
-        
-        # 菜单 - 文件
-        "menu.file": "File",
-        "menu.file.open": "Open Workspace",
-        "menu.file.close": "Close Workspace",
-        "menu.file.recent": "Recent Projects",
-        "menu.file.recent.clear": "Clear Recent",
-        "menu.file.recent.empty": "No Recent Projects",
-        "menu.file.recent.not_exist": "(Not Exist)",
-        "menu.file.save": "Save",
-        "menu.file.save_all": "Save All",
-        "menu.file.exit": "Exit",
-        
-        # 菜单 - 编辑
-        "menu.edit": "Edit",
-        "menu.edit.undo": "Undo",
-        "menu.edit.redo": "Redo",
-        "menu.edit.undo_iteration": "Undo Iteration",
-        "menu.edit.cut": "Cut",
-        "menu.edit.copy": "Copy",
-        "menu.edit.paste": "Paste",
-        
-        # 菜单 - 视图
-        "menu.view": "View",
-        "menu.view.file_browser": "File Browser",
-        "menu.view.code_editor": "Code Editor",
-        "menu.view.chat_panel": "Chat Panel",
-        "menu.view.simulation": "Simulation Results",
-        
-        # 菜单 - 仿真
-        "menu.simulation": "Simulation",
-        "menu.simulation.run": "Run Simulation",
-        "menu.simulation.stop": "Stop Simulation",
-        
-        # 菜单 - 知识库
-        "menu.knowledge": "Knowledge Base",
-        "menu.knowledge.import": "Import Documents",
-        "menu.knowledge.rebuild": "Rebuild Index",
-        
-        # 菜单 - 工具
-        "menu.tools": "Tools",
-        "menu.tools.api_config": "API Configuration",
-        "menu.tools.compress_context": "Compress Context",
-        
-        # 菜单 - 设置
-        "menu.settings": "Settings",
-        "menu.settings.api_config": "API Configuration",
-        "menu.settings.language": "Language",
-        "menu.settings.preferences": "Preferences",
-        
-        # 菜单 - 帮助
-        "menu.help": "Help",
-        "menu.help.about": "About",
-        "menu.help.documentation": "Documentation",
-        
-        # 按钮
-        "btn.save": "Save",
-        "btn.cancel": "Cancel",
-        "btn.ok": "OK",
-        "btn.apply": "Apply",
-        "btn.send": "Send",
-        "btn.stop": "Stop",
-        "btn.continue": "Continue",
-        "btn.retry": "Retry",
-        "btn.close": "Close",
-        "btn.browse": "Browse",
-        "btn.confirm": "Confirm",
-        
-        # 状态栏
-        "status.ready": "Ready",
-        "status.loading": "Loading...",
-        "status.saving": "Saving...",
-        "status.running": "Running...",
-        "status.idle": "Idle",
-        "status.error": "Error",
-        "status.connected": "Connected",
-        "status.disconnected": "Disconnected",
-        "status.open_workspace": "Please open a workspace folder",
-        "status.readonly": "READ ONLY",
-        "status.workspace": "Workspace",
-        "status.no_project": "No project opened",
-        
-        # 面板标题
-        "panel.file_browser": "File Browser",
-        "panel.code_editor": "Code Editor",
-        "panel.chat": "AI Assistant",
-        "panel.simulation": "Simulation Results",
-        "panel.iteration_history": "Iteration History",
-        
-        # 对话框
-        "dialog.open_workspace.title": "Open Workspace",
-        "dialog.api_config.title": "API Configuration",
-        "dialog.about.title": "About",
-        "dialog.confirm.title": "Confirm",
-        "dialog.error.title": "Error",
-        "dialog.warning.title": "Warning",
-        "dialog.info.title": "Information",
-        
-        # 错误消息
-        "error.file_not_found": "File not found",
-        "error.permission_denied": "Permission denied",
-        "error.network_error": "Network error",
-        "error.api_error": "API error",
-        "error.simulation_failed": "Simulation failed",
-        "error.unknown": "An unknown error occurred",
-        
-        # 提示消息
-        "hint.drag_file": "Drag and drop files here",
-        "hint.enter_message": "Enter your message...",
-        "hint.select_file": "Select a file to view",
-        "hint.open_workspace": "Open a workspace to get started",
-        
-        # 按钮 - 工作区
-        "btn.open_workspace": "Open Workspace",
-        
-        # 文件浏览器
-        "file_browser.refresh": "Refresh",
-        "file_browser.collapse_all": "Collapse All",
-        "file_browser.open_in_editor": "Open in Editor",
-        "file_browser.show_in_system": "Show in System",
-        "file_browser.copy_path": "Copy Path",
-        "file_browser.delete": "Delete",
-        "file_browser.new_file": "New File",
-        "file_browser.new_folder": "New Folder",
-        
-        # 工作流
-        "workflow.iteration": "Iteration",
-        "workflow.waiting_confirmation": "Waiting for confirmation",
-        "workflow.auto_continue": "Auto continue",
-        "workflow.stopped": "Stopped",
-        "workflow.completed": "Completed",
-        
-        # 工具栏 - 仿真按钮
-        "toolbar.run_auto": "Auto Run",
-        "toolbar.run_auto_tip": "Auto-detect main circuit and run simulation",
-        "toolbar.run_select": "Select Run",
-        "toolbar.run_select_tip": "Select simulation file and run",
-        
-        # 工作流模式（菜单项）
-        "menu.settings.mode_auto": "Auto Mode",
-        "menu.settings.mode_manual": "Manual Mode",
-        "menu.settings.mode_auto_tip": "Auto run simulation and continue to next iteration",
-        "menu.settings.mode_manual_tip": "Manual control: click to run simulation and start next iteration",
-        "status.mode_auto": "Mode: Auto",
-        "status.mode_manual": "Mode: Manual",
-        "status.mode_switch_disabled": "Cannot switch mode while workflow is running",
-        
-        # 选择主电路对话框
-        "dialog.select_circuit.title": "Select Simulation File",
-        "dialog.select_circuit.hint": "Please select the main circuit file to run simulation",
-        "dialog.select_circuit.hint_multiple": "Multiple main circuits detected, please select one",
-        "dialog.select_circuit.run": "Run",
-        
-        # 主电路标注
-        "file_browser.main_circuit_marker": "★",
-        "file_browser.main_circuit_tooltip": "Detected as main circuit (top-level circuit file)",
-    },
-
-    LANG_ZH_CN: {
-        # 应用标题
-        "app.title": "电路AI设计助理",
-        "app.version": "版本",
-        
-        # 菜单 - 文件
-        "menu.file": "文件",
-        "menu.file.open": "打开工作文件夹",
-        "menu.file.close": "关闭工作文件夹",
-        "menu.file.recent": "最近打开",
-        "menu.file.recent.clear": "清除记录",
-        "menu.file.recent.empty": "无最近项目",
-        "menu.file.recent.not_exist": "(不存在)",
-        "menu.file.save": "保存",
-        "menu.file.save_all": "全部保存",
-        "menu.file.exit": "退出",
-        
-        # 菜单 - 编辑
-        "menu.edit": "编辑",
-        "menu.edit.undo": "撤销",
-        "menu.edit.redo": "重做",
-        "menu.edit.undo_iteration": "撤回本次迭代",
-        "menu.edit.cut": "剪切",
-        "menu.edit.copy": "复制",
-        "menu.edit.paste": "粘贴",
-        
-        # 菜单 - 视图
-        "menu.view": "视图",
-        "menu.view.file_browser": "文件浏览器",
-        "menu.view.code_editor": "代码编辑器",
-        "menu.view.chat_panel": "对话面板",
-        "menu.view.simulation": "仿真结果",
-        
-        # 菜单 - 仿真
-        "menu.simulation": "仿真",
-        "menu.simulation.run": "运行仿真",
-        "menu.simulation.stop": "停止仿真",
-        
-        # 菜单 - 知识库
-        "menu.knowledge": "知识库",
-        "menu.knowledge.import": "导入文档",
-        "menu.knowledge.rebuild": "重建索引",
-        
-        # 菜单 - 工具
-        "menu.tools": "工具",
-        "menu.tools.api_config": "API 配置",
-        "menu.tools.compress_context": "压缩上下文",
-        
-        # 菜单 - 设置
-        "menu.settings": "设置",
-        "menu.settings.api_config": "API 配置",
-        "menu.settings.language": "语言",
-        "menu.settings.preferences": "偏好设置",
-        
-        # 菜单 - 帮助
-        "menu.help": "帮助",
-        "menu.help.about": "关于",
-        "menu.help.documentation": "文档",
-        
-        # 按钮
-        "btn.save": "保存",
-        "btn.cancel": "取消",
-        "btn.ok": "确定",
-        "btn.apply": "应用",
-        "btn.send": "发送",
-        "btn.stop": "停止",
-        "btn.continue": "继续",
-        "btn.retry": "重试",
-        "btn.close": "关闭",
-        "btn.browse": "浏览",
-        "btn.confirm": "确认",
-        
-        # 状态栏
-        "status.ready": "就绪",
-        "status.loading": "加载中...",
-        "status.saving": "保存中...",
-        "status.running": "运行中...",
-        "status.idle": "空闲",
-        "status.error": "错误",
-        "status.connected": "已连接",
-        "status.disconnected": "已断开",
-        "status.open_workspace": "请先打开工作文件夹",
-        "status.readonly": "只读",
-        "status.workspace": "工作区",
-        "status.no_project": "未打开项目",
-        
-        # 面板标题
-        "panel.file_browser": "文件浏览器",
-        "panel.code_editor": "代码编辑器",
-        "panel.chat": "AI 助手",
-        "panel.simulation": "仿真结果",
-        "panel.iteration_history": "迭代历史",
-        
-        # 对话框
-        "dialog.open_workspace.title": "打开工作文件夹",
-        "dialog.api_config.title": "API 配置",
-        "dialog.about.title": "关于",
-        "dialog.confirm.title": "确认",
-        "dialog.error.title": "错误",
-        "dialog.warning.title": "警告",
-        "dialog.info.title": "提示",
-        
-        # 错误消息
-        "error.file_not_found": "文件未找到",
-        "error.permission_denied": "权限被拒绝",
-        "error.network_error": "网络错误",
-        "error.api_error": "API 错误",
-        "error.simulation_failed": "仿真失败",
-        "error.unknown": "发生未知错误",
-        
-        # 提示消息
-        "hint.drag_file": "拖放文件到此处",
-        "hint.enter_message": "输入您的消息...",
-        "hint.select_file": "选择文件以查看",
-        "hint.open_workspace": "打开工作区以开始",
-        
-        # 按钮 - 工作区
-        "btn.open_workspace": "打开工作区",
-        
-        # 文件浏览器
-        "file_browser.refresh": "刷新",
-        "file_browser.collapse_all": "折叠全部",
-        "file_browser.open_in_editor": "在编辑器中打开",
-        "file_browser.show_in_system": "在系统中显示",
-        "file_browser.copy_path": "复制路径",
-        "file_browser.delete": "删除",
-        "file_browser.new_file": "新建文件",
-        "file_browser.new_folder": "新建文件夹",
-        
-        # 工作流
-        "workflow.iteration": "迭代",
-        "workflow.waiting_confirmation": "等待确认",
-        "workflow.auto_continue": "自动继续",
-        "workflow.stopped": "已停止",
-        "workflow.completed": "已完成",
-        
-        # 工具栏 - 仿真按钮
-        "toolbar.run_auto": "自动运行",
-        "toolbar.run_auto_tip": "自动检测主电路并运行仿真",
-        "toolbar.run_select": "选择运行",
-        "toolbar.run_select_tip": "选择仿真文件并运行",
-        
-        # 工作流模式（菜单项）
-        "menu.settings.mode_auto": "自动模式",
-        "menu.settings.mode_manual": "手动模式",
-        "menu.settings.mode_auto_tip": "自动运行仿真并继续下一轮迭代",
-        "menu.settings.mode_manual_tip": "手动控制：点击运行仿真和开始下一轮",
-        "status.mode_auto": "模式：自动",
-        "status.mode_manual": "模式：手动",
-        "status.mode_switch_disabled": "工作流运行中，无法切换模式",
-        
-        # 选择主电路对话框
-        "dialog.select_circuit.title": "选择仿真文件",
-        "dialog.select_circuit.hint": "请选择要运行仿真的主电路文件",
-        "dialog.select_circuit.hint_multiple": "检测到多个可能的主电路，请选择一个",
-        "dialog.select_circuit.run": "运行",
-        
-        # 主电路标注
-        "file_browser.main_circuit_marker": "★",
-        "file_browser.main_circuit_tooltip": "检测为主电路（顶层电路文件）",
-    },
-}
-
-
-# ============================================================
 # 国际化管理器
 # ============================================================
 
@@ -387,25 +63,51 @@ class I18nManager:
     """
     国际化管理器
     
-    统一管理多语言文本和语言切换。
+    统一管理多语言文本和语言切换，从外部 JSON 文件加载文本。
     
     设计原则：
     - 延迟获取 ConfigManager 和 EventBus
     - 语言切换通过 EventBus 通知 UI 组件
     - 文本键不存在时返回键名本身，便于调试
+    - 支持变量占位符 {variable_name}
     """
 
     def __init__(self):
         # 当前语言
         self._current_language = LANG_EN_US
         
+        # 文本缓存：{lang_code: {key: text}}
+        self._texts: Dict[str, Dict[str, str]] = {}
+        
+        # i18n 目录路径
+        self._i18n_dir: Optional[Path] = None
+        
         # 延迟获取的服务
         self._config_manager = None
         self._event_bus = None
         self._logger = None
         
+        # 初始化 i18n 目录路径
+        self._init_i18n_dir()
+        
         # 尝试从配置加载语言设置
         self._load_language_from_config()
+        
+        # 加载当前语言的文本
+        self._load_language_file(self._current_language)
+
+    # ============================================================
+    # 初始化
+    # ============================================================
+
+    def _init_i18n_dir(self):
+        """初始化 i18n 目录路径"""
+        # 获取 resources/i18n 目录的绝对路径
+        # 从当前文件位置向上找到 circuit_design_ai 目录
+        current_file = Path(__file__).resolve()
+        # shared/i18n_manager.py -> circuit_design_ai/shared/i18n_manager.py
+        project_root = current_file.parent.parent
+        self._i18n_dir = project_root / "resources" / "i18n"
 
     # ============================================================
     # 延迟获取服务
@@ -447,8 +149,59 @@ class I18nManager:
         return self._logger
 
     # ============================================================
-    # 配置加载
+    # 文件加载
     # ============================================================
+
+    def _load_language_file(self, lang_code: str) -> bool:
+        """
+        从 JSON 文件加载指定语言的文本
+        
+        Args:
+            lang_code: 语言代码（如 "en_US"、"zh_CN"）
+            
+        Returns:
+            bool: 是否加载成功
+        """
+        if lang_code in self._texts:
+            # 已加载，跳过
+            return True
+        
+        if self._i18n_dir is None:
+            if self.logger:
+                self.logger.warning("i18n directory not initialized")
+            return False
+        
+        file_path = self._i18n_dir / f"{lang_code}.json"
+        
+        if not file_path.exists():
+            if self.logger:
+                self.logger.warning(f"Language file not found: {file_path}")
+            return False
+        
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                texts = json.load(f)
+            
+            if not isinstance(texts, dict):
+                if self.logger:
+                    self.logger.error(f"Invalid language file format: {file_path}")
+                return False
+            
+            self._texts[lang_code] = texts
+            
+            if self.logger:
+                self.logger.info(f"Loaded language file: {file_path} ({len(texts)} keys)")
+            
+            return True
+            
+        except json.JSONDecodeError as e:
+            if self.logger:
+                self.logger.error(f"Failed to parse language file {file_path}: {e}")
+            return False
+        except Exception as e:
+            if self.logger:
+                self.logger.error(f"Failed to load language file {file_path}: {e}")
+            return False
 
     def _load_language_from_config(self):
         """从配置加载语言设置"""
@@ -469,47 +222,66 @@ class I18nManager:
     # 核心功能
     # ============================================================
 
-    def get_text(self, key: str, default: Optional[str] = None) -> str:
+    def get_text(self, key: str, default: Optional[str] = None, **kwargs: Any) -> str:
         """
         根据键名获取当前语言的文本
         
         Args:
             key: 文本键（如 "app.title"、"btn.save"）
             default: 默认值（键不存在时返回）
+            **kwargs: 变量占位符的值（如 path="/some/path"）
             
         Returns:
             str: 对应语言的文本，键不存在时返回 default 或键名本身
+            
+        示例：
+            get_text("app.title")  # -> "Circuit AI Design Assistant"
+            get_text("error.file_not_found", path="/test.txt")  # -> "File not found: /test.txt"
         """
-        texts = TEXTS.get(self._current_language, {})
+        # 确保当前语言已加载
+        if self._current_language not in self._texts:
+            self._load_language_file(self._current_language)
+        
+        texts = self._texts.get(self._current_language, {})
         text = texts.get(key)
         
-        if text is not None:
-            return text
+        if text is None:
+            # 回退到英文
+            if self._current_language != LANG_EN_US:
+                if LANG_EN_US not in self._texts:
+                    self._load_language_file(LANG_EN_US)
+                en_texts = self._texts.get(LANG_EN_US, {})
+                text = en_texts.get(key)
         
-        # 回退到英文
-        if self._current_language != LANG_EN_US:
-            en_texts = TEXTS.get(LANG_EN_US, {})
-            text = en_texts.get(key)
-            if text is not None:
-                return text
+        if text is None:
+            # 返回默认值或键名
+            if default is not None:
+                return default
+            
+            # 返回键名便于调试
+            if self.logger:
+                self.logger.debug(f"Missing translation for key: {key}")
+            return key
         
-        # 返回默认值或键名
-        if default is not None:
-            return default
+        # 替换变量占位符
+        if kwargs:
+            try:
+                text = text.format(**kwargs)
+            except KeyError as e:
+                if self.logger:
+                    self.logger.warning(f"Missing variable in text '{key}': {e}")
         
-        # 返回键名便于调试
-        if self.logger:
-            self.logger.debug(f"Missing translation for key: {key}")
-        return key
+        return text
 
     def set_language(self, lang_code: str) -> bool:
         """
         切换语言
         
         切换后会：
-        1. 更新当前语言
-        2. 保存到配置文件
-        3. 通过 EventBus 发布 EVENT_LANGUAGE_CHANGED 事件
+        1. 加载对应的 JSON 文件到内存
+        2. 更新当前语言
+        3. 保存到配置文件
+        4. 通过 EventBus 发布 EVENT_LANGUAGE_CHANGED 事件
         
         Args:
             lang_code: 语言代码（如 "en_US"、"zh_CN"）
@@ -524,6 +296,12 @@ class I18nManager:
         
         if lang_code == self._current_language:
             return True
+        
+        # 加载新语言文件
+        if not self._load_language_file(lang_code):
+            if self.logger:
+                self.logger.error(f"Failed to load language file for: {lang_code}")
+            return False
         
         old_language = self._current_language
         self._current_language = lang_code
@@ -568,7 +346,6 @@ class I18nManager:
             if self.logger:
                 self.logger.warning(f"Failed to publish language changed event: {e}")
 
-
     def get_current_language(self) -> str:
         """
         获取当前语言代码
@@ -580,12 +357,25 @@ class I18nManager:
 
     def get_available_languages(self) -> List[str]:
         """
-        返回支持的语言列表
+        扫描 i18n 目录返回支持的语言列表
         
         Returns:
             list: 语言代码列表
         """
-        return SUPPORTED_LANGUAGES.copy()
+        if self._i18n_dir is None or not self._i18n_dir.exists():
+            return SUPPORTED_LANGUAGES.copy()
+        
+        languages = []
+        for file_path in self._i18n_dir.glob("*.json"):
+            lang_code = file_path.stem
+            if lang_code in SUPPORTED_LANGUAGES:
+                languages.append(lang_code)
+        
+        # 确保至少返回默认语言
+        if not languages:
+            return SUPPORTED_LANGUAGES.copy()
+        
+        return languages
 
     def get_language_name(self, lang_code: str) -> str:
         """
@@ -608,22 +398,42 @@ class I18nManager:
         """
         return LANGUAGE_NAMES.copy()
 
+    def reload_texts(self) -> bool:
+        """
+        重新加载当前语言文件（支持热更新）
+        
+        Returns:
+            bool: 是否重新加载成功
+        """
+        # 清除缓存
+        if self._current_language in self._texts:
+            del self._texts[self._current_language]
+        
+        # 重新加载
+        success = self._load_language_file(self._current_language)
+        
+        if success and self.logger:
+            self.logger.info(f"Reloaded language file: {self._current_language}")
+        
+        return success
+
     # ============================================================
     # 便捷方法
     # ============================================================
 
-    def t(self, key: str, default: Optional[str] = None) -> str:
+    def t(self, key: str, default: Optional[str] = None, **kwargs: Any) -> str:
         """
         get_text 的简写
         
         Args:
             key: 文本键
             default: 默认值
+            **kwargs: 变量占位符的值
             
         Returns:
             str: 翻译后的文本
         """
-        return self.get_text(key, default)
+        return self.get_text(key, default, **kwargs)
 
     def is_chinese(self) -> bool:
         """当前是否为中文"""
@@ -645,6 +455,4 @@ __all__ = [
     "LANG_ZH_CN",
     "SUPPORTED_LANGUAGES",
     "LANGUAGE_NAMES",
-    # 文本字典
-    "TEXTS",
 ]

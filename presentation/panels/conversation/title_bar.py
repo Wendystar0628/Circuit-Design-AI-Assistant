@@ -51,6 +51,7 @@ class TitleBar(QWidget):
     new_conversation_clicked = pyqtSignal()
     history_clicked = pyqtSignal()
     clear_clicked = pyqtSignal()
+    compress_clicked = pyqtSignal()
     session_name_changed = pyqtSignal(str)
     
     def __init__(self, parent: Optional[QWidget] = None):
@@ -65,6 +66,7 @@ class TitleBar(QWidget):
         self._session_name_edit: Optional[QLineEdit] = None
         self._new_btn: Optional[QToolButton] = None
         self._history_btn: Optional[QToolButton] = None
+        self._compress_btn: Optional[QToolButton] = None
         self._clear_btn: Optional[QToolButton] = None
         
         # 初始化 UI
@@ -111,7 +113,7 @@ class TitleBar(QWidget):
         
         # 会话名称标签（可点击编辑）
         self._session_name_label = QLabel(
-            self._get_text("panel.new_conversation", "新对话")
+            self._get_text("panel.new_conversation", "New Chat")
         )
         self._session_name_label.setStyleSheet("""
             QLabel {
@@ -155,29 +157,40 @@ class TitleBar(QWidget):
         self._new_btn.setToolTip(
             self._get_text("btn.new_conversation", "New conversation")
         )
-        self._new_btn.setFixedSize(28, 28)
+        self._new_btn.setFixedSize(32, 32)
         self._new_btn.setStyleSheet(self._get_button_style())
-        self._set_icon(self._new_btn, "plus")
+        self._set_icon(self._new_btn, "plus", 20)
         self._new_btn.clicked.connect(self.new_conversation_clicked.emit)
         layout.addWidget(self._new_btn)
         
         # 历史对话按钮
         self._history_btn = QToolButton()
         self._history_btn.setToolTip(self._get_text("btn.history", "History"))
-        self._history_btn.setFixedSize(28, 28)
+        self._history_btn.setFixedSize(32, 32)
         self._history_btn.setStyleSheet(self._get_button_style())
-        self._set_icon(self._history_btn, "history")
+        self._set_icon(self._history_btn, "history", 20)
         self._history_btn.clicked.connect(self.history_clicked.emit)
         layout.addWidget(self._history_btn)
+        
+        # 压缩上下文按钮
+        self._compress_btn = QToolButton()
+        self._compress_btn.setToolTip(
+            self._get_text("menu.tools.compress_context", "Compress context")
+        )
+        self._compress_btn.setFixedSize(32, 32)
+        self._compress_btn.setStyleSheet(self._get_button_style())
+        self._set_icon(self._compress_btn, "compress", 20)
+        self._compress_btn.clicked.connect(self.compress_clicked.emit)
+        layout.addWidget(self._compress_btn)
         
         # 清空对话按钮
         self._clear_btn = QToolButton()
         self._clear_btn.setToolTip(
             self._get_text("btn.clear_conversation", "Clear conversation")
         )
-        self._clear_btn.setFixedSize(28, 28)
+        self._clear_btn.setFixedSize(32, 32)
         self._clear_btn.setStyleSheet(self._get_button_style())
-        self._set_icon(self._clear_btn, "trash")
+        self._set_icon(self._clear_btn, "trash", 20)
         self._clear_btn.clicked.connect(self.clear_clicked.emit)
         layout.addWidget(self._clear_btn)
     
@@ -188,7 +201,7 @@ class TitleBar(QWidget):
                 background-color: transparent;
                 border: none;
                 border-radius: 4px;
-                padding: 4px 8px;
+                padding: 2px;
             }
             QToolButton:hover {
                 background-color: #f0f0f0;
@@ -198,7 +211,7 @@ class TitleBar(QWidget):
             }
         """
     
-    def _set_icon(self, button: QToolButton, icon_type: str, size: int = 16) -> None:
+    def _set_icon(self, button: QToolButton, icon_type: str, size: int = 24) -> None:
         """设置按钮图标"""
         try:
             from resources.resource_loader import get_panel_icon
@@ -215,7 +228,7 @@ class TitleBar(QWidget):
     
     def set_session_name(self, name: str) -> None:
         """设置会话名称显示"""
-        display_name = name or self._get_text("panel.new_conversation", "新对话")
+        display_name = name or self._get_text("panel.new_conversation", "New Chat")
         if self._session_name_label:
             self._session_name_label.setText(display_name)
     
@@ -254,7 +267,7 @@ class TitleBar(QWidget):
         
         new_name = self._session_name_edit.text().strip()
         if not new_name:
-            new_name = self._get_text("panel.new_conversation", "新对话")
+            new_name = self._get_text("panel.new_conversation", "New Chat")
         
         old_name = self._session_name_label.text()
         self._session_name_label.setText(new_name)
@@ -282,6 +295,10 @@ class TitleBar(QWidget):
         if self._clear_btn:
             self._clear_btn.setToolTip(
                 self._get_text("btn.clear_conversation", "Clear conversation")
+            )
+        if self._compress_btn:
+            self._compress_btn.setToolTip(
+                self._get_text("menu.tools.compress_context", "Compress context")
             )
         if self._session_name_label:
             self._session_name_label.setToolTip(

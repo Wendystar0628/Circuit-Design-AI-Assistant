@@ -428,7 +428,8 @@ class MainWindow(QMainWindow):
     def _restore_conversation_session(self):
         """恢复对话会话"""
         if self._session_manager:
-            self._session_manager.restore_conversation_session()
+            # 使用完整的会话恢复流程
+            self._session_manager.restore_full_session()
 
     def _on_language_changed(self, event_data: Dict[str, Any]):
         """语言变更事件处理"""
@@ -514,9 +515,11 @@ class MainWindow(QMainWindow):
                 self._splitters, self._panels
             )
         
-        # 保存会话状态
+        # 保存会话状态（编辑器会话）
         if self._session_manager:
             self._session_manager.save_session_state()
+            # 保存对话会话
+            self._session_manager.save_current_conversation()
         
         super().closeEvent(event)
 
@@ -622,9 +625,8 @@ class MainWindow(QMainWindow):
             )
             self._statusbar_manager.set_worker_status("llm", "running")
         
-        # 通过 ContextManager 添加用户消息
-        if self.context_manager:
-            self.context_manager.add_user_message(text, attachments)
+        # 注意：用户消息已在 ConversationViewModel.send_message() 中添加到 ContextManager
+        # 这里不再重复添加，避免消息重复
         
         # 构建 LLM 请求
         self._send_llm_request()
@@ -675,36 +677,12 @@ class MainWindow(QMainWindow):
 
     def _on_new_conversation(self):
         """处理新开对话请求"""
-        # 确认对话框
-        result = QMessageBox.question(
-            self,
-            self._get_text("dialog.confirm", "Confirm"),
-            self._get_text(
-                "dialog.new_conversation.confirm",
-                "Archive current conversation and start a new one?"
-            ),
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No
-        )
-        
-        if result != QMessageBox.StandardButton.Yes:
-            return
-        
-        # 归档当前对话并重置
-        if self.context_manager:
-            self.context_manager.archive_and_reset()
-        
-        # 刷新对话面板
-        if "chat" in self._panels:
-            self._panels["chat"].refresh_display()
-        
-        # 发布对话重置事件
-        if self.event_bus:
-            from shared.event_types import EVENT_CONVERSATION_RESET
-            self.event_bus.publish(EVENT_CONVERSATION_RESET, {})
+        # 直接执行，无需确认对话框（当前会话自动保存）
+        # 注意：conversation_panel.start_new_conversation() 已经处理了保存和重置逻辑
+        # 这里只需要发布事件通知其他组件
         
         if self.logger:
-            self.logger.info("Conversation archived and reset")
+            self.logger.info("New conversation requested")
 
     def _on_show_history_dialog(self):
         """显示对话历史对话框"""

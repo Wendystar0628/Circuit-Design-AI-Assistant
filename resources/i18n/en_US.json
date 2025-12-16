@@ -186,7 +186,7 @@
   "dialog.history.sessions": "Sessions",
   "dialog.history.detail": "Session Detail",
   "dialog.history.no_messages": "No messages in this session",
-  "dialog.history.restore_confirm": "Archive current conversation and restore this session?",
+  "dialog.history.open_confirm": "Switch to this session? Current session will be saved automatically.",
   "dialog.history.delete_confirm": "Are you sure you want to delete this session? This action cannot be undone.",
   "dialog.history.not_implemented": "History dialog will be implemented soon.",
 
@@ -198,7 +198,7 @@
 
   "dialog.new_conversation.confirm": "Archive current conversation and start a new one?",
 
-  "btn.restore": "Restore",
+  "btn.open": "Open",
   "btn.export": "Export",
   "btn.delete": "Delete",
   "btn.new_conversation": "New Conversation",

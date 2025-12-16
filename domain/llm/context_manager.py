@@ -334,6 +334,157 @@ class ContextManager:
         """
         return self._message_store.import_session(path, state)
     
+    def save_session(
+        self,
+        state: Dict[str, Any],
+        project_path: str,
+        session_name: str
+    ) -> Tuple[bool, str]:
+        """
+        保存会话到文件
+        
+        Args:
+            state: 当前状态
+            project_path: 项目路径
+            session_name: 会话名称
+            
+        Returns:
+            (是否成功, 消息)
+        """
+        return self._message_store.save_session(state, project_path, session_name)
+    
+    def load_session(
+        self,
+        project_path: str,
+        session_name: str,
+        state: Dict[str, Any]
+    ) -> Tuple[Dict[str, Any], bool, str, Optional[Dict[str, Any]]]:
+        """
+        加载指定会话
+        
+        Args:
+            project_path: 项目路径
+            session_name: 会话名称
+            state: 当前状态
+            
+        Returns:
+            (更新后的状态, 是否成功, 消息, 会话元数据)
+        """
+        return self._message_store.load_session(project_path, session_name, state)
+    
+    def load_current_session(
+        self,
+        project_path: str,
+        state: Dict[str, Any]
+    ) -> Tuple[Dict[str, Any], bool, str, Optional[Dict[str, Any]]]:
+        """
+        加载当前会话
+        
+        Args:
+            project_path: 项目路径
+            state: 当前状态
+            
+        Returns:
+            (更新后的状态, 是否成功, 消息, 会话元数据)
+        """
+        return self._message_store.load_current_session(project_path, state)
+    
+    def create_new_session(
+        self,
+        state: Dict[str, Any],
+        project_path: str,
+        session_name: str,
+        save_current: bool = True,
+        current_session_name: str = ""
+    ) -> Tuple[Dict[str, Any], bool, str]:
+        """
+        创建新会话
+        
+        Args:
+            state: 当前状态
+            project_path: 项目路径
+            session_name: 新会话名称
+            save_current: 是否保存当前会话
+            current_session_name: 当前会话名称
+            
+        Returns:
+            (更新后的状态, 是否成功, 消息)
+        """
+        return self._message_store.create_new_session(
+            state, project_path, session_name, save_current, current_session_name
+        )
+    
+    def delete_session(
+        self,
+        project_path: str,
+        session_name: str
+    ) -> Tuple[bool, str]:
+        """
+        删除会话
+        
+        Args:
+            project_path: 项目路径
+            session_name: 会话名称
+            
+        Returns:
+            (是否成功, 消息)
+        """
+        return self._message_store.delete_session(project_path, session_name)
+    
+    def rename_session(
+        self,
+        project_path: str,
+        old_name: str,
+        new_name: str
+    ) -> Tuple[bool, str]:
+        """
+        重命名会话
+        
+        Args:
+            project_path: 项目路径
+            old_name: 旧会话名称
+            new_name: 新会话名称
+            
+        Returns:
+            (是否成功, 消息)
+        """
+        return self._message_store.rename_session(project_path, old_name, new_name)
+    
+    def get_all_sessions(self, project_path: str) -> List[Dict[str, Any]]:
+        """
+        获取所有会话列表
+        
+        Args:
+            project_path: 项目路径
+            
+        Returns:
+            会话列表
+        """
+        return self._message_store.get_all_sessions(project_path)
+    
+    def get_current_session_name(self, project_path: str) -> str:
+        """
+        获取当前会话名称
+        
+        Args:
+            project_path: 项目路径
+            
+        Returns:
+            str: 当前会话名称
+        """
+        return self._message_store.get_current_session_name(project_path)
+    
+    def generate_session_name(self) -> str:
+        """
+        生成会话名称
+        
+        格式：Chat YYYY-MM-DD HH:mm（精确到分钟）
+        
+        Returns:
+            str: 会话名称
+        """
+        return self._message_store.generate_session_name()
+    
     # ============================================================
     # Token 监控（委托给 TokenMonitor）
     # ============================================================
@@ -603,8 +754,12 @@ class ContextManager:
         """
         获取用于 LLM 调用的消息列表（有状态版本）
         
+        处理附件：
+        - 图片：转换为 base64 编码的多模态内容
+        - 文件：读取文件内容并添加到消息文本中
+        
         Returns:
-            消息列表，格式为 [{"role": str, "content": str}, ...]
+            消息列表，格式为 [{"role": str, "content": str|list}, ...]
         """
         state = self._get_internal_state()
         messages = self.get_messages(state)
@@ -612,12 +767,151 @@ class ContextManager:
         # 转换为 LLM API 格式
         result = []
         for msg in messages:
-            result.append({
-                "role": msg.role,
-                "content": msg.content,
-            })
+            llm_msg = self._convert_message_for_llm(msg)
+            result.append(llm_msg)
         
         return result
+    
+    def _convert_message_for_llm(self, msg) -> Dict[str, Any]:
+        """
+        将内部消息转换为 LLM API 格式
+        
+        Args:
+            msg: 内部消息对象
+            
+        Returns:
+            LLM API 格式的消息字典
+        """
+        # 如果没有附件，直接返回简单格式
+        if not msg.attachments:
+            return {
+                "role": msg.role,
+                "content": msg.content,
+            }
+        
+        # 有附件时，构建多模态内容
+        content_parts = []
+        file_contents = []
+        
+        for att in msg.attachments:
+            if att.type == "image":
+                # 图片转换为 base64
+                image_content = self._convert_image_to_base64(att.path)
+                if image_content:
+                    content_parts.append(image_content)
+            elif att.type == "file":
+                # 文件读取内容
+                file_text = self._read_file_content(att.path, att.name)
+                if file_text:
+                    file_contents.append(file_text)
+        
+        # 构建最终内容
+        if content_parts:
+            # 有图片，使用多模态格式
+            # 先添加文本内容
+            text_content = msg.content
+            if file_contents:
+                text_content += "\n\n" + "\n\n".join(file_contents)
+            
+            if text_content.strip():
+                content_parts.insert(0, {"type": "text", "text": text_content})
+            
+            return {
+                "role": msg.role,
+                "content": content_parts,
+            }
+        else:
+            # 只有文件，添加到文本内容
+            text_content = msg.content
+            if file_contents:
+                text_content += "\n\n" + "\n\n".join(file_contents)
+            
+            return {
+                "role": msg.role,
+                "content": text_content,
+            }
+    
+    def _convert_image_to_base64(self, image_path: str) -> Optional[Dict[str, Any]]:
+        """
+        将图片转换为 base64 编码的多模态内容
+        
+        Args:
+            image_path: 图片文件路径
+            
+        Returns:
+            多模态内容字典，失败返回 None
+        """
+        import base64
+        import os
+        
+        if not os.path.isfile(image_path):
+            if self.logger:
+                self.logger.warning(f"Image file not found: {image_path}")
+            return None
+        
+        try:
+            # 获取 MIME 类型
+            ext = os.path.splitext(image_path)[1].lower()
+            mime_types = {
+                ".png": "image/png",
+                ".jpg": "image/jpeg",
+                ".jpeg": "image/jpeg",
+                ".webp": "image/webp",
+                ".gif": "image/gif",
+            }
+            mime_type = mime_types.get(ext, "image/png")
+            
+            # 读取并编码
+            with open(image_path, "rb") as f:
+                image_data = base64.b64encode(f.read()).decode("utf-8")
+            
+            return {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:{mime_type};base64,{image_data}"
+                }
+            }
+        except Exception as e:
+            if self.logger:
+                self.logger.error(f"Failed to convert image to base64: {e}")
+            return None
+    
+    def _read_file_content(self, file_path: str, file_name: str) -> Optional[str]:
+        """
+        读取文件内容
+        
+        Args:
+            file_path: 文件路径
+            file_name: 文件名（用于显示）
+            
+        Returns:
+            格式化的文件内容字符串，失败返回 None
+        """
+        import os
+        
+        if not os.path.isfile(file_path):
+            if self.logger:
+                self.logger.warning(f"File not found: {file_path}")
+            return None
+        
+        try:
+            # 尝试读取文本文件
+            with open(file_path, "r", encoding="utf-8") as f:
+                content = f.read()
+            
+            # 限制文件大小（避免过长）
+            max_chars = 50000  # 约 50KB 文本
+            if len(content) > max_chars:
+                content = content[:max_chars] + "\n... (file truncated)"
+            
+            return f"--- File: {file_name} ---\n{content}\n--- End of {file_name} ---"
+        except UnicodeDecodeError:
+            # 二进制文件，只显示文件名
+            return f"[Binary file attached: {file_name}]"
+        except Exception as e:
+            if self.logger:
+                self.logger.error(f"Failed to read file: {e}")
+            return None
     
     def get_display_messages(self) -> List[Message]:
         """

@@ -186,7 +186,7 @@
   "dialog.history.sessions": "会话列表",
   "dialog.history.detail": "会话详情",
   "dialog.history.no_messages": "该会话没有消息",
-  "dialog.history.restore_confirm": "归档当前对话并恢复此会话？",
+  "dialog.history.open_confirm": "切换到此会话？当前会话将自动保存。",
   "dialog.history.delete_confirm": "确定要删除此会话吗？此操作无法撤销。",
   "dialog.history.not_implemented": "对话历史功能即将推出。",
 
@@ -198,7 +198,7 @@
 
   "dialog.new_conversation.confirm": "归档当前对话并开始新对话？",
 
-  "btn.restore": "恢复",
+  "btn.open": "打开",
   "btn.export": "导出",
   "btn.delete": "删除",
   "btn.new_conversation": "新开对话",

@@ -32,6 +32,7 @@ from PyQt6.QtWidgets import (
     QFileDialog,
     QMessageBox,
     QSizePolicy,
+    QProgressBar,
 )
 
 # ============================================================
@@ -46,6 +47,13 @@ INPUT_BORDER_RADIUS = 8
 # 附件限制
 MAX_IMAGE_SIZE_MB = 10
 ALLOWED_IMAGE_EXTENSIONS = [".png", ".jpg", ".jpeg", ".webp"]
+
+# 上下文占用阈值
+WARNING_THRESHOLD = 0.60
+CRITICAL_THRESHOLD = 0.80
+COLOR_NORMAL = "#4caf50"
+COLOR_WARNING = "#ff9800"
+COLOR_CRITICAL = "#f44336"
 
 
 # ============================================================
@@ -80,6 +88,9 @@ class InputArea(QWidget):
         self._send_button: Optional[QPushButton] = None
         self._attachments_area: Optional[QWidget] = None
         self._attachments_layout: Optional[QHBoxLayout] = None
+        self._progress_bar: Optional[QProgressBar] = None
+        self._usage_label: Optional[QLabel] = None
+        self._token_label: Optional[QLabel] = None
         
         # 延迟获取的服务
         self._i18n = None
@@ -112,8 +123,11 @@ class InputArea(QWidget):
     def _setup_ui(self) -> None:
         """设置 UI 布局（参考 Cursor 风格）"""
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(12, 8, 12, 12)
+        main_layout.setContentsMargins(12, 0, 12, 12)
         main_layout.setSpacing(8)
+        
+        # 移除输入区域的白色背景
+        self.setStyleSheet("background-color: transparent;")
         
         # 附件预览区（初始隐藏，位于输入框上方）
         self._attachments_area = QWidget()
@@ -123,10 +137,6 @@ class InputArea(QWidget):
         self._attachments_layout.setSpacing(6)
         self._attachments_layout.addStretch()
         main_layout.addWidget(self._attachments_area)
-        
-        # 输入行
-        input_row = QHBoxLayout()
-        input_row.setSpacing(8)
         
         # 输入框容器（包含输入框和内部按钮）
         input_container = QWidget()
@@ -146,7 +156,7 @@ class InputArea(QWidget):
                 background-color: {BACKGROUND_COLOR};
                 border: 1px solid {BORDER_COLOR};
                 border-radius: {INPUT_BORDER_RADIUS}px;
-                padding: 8px 8px 28px 8px;
+                padding: 8px 70px 28px 8px;
                 font-size: 14px;
             }}
             QTextEdit:focus {{
@@ -157,11 +167,11 @@ class InputArea(QWidget):
         self._input_text.installEventFilter(self)
         input_container_layout.addWidget(self._input_text)
         
-        # 附件按钮区（位于输入框内部左下角）
-        self._attachment_buttons = QWidget(self._input_text)
-        attachment_btn_layout = QHBoxLayout(self._attachment_buttons)
-        attachment_btn_layout.setContentsMargins(4, 0, 0, 4)
-        attachment_btn_layout.setSpacing(2)
+        # 底部按钮区（位于输入框内部底部，左侧附件按钮，右侧发送按钮）
+        self._bottom_buttons = QWidget(self._input_text)
+        bottom_btn_layout = QHBoxLayout(self._bottom_buttons)
+        bottom_btn_layout.setContentsMargins(4, 0, 4, 4)
+        bottom_btn_layout.setSpacing(2)
         
         # 上传图片按钮（SVG 图标）
         self._upload_image_btn = QToolButton()
@@ -170,7 +180,7 @@ class InputArea(QWidget):
         self._upload_image_btn.setStyleSheet(self._get_inline_button_style())
         self._upload_image_btn.clicked.connect(self._on_upload_image_clicked)
         self._set_svg_icon(self._upload_image_btn, "image")
-        attachment_btn_layout.addWidget(self._upload_image_btn)
+        bottom_btn_layout.addWidget(self._upload_image_btn)
         
         # 选择文件按钮（SVG 图标）
         self._select_file_btn = QToolButton()
@@ -179,24 +189,58 @@ class InputArea(QWidget):
         self._select_file_btn.setStyleSheet(self._get_inline_button_style())
         self._select_file_btn.clicked.connect(self._on_select_file_clicked)
         self._set_svg_icon(self._select_file_btn, "paperclip")
-        attachment_btn_layout.addWidget(self._select_file_btn)
+        bottom_btn_layout.addWidget(self._select_file_btn)
         
-        attachment_btn_layout.addStretch()
+        bottom_btn_layout.addStretch()
         
-        input_row.addWidget(input_container, 1)
+        # 上下文占用信息区（居中显示）
+        self._progress_bar = QProgressBar()
+        self._progress_bar.setFixedHeight(6)
+        self._progress_bar.setFixedWidth(80)
+        self._progress_bar.setTextVisible(False)
+        self._progress_bar.setRange(0, 100)
+        self._progress_bar.setValue(0)
+        self._update_progress_style(COLOR_NORMAL)
+        bottom_btn_layout.addWidget(self._progress_bar)
         
-        # 发送按钮
+        self._usage_label = QLabel("0%")
+        self._usage_label.setStyleSheet("""
+            QLabel {
+                color: #666666;
+                font-size: 10px;
+                background: transparent;
+                border: none;
+            }
+        """)
+        self._usage_label.setFixedWidth(28)
+        bottom_btn_layout.addWidget(self._usage_label)
+        
+        self._token_label = QLabel("")
+        self._token_label.setStyleSheet("""
+            QLabel {
+                color: #999999;
+                font-size: 10px;
+                background: transparent;
+                border: none;
+            }
+        """)
+        bottom_btn_layout.addWidget(self._token_label)
+        
+        bottom_btn_layout.addStretch()
+        
+        # 发送按钮（位于输入框内部右下角）
         self._send_button = QPushButton()
         self._send_button.setText(self._get_text("btn.send", "Send"))
-        self._send_button.setFixedSize(60, 36)
+        self._send_button.setFixedSize(56, 24)
         self._send_button.setStyleSheet(f"""
             QPushButton {{
                 background-color: {PRIMARY_COLOR};
                 color: white;
                 border: none;
-                border-radius: {INPUT_BORDER_RADIUS}px;
-                font-size: 14px;
+                border-radius: 4px;
+                font-size: 12px;
                 font-weight: bold;
+                padding: 0px 4px;
             }}
             QPushButton:hover {{
                 background-color: #3d8be8;
@@ -209,9 +253,9 @@ class InputArea(QWidget):
             }}
         """)
         self._send_button.clicked.connect(self._on_send_clicked)
-        input_row.addWidget(self._send_button, 0, Qt.AlignmentFlag.AlignBottom)
+        bottom_btn_layout.addWidget(self._send_button)
         
-        main_layout.addLayout(input_row)
+        main_layout.addWidget(input_container)
     
     def _get_tool_button_style(self) -> str:
         """获取工具按钮样式"""
@@ -374,6 +418,62 @@ class InputArea(QWidget):
         """聚焦到输入框"""
         if self._input_text:
             self._input_text.setFocus()
+    
+    def update_usage(self, ratio: float, current_tokens: int = 0, max_tokens: int = 0) -> None:
+        """
+        更新上下文占用显示
+        
+        Args:
+            ratio: 占用比例 (0.0 - 1.0)
+            current_tokens: 当前使用的 token 数
+            max_tokens: 最大 token 数
+        """
+        ratio = max(0.0, min(1.0, ratio))
+        percentage = int(ratio * 100)
+        
+        # 更新进度条值
+        if self._progress_bar:
+            self._progress_bar.setValue(percentage)
+        
+        # 更新百分比标签
+        if self._usage_label:
+            self._usage_label.setText(f"{percentage}%")
+        
+        # 更新 token 数量标签
+        if self._token_label:
+            if max_tokens > 0:
+                self._token_label.setText(f"{self._format_tokens(current_tokens)} / {self._format_tokens(max_tokens)}")
+            else:
+                self._token_label.setText("")
+        
+        # 根据占用率更新样式
+        if ratio >= CRITICAL_THRESHOLD:
+            self._update_progress_style(COLOR_CRITICAL)
+        elif ratio >= WARNING_THRESHOLD:
+            self._update_progress_style(COLOR_WARNING)
+        else:
+            self._update_progress_style(COLOR_NORMAL)
+    
+    def _format_tokens(self, tokens: int) -> str:
+        """格式化 token 数量显示"""
+        if tokens >= 1000:
+            return f"{tokens / 1000:.1f}k"
+        return str(tokens)
+    
+    def _update_progress_style(self, color: str) -> None:
+        """更新进度条样式"""
+        if self._progress_bar:
+            self._progress_bar.setStyleSheet(f"""
+                QProgressBar {{
+                    background-color: #e0e0e0;
+                    border-radius: 3px;
+                    border: none;
+                }}
+                QProgressBar::chunk {{
+                    background-color: {color};
+                    border-radius: 3px;
+                }}
+            """)
 
 
     # ============================================================
@@ -441,28 +541,26 @@ class InputArea(QWidget):
         
         # 删除按钮（小叉号）
         delete_btn = QToolButton()
-        delete_btn.setFixedSize(18, 18)
+        delete_btn.setFixedSize(20, 20)
         delete_btn.setStyleSheet("""
             QToolButton {
                 background-color: transparent;
                 border: none;
-                border-radius: 9px;
-                font-size: 14px;
-                color: #666666;
+                border-radius: 10px;
+                padding: 0px;
             }
             QToolButton:hover {
                 background-color: rgba(0, 0, 0, 0.1);
-                color: #333333;
             }
         """)
         # 设置关闭图标
-        self._set_close_icon(delete_btn)
+        self._set_close_icon(delete_btn, 16)
         delete_btn.clicked.connect(lambda: self.remove_attachment(index))
         layout.addWidget(delete_btn)
         
         return container
     
-    def _set_close_icon(self, button: QToolButton) -> None:
+    def _set_close_icon(self, button: QToolButton, size: int = 16) -> None:
         """设置关闭图标（从本地文件加载）"""
         from PyQt6.QtCore import QSize
         try:
@@ -470,7 +568,7 @@ class InputArea(QWidget):
             icon = get_panel_icon("close")
             if not icon.isNull():
                 button.setIcon(icon)
-                button.setIconSize(QSize(12, 12))
+                button.setIconSize(QSize(size, size))
         except Exception:
             pass  # 图标加载失败时静默处理
     
@@ -490,32 +588,13 @@ class InputArea(QWidget):
     
     def _on_upload_image_clicked(self) -> None:
         """处理上传图片按钮点击"""
+        # 只发出信号，由 ConversationPanel 处理文件选择
         self.upload_image_clicked.emit()
-        
-        file_filter = "Images (*.png *.jpg *.jpeg *.webp)"
-        paths, _ = QFileDialog.getOpenFileNames(
-            self,
-            self._get_text("dialog.select_image.title", "选择图片"),
-            "",
-            file_filter
-        )
-        
-        for path in paths:
-            self.add_attachment(path, "image")
     
     def _on_select_file_clicked(self) -> None:
         """处理选择文件按钮点击"""
+        # 只发出信号，由 ConversationPanel 处理文件选择
         self.select_file_clicked.emit()
-        
-        paths, _ = QFileDialog.getOpenFileNames(
-            self,
-            self._get_text("dialog.select_file.title", "选择文件"),
-            "",
-            "All Files (*.*)"
-        )
-        
-        for path in paths:
-            self.add_attachment(path, "file")
     
     # ============================================================
     # 拖放处理
@@ -558,23 +637,24 @@ class InputArea(QWidget):
     # ============================================================
     
     def resizeEvent(self, event) -> None:
-        """处理大小变化，调整附件按钮位置"""
+        """处理大小变化，调整底部按钮位置"""
         super().resizeEvent(event)
-        self._update_attachment_buttons_position()
+        self._update_bottom_buttons_position()
     
-    def _update_attachment_buttons_position(self) -> None:
-        """更新附件按钮位置（输入框内部左下角）"""
-        if hasattr(self, '_attachment_buttons') and self._input_text:
-            # 将按钮放在输入框内部左下角
-            btn_height = 24
+    def _update_bottom_buttons_position(self) -> None:
+        """更新底部按钮位置（输入框内部底部，横跨整个宽度）"""
+        if hasattr(self, '_bottom_buttons') and self._input_text:
+            # 将按钮区放在输入框内部底部
+            btn_height = 28
             margin = 4
             y_pos = self._input_text.height() - btn_height - margin
-            self._attachment_buttons.setGeometry(margin, y_pos, 60, btn_height)
+            width = self._input_text.width() - margin * 2
+            self._bottom_buttons.setGeometry(margin, y_pos, width, btn_height)
     
     def showEvent(self, event) -> None:
         """显示时更新按钮位置"""
         super().showEvent(event)
-        self._update_attachment_buttons_position()
+        self._update_bottom_buttons_position()
     
     # ============================================================
     # 国际化

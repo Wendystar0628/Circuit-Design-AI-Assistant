@@ -70,10 +70,13 @@ class StatusBar(QWidget):
         # 内部状态
         self._current_ratio: float = 0.0
         self._button_state: str = STATE_NORMAL
+        self._current_tokens: int = 0
+        self._max_tokens: int = 0
         
         # UI 组件引用
         self._progress_bar: Optional[QProgressBar] = None
         self._usage_label: Optional[QLabel] = None
+        self._token_label: Optional[QLabel] = None
         self._compress_button: Optional[QToolButton] = None
         
         # 初始化 UI
@@ -117,28 +120,45 @@ class StatusBar(QWidget):
         
         layout = QHBoxLayout(self)
         layout.setContentsMargins(12, 4, 12, 4)
+        layout.setSpacing(8)
         
-        # 上下文占用进度条
+        # 上下文占用进度条（缩短宽度）
         self._progress_bar = QProgressBar()
         self._progress_bar.setFixedHeight(8)
+        self._progress_bar.setFixedWidth(120)
         self._progress_bar.setTextVisible(False)
         self._progress_bar.setRange(0, 100)
         self._progress_bar.setValue(0)
         self._update_progress_style(COLOR_NORMAL)
-        layout.addWidget(self._progress_bar, 1)
+        layout.addWidget(self._progress_bar)
         
         # 占用百分比标签
         self._usage_label = QLabel("0%")
         self._usage_label.setStyleSheet("""
             QLabel {
                 color: #666666;
-                font-size: 12px;
+                font-size: 11px;
                 background: transparent;
                 border: none;
             }
         """)
-        self._usage_label.setFixedWidth(40)
+        self._usage_label.setFixedWidth(32)
         layout.addWidget(self._usage_label)
+        
+        # Token 数量标签
+        self._token_label = QLabel("0 / 0")
+        self._token_label.setStyleSheet("""
+            QLabel {
+                color: #999999;
+                font-size: 11px;
+                background: transparent;
+                border: none;
+            }
+        """)
+        layout.addWidget(self._token_label)
+        
+        # 弹性空间
+        layout.addStretch()
         
         # 压缩按钮
         self._compress_button = QToolButton()
@@ -226,23 +246,34 @@ class StatusBar(QWidget):
     # 公共方法
     # ============================================================
     
-    def update_usage(self, ratio: float) -> None:
+    def update_usage(self, ratio: float, current_tokens: int = 0, max_tokens: int = 0) -> None:
         """
         更新占用比例显示
         
         Args:
             ratio: 占用比例 (0.0 - 1.0)
+            current_tokens: 当前使用的 token 数
+            max_tokens: 最大 token 数
         """
         self._current_ratio = max(0.0, min(1.0, ratio))
+        self._current_tokens = current_tokens
+        self._max_tokens = max_tokens
         percentage = int(self._current_ratio * 100)
         
         # 更新进度条值
         if self._progress_bar:
             self._progress_bar.setValue(percentage)
         
-        # 更新标签
+        # 更新百分比标签
         if self._usage_label:
             self._usage_label.setText(f"{percentage}%")
+        
+        # 更新 token 数量标签
+        if self._token_label:
+            if max_tokens > 0:
+                self._token_label.setText(f"{self._format_tokens(current_tokens)} / {self._format_tokens(max_tokens)}")
+            else:
+                self._token_label.setText("")
         
         # 根据占用率更新样式
         if self._current_ratio >= CRITICAL_THRESHOLD:
@@ -254,6 +285,12 @@ class StatusBar(QWidget):
         else:
             self._update_progress_style(COLOR_NORMAL)
             self.set_compress_button_state(STATE_NORMAL)
+    
+    def _format_tokens(self, tokens: int) -> str:
+        """格式化 token 数量显示"""
+        if tokens >= 1000:
+            return f"{tokens / 1000:.1f}k"
+        return str(tokens)
     
     def set_compress_button_state(self, state: str) -> None:
         """

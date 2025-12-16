@@ -15,7 +15,7 @@
 """
 
 import os
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Tuple
 
 from PyQt6.QtWidgets import QMainWindow
 from PyQt6.QtCore import QTimer
@@ -44,6 +44,7 @@ class SessionManager:
         self._context_manager = None
         self._event_bus = None
         self._logger = None
+        self._session_state_manager = None
 
     @property
     def config_manager(self):
@@ -116,6 +117,18 @@ class SessionManager:
             except Exception:
                 pass
         return self._event_bus
+
+    @property
+    def session_state_manager(self):
+        """延迟获取 SessionStateManager"""
+        if self._session_state_manager is None:
+            try:
+                from shared.service_locator import ServiceLocator
+                from shared.service_names import SVC_SESSION_STATE_MANAGER
+                self._session_state_manager = ServiceLocator.get_optional(SVC_SESSION_STATE_MANAGER)
+            except Exception:
+                pass
+        return self._session_state_manager
 
     def save_session_state(self):
         """保存会话状态（项目路径、打开的文件、对话会话）"""
@@ -201,94 +214,38 @@ class SessionManager:
     # ============================================================
 
     def _save_conversation_session(self):
-        """保存对话会话信息"""
+        """保存对话会话信息到配置"""
         if not self.config_manager:
             return
         
-        # 获取当前会话信息
+        # 获取当前会话名称
         chat_panel = self._panels.get("chat")
         if chat_panel and hasattr(chat_panel, 'view_model'):
             view_model = chat_panel.view_model
             if view_model:
-                session_id = getattr(view_model, 'current_session_id', None)
                 session_name = getattr(view_model, 'current_session_name', None)
-                if session_id:
-                    self.config_manager.set("current_conversation_id", session_id)
                 if session_name:
                     self.config_manager.set("current_conversation_name", session_name)
 
     def restore_conversation_session(self):
         """
-        恢复对话会话状态
+        恢复对话会话状态（兼容方法，调用 restore_full_session）
         
         在 EVENT_INIT_COMPLETE 后调用，此时 ContextManager 已可用
         """
-        if not self.config_manager:
-            return
-        
-        # 获取保存的会话信息
-        session_id = self.config_manager.get("current_conversation_id")
-        session_name = self.config_manager.get("current_conversation_name")
-        
-        if not session_id:
-            if self.logger:
-                self.logger.debug("No saved conversation session to restore")
-            return
-        
-        # 获取项目路径
-        project_path = None
-        if self.app_state:
-            from shared.app_state import STATE_PROJECT_PATH
-            project_path = self.app_state.get(STATE_PROJECT_PATH)
-        
-        if not project_path:
-            if self.logger:
-                self.logger.debug("No project path, skip conversation restore")
-            return
-        
-        # 通过 ContextManager 恢复会话
-        if self.context_manager:
-            try:
-                state = self.context_manager._get_internal_state()
-                new_state, success, msg = self.context_manager.restore_session(
-                    session_id, project_path, state
-                )
-                if success:
-                    self.context_manager._set_internal_state(new_state)
-                    if self.logger:
-                        self.logger.info(f"Conversation session restored: {session_id}")
-                    
-                    # 发布会话加载事件
-                    self._publish_session_loaded_event(session_id, session_name)
-                    
-                    # 刷新对话面板
-                    self._refresh_chat_panel()
-                else:
-                    if self.logger:
-                        self.logger.warning(f"Failed to restore session: {msg}")
-            except Exception as e:
-                if self.logger:
-                    self.logger.error(f"Error restoring conversation session: {e}")
-
-    def _publish_session_loaded_event(self, session_id: str, session_name: Optional[str]):
-        """发布会话加载事件"""
-        if self.event_bus:
-            try:
-                from shared.event_types import EVENT_SESSION_LOADED
-                self.event_bus.publish(EVENT_SESSION_LOADED, {
-                    "session_id": session_id,
-                    "session_name": session_name or "新对话",
-                    "message_count": 0,
-                    "is_new": False,
-                })
-            except ImportError:
-                pass
+        self.restore_full_session()
 
     def _refresh_chat_panel(self):
         """刷新对话面板显示"""
         chat_panel = self._panels.get("chat")
-        if chat_panel and hasattr(chat_panel, 'refresh_display'):
-            chat_panel.refresh_display()
+        if chat_panel:
+            # 先让 ViewModel 重新加载消息
+            if hasattr(chat_panel, 'view_model') and chat_panel.view_model:
+                if hasattr(chat_panel.view_model, 'load_messages'):
+                    chat_panel.view_model.load_messages()
+            # 然后刷新显示
+            if hasattr(chat_panel, 'refresh_display'):
+                chat_panel.refresh_display()
 
     def get_current_session_name(self) -> Optional[str]:
         """获取当前会话名称"""
@@ -306,6 +263,146 @@ class SessionManager:
             view_model = chat_panel.view_model
             if view_model and hasattr(view_model, 'set_session_name'):
                 view_model.set_session_name(name)
+
+    # ============================================================
+    # 会话名称生成
+    # ============================================================
+
+    def generate_session_name(self) -> str:
+        """
+        生成会话名称
+        
+        格式：Chat YYYY-MM-DD HH:mm（精确到分钟）
+        精确到分钟可避免同一天内多次新建对话时名称冲突
+        
+        Returns:
+            str: 会话名称
+        """
+        from datetime import datetime
+        now = datetime.now().strftime("%Y-%m-%d %H:%M")
+        return f"Chat {now}"
+
+    def _safe_filename(self, name: str) -> str:
+        """
+        将会话名称转换为安全的文件名
+        
+        处理规则：
+        - 替换特殊字符 /\\:*?"<>| 为下划线
+        - 限制长度不超过 100 字符
+        
+        Args:
+            name: 会话名称
+            
+        Returns:
+            str: 安全的文件名
+        """
+        import hashlib
+        
+        unsafe_chars = '/\\:*?"<>|'
+        safe_name = name
+        for char in unsafe_chars:
+            safe_name = safe_name.replace(char, '_')
+        
+        if len(safe_name) > 100:
+            hash_suffix = hashlib.md5(name.encode()).hexdigest()[:8]
+            safe_name = safe_name[:91] + '_' + hash_suffix
+        
+        return safe_name
+
+    # ============================================================
+    # 完整会话恢复流程
+    # ============================================================
+
+    def restore_full_session(self):
+        """
+        完整的会话恢复流程（委托给 SessionStateManager）
+        
+        在 EVENT_INIT_COMPLETE 后调用，SessionStateManager 执行以下步骤：
+        1. 读取 sessions.json 获取 current_session_name
+        2. 若存在当前会话，加载会话消息
+        3. 若不存在当前会话，生成新会话名称并创建
+        4. 发布 EVENT_SESSION_CHANGED 事件
+        5. UI 组件订阅事件后自动刷新
+        """
+        if not self.session_state_manager:
+            if self.logger:
+                self.logger.error("SessionStateManager not available")
+            return
+        
+        try:
+            success, msg = self.session_state_manager.restore_on_startup()
+            
+            if success:
+                if self.logger:
+                    self.logger.info(f"Session restored: {msg}")
+            else:
+                if self.logger:
+                    self.logger.warning(f"Session restore failed: {msg}")
+                    
+        except Exception as e:
+            if self.logger:
+                self.logger.error(f"Error restoring session: {e}")
+
+    # ============================================================
+    # 软件关闭时保存会话
+    # ============================================================
+
+    def save_current_conversation(self):
+        """
+        保存当前对话会话（委托给 SessionStateManager）
+        
+        在软件关闭时调用
+        """
+        if not self.session_state_manager:
+            if self.logger:
+                self.logger.error("SessionStateManager not available")
+            return
+        
+        try:
+            success, msg = self.session_state_manager.save_current_session()
+            
+            if success:
+                if self.logger:
+                    self.logger.info("Conversation saved")
+            else:
+                if self.logger:
+                    self.logger.warning(f"Failed to save conversation: {msg}")
+                    
+        except Exception as e:
+            if self.logger:
+                self.logger.error(f"Error saving conversation: {e}")
+
+    # ============================================================
+    # 会话重命名
+    # ============================================================
+
+    def rename_session(self, old_name: str, new_name: str) -> Tuple[bool, str]:
+        """
+        重命名会话（委托给 SessionStateManager）
+        
+        Args:
+            old_name: 旧会话名称
+            new_name: 新会话名称
+            
+        Returns:
+            (是否成功, 消息)
+        """
+        if self.session_state_manager:
+            try:
+                success, msg = self.session_state_manager.rename_session(old_name, new_name)
+                
+                if success:
+                    if self.logger:
+                        self.logger.info(f"Session renamed via SessionStateManager: {old_name} -> {new_name}")
+                
+                return success, msg
+                
+            except Exception as e:
+                if self.logger:
+                    self.logger.error(f"Error renaming session: {e}")
+                return False, str(e)
+        
+        return False, "SessionStateManager not available"
 
 
 __all__ = ["SessionManager"]

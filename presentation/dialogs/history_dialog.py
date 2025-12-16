@@ -4,8 +4,13 @@
 
 职责：
 - 显示所有会话列表
-- 支持查看、恢复、导出和删除历史对话
-- 与 Checkpointer 集成获取会话数据
+- 支持打开、导出和删除历史对话
+- 与 SessionStateManager 集成进行会话切换
+
+会话自动保存机制：
+- 每轮 LLM 输出完成后自动保存当前会话
+- 切换会话时自动保存当前会话
+- 无需手动归档，所有会话实时持久化
 
 国际化支持：
 - 实现 retranslate_ui() 方法
@@ -80,7 +85,7 @@ class HistoryDialog(QDialog):
         # UI 组件引用
         self._session_list: Optional[QListWidget] = None
         self._detail_text: Optional[QTextEdit] = None
-        self._restore_btn: Optional[QPushButton] = None
+        self._open_btn: Optional[QPushButton] = None
         self._export_btn: Optional[QPushButton] = None
         self._delete_btn: Optional[QPushButton] = None
         self._close_btn: Optional[QPushButton] = None
@@ -148,6 +153,20 @@ class HistoryDialog(QDialog):
             except Exception:
                 pass
         return self._context_manager
+
+    @property
+    def session_state_manager(self):
+        """延迟获取 SessionStateManager"""
+        if not hasattr(self, '_session_state_manager'):
+            self._session_state_manager = None
+        if self._session_state_manager is None:
+            try:
+                from shared.service_locator import ServiceLocator
+                from shared.service_names import SVC_SESSION_STATE_MANAGER
+                self._session_state_manager = ServiceLocator.get_optional(SVC_SESSION_STATE_MANAGER)
+            except Exception:
+                pass
+        return self._session_state_manager
 
     def _get_text(self, key: str, default: Optional[str] = None) -> str:
         """获取国际化文本"""
@@ -237,11 +256,11 @@ class HistoryDialog(QDialog):
         layout = QHBoxLayout(widget)
         layout.setContentsMargins(0, 10, 0, 0)
         
-        # 恢复按钮
-        self._restore_btn = QPushButton()
-        self._restore_btn.setEnabled(False)
-        self._restore_btn.clicked.connect(self._on_restore_clicked)
-        layout.addWidget(self._restore_btn)
+        # 打开按钮
+        self._open_btn = QPushButton()
+        self._open_btn.setEnabled(False)
+        self._open_btn.clicked.connect(self._on_open_clicked)
+        layout.addWidget(self._open_btn)
         
         # 导出按钮
         self._export_btn = QPushButton()
@@ -308,21 +327,70 @@ class HistoryDialog(QDialog):
             self.logger.info(f"Loaded {len(self._sessions)} sessions")
 
     def _get_sessions_from_checkpointer(self) -> List[SessionInfo]:
-        """从 Checkpointer 获取会话列表"""
+        """从 MessageStore 获取会话列表"""
         sessions = []
         
-        # TODO: 实际实现需要与 Checkpointer 集成
-        # 这里提供模拟数据用于 UI 测试
         try:
-            # 尝试从 ContextManager 获取会话历史
-            if self.context_manager:
-                # 如果 ContextManager 有获取历史会话的方法
-                pass
+            # 获取项目路径
+            project_path = self._get_project_path()
+            if not project_path:
+                if self.logger:
+                    self.logger.debug("No project path, cannot load sessions")
+                return sessions
+            
+            # 从 MessageStore 获取所有会话
+            from domain.llm.message_store import MessageStore
+            message_store = MessageStore()
+            
+            session_list = message_store.get_all_sessions(project_path)
+            
+            for session_data in session_list:
+                # 解析时间
+                created_str = session_data.get("created_at", "")
+                updated_str = session_data.get("updated_at", "")
+                
+                try:
+                    created_at = datetime.fromisoformat(created_str) if created_str else datetime.now()
+                except ValueError:
+                    created_at = datetime.now()
+                
+                try:
+                    updated_at = datetime.fromisoformat(updated_str) if updated_str else datetime.now()
+                except ValueError:
+                    updated_at = datetime.now()
+                
+                # 创建 SessionInfo
+                session_info = SessionInfo(
+                    session_id=session_data.get("name", ""),
+                    created_at=created_at,
+                    updated_at=updated_at,
+                    message_count=session_data.get("message_count", 0),
+                    preview=session_data.get("preview", ""),
+                )
+                sessions.append(session_info)
+            
+            if self.logger:
+                self.logger.info(f"Loaded {len(sessions)} sessions from MessageStore")
+                
         except Exception as e:
             if self.logger:
                 self.logger.warning(f"Failed to load sessions: {e}")
         
         return sessions
+    
+    def _get_project_path(self) -> Optional[str]:
+        """获取当前项目路径"""
+        try:
+            from shared.service_locator import ServiceLocator
+            from shared.service_names import SVC_APP_STATE
+            from shared.app_state import STATE_PROJECT_PATH
+            
+            app_state = ServiceLocator.get_optional(SVC_APP_STATE)
+            if app_state:
+                return app_state.get(STATE_PROJECT_PATH)
+        except Exception:
+            pass
+        return None
 
     def _format_session_item(self, session: SessionInfo) -> str:
         """格式化会话列表项显示文本"""
@@ -344,7 +412,7 @@ class HistoryDialog(QDialog):
         self._detail_text.setHtml(html_content)
         
         # 启用操作按钮
-        self._restore_btn.setEnabled(True)
+        self._open_btn.setEnabled(True)
         self._export_btn.setEnabled(True)
         self._delete_btn.setEnabled(True)
 
@@ -352,8 +420,45 @@ class HistoryDialog(QDialog):
         """加载会话消息"""
         messages = []
         
-        # TODO: 从 Checkpointer 加载指定会话的消息
-        # 这里返回空列表，实际实现需要与 Checkpointer 集成
+        try:
+            # 获取项目路径
+            project_path = self._get_project_path()
+            if not project_path:
+                return messages
+            
+            # 从 MessageStore 加载会话
+            from domain.llm.message_store import MessageStore
+            message_store = MessageStore()
+            
+            # session_id 实际上是会话名称
+            session_name = session_id
+            
+            # 创建空状态用于加载
+            empty_state = {"messages": []}
+            
+            new_state, success, msg, metadata = message_store.load_session(
+                project_path, session_name, empty_state
+            )
+            
+            if success:
+                # 从状态中提取消息
+                from domain.llm.message_adapter import MessageAdapter
+                adapter = MessageAdapter()
+                internal_messages = adapter.extract_messages_from_state(new_state)
+                
+                # 转换为字典格式
+                for m in internal_messages:
+                    messages.append(m.to_dict())
+                    
+                if self.logger:
+                    self.logger.debug(f"Loaded {len(messages)} messages for session: {session_name}")
+            else:
+                if self.logger:
+                    self.logger.warning(f"Failed to load session messages: {msg}")
+                    
+        except Exception as e:
+            if self.logger:
+                self.logger.warning(f"Error loading session messages: {e}")
         
         return messages
 
@@ -397,24 +502,33 @@ class HistoryDialog(QDialog):
         
         return "".join(html_parts)
 
-    def restore_session(self, session_id: str) -> bool:
-        """恢复会话到当前对话"""
+    def open_session(self, session_id: str) -> bool:
+        """打开会话（委托给 SessionStateManager 切换会话）"""
         if not session_id:
             return False
         
         try:
-            # 调用 ContextManager 恢复会话
-            if self.context_manager:
-                # TODO: 实现 context_manager.restore_session(session_id)
-                pass
+            session_name = session_id
             
-            if self.logger:
-                self.logger.info(f"Session restored: {session_id}")
+            if not self.session_state_manager:
+                if self.logger:
+                    self.logger.error("SessionStateManager not available")
+                return False
             
-            return True
+            success, msg = self.session_state_manager.switch_session(session_name)
+            
+            if success:
+                if self.logger:
+                    self.logger.info(f"Session opened: {session_name}")
+                return True
+            else:
+                if self.logger:
+                    self.logger.warning(f"Failed to open session: {msg}")
+                return False
+            
         except Exception as e:
             if self.logger:
-                self.logger.error(f"Failed to restore session: {e}")
+                self.logger.error(f"Failed to open session: {e}")
             return False
 
     def export_session(self, session_id: str, format: str) -> bool:
@@ -509,18 +623,29 @@ class HistoryDialog(QDialog):
         return ""
 
     def delete_session(self, session_id: str) -> bool:
-        """删除会话"""
+        """删除会话（委托给 SessionStateManager）"""
         if not session_id:
             return False
         
         try:
-            # TODO: 从 Checkpointer 删除会话
-            # checkpointer.delete(session_id)
+            session_name = session_id
             
-            if self.logger:
-                self.logger.info(f"Session deleted: {session_id}")
+            if not self.session_state_manager:
+                if self.logger:
+                    self.logger.error("SessionStateManager not available")
+                return False
             
-            return True
+            success, msg = self.session_state_manager.delete_session(session_name)
+            
+            if success:
+                if self.logger:
+                    self.logger.info(f"Session deleted: {session_name}")
+                return True
+            else:
+                if self.logger:
+                    self.logger.warning(f"Failed to delete session: {msg}")
+                return False
+                
         except Exception as e:
             if self.logger:
                 self.logger.error(f"Failed to delete session: {e}")
@@ -535,7 +660,7 @@ class HistoryDialog(QDialog):
         """会话选择变化"""
         if current is None:
             self._detail_text.clear()
-            self._restore_btn.setEnabled(False)
+            self._open_btn.setEnabled(False)
             self._export_btn.setEnabled(False)
             self._delete_btn.setEnabled(False)
             return
@@ -544,12 +669,12 @@ class HistoryDialog(QDialog):
         self.show_session_detail(session_id)
 
     def _on_session_double_clicked(self, item: QListWidgetItem) -> None:
-        """会话双击（快速恢复）"""
+        """会话双击（快速打开）"""
         session_id = item.data(Qt.ItemDataRole.UserRole)
-        self._on_restore_clicked()
+        self._on_open_clicked()
 
-    def _on_restore_clicked(self) -> None:
-        """恢复按钮点击"""
+    def _on_open_clicked(self) -> None:
+        """打开按钮点击"""
         if not self._current_session_id:
             return
         
@@ -558,8 +683,8 @@ class HistoryDialog(QDialog):
             self,
             self._get_text("dialog.confirm", "Confirm"),
             self._get_text(
-                "dialog.history.restore_confirm",
-                "Archive current conversation and restore this session?"
+                "dialog.history.open_confirm",
+                "Switch to this session? Current session will be saved automatically."
             ),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No
@@ -568,7 +693,7 @@ class HistoryDialog(QDialog):
         if result != QMessageBox.StandardButton.Yes:
             return
         
-        if self.restore_session(self._current_session_id):
+        if self.open_session(self._current_session_id):
             self.accept()
 
     def _on_export_clicked(self) -> None:
@@ -629,7 +754,7 @@ class HistoryDialog(QDialog):
             self._current_messages = []
             
             # 禁用按钮
-            self._restore_btn.setEnabled(False)
+            self._open_btn.setEnabled(False)
             self._export_btn.setEnabled(False)
             self._delete_btn.setEnabled(False)
 
@@ -653,8 +778,8 @@ class HistoryDialog(QDialog):
                 group.setTitle(self._get_text("dialog.history.detail", "Session Detail"))
         
         # 按钮文本
-        if self._restore_btn:
-            self._restore_btn.setText(self._get_text("btn.restore", "Restore"))
+        if self._open_btn:
+            self._open_btn.setText(self._get_text("btn.open", "Open"))
         if self._export_btn:
             self._export_btn.setText(self._get_text("btn.export", "Export"))
         if self._delete_btn:

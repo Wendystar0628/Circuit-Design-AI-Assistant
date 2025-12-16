@@ -27,7 +27,7 @@
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
@@ -138,6 +138,7 @@ class ConversationViewModel(QObject):
         self._logger = None
         self._markdown_converter = None
         self._config_manager = None
+        self._session_state_manager = None
         
         # 事件订阅句柄
         self._subscriptions: List[Callable] = []
@@ -206,7 +207,9 @@ class ConversationViewModel(QObject):
     
     @property
     def current_session_name(self) -> str:
-        """当前会话名称"""
+        """当前会话名称（从 SessionStateManager 获取）"""
+        if self.session_state_manager:
+            return self.session_state_manager.get_current_session_name()
         return self._current_session_name
     
     # ============================================================
@@ -260,6 +263,18 @@ class ConversationViewModel(QObject):
                 pass
         return self._config_manager
     
+    @property
+    def session_state_manager(self):
+        """延迟获取会话状态管理器"""
+        if self._session_state_manager is None:
+            try:
+                from shared.service_locator import ServiceLocator
+                from shared.service_names import SVC_SESSION_STATE_MANAGER
+                self._session_state_manager = ServiceLocator.get_optional(SVC_SESSION_STATE_MANAGER)
+            except Exception:
+                pass
+        return self._session_state_manager
+    
     def _get_markdown_converter(self):
         """获取 Markdown 转换器"""
         if self._markdown_converter is None:
@@ -298,6 +313,7 @@ class ConversationViewModel(QObject):
                 EVENT_WORKFLOW_LOCKED,
                 EVENT_WORKFLOW_UNLOCKED,
                 EVENT_CONTEXT_COMPRESS_COMPLETE,
+                EVENT_SESSION_CHANGED,
             )
             
             self.event_bus.subscribe(EVENT_LLM_CHUNK, self._on_llm_chunk)
@@ -312,6 +328,7 @@ class ConversationViewModel(QObject):
                 EVENT_CONTEXT_COMPRESS_COMPLETE,
                 self._on_compress_complete
             )
+            self.event_bus.subscribe(EVENT_SESSION_CHANGED, self._on_session_changed)
             
         except ImportError:
             if self.logger:
@@ -330,6 +347,7 @@ class ConversationViewModel(QObject):
                 EVENT_WORKFLOW_LOCKED,
                 EVENT_WORKFLOW_UNLOCKED,
                 EVENT_CONTEXT_COMPRESS_COMPLETE,
+                EVENT_SESSION_CHANGED,
             )
             
             self.event_bus.unsubscribe(EVENT_LLM_CHUNK, self._on_llm_chunk)
@@ -344,6 +362,7 @@ class ConversationViewModel(QObject):
                 EVENT_CONTEXT_COMPRESS_COMPLETE,
                 self._on_compress_complete
             )
+            self.event_bus.unsubscribe(EVENT_SESSION_CHANGED, self._on_session_changed)
             
         except ImportError:
             pass
@@ -616,21 +635,8 @@ class ConversationViewModel(QObject):
         if self._active_suggestion_message_id:
             self.mark_suggestion_expired()
         
-        # 创建用户消息显示
-        user_msg = DisplayMessage(
-            id=str(uuid.uuid4()),
-            role=ROLE_USER,
-            content_html=self._markdown_to_html(text),
-            attachments=attachments or [],
-            timestamp_display=self._format_timestamp(datetime.now().isoformat()),
-        )
-        self._messages.append(user_msg)
-        self.messages_changed.emit()
-        
-        # 开始加载状态
-        self.start_streaming()
-        
         # 委托给 ContextManager 发送（使用有状态便捷方法）
+        # 注意：不直接操作 _messages 列表，通过 load_messages() 统一同步
         if self.context_manager:
             try:
                 from domain.llm.message_types import Attachment
@@ -648,6 +654,13 @@ class ConversationViewModel(QObject):
                 
                 # 使用有状态便捷方法添加用户消息
                 self.context_manager.add_user_message(text, att_list)
+                
+                # 从 ContextManager 重新加载消息以保持同步
+                self.load_messages()
+                
+                # 开始加载状态（流式输出）
+                self.start_streaming()
+                
                 return True
                 
             except Exception as e:
@@ -716,10 +729,27 @@ class ConversationViewModel(QObject):
         获取上下文使用信息
         
         Returns:
-            Dict: 包含 ratio, used_tokens, total_tokens, state 等信息
+            Dict: 包含 ratio, current_tokens, max_tokens, state 等信息
         """
+        current_tokens = 0
+        max_tokens = 0
+        
+        if self.context_manager:
+            try:
+                state = self.context_manager._get_internal_state()
+                usage = self.context_manager.calculate_usage(state)
+                current_tokens = usage.get("total_tokens", 0)
+                # max_tokens 是可用于输入的空间（context_limit - output_reserve）
+                context_limit = usage.get("context_limit", 0)
+                output_reserve = usage.get("output_reserve", 0)
+                max_tokens = context_limit - output_reserve
+            except Exception:
+                pass
+        
         return {
             "ratio": self._usage_ratio,
+            "current_tokens": current_tokens,
+            "max_tokens": max_tokens,
             "state": self.compress_button_state,
             "message_count": len(self._messages),
         }
@@ -742,15 +772,16 @@ class ConversationViewModel(QObject):
         生成唯一的会话名称
         
         命名规则：
-        - 基础格式："新对话 YYYY-MM-DD"
-        - 若当天已有同名会话，追加序号："新对话 YYYY-MM-DD (2)"
+        - 基础格式："Chat YYYY-MM-DD HH:mm"（精确到分钟）
+        - 若已有同名会话，追加序号："Chat YYYY-MM-DD HH:mm (2)"
         - 序号从 2 开始递增，直到找到唯一名称
+        - 精确到分钟可避免同一天内多次新建对话时名称冲突
         
         Returns:
             str: 唯一的会话名称
         """
-        today = datetime.now().strftime("%Y-%m-%d")
-        base_name = f"新对话 {today}"
+        now = datetime.now().strftime("%Y-%m-%d %H:%M")
+        base_name = f"Chat {now}"
         
         # 获取已存在的会话名称列表
         existing_names = self._get_existing_session_names()
@@ -814,64 +845,74 @@ class ConversationViewModel(QObject):
     
     def set_session_name(self, name: str) -> None:
         """
-        设置当前会话名称
+        设置当前会话名称（内部使用，用于同步状态）
         
         Args:
             name: 会话名称
         """
         self._current_session_name = name
         self.session_name_updated.emit(name)
-        
-        # 保存到配置
-        if self.config_manager:
-            self.config_manager.set("current_conversation_name", name)
     
     def get_session_name(self) -> str:
         """
-        获取当前会话名称
+        获取当前会话名称（从 SessionStateManager 获取）
         
         Returns:
             str: 会话名称
         """
+        if self.session_state_manager:
+            return self.session_state_manager.get_current_session_name()
         return self._current_session_name
     
     def set_session_id(self, session_id: str) -> None:
         """
-        设置当前会话 ID
+        设置当前会话 ID（保留用于兼容）
         
         Args:
             session_id: 会话 ID
         """
         self._current_session_id = session_id
-        
-        # 保存到配置
-        if self.config_manager:
-            self.config_manager.set("current_conversation_id", session_id)
     
     def reset_session(self) -> str:
         """
         重置会话（新开对话时调用）
         
-        生成新的会话 ID 和唯一名称。
+        委托给 SessionStateManager.new_session()
         
         Returns:
             str: 新的会话名称
         """
-        # 生成新的会话 ID
-        self._current_session_id = str(uuid.uuid4())
+        if self.session_state_manager:
+            success, result = self.session_state_manager.new_session()
+            if success:
+                return result
         
-        # 生成唯一的会话名称
+        # 回退：生成唯一的会话名称
         self._current_session_name = self.generate_unique_session_name()
-        
-        # 保存到配置
-        if self.config_manager:
-            self.config_manager.set("current_conversation_id", self._current_session_id)
-            self.config_manager.set("current_conversation_name", self._current_session_name)
-        
-        # 发出信号
         self.session_name_updated.emit(self._current_session_name)
-        
         return self._current_session_name
+    
+    def request_new_session(self) -> Tuple[bool, str]:
+        """
+        请求新开对话（委托给 SessionStateManager）
+        
+        Returns:
+            (是否成功, 新会话名称或错误消息)
+        """
+        if self.session_state_manager:
+            return self.session_state_manager.new_session()
+        return False, "SessionStateManager not available"
+    
+    def request_save_session(self) -> Tuple[bool, str]:
+        """
+        请求保存当前会话（委托给 SessionStateManager）
+        
+        Returns:
+            (是否成功, 消息)
+        """
+        if self.session_state_manager:
+            return self.session_state_manager.save_current_session()
+        return False, "SessionStateManager not available"
     
     def _update_usage_ratio(self) -> None:
         """更新上下文占用比例"""
@@ -952,39 +993,40 @@ class ConversationViewModel(QObject):
     
     def _on_llm_complete(self, event_data: Dict[str, Any]) -> None:
         """处理 LLM 输出完成事件"""
-        data = event_data.get("data", {})
-        
-        # 如果有完整消息，使用它
-        if "message" in data:
-            msg_data = data["message"]
-            content_html = self._markdown_to_html(msg_data.get("content", ""))
-            reasoning_html = ""
-            if msg_data.get("reasoning_content"):
-                reasoning_html = self._markdown_to_html(msg_data["reasoning_content"])
-            
-            msg = DisplayMessage(
-                id=str(uuid.uuid4()),
-                role=ROLE_ASSISTANT,
-                content_html=content_html,
-                reasoning_html=reasoning_html,
-                operations=msg_data.get("operations", []),
-                timestamp_display=self._format_timestamp(datetime.now().isoformat()),
-            )
-            self._messages.append(msg)
-        else:
-            # 否则使用流式内容
-            self.finalize_stream()
-        
         # 更新状态
         self._is_loading = False
         self._current_stream_content = ""
         self._current_reasoning_content = ""
-        self._update_usage_ratio()
+        
+        # 从 ContextManager 重新加载消息以保持同步
+        # 注意：不直接操作 _messages 列表，避免消息重复
+        self.load_messages()
+        
+        # 每轮对话完成后自动保存会话
+        self._auto_save_session()
         
         # 发出信号
         self.stream_finished.emit()
-        self.messages_changed.emit()
         self.can_send_changed.emit(True)
+    
+    def _auto_save_session(self) -> None:
+        """
+        自动保存当前会话
+        
+        在每轮对话完成后调用，委托给 SessionStateManager。
+        """
+        if self.session_state_manager:
+            try:
+                success, msg = self.session_state_manager.save_current_session()
+                if success:
+                    if self.logger:
+                        self.logger.debug(f"Auto-saved session: {self.current_session_name}")
+                else:
+                    if self.logger:
+                        self.logger.warning(f"Auto-save failed: {msg}")
+            except Exception as e:
+                if self.logger:
+                    self.logger.warning(f"Auto-save error: {e}")
     
     def _on_iteration_awaiting(self, event_data: Dict[str, Any]) -> None:
         """处理迭代等待确认事件"""
@@ -1017,6 +1059,31 @@ class ConversationViewModel(QObject):
         elif status == "suggest_new_conversation":
             # 建议开启新对话
             self.new_conversation_suggested.emit()
+    
+    def _on_session_changed(self, event_data: Dict[str, Any]) -> None:
+        """
+        处理会话变更事件（由 SessionStateManager 发布）
+        
+        响应会话切换、新建、恢复等操作，刷新 UI 显示。
+        """
+        data = event_data.get("data", {})
+        session_name = data.get("session_name", "")
+        action = data.get("action", "")
+        
+        if self.logger:
+            self.logger.debug(f"Session changed: {action}, name={session_name}")
+        
+        # 更新内部状态
+        self._current_session_name = session_name
+        
+        # 发出会话名称更新信号
+        self.session_name_updated.emit(session_name)
+        
+        # 重新加载消息
+        self.load_messages()
+        
+        # 更新使用率
+        self._update_usage_ratio()
 
 
 # ============================================================

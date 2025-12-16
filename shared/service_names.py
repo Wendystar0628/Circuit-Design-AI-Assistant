@@ -76,6 +76,9 @@ SVC_LLM_CLIENT = "llm_client"
 # 上下文管理器 - 对话消息和 Token 管理
 SVC_CONTEXT_MANAGER = "context_manager"
 
+# 会话状态管理器 - 会话状态的唯一数据源
+SVC_SESSION_STATE_MANAGER = "session_state_manager"
+
 # Prompt 模板管理器 - 提示词模板
 SVC_PROMPT_TEMPLATE_MANAGER = "prompt_template_manager"
 
@@ -120,6 +123,7 @@ __all__ = [
     "SVC_TOOL_EXECUTOR",
     # 领域层
     "SVC_CONTEXT_MANAGER",
+    "SVC_SESSION_STATE_MANAGER",
     "SVC_PROMPT_TEMPLATE_MANAGER",
     "SVC_EXTERNAL_SERVICE_MANAGER",
     "SVC_ITERATION_TRACKER",

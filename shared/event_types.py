@@ -212,6 +212,14 @@ EVENT_SESSION_LOADED = "session_loaded"
 #   - new_name: str - 新名称
 EVENT_SESSION_NAME_CHANGED = "session_name_changed"
 
+# 会话状态变更（由 SessionStateManager 发布）
+# 携带数据：
+#   - session_name: str - 当前会话名称
+#   - message_count: int - 消息数量
+#   - action: str - 触发动作（"new", "switch", "save", "delete", "rename", "restore"）
+#   - previous_session_name: str - 之前的会话名称（可选）
+EVENT_SESSION_CHANGED = "session_changed"
+
 
 # ============================================================
 # 错误处理事件
@@ -342,6 +350,7 @@ __all__ = [
     "EVENT_CONVERSATION_UPDATED",
     "EVENT_SESSION_LOADED",
     "EVENT_SESSION_NAME_CHANGED",
+    "EVENT_SESSION_CHANGED",
     # 错误处理事件
     "EVENT_ERROR_OCCURRED",
     "EVENT_ERROR_RECOVERED",

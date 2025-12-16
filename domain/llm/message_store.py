@@ -49,8 +49,20 @@ IMPORTANCE_HIGH = "high"
 IMPORTANCE_MEDIUM = "medium"
 IMPORTANCE_LOW = "low"
 
-# 归档目录名
+# 会话目录名（相对于 .circuit_ai/）
+CONVERSATIONS_DIR = "conversations"
+
+# 归档目录名（相对于 .circuit_ai/）- 用于旧版归档功能
 ARCHIVE_DIR = "conversations/archive"
+
+# 会话索引文件名
+SESSIONS_INDEX_FILE = "sessions.json"
+
+# 文件名安全字符替换（特殊字符 → 下划线）
+UNSAFE_FILENAME_CHARS = '/\\:*?"<>|'
+
+# 文件名最大长度
+MAX_FILENAME_LENGTH = 100
 
 
 # ============================================================
@@ -634,6 +646,642 @@ class MessageStore:
             return state, False, str(e)
 
 
+    # ============================================================
+    # 文件名处理方法
+    # ============================================================
+    
+    def _safe_filename(self, name: str) -> str:
+        """
+        将会话名称转换为安全的文件名
+        
+        处理规则：
+        - 替换特殊字符 /\\:*?"<>| 为下划线
+        - 限制长度不超过 100 字符
+        - 超长时截断并添加哈希后缀
+        
+        Args:
+            name: 会话名称
+            
+        Returns:
+            str: 安全的文件名（不含扩展名）
+        """
+        import hashlib
+        
+        # 替换特殊字符
+        safe_name = name
+        for char in UNSAFE_FILENAME_CHARS:
+            safe_name = safe_name.replace(char, '_')
+        
+        # 处理长度限制
+        if len(safe_name) > MAX_FILENAME_LENGTH:
+            # 截断并添加哈希后缀以保证唯一性
+            hash_suffix = hashlib.md5(name.encode()).hexdigest()[:8]
+            safe_name = safe_name[:MAX_FILENAME_LENGTH - 9] + '_' + hash_suffix
+        
+        return safe_name
+    
+    def _get_session_file_path(
+        self,
+        project_path: str,
+        session_name: str
+    ) -> Path:
+        """
+        获取会话文件完整路径
+        
+        Args:
+            project_path: 项目路径
+            session_name: 会话名称
+            
+        Returns:
+            Path: 会话文件路径
+        """
+        safe_name = self._safe_filename(session_name)
+        return (
+            Path(project_path) / ".circuit_ai" / CONVERSATIONS_DIR / f"{safe_name}.json"
+        )
+    
+    def _get_sessions_index_path(self, project_path: str) -> Path:
+        """
+        获取会话索引文件路径
+        
+        Args:
+            project_path: 项目路径
+            
+        Returns:
+            Path: 索引文件路径
+        """
+        return (
+            Path(project_path) / ".circuit_ai" / CONVERSATIONS_DIR / SESSIONS_INDEX_FILE
+        )
+    
+    def _load_sessions_index(self, project_path: str) -> Dict[str, Any]:
+        """
+        加载会话索引文件
+        
+        Args:
+            project_path: 项目路径
+            
+        Returns:
+            Dict: 索引数据，若不存在则返回空结构
+        """
+        index_path = self._get_sessions_index_path(project_path)
+        
+        if not index_path.exists():
+            return {
+                "current_session_name": "",
+                "sessions": []
+            }
+        
+        try:
+            return json.loads(index_path.read_text(encoding="utf-8"))
+        except Exception as e:
+            if self.logger:
+                self.logger.error(f"加载会话索引失败: {e}")
+            return {
+                "current_session_name": "",
+                "sessions": []
+            }
+    
+    def _save_sessions_index(
+        self,
+        project_path: str,
+        index_data: Dict[str, Any]
+    ) -> bool:
+        """
+        保存会话索引文件
+        
+        Args:
+            project_path: 项目路径
+            index_data: 索引数据
+            
+        Returns:
+            bool: 是否成功
+        """
+        index_path = self._get_sessions_index_path(project_path)
+        
+        try:
+            index_path.parent.mkdir(parents=True, exist_ok=True)
+            index_path.write_text(
+                json.dumps(index_data, ensure_ascii=False, indent=2),
+                encoding="utf-8"
+            )
+            return True
+        except Exception as e:
+            if self.logger:
+                self.logger.error(f"保存会话索引失败: {e}")
+            return False
+    
+    def _update_sessions_index(
+        self,
+        project_path: str,
+        session_info: Dict[str, Any],
+        set_current: bool = True
+    ) -> bool:
+        """
+        更新会话索引
+        
+        Args:
+            project_path: 项目路径
+            session_info: 会话信息（name, file_name, created_at, updated_at, message_count, preview）
+            set_current: 是否设置为当前会话
+            
+        Returns:
+            bool: 是否成功
+        """
+        index_data = self._load_sessions_index(project_path)
+        
+        session_name = session_info.get("name", "")
+        
+        # 查找是否已存在
+        existing_idx = None
+        for i, s in enumerate(index_data["sessions"]):
+            if s.get("name") == session_name:
+                existing_idx = i
+                break
+        
+        if existing_idx is not None:
+            # 更新现有记录
+            index_data["sessions"][existing_idx].update(session_info)
+        else:
+            # 添加新记录
+            index_data["sessions"].append(session_info)
+        
+        # 设置当前会话
+        if set_current:
+            index_data["current_session_name"] = session_name
+        
+        return self._save_sessions_index(project_path, index_data)
+    
+    # ============================================================
+    # 会话管理方法
+    # ============================================================
+    
+    def save_session(
+        self,
+        state: Dict[str, Any],
+        project_path: str,
+        session_name: str
+    ) -> Tuple[bool, str]:
+        """
+        保存会话到文件
+        
+        使用会话名称作为文件名（经过安全处理）。
+        
+        Args:
+            state: 当前状态
+            project_path: 项目路径
+            session_name: 会话名称
+            
+        Returns:
+            (是否成功, 消息)
+        """
+        with self._lock:
+            messages = self.get_messages(state)
+            safe_name = self._safe_filename(session_name)
+            
+            # 获取首条用户消息作为预览
+            preview = ""
+            for msg in messages:
+                if msg.is_user():
+                    preview = msg.content[:50]
+                    break
+            
+            # 构建会话数据
+            session_data = {
+                "name": session_name,
+                "file_name": safe_name,
+                "created_at": datetime.now().isoformat(),
+                "updated_at": datetime.now().isoformat(),
+                "message_count": len(messages),
+                "messages": [msg.to_dict() for msg in messages],
+                "summary": self.get_summary(state),
+                "ui_state": {
+                    "scroll_position": 0,
+                }
+            }
+            
+            # 确定保存路径
+            session_file = self._get_session_file_path(project_path, session_name)
+            
+            try:
+                # 创建目录
+                session_file.parent.mkdir(parents=True, exist_ok=True)
+                
+                # 写入文件
+                session_file.write_text(
+                    json.dumps(session_data, ensure_ascii=False, indent=2),
+                    encoding="utf-8"
+                )
+                
+                # 更新索引
+                self._update_sessions_index(project_path, {
+                    "name": session_name,
+                    "file_name": safe_name,
+                    "created_at": session_data["created_at"],
+                    "updated_at": session_data["updated_at"],
+                    "message_count": len(messages),
+                    "preview": preview,
+                })
+                
+                if self.logger:
+                    self.logger.info(f"会话已保存: {session_name}")
+                
+                return True, session_name
+                
+            except Exception as e:
+                if self.logger:
+                    self.logger.error(f"保存会话失败: {e}")
+                return False, str(e)
+    
+    def load_session(
+        self,
+        project_path: str,
+        session_name: str,
+        state: Dict[str, Any]
+    ) -> Tuple[Dict[str, Any], bool, str, Optional[Dict[str, Any]]]:
+        """
+        加载指定会话
+        
+        Args:
+            project_path: 项目路径
+            session_name: 会话名称
+            state: 当前状态
+            
+        Returns:
+            (更新后的状态, 是否成功, 消息, 会话元数据)
+        """
+        session_file = self._get_session_file_path(project_path, session_name)
+        
+        if not session_file.exists():
+            return state, False, f"会话文件不存在: {session_name}", None
+        
+        try:
+            data = json.loads(session_file.read_text(encoding="utf-8"))
+            
+            # 重建消息
+            messages_data = data.get("messages", [])
+            messages = [Message.from_dict(m) for m in messages_data]
+            
+            # 更新状态
+            new_state = self._message_adapter.update_state_messages(state, messages)
+            new_state["conversation_summary"] = data.get("summary", "")
+            
+            # 提取元数据
+            metadata = {
+                "name": data.get("name", session_name),
+                "file_name": data.get("file_name", ""),
+                "created_at": data.get("created_at", ""),
+                "updated_at": data.get("updated_at", ""),
+                "message_count": data.get("message_count", 0),
+                "ui_state": data.get("ui_state", {}),
+            }
+            
+            # 更新索引中的当前会话
+            index_data = self._load_sessions_index(project_path)
+            index_data["current_session_name"] = session_name
+            self._save_sessions_index(project_path, index_data)
+            
+            if self.logger:
+                self.logger.info(f"会话已加载: {session_name}")
+            
+            return new_state, True, f"已加载 {len(messages)} 条消息", metadata
+            
+        except Exception as e:
+            if self.logger:
+                self.logger.error(f"加载会话失败: {e}")
+            return state, False, str(e), None
+    
+    def load_current_session(
+        self,
+        project_path: str,
+        state: Dict[str, Any]
+    ) -> Tuple[Dict[str, Any], bool, str, Optional[Dict[str, Any]]]:
+        """
+        加载当前会话
+        
+        从 sessions.json 获取 current_session_name，然后加载对应会话文件。
+        
+        Args:
+            project_path: 项目路径
+            state: 当前状态
+            
+        Returns:
+            (更新后的状态, 是否成功, 消息, 会话元数据)
+        """
+        index_data = self._load_sessions_index(project_path)
+        current_name = index_data.get("current_session_name", "")
+        
+        if not current_name:
+            return state, False, "没有当前会话", None
+        
+        return self.load_session(project_path, current_name, state)
+    
+    def save_current_session(
+        self,
+        state: Dict[str, Any],
+        project_path: str,
+        session_name: str
+    ) -> Tuple[bool, str]:
+        """
+        保存当前会话
+        
+        Args:
+            state: 当前状态
+            project_path: 项目路径
+            session_name: 会话名称
+            
+        Returns:
+            (是否成功, 消息)
+        """
+        return self.save_session(state, project_path, session_name)
+    
+    def create_new_session(
+        self,
+        state: Dict[str, Any],
+        project_path: str,
+        session_name: str,
+        save_current: bool = True,
+        current_session_name: str = ""
+    ) -> Tuple[Dict[str, Any], bool, str]:
+        """
+        创建新会话
+        
+        Args:
+            state: 当前状态
+            project_path: 项目路径
+            session_name: 新会话名称
+            save_current: 是否保存当前会话
+            current_session_name: 当前会话名称（用于保存）
+            
+        Returns:
+            (更新后的状态, 是否成功, 消息)
+        """
+        with self._lock:
+            # 保存当前会话（如果有消息且需要保存）
+            if save_current and current_session_name:
+                messages = self.get_messages(state)
+                if messages:
+                    success, msg = self.save_session(
+                        state, project_path, current_session_name
+                    )
+                    if not success:
+                        if self.logger:
+                            self.logger.warning(f"保存当前会话失败: {msg}")
+            
+            # 重置消息列表
+            new_state = self.reset_messages(state, keep_system=True)
+            
+            # 创建新会话文件
+            success, msg = self.save_session(
+                new_state, project_path, session_name
+            )
+            
+            if success:
+                if self.logger:
+                    self.logger.info(f"新会话已创建: {session_name}")
+                return new_state, True, f"新会话已创建: {session_name}"
+            else:
+                return new_state, False, f"创建新会话失败: {msg}"
+    
+    def delete_session(
+        self,
+        project_path: str,
+        session_name: str
+    ) -> Tuple[bool, str]:
+        """
+        删除会话
+        
+        Args:
+            project_path: 项目路径
+            session_name: 会话名称
+            
+        Returns:
+            (是否成功, 消息)
+        """
+        with self._lock:
+            session_file = self._get_session_file_path(project_path, session_name)
+            
+            try:
+                # 删除文件
+                if session_file.exists():
+                    session_file.unlink()
+                
+                # 更新索引
+                index_data = self._load_sessions_index(project_path)
+                index_data["sessions"] = [
+                    s for s in index_data["sessions"]
+                    if s.get("name") != session_name
+                ]
+                
+                # 如果删除的是当前会话，清空 current_session_name
+                if index_data.get("current_session_name") == session_name:
+                    index_data["current_session_name"] = ""
+                
+                self._save_sessions_index(project_path, index_data)
+                
+                if self.logger:
+                    self.logger.info(f"会话已删除: {session_name}")
+                
+                return True, f"会话已删除: {session_name}"
+                
+            except Exception as e:
+                if self.logger:
+                    self.logger.error(f"删除会话失败: {e}")
+                return False, str(e)
+    
+    def rename_session(
+        self,
+        project_path: str,
+        old_name: str,
+        new_name: str
+    ) -> Tuple[bool, str]:
+        """
+        重命名会话
+        
+        Args:
+            project_path: 项目路径
+            old_name: 旧会话名称
+            new_name: 新会话名称
+            
+        Returns:
+            (是否成功, 消息)
+        """
+        with self._lock:
+            old_file = self._get_session_file_path(project_path, old_name)
+            new_file = self._get_session_file_path(project_path, new_name)
+            
+            if not old_file.exists():
+                return False, f"会话不存在: {old_name}"
+            
+            if new_file.exists() and old_file != new_file:
+                return False, f"会话名称已存在: {new_name}"
+            
+            try:
+                # 读取旧文件
+                data = json.loads(old_file.read_text(encoding="utf-8"))
+                
+                # 更新会话数据
+                new_safe_name = self._safe_filename(new_name)
+                data["name"] = new_name
+                data["file_name"] = new_safe_name
+                data["updated_at"] = datetime.now().isoformat()
+                
+                # 写入新文件
+                new_file.write_text(
+                    json.dumps(data, ensure_ascii=False, indent=2),
+                    encoding="utf-8"
+                )
+                
+                # 删除旧文件（如果文件名不同）
+                if old_file != new_file:
+                    old_file.unlink()
+                
+                # 更新索引
+                index_data = self._load_sessions_index(project_path)
+                for s in index_data["sessions"]:
+                    if s.get("name") == old_name:
+                        s["name"] = new_name
+                        s["file_name"] = new_safe_name
+                        s["updated_at"] = data["updated_at"]
+                        break
+                
+                # 更新当前会话名称
+                if index_data.get("current_session_name") == old_name:
+                    index_data["current_session_name"] = new_name
+                
+                self._save_sessions_index(project_path, index_data)
+                
+                if self.logger:
+                    self.logger.info(f"会话已重命名: {old_name} -> {new_name}")
+                
+                return True, f"会话已重命名: {new_name}"
+                
+            except Exception as e:
+                if self.logger:
+                    self.logger.error(f"重命名会话失败: {e}")
+                return False, str(e)
+    
+    def get_all_sessions(
+        self,
+        project_path: str,
+        sync_with_files: bool = True
+    ) -> List[Dict[str, Any]]:
+        """
+        获取所有会话列表
+        
+        同时检查索引文件和实际会话文件，确保同步一致。
+        
+        Args:
+            project_path: 项目路径
+            sync_with_files: 是否与实际文件同步（默认 True）
+            
+        Returns:
+            会话列表
+        """
+        index_data = self._load_sessions_index(project_path)
+        indexed_sessions = index_data.get("sessions", [])
+        
+        if not sync_with_files:
+            return indexed_sessions
+        
+        # 扫描实际的会话文件
+        conversations_dir = Path(project_path) / ".circuit_ai" / CONVERSATIONS_DIR
+        if not conversations_dir.exists():
+            return indexed_sessions
+        
+        # 构建索引中的会话名称集合
+        indexed_names = {s.get("name", "") for s in indexed_sessions}
+        
+        # 扫描目录中的 JSON 文件（排除 sessions.json）
+        updated = False
+        for file_path in conversations_dir.glob("*.json"):
+            if file_path.name == SESSIONS_INDEX_FILE:
+                continue
+            
+            # 尝试读取文件获取会话信息
+            try:
+                data = json.loads(file_path.read_text(encoding="utf-8"))
+                session_name = data.get("name", "")
+                
+                if session_name and session_name not in indexed_names:
+                    # 文件存在但不在索引中，添加到索引
+                    new_session_info = {
+                        "name": session_name,
+                        "file_name": data.get("file_name", file_path.stem),
+                        "created_at": data.get("created_at", ""),
+                        "updated_at": data.get("updated_at", ""),
+                        "message_count": data.get("message_count", 0),
+                        "preview": self._extract_preview(data.get("messages", [])),
+                    }
+                    indexed_sessions.append(new_session_info)
+                    indexed_names.add(session_name)
+                    updated = True
+                    
+                    if self.logger:
+                        self.logger.info(f"Added missing session to index: {session_name}")
+                        
+            except Exception as e:
+                if self.logger:
+                    self.logger.warning(f"Failed to read session file {file_path}: {e}")
+                continue
+        
+        # 检查索引中的会话是否都有对应文件
+        valid_sessions = []
+        for session in indexed_sessions:
+            session_name = session.get("name", "")
+            if not session_name:
+                continue
+            
+            session_file = self._get_session_file_path(project_path, session_name)
+            if session_file.exists():
+                valid_sessions.append(session)
+            else:
+                # 文件不存在，从索引中移除
+                updated = True
+                if self.logger:
+                    self.logger.info(f"Removed orphan session from index: {session_name}")
+        
+        # 如果有更新，保存索引
+        if updated:
+            index_data["sessions"] = valid_sessions
+            self._save_sessions_index(project_path, index_data)
+        
+        return valid_sessions
+    
+    def _extract_preview(self, messages: List[Dict[str, Any]]) -> str:
+        """从消息列表中提取预览文本"""
+        for msg in messages:
+            if msg.get("role") == "user":
+                content = msg.get("content", "")
+                return content[:50] if content else ""
+        return ""
+    
+    def get_current_session_name(self, project_path: str) -> str:
+        """
+        获取当前会话名称
+        
+        Args:
+            project_path: 项目路径
+            
+        Returns:
+            str: 当前会话名称
+        """
+        index_data = self._load_sessions_index(project_path)
+        return index_data.get("current_session_name", "")
+    
+    def generate_session_name(self) -> str:
+        """
+        生成会话名称
+        
+        格式：Chat YYYY-MM-DD HH:mm（精确到分钟）
+        
+        Returns:
+            str: 会话名称
+        """
+        now = datetime.now().strftime("%Y-%m-%d %H:%M")
+        return f"Chat {now}"
+
+
 # ============================================================
 # 模块导出
 # ============================================================
@@ -643,5 +1291,7 @@ __all__ = [
     "IMPORTANCE_HIGH",
     "IMPORTANCE_MEDIUM",
     "IMPORTANCE_LOW",
+    "CONVERSATIONS_DIR",
     "ARCHIVE_DIR",
+    "SESSIONS_INDEX_FILE",
 ]

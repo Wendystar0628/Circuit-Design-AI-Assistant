@@ -37,7 +37,6 @@ from presentation.panels.conversation import (
     ConversationViewModel,
     TitleBar,
     MessageArea,
-    StatusBar,
     InputArea,
     AttachmentManager,
     SUGGESTION_STATE_ACTIVE,
@@ -95,7 +94,6 @@ class ConversationPanel(QWidget):
         # 子组件引用
         self._title_bar: Optional[TitleBar] = None
         self._message_area: Optional[MessageArea] = None
-        self._status_bar: Optional[StatusBar] = None
         self._input_area: Optional[InputArea] = None
         self._attachment_manager: Optional[AttachmentManager] = None
         
@@ -199,15 +197,11 @@ class ConversationPanel(QWidget):
         self._message_area = MessageArea(self)
         main_layout.addWidget(self._message_area, 1)
         
-        # 3. 状态栏
-        self._status_bar = StatusBar(self)
-        main_layout.addWidget(self._status_bar)
-        
-        # 4. 附件管理器（隐藏，用于管理附件数据）
+        # 3. 附件管理器（隐藏，用于管理附件数据）
         self._attachment_manager = AttachmentManager(self)
         main_layout.addWidget(self._attachment_manager)
         
-        # 5. 输入区域
+        # 4. 输入区域
         self._input_area = InputArea(self)
         main_layout.addWidget(self._input_area)
     
@@ -227,10 +221,7 @@ class ConversationPanel(QWidget):
             self._title_bar.session_name_changed.connect(
                 self._on_session_name_changed
             )
-        
-        # 状态栏信号
-        if self._status_bar:
-            self._status_bar.compress_clicked.connect(
+            self._title_bar.compress_clicked.connect(
                 self._on_compress_clicked
             )
         
@@ -304,6 +295,7 @@ class ConversationPanel(QWidget):
                 EVENT_WORKFLOW_LOCKED,
                 EVENT_WORKFLOW_UNLOCKED,
                 EVENT_ITERATION_AWAITING_CONFIRMATION,
+                EVENT_SESSION_CHANGED,
             )
             
             self.event_bus.subscribe(
@@ -327,6 +319,10 @@ class ConversationPanel(QWidget):
                 EVENT_ITERATION_AWAITING_CONFIRMATION,
                 self._on_iteration_awaiting
             )
+            # 订阅会话变更事件，更新标题栏
+            self.event_bus.subscribe(
+                EVENT_SESSION_CHANGED, self._on_session_changed
+            )
             
         except ImportError:
             if self.logger:
@@ -345,6 +341,7 @@ class ConversationPanel(QWidget):
                 EVENT_WORKFLOW_LOCKED,
                 EVENT_WORKFLOW_UNLOCKED,
                 EVENT_ITERATION_AWAITING_CONFIRMATION,
+                EVENT_SESSION_CHANGED,
             )
             
             self.event_bus.unsubscribe(
@@ -365,6 +362,9 @@ class ConversationPanel(QWidget):
             self.event_bus.unsubscribe(
                 EVENT_ITERATION_AWAITING_CONFIRMATION,
                 self._on_iteration_awaiting
+            )
+            self.event_bus.unsubscribe(
+                EVENT_SESSION_CHANGED, self._on_session_changed
             )
             
         except ImportError:
@@ -389,15 +389,17 @@ class ConversationPanel(QWidget):
     
     def _update_usage_display(self) -> None:
         """更新上下文占用显示"""
-        if self.view_model is None or self._status_bar is None:
+        if self.view_model is None or self._input_area is None:
             return
         
-        ratio = self.view_model.usage_ratio
-        self._status_bar.update_usage(ratio)
+        # 获取完整的使用信息
+        usage_info = self.view_model.get_usage_info()
+        ratio = usage_info.get("ratio", 0.0)
+        current_tokens = usage_info.get("current_tokens", 0)
+        max_tokens = usage_info.get("max_tokens", 0)
         
-        # 根据 ViewModel 状态更新按钮
-        state = self.view_model.compress_button_state
-        self._status_bar.set_compress_button_state(state)
+        # 更新输入区域的占用显示
+        self._input_area.update_usage(ratio, current_tokens, max_tokens)
 
     # ============================================================
     # 事件处理 - EventBus 事件
@@ -430,6 +432,26 @@ class ConversationPanel(QWidget):
     def _on_iteration_awaiting(self, event_data: Dict[str, Any]) -> None:
         """处理迭代等待确认事件"""
         QTimer.singleShot(100, self.refresh_display)
+    
+    def _on_session_changed(self, event_data: Dict[str, Any]) -> None:
+        """
+        处理会话变更事件（由 SessionStateManager 发布）
+        
+        更新标题栏显示会话名称，刷新消息显示。
+        """
+        data = event_data.get("data", {})
+        session_name = data.get("session_name", "")
+        action = data.get("action", "")
+        
+        if self.logger:
+            self.logger.debug(f"Session changed in panel: {action}, name={session_name}")
+        
+        # 更新标题栏
+        if self._title_bar and session_name:
+            self._title_bar.set_session_name(session_name)
+        
+        # 刷新显示（ViewModel 会在其 _on_session_changed 中重新加载消息）
+        QTimer.singleShot(50, self.refresh_display)
 
     # ============================================================
     # 事件处理 - ViewModel 信号
@@ -490,19 +512,8 @@ class ConversationPanel(QWidget):
     
     def _on_new_conversation_clicked(self) -> None:
         """处理新开对话按钮点击"""
-        reply = QMessageBox.question(
-            self,
-            self._get_text("dialog.confirm.title", "确认"),
-            self._get_text(
-                "msg.confirm_new_conversation",
-                "是否归档当前对话并开始新对话？"
-            ),
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No
-        )
-        
-        if reply == QMessageBox.StandardButton.Yes:
-            self.start_new_conversation()
+        # 直接开始新对话，无需确认（当前会话自动保存）
+        self.start_new_conversation()
     
     def _on_history_clicked(self) -> None:
         """处理历史对话按钮点击"""
@@ -550,9 +561,10 @@ class ConversationPanel(QWidget):
             file_filter
         )
         
-        if self._attachment_manager:
+        # 添加到 InputArea 的附件列表
+        if self._input_area:
             for path in paths:
-                self._attachment_manager.add_attachment(path, "image")
+                self._input_area.add_attachment(path, "image")
     
     def _on_select_file_clicked(self) -> None:
         """处理选择文件按钮点击"""
@@ -563,9 +575,10 @@ class ConversationPanel(QWidget):
             "All Files (*.*)"
         )
         
-        if self._attachment_manager:
+        # 添加到 InputArea 的附件列表
+        if self._input_area:
             for path in paths:
-                self._attachment_manager.add_attachment(path, "file")
+                self._input_area.add_attachment(path, "file")
         
         if paths:
             self.file_selected.emit(paths)
@@ -624,15 +637,11 @@ class ConversationPanel(QWidget):
         if self.view_model and not self.view_model.can_send:
             return
         
-        # 获取附件
-        attachments = []
-        if self._attachment_manager:
-            attachments = self._attachment_manager.get_attachments()
+        # 获取附件（从 InputArea 获取）
+        attachments = self._input_area.get_attachments()
         
-        # 清空输入
-        self._input_area.clear_text()
-        if self._attachment_manager:
-            self._attachment_manager.clear_attachments()
+        # 清空输入和附件
+        self._input_area.clear()
         
         # 通过 ViewModel 发送
         if self.view_model:
@@ -648,40 +657,128 @@ class ConversationPanel(QWidget):
             self._attachment_manager.clear_attachments()
     
     def start_new_conversation(self) -> None:
-        """新开对话"""
-        # 归档当前对话
-        self._archive_conversation()
+        """
+        新开对话（委托给 SessionStateManager）
         
-        # 清空 ViewModel 并重置会话
-        new_session_name = ""
+        SessionStateManager 原子执行：
+        1. 保存当前会话
+        2. 清空消息
+        3. 生成新名称
+        4. 发布 EVENT_SESSION_CHANGED 事件
+        5. UI 组件订阅事件后自动刷新
+        """
         if self.view_model:
-            self.view_model.clear()
-            new_session_name = self.view_model.reset_session()
-        
-        # 清空显示
-        self.clear_display()
-        
-        # 更新标题栏显示新会话名称
-        if new_session_name and self._title_bar:
-            self._title_bar.set_session_name(new_session_name)
-        
-        # 发布事件
-        if self.event_bus:
-            try:
-                from shared.event_types import EVENT_CONVERSATION_RESET
-                self.event_bus.publish(EVENT_CONVERSATION_RESET, {
-                    "new_session_name": new_session_name,
-                })
-            except ImportError:
-                pass
+            # 委托给 ViewModel，ViewModel 再委托给 SessionStateManager
+            success, new_session_name = self.view_model.request_new_session()
+            
+            if success:
+                # 清空 ViewModel 显示数据
+                self.view_model.clear()
+                
+                # 清空显示
+                self.clear_display()
+                
+                # 更新标题栏显示新会话名称
+                if new_session_name and self._title_bar:
+                    self._title_bar.set_session_name(new_session_name)
+                
+                if self.logger:
+                    self.logger.info(f"New conversation started: {new_session_name}")
+            else:
+                if self.logger:
+                    self.logger.warning(f"Failed to start new conversation: {new_session_name}")
         
         # 发出信号
         self.new_conversation_requested.emit()
     
+    def _save_current_conversation(self, session_name: str) -> None:
+        """
+        保存当前对话
+        
+        Args:
+            session_name: 会话名称
+        """
+        if not session_name:
+            return
+        
+        # 获取项目路径
+        project_path = None
+        if self.app_state:
+            try:
+                from shared.app_state import STATE_PROJECT_PATH
+                project_path = self.app_state.get(STATE_PROJECT_PATH)
+            except ImportError:
+                pass
+        
+        if not project_path:
+            if self.logger:
+                self.logger.debug("No project path, skip save")
+            return
+        
+        # 通过 ContextManager 保存
+        try:
+            from shared.service_locator import ServiceLocator
+            from shared.service_names import SVC_CONTEXT_MANAGER
+            
+            context_manager = ServiceLocator.get_optional(SVC_CONTEXT_MANAGER)
+            if context_manager:
+                state = context_manager._get_internal_state()
+                success, msg = context_manager.save_session(
+                    state, project_path, session_name
+                )
+                if success:
+                    if self.logger:
+                        self.logger.info(f"对话已保存: {session_name}")
+                else:
+                    if self.logger:
+                        self.logger.warning(f"保存失败: {msg}")
+        except Exception as e:
+            if self.logger:
+                self.logger.error(f"保存对话时出错: {e}")
+    
+    def _create_new_session_file(self, session_name: str) -> None:
+        """
+        创建新会话文件
+        
+        Args:
+            session_name: 新会话名称
+        """
+        if not session_name:
+            return
+        
+        # 获取项目路径
+        project_path = None
+        if self.app_state:
+            try:
+                from shared.app_state import STATE_PROJECT_PATH
+                project_path = self.app_state.get(STATE_PROJECT_PATH)
+            except ImportError:
+                pass
+        
+        if not project_path:
+            return
+        
+        # 通过 ContextManager 创建新会话
+        try:
+            from shared.service_locator import ServiceLocator
+            from shared.service_names import SVC_CONTEXT_MANAGER
+            
+            context_manager = ServiceLocator.get_optional(SVC_CONTEXT_MANAGER)
+            if context_manager:
+                state = context_manager._get_internal_state()
+                context_manager.save_session(state, project_path, session_name)
+        except Exception as e:
+            if self.logger:
+                self.logger.warning(f"创建新会话文件失败: {e}")
+    
     def _archive_conversation(self) -> None:
-        """归档当前对话"""
-        if self.logger:
-            self.logger.info("对话已归档")
+        """归档当前对话（保留用于兼容）"""
+        # 获取当前会话名称
+        session_name = ""
+        if self.view_model:
+            session_name = self.view_model.current_session_name
+        
+        self._save_current_conversation(session_name)
     
     def handle_stream_chunk(self, chunk_type: str, text: str) -> None:
         """
@@ -792,8 +889,6 @@ class ConversationPanel(QWidget):
         """刷新 UI 文本"""
         if self._title_bar:
             self._title_bar.retranslate_ui()
-        if self._status_bar:
-            self._status_bar.retranslate_ui()
         if self._input_area:
             self._input_area.retranslate_ui()
         

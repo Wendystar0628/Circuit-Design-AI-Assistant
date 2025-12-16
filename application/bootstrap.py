@@ -350,14 +350,26 @@ def _delayed_init():
             _logger.info("Phase 3.4 ContextManager 初始化完成")
 
         # --------------------------------------------------------
-        # 3.5 LLM 客户端初始化（可选，依赖配置）
+        # 3.5 SessionStateManager 初始化
+        # 依赖：Logger、EventBus、ContextManager、AppState
+        # 职责：会话状态的唯一数据源（Single Source of Truth）
+        # --------------------------------------------------------
+        from domain.llm.session_state_manager import SessionStateManager
+        from shared.service_names import SVC_SESSION_STATE_MANAGER
+        session_state_manager = SessionStateManager()
+        ServiceLocator.register(SVC_SESSION_STATE_MANAGER, session_state_manager)
+        if _logger:
+            _logger.info("Phase 3.5 SessionStateManager 初始化完成")
+
+        # --------------------------------------------------------
+        # 3.6 LLM 客户端初始化（可选，依赖配置）
         # 依赖：ConfigManager、CredentialManager
         # 职责：提供 LLM API 调用能力
         # --------------------------------------------------------
         _init_llm_client()
 
         # --------------------------------------------------------
-        # 3.6 发布 EVENT_INIT_COMPLETE 事件
+        # 3.7 发布 EVENT_INIT_COMPLETE 事件
         # 通知所有订阅者初始化完成
         # --------------------------------------------------------
         from shared.service_locator import ServiceLocator
@@ -366,7 +378,7 @@ def _delayed_init():
         event_bus = ServiceLocator.get(SVC_EVENT_BUS)
         event_bus.publish(EVENT_INIT_COMPLETE, {"timestamp": time.time()})
         if _logger:
-            _logger.info("Phase 3.5 EVENT_INIT_COMPLETE 已发布")
+            _logger.info("Phase 3.7 EVENT_INIT_COMPLETE 已发布")
 
         print("=" * 50)
         print("初始化完成！应用已就绪。")

@@ -277,6 +277,9 @@ class LLMWorker(BaseWorker):
             # 发送结果
             self.emit_result(result.to_dict())
             
+            # 发布 LLM 完成事件
+            self._publish_llm_complete_event(result)
+            
         except Exception as e:
             raise e
 
@@ -373,6 +376,9 @@ class LLMWorker(BaseWorker):
             
             # 发送结果
             self.emit_result(result.to_dict())
+            
+            # 发布 LLM 完成事件
+            self._publish_llm_complete_event(result)
             
         except Exception as e:
             # 流式传输中断，返回部分内容
@@ -480,6 +486,27 @@ class LLMWorker(BaseWorker):
     # ============================================================
     # 错误处理
     # ============================================================
+
+    def _publish_llm_complete_event(self, result: LLMResult) -> None:
+        """
+        发布 LLM 完成事件
+        
+        Args:
+            result: LLM 响应结果
+        """
+        if self.event_bus:
+            from shared.event_types import EVENT_LLM_COMPLETE
+            self.event_bus.publish(
+                EVENT_LLM_COMPLETE,
+                data={
+                    "content": result.content,
+                    "reasoning_content": result.reasoning_content,
+                    "tool_calls": result.tool_calls,
+                    "usage": result.usage,
+                    "is_partial": result.is_partial,
+                },
+                source="llm_worker"
+            )
 
     def _handle_error(self, error: Exception) -> None:
         """

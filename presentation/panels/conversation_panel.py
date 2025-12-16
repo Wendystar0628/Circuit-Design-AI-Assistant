@@ -303,8 +303,6 @@ class ConversationPanel(QWidget):
                 EVENT_LANGUAGE_CHANGED,
                 EVENT_WORKFLOW_LOCKED,
                 EVENT_WORKFLOW_UNLOCKED,
-                EVENT_LLM_CHUNK,
-                EVENT_LLM_COMPLETE,
                 EVENT_ITERATION_AWAITING_CONFIRMATION,
             )
             
@@ -323,12 +321,8 @@ class ConversationPanel(QWidget):
             self.event_bus.subscribe(
                 EVENT_WORKFLOW_UNLOCKED, self._on_workflow_unlocked
             )
-            self.event_bus.subscribe(
-                EVENT_LLM_CHUNK, self._on_llm_chunk
-            )
-            self.event_bus.subscribe(
-                EVENT_LLM_COMPLETE, self._on_llm_complete
-            )
+            # 注意：EVENT_LLM_CHUNK 和 EVENT_LLM_COMPLETE 由 ViewModel 处理
+            # ConversationPanel 通过 ViewModel 的信号（stream_updated, stream_finished）响应
             self.event_bus.subscribe(
                 EVENT_ITERATION_AWAITING_CONFIRMATION,
                 self._on_iteration_awaiting
@@ -350,8 +344,6 @@ class ConversationPanel(QWidget):
                 EVENT_LANGUAGE_CHANGED,
                 EVENT_WORKFLOW_LOCKED,
                 EVENT_WORKFLOW_UNLOCKED,
-                EVENT_LLM_CHUNK,
-                EVENT_LLM_COMPLETE,
                 EVENT_ITERATION_AWAITING_CONFIRMATION,
             )
             
@@ -369,12 +361,6 @@ class ConversationPanel(QWidget):
             )
             self.event_bus.unsubscribe(
                 EVENT_WORKFLOW_UNLOCKED, self._on_workflow_unlocked
-            )
-            self.event_bus.unsubscribe(
-                EVENT_LLM_CHUNK, self._on_llm_chunk
-            )
-            self.event_bus.unsubscribe(
-                EVENT_LLM_COMPLETE, self._on_llm_complete
             )
             self.event_bus.unsubscribe(
                 EVENT_ITERATION_AWAITING_CONFIRMATION,
@@ -441,21 +427,6 @@ class ConversationPanel(QWidget):
         if self._input_area:
             self._input_area.set_send_enabled(True)
     
-    def _on_llm_chunk(self, event_data: Dict[str, Any]) -> None:
-        """处理 LLM 流式输出块事件"""
-        data = event_data.get("data", {})
-        chunk = data.get("chunk", "")
-        chunk_type = data.get("type", "content")
-        
-        if self._message_area:
-            self._message_area.append_stream_chunk(chunk_type, chunk)
-    
-    def _on_llm_complete(self, event_data: Dict[str, Any]) -> None:
-        """处理 LLM 输出完成事件"""
-        if self._message_area:
-            self._message_area.finish_streaming()
-        self.refresh_display()
-    
     def _on_iteration_awaiting(self, event_data: Dict[str, Any]) -> None:
         """处理迭代等待确认事件"""
         QTimer.singleShot(100, self.refresh_display)
@@ -478,9 +449,10 @@ class ConversationPanel(QWidget):
     @pyqtSlot()
     def _on_stream_finished(self) -> None:
         """处理流式输出完成"""
+        # 只结束流式输出，不刷新显示
+        # 刷新由 messages_changed 信号触发的 _on_messages_changed 处理
         if self._message_area:
             self._message_area.finish_streaming()
-        self.refresh_display()
     
     @pyqtSlot(float)
     def _on_usage_changed(self, ratio: float) -> None:
@@ -739,8 +711,22 @@ class ConversationPanel(QWidget):
         Args:
             result: LLM 完整响应结果
         """
+        # 结束流式输出气泡
         if self._message_area:
             self._message_area.finish_streaming()
+        
+        # 将助手消息添加到 ViewModel
+        if self.view_model:
+            content = result.get("content", "")
+            reasoning_content = result.get("reasoning_content", "")
+            
+            if content:
+                self.view_model.add_assistant_message(
+                    content=content,
+                    reasoning_content=reasoning_content,
+                )
+        
+        # 刷新显示
         self.refresh_display()
     
     def handle_error(self, error_msg: str) -> None:

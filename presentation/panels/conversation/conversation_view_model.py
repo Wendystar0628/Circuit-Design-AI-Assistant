@@ -659,6 +659,45 @@ class ConversationViewModel(QObject):
         
         return False
     
+    def add_assistant_message(
+        self,
+        content: str,
+        reasoning_content: str = "",
+    ) -> None:
+        """
+        添加助手消息到消息列表
+        
+        Args:
+            content: 消息内容
+            reasoning_content: 思考过程内容
+        """
+        # 转换为 HTML
+        content_html = self._markdown_to_html(content)
+        reasoning_html = ""
+        if reasoning_content:
+            reasoning_html = self._markdown_to_html(reasoning_content)
+        
+        # 创建消息
+        msg = DisplayMessage(
+            id=str(uuid.uuid4()),
+            role=ROLE_ASSISTANT,
+            content_html=content_html,
+            reasoning_html=reasoning_html,
+            timestamp_display=self._format_timestamp(datetime.now().isoformat()),
+            is_streaming=False,
+        )
+        
+        # 添加到消息列表
+        self._messages.append(msg)
+        
+        # 更新状态
+        self._is_loading = False
+        self._current_stream_content = ""
+        self._current_reasoning_content = ""
+        
+        # 发出信号
+        self.can_send_changed.emit(True)
+    
     def request_compress(self) -> None:
         """请求压缩上下文"""
         if self.context_manager:

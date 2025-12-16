@@ -751,7 +751,7 @@ class MainWindow(QMainWindow):
             chunk_type = data.get("type", "content")
             text = data.get("text", "")
             
-            # 转发给对话面板
+            # 直接调用对话面板处理流式输出
             if "chat" in self._panels:
                 self._panels["chat"].handle_stream_chunk(chunk_type, text)
                 
@@ -797,7 +797,7 @@ class MainWindow(QMainWindow):
                 usage=usage,
             )
         
-        # 刷新对话面板
+        # 直接调用对话面板完成流式输出并刷新显示
         if "chat" in self._panels:
             self._panels["chat"].finish_stream(result)
 

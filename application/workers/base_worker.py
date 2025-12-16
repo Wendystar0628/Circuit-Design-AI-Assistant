@@ -41,14 +41,27 @@ Worker 基类 - 所有后台 Worker 的统一接口和信号规范
             self.result.emit({"status": "success"})
 """
 
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 from typing import Any, Optional
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
 
+# ============================================================
+# 注意：不使用 ABC 作为基类
+# ============================================================
+# QThread 使用 sip.wrappertype 元类，ABC 使用 ABCMeta 元类
+# 同时继承两者会导致元类冲突：
+# "metaclass conflict: the metaclass of a derived class must be a 
+#  (non-strict) subclass of the metaclasses of all its bases"
+# 
+# 解决方案：不继承 ABC，仅使用 @abstractmethod 装饰器
+# @abstractmethod 装饰器本身不依赖 ABC 元类，可以独立使用
+# 虽然不会在实例化时强制检查，但 IDE 和类型检查器仍会提示
+# ============================================================
 
-class BaseWorker(QThread, ABC):
+
+class BaseWorker(QThread):
     """
     Worker 基类 - 所有后台 Worker 的抽象基类
     

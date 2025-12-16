@@ -117,14 +117,20 @@ class Message:
     对话消息
     
     统一的消息数据结构，支持用户消息、助手消息和系统消息。
+    
+    压缩时的清理策略（详见 context_compressor.py）：
+    - reasoning_content: 旧消息会被截断或清空（节省 30-50% Token）
+    - operations: 会被合并去重，每条消息限制数量
+    - content: 旧消息过长时会被智能截断
+    - metadata/timestamp/usage: 保留，不影响 LLM 上下文
     """
     role: str                                    # "user" | "assistant" | "system"
-    content: str                                 # 文本内容
+    content: str                                 # 文本内容（压缩时可能被截断）
     attachments: List[Attachment] = field(default_factory=list)  # 附件列表
     timestamp: str = ""                          # ISO 时间戳
     metadata: Dict[str, Any] = field(default_factory=dict)       # 额外元数据
-    operations: List[str] = field(default_factory=list)          # 操作摘要（仅助手）
-    reasoning_content: str = ""                  # 深度思考内容（仅助手）
+    operations: List[str] = field(default_factory=list)          # 操作摘要（压缩时合并去重）
+    reasoning_content: str = ""                  # 深度思考内容（压缩时清理）
     usage: Optional[TokenUsage] = None           # Token 使用统计（仅助手）
     
     def __post_init__(self):

@@ -1,0 +1,21 @@
+{
+  "version": "1.0.0",
+  "release_date": "2024-12-16",
+  "description": "Initial release of prompt templates for Circuit Design AI",
+  "changelog": [
+    {
+      "version": "1.0.0",
+      "date": "2024-12-16",
+      "changes": [
+        "Initial task prompts: EXTRACT_DESIGN_GOALS, INITIAL_DESIGN, ANALYZE_SIMULATION_RESULTS",
+        "Initial task prompts: OPTIMIZE_PARAMETERS, FIX_ERROR, EXECUTE_USER_INSTRUCTION",
+        "Initial task prompts: GENERAL_CONVERSATION, SUMMARIZE_CONVERSATION, INTENT_ANALYSIS",
+        "Output format prompts: SPICE_OUTPUT_FORMAT, JSON_OUTPUT_FORMAT, ANALYSIS_OUTPUT_FORMAT"
+      ]
+    }
+  ],
+  "compatibility": {
+    "min_app_version": "1.0.0",
+    "max_app_version": null
+  }
+}

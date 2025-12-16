@@ -136,7 +136,8 @@ def _init_phase_1() -> bool:
     """
     Phase 1: 核心管理器初始化（同步，阻塞式）
     
-    1.1 ConfigManager 初始化（依赖 Logger）
+    1.0 CredentialManager 初始化（依赖 Logger）
+    1.1 ConfigManager 初始化（依赖 Logger、CredentialManager）
     1.2 ErrorHandler 初始化（依赖 Logger、EventBus、ConfigManager）
     1.3 I18nManager 初始化（依赖 ConfigManager）
     1.4 AppState 初始化（依赖 EventBus）
@@ -146,12 +147,25 @@ def _init_phase_1() -> bool:
     """
     try:
         # --------------------------------------------------------
+        # 1.0 CredentialManager 初始化
+        # 依赖：Logger（记录凭证操作日志）
+        # 职责：加载凭证，初始化加密密钥
+        # --------------------------------------------------------
+        from infrastructure.config.credential_manager import CredentialManager
+        from shared.service_locator import ServiceLocator
+        from shared.service_names import SVC_CREDENTIAL_MANAGER
+        credential_manager = CredentialManager()
+        credential_manager.load_credentials()
+        ServiceLocator.register(SVC_CREDENTIAL_MANAGER, credential_manager)
+        if _logger:
+            _logger.info("Phase 1.0 CredentialManager 初始化完成")
+
+        # --------------------------------------------------------
         # 1.1 ConfigManager 初始化
-        # 依赖：Logger（记录配置加载日志）
+        # 依赖：Logger、CredentialManager（获取凭证）
         # 职责：加载配置，缺失字段使用默认值，校验失败时记录日志
         # --------------------------------------------------------
         from infrastructure.config.config_manager import ConfigManager
-        from shared.service_locator import ServiceLocator
         from shared.service_names import SVC_CONFIG_MANAGER
         config_manager = ConfigManager()
         config_manager.load_config()
@@ -324,7 +338,26 @@ def _delayed_init():
             _logger.info("Phase 3.3 ProjectService 初始化完成")
 
         # --------------------------------------------------------
-        # 3.5 发布 EVENT_INIT_COMPLETE 事件
+        # 3.4 ContextManager 初始化
+        # 依赖：Logger、EventBus
+        # 职责：管理对话消息、Token 监控、上下文压缩
+        # --------------------------------------------------------
+        from domain.llm.context_manager import ContextManager
+        from shared.service_names import SVC_CONTEXT_MANAGER
+        context_manager = ContextManager()
+        ServiceLocator.register(SVC_CONTEXT_MANAGER, context_manager)
+        if _logger:
+            _logger.info("Phase 3.4 ContextManager 初始化完成")
+
+        # --------------------------------------------------------
+        # 3.5 LLM 客户端初始化（可选，依赖配置）
+        # 依赖：ConfigManager、CredentialManager
+        # 职责：提供 LLM API 调用能力
+        # --------------------------------------------------------
+        _init_llm_client()
+
+        # --------------------------------------------------------
+        # 3.6 发布 EVENT_INIT_COMPLETE 事件
         # 通知所有订阅者初始化完成
         # --------------------------------------------------------
         from shared.service_locator import ServiceLocator
@@ -351,6 +384,75 @@ def _delayed_init():
         # Phase 3 失败不致命，功能降级运行
         print("[WARNING] 部分功能可能不可用，应用将以降级模式运行")
 
+
+
+def _init_llm_client():
+    """
+    初始化 LLM 客户端（可选）
+    
+    根据配置创建 LLM 客户端并注册到 ServiceLocator。
+    如果配置不完整（如 API Key 未设置），则跳过初始化。
+    """
+    global _logger
+    
+    try:
+        from shared.service_locator import ServiceLocator
+        from shared.service_names import (
+            SVC_CONFIG_MANAGER,
+            SVC_CREDENTIAL_MANAGER,
+            SVC_LLM_CLIENT,
+        )
+        from infrastructure.config.settings import LLM_PROVIDER_ZHIPU
+        
+        config_manager = ServiceLocator.get_optional(SVC_CONFIG_MANAGER)
+        credential_manager = ServiceLocator.get_optional(SVC_CREDENTIAL_MANAGER)
+        
+        if not config_manager or not credential_manager:
+            if _logger:
+                _logger.warning("Phase 3.5 LLM 客户端初始化跳过：ConfigManager 或 CredentialManager 不可用")
+            return
+        
+        # 获取当前 LLM 厂商
+        provider = config_manager.get("llm_provider", "")
+        if not provider:
+            if _logger:
+                _logger.info("Phase 3.5 LLM 客户端初始化跳过：未配置 LLM 厂商")
+            return
+        
+        # 获取凭证
+        credential = credential_manager.get_credential("llm", provider)
+        if not credential or not credential.get("api_key"):
+            if _logger:
+                _logger.info(f"Phase 3.5 LLM 客户端初始化跳过：{provider} 的 API Key 未配置")
+            return
+        
+        api_key = credential.get("api_key")
+        base_url = config_manager.get("llm_base_url", "")
+        model = config_manager.get("llm_model", "")
+        timeout = config_manager.get("llm_timeout", 60)
+        
+        # 根据厂商创建客户端
+        if provider == LLM_PROVIDER_ZHIPU:
+            from infrastructure.llm_adapters.zhipu import ZhipuClient
+            
+            client = ZhipuClient(
+                api_key=api_key,
+                base_url=base_url if base_url else None,
+                model=model if model else None,
+                timeout=timeout,
+            )
+            ServiceLocator.register(SVC_LLM_CLIENT, client)
+            
+            if _logger:
+                _logger.info(f"Phase 3.5 LLM 客户端初始化完成：{provider}, model={model or 'default'}")
+        else:
+            if _logger:
+                _logger.warning(f"Phase 3.5 LLM 客户端初始化跳过：厂商 {provider} 暂未实现")
+                
+    except Exception as e:
+        if _logger:
+            _logger.warning(f"Phase 3.5 LLM 客户端初始化失败（非致命）: {e}")
+        # LLM 客户端初始化失败不是致命错误，用户可以稍后在设置中配置
 
 
 def _show_fatal_error(message: str):

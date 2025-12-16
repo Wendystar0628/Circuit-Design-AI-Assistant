@@ -40,6 +40,9 @@ SVC_I18N_MANAGER = "i18n_manager"
 # 基础设施层服务
 # ============================================================
 
+# 凭证管理器 - 敏感信息加密存储
+SVC_CREDENTIAL_MANAGER = "credential_manager"
+
 # 配置管理器 - 统一配置访问
 SVC_CONFIG_MANAGER = "config_manager"
 
@@ -107,6 +110,7 @@ __all__ = [
     "SVC_WORKER_MANAGER",
     "SVC_I18N_MANAGER",
     # 基础设施层
+    "SVC_CREDENTIAL_MANAGER",
     "SVC_CONFIG_MANAGER",
     "SVC_FILE_MANAGER",
     "SVC_LLM_CLIENT",

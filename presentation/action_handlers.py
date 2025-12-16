@@ -336,9 +336,9 @@ class ActionHandlers:
     # ============================================================
 
     def on_api_config(self):
-        """打开 API 配置对话框"""
-        from presentation.dialogs import ApiConfigDialog
-        dialog = ApiConfigDialog(self._main_window)
+        """打开模型配置对话框"""
+        from presentation.dialogs import ModelConfigDialog
+        dialog = ModelConfigDialog(self._main_window)
         dialog.exec()
 
     def on_help_docs(self):

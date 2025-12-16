@@ -12,6 +12,11 @@
 - 状态不可变：消息操作返回更新后的 state 副本
 - 线程安全：内部使用 RLock 保护共享状态
 
+压缩与清理：
+- compress() 方法执行上下文压缩，含增强清理策略
+- 增强清理策略：清理 reasoning_content、合并 operations、截断旧消息、替换摘要
+- 配置项定义在 settings.py（KEEP_REASONING_RECENT_COUNT 等）
+
 使用示例：
     from domain.llm.context_manager import ContextManager
     
@@ -480,7 +485,7 @@ class ContextManager:
         self._cache_stats_tracker.reset_stats()
     
     # ============================================================
-    # 便捷方法
+    # 便捷方法（基于 state 参数）
     # ============================================================
     
     def get_context_status(
@@ -509,6 +514,202 @@ class ContextManager:
             "should_compress": self.should_compress(state, model),
             "cache_stats": cache_stats.to_dict(),
         }
+
+    # ============================================================
+    # 有状态便捷方法（供 UI 层使用）
+    # ============================================================
+    # 以下方法内部维护一个默认 state，供不需要 LangGraph 集成的场景使用
+    # 这些方法是对基于 state 参数方法的封装，简化 UI 层调用
+    
+    def _get_internal_state(self) -> Dict[str, Any]:
+        """获取内部状态（线程安全）"""
+        with self._lock:
+            if not hasattr(self, '_internal_state'):
+                self._internal_state = {"messages": []}
+            return self._internal_state
+    
+    def _set_internal_state(self, state: Dict[str, Any]) -> None:
+        """设置内部状态（线程安全）"""
+        with self._lock:
+            self._internal_state = state
+    
+    def add_user_message(
+        self,
+        content: str,
+        attachments: Optional[List[Any]] = None
+    ) -> None:
+        """
+        添加用户消息（有状态版本，供 UI 层使用）
+        
+        Args:
+            content: 消息内容
+            attachments: 附件列表
+        """
+        state = self._get_internal_state()
+        new_state = self.add_message(
+            state=state,
+            role="user",
+            content=content,
+            attachments=attachments,
+        )
+        self._set_internal_state(new_state)
+        
+        if self.logger:
+            self.logger.debug(f"Added user message: {content[:50]}...")
+    
+    def add_assistant_message(
+        self,
+        content: str,
+        reasoning_content: str = "",
+        tool_calls: Optional[List[Dict[str, Any]]] = None,
+        usage: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """
+        添加助手消息（有状态版本，供 UI 层使用）
+        
+        Args:
+            content: 消息内容
+            reasoning_content: 思考内容
+            tool_calls: 工具调用列表
+            usage: Token 使用统计
+        """
+        state = self._get_internal_state()
+        
+        # 提取 operations（如果有 tool_calls）
+        operations = []
+        if tool_calls:
+            for tc in tool_calls:
+                func_name = tc.get("function", {}).get("name", "unknown")
+                operations.append(f"Called: {func_name}")
+        
+        new_state = self.add_message(
+            state=state,
+            role="assistant",
+            content=content,
+            reasoning_content=reasoning_content,
+            operations=operations if operations else None,
+            usage=usage,
+        )
+        self._set_internal_state(new_state)
+        
+        # 记录缓存统计
+        if usage:
+            self.record_cache_stats(usage)
+        
+        if self.logger:
+            self.logger.debug(f"Added assistant message: {content[:50]}...")
+    
+    def get_messages_for_llm(self) -> List[Dict[str, Any]]:
+        """
+        获取用于 LLM 调用的消息列表（有状态版本）
+        
+        Returns:
+            消息列表，格式为 [{"role": str, "content": str}, ...]
+        """
+        state = self._get_internal_state()
+        messages = self.get_messages(state)
+        
+        # 转换为 LLM API 格式
+        result = []
+        for msg in messages:
+            result.append({
+                "role": msg.role,
+                "content": msg.content,
+            })
+        
+        return result
+    
+    def get_display_messages(self) -> List[Message]:
+        """
+        获取用于显示的消息列表（有状态版本）
+        
+        Returns:
+            消息列表（内部 Message 格式）
+        """
+        state = self._get_internal_state()
+        return self.get_messages(state)
+    
+    def get_usage_ratio_stateful(self, model: str = "default") -> float:
+        """
+        获取占用比例（有状态版本）
+        
+        Args:
+            model: 模型名称
+            
+        Returns:
+            占用比例（0.0 - 1.0）
+        """
+        state = self._get_internal_state()
+        return self.get_usage_ratio(state, model)
+    
+    def request_compress(self) -> None:
+        """
+        请求压缩上下文（发布事件，由 UI 层处理）
+        
+        此方法发布 EVENT_CONTEXT_COMPRESS_REQUESTED 事件，
+        由 MainWindow 或其他组件监听并打开压缩对话框。
+        """
+        if self.event_bus:
+            try:
+                from shared.event_types import EVENT_CONTEXT_COMPRESS_REQUESTED
+                self.event_bus.publish(EVENT_CONTEXT_COMPRESS_REQUESTED, {
+                    "source": "context_manager",
+                })
+            except ImportError:
+                if self.logger:
+                    self.logger.warning("EVENT_CONTEXT_COMPRESS_REQUESTED not defined")
+        
+        if self.logger:
+            self.logger.info("Context compress requested")
+    
+    def archive_and_reset(self) -> bool:
+        """
+        归档当前对话并重置（有状态版本）
+        
+        Returns:
+            是否成功
+        """
+        state = self._get_internal_state()
+        
+        # 获取项目路径
+        project_path = ""
+        try:
+            from shared.service_locator import ServiceLocator
+            from shared.service_names import SVC_APP_STATE
+            app_state = ServiceLocator.get_optional(SVC_APP_STATE)
+            if app_state:
+                project_path = app_state.current_project_path or ""
+        except Exception:
+            pass
+        
+        # 归档
+        if project_path:
+            success, msg = self.archive_current_session(state, project_path)
+            if not success:
+                if self.logger:
+                    self.logger.warning(f"Archive failed: {msg}")
+        
+        # 重置
+        new_state = self.reset_messages(state, keep_system=True)
+        self._set_internal_state(new_state)
+        
+        if self.logger:
+            self.logger.info("Conversation archived and reset")
+        
+        return True
+    
+    def refresh_display(self) -> None:
+        """
+        刷新显示（发布事件通知 UI 更新）
+        """
+        if self.event_bus:
+            try:
+                from shared.event_types import EVENT_CONVERSATION_UPDATED
+                self.event_bus.publish(EVENT_CONVERSATION_UPDATED, {
+                    "source": "context_manager",
+                })
+            except ImportError:
+                pass
 
 
 # ============================================================

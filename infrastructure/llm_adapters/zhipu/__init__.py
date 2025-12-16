@@ -19,17 +19,49 @@ API 文档参考：
 - 流式输出：https://zhipu-ef7018ed.mintlify.app/cn/guide/capabilities/streaming
 - 上下文缓存：https://zhipu-ef7018ed.mintlify.app/cn/guide/capabilities/cache
 
-阶段三实现：
-- zhipu_client.py
-- zhipu_request_builder.py
-- zhipu_response_parser.py
-- zhipu_stream_handler.py
+使用示例：
+    from infrastructure.llm_adapters.zhipu import ZhipuClient, create_zhipu_client
+    
+    # 方式一：直接创建
+    client = ZhipuClient(api_key="your_api_key")
+    
+    # 方式二：使用工厂函数（自动从 ConfigManager 获取配置）
+    client = create_zhipu_client()
+    
+    # 非流式调用
+    response = client.chat(messages=[{"role": "user", "content": "Hello"}])
+    print(response.content)
+    
+    # 流式调用
+    async for chunk in client.chat_stream(messages):
+        if chunk.content:
+            print(chunk.content, end="")
 """
 
-# 阶段三实现后导出
-# from infrastructure.llm_adapters.zhipu.zhipu_client import ZhipuClient
+from infrastructure.llm_adapters.zhipu.zhipu_client import (
+    ZhipuClient,
+    create_zhipu_client,
+    ZHIPU_MODELS,
+)
+from infrastructure.llm_adapters.zhipu.zhipu_request_builder import ZhipuRequestBuilder
+from infrastructure.llm_adapters.zhipu.zhipu_response_parser import ZhipuResponseParser
+from infrastructure.llm_adapters.zhipu.zhipu_stream_handler import (
+    ZhipuStreamHandler,
+    StreamState,
+    collect_stream,
+)
 
 __all__ = [
-    # 阶段三实现后导出
-    # "ZhipuClient",
+    # 客户端主类和工厂函数
+    "ZhipuClient",
+    "create_zhipu_client",
+    "ZHIPU_MODELS",
+    # 请求构建器（供高级用户使用）
+    "ZhipuRequestBuilder",
+    # 响应解析器（供高级用户使用）
+    "ZhipuResponseParser",
+    # 流式处理器（供高级用户使用）
+    "ZhipuStreamHandler",
+    "StreamState",
+    "collect_stream",
 ]

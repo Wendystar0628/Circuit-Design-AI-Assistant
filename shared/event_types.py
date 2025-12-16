@@ -186,10 +186,31 @@ EVENT_CONTEXT_COMPRESS_COMPLETE = "context_compress_complete"
 # ============================================================
 
 # 对话重置（新开对话）
+# 携带数据：
+#   - archived_session_id: str - 被归档的会话 ID（若有）
+#   - new_session_id: str - 新会话 ID
 EVENT_CONVERSATION_RESET = "conversation_reset"
 
 # 对话归档
 EVENT_CONVERSATION_ARCHIVED = "conversation_archived"
+
+# 对话更新（消息列表变化）
+EVENT_CONVERSATION_UPDATED = "conversation_updated"
+
+# 会话加载完成
+# 携带数据：
+#   - session_id: str - 会话 ID
+#   - session_name: str - 会话名称
+#   - message_count: int - 消息数量
+#   - is_new: bool - 是否为新建会话
+EVENT_SESSION_LOADED = "session_loaded"
+
+# 会话名称变更
+# 携带数据：
+#   - session_id: str - 会话 ID
+#   - old_name: str - 旧名称
+#   - new_name: str - 新名称
+EVENT_SESSION_NAME_CHANGED = "session_name_changed"
 
 
 # ============================================================
@@ -318,6 +339,9 @@ __all__ = [
     # 对话管理事件
     "EVENT_CONVERSATION_RESET",
     "EVENT_CONVERSATION_ARCHIVED",
+    "EVENT_CONVERSATION_UPDATED",
+    "EVENT_SESSION_LOADED",
+    "EVENT_SESSION_NAME_CHANGED",
     # 错误处理事件
     "EVENT_ERROR_OCCURRED",
     "EVENT_ERROR_RECOVERED",

@@ -4,6 +4,7 @@
 
 包含：
 - settings.py: 默认设置常量
+- credential_manager.py: 凭证管理器（敏感信息专用）
 - config_manager.py: 配置统一访问管理器
 """
 
@@ -23,6 +24,7 @@ from .settings import (
     GLOBAL_CONFIG_FILE,
     GLOBAL_LOG_DIR,
     WORK_FOLDER_HIDDEN_DIR,
+    CREDENTIALS_FILE,
     # 国际化常量
     DEFAULT_LANGUAGE,
     SUPPORTED_LANGUAGES,
@@ -32,13 +34,18 @@ from .settings import (
     CONFIG_API_KEY,
     CONFIG_TIMEOUT,
     CONFIG_STREAMING,
+    # 凭证类型常量
+    CREDENTIAL_TYPE_LLM,
+    CREDENTIAL_TYPE_SEARCH,
     # 默认配置模板
     DEFAULT_CONFIG,
 )
 
+from .credential_manager import CredentialManager
 from .config_manager import ConfigManager
 
 __all__ = [
+    "CredentialManager",
     "ConfigManager",
     "DEFAULT_MAX_CHECKPOINTS",
     "DEFAULT_STAGNATION_THRESHOLD",
@@ -51,7 +58,10 @@ __all__ = [
     "GLOBAL_CONFIG_FILE",
     "GLOBAL_LOG_DIR",
     "WORK_FOLDER_HIDDEN_DIR",
+    "CREDENTIALS_FILE",
     "DEFAULT_LANGUAGE",
     "SUPPORTED_LANGUAGES",
+    "CREDENTIAL_TYPE_LLM",
+    "CREDENTIAL_TYPE_SEARCH",
     "DEFAULT_CONFIG",
 ]

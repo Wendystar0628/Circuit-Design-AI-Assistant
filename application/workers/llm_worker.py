@@ -292,19 +292,55 @@ class LLMWorker(BaseWorker):
         try:
             loop.run_until_complete(self._async_streaming_call())
         finally:
+            # 清理所有待处理的任务，避免 "Task was destroyed but it is pending" 警告
+            self._cleanup_event_loop(loop)
+
+    def _cleanup_event_loop(self, loop) -> None:
+        """
+        清理事件循环中的待处理任务
+        
+        在关闭事件循环前，确保所有异步生成器和任务都被正确清理，
+        避免 "Task was destroyed but it is pending" 警告。
+        
+        Args:
+            loop: 要清理的事件循环
+        """
+        import asyncio
+        
+        try:
+            # 关闭所有异步生成器
+            loop.run_until_complete(loop.shutdown_asyncgens())
+            
+            # 取消所有待处理的任务
+            pending = asyncio.all_tasks(loop)
+            for task in pending:
+                task.cancel()
+            
+            # 等待所有任务完成取消
+            if pending:
+                loop.run_until_complete(
+                    asyncio.gather(*pending, return_exceptions=True)
+                )
+        except Exception:
+            pass  # 清理失败不影响主流程
+        finally:
             loop.close()
 
     async def _async_streaming_call(self) -> None:
         """异步流式调用"""
         result = LLMResult()
+        stream = None
         
         try:
-            async for chunk in self.llm_client.chat_stream(
+            # 获取异步生成器
+            stream = self.llm_client.chat_stream(
                 messages=self._request.messages,
                 model=self._request.model,
                 tools=self._request.tools,
                 thinking=self._request.thinking,
-            ):
+            )
+            
+            async for chunk in stream:
                 if self.is_cancelled():
                     result.is_partial = True
                     break
@@ -344,6 +380,10 @@ class LLMWorker(BaseWorker):
                 result.is_partial = True
                 self.emit_result(result.to_dict())
             raise e
+        finally:
+            # 确保异步生成器被正确关闭
+            if stream is not None:
+                await stream.aclose()
 
 
     # ============================================================

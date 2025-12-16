@@ -88,6 +88,10 @@ class MenuManager:
         self._menus["knowledge"] = menubar.addMenu("")
         self._setup_knowledge_menu()
         
+        # 模型配置菜单（顶级菜单）
+        self._menus["model"] = menubar.addMenu("")
+        self._setup_model_menu()
+        
         # 工具菜单
         self._menus["tools"] = menubar.addMenu("")
         self._setup_tools_menu()
@@ -266,15 +270,19 @@ class MenuManager:
         self._actions["knowledge_rebuild"].setEnabled(False)
         menu.addAction(self._actions["knowledge_rebuild"])
 
+    def _setup_model_menu(self) -> None:
+        """设置模型配置菜单（顶级菜单）"""
+        menu = self._menus["model"]
+        
+        # 模型配置
+        self._actions["model_config"] = QAction(self._main_window)
+        if "on_api_config" in self._callbacks:
+            self._actions["model_config"].triggered.connect(self._callbacks["on_api_config"])
+        menu.addAction(self._actions["model_config"])
+
     def _setup_tools_menu(self) -> None:
         """设置工具菜单"""
         menu = self._menus["tools"]
-        
-        # 配置大模型API
-        self._actions["tools_api_config"] = QAction(self._main_window)
-        if "on_api_config" in self._callbacks:
-            self._actions["tools_api_config"].triggered.connect(self._callbacks["on_api_config"])
-        menu.addAction(self._actions["tools_api_config"])
         
         # 压缩上下文（灰显）
         self._actions["tools_compress"] = QAction(self._main_window)
@@ -364,6 +372,7 @@ class MenuManager:
         self._menus["view"].setTitle(self._get_text("menu.view", "View"))
         self._menus["simulation"].setTitle(self._get_text("menu.simulation", "Simulation"))
         self._menus["knowledge"].setTitle(self._get_text("menu.knowledge", "Knowledge Base"))
+        self._menus["model"].setTitle(self._get_text("menu.model", "Model"))
         self._menus["tools"].setTitle(self._get_text("menu.tools", "Tools"))
         self._menus["language"].setTitle(self._get_text("menu.language", "Language"))
         self._menus["help"].setTitle(self._get_text("menu.help", "Help"))
@@ -417,10 +426,12 @@ class MenuManager:
             self._get_text("menu.knowledge.rebuild", "Rebuild Index")
         )
         
-        # 工具菜单项
-        self._actions["tools_api_config"].setText(
-            self._get_text("menu.tools.api_config", "API Configuration")
+        # 模型菜单项
+        self._actions["model_config"].setText(
+            self._get_text("menu.model.config", "Model Configuration")
         )
+        
+        # 工具菜单项
         self._actions["tools_compress"].setText(
             self._get_text("menu.tools.compress_context", "Compress Context")
         )

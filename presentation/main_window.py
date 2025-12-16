@@ -6,6 +6,7 @@
 - 窗口布局管理、面板协调
 - 组件初始化
 - 事件订阅与分发
+- LLM Worker 信号处理和对话面板集成
 
 委托关系：
 - 菜单栏创建委托给 MenuManager
@@ -24,13 +25,14 @@
 - 所有用户可见文本通过 i18n_manager.get_text() 获取
 """
 
-from typing import Optional, Dict, Any
+import json
+from typing import Optional, Dict, Any, List
 
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout,
-    QSplitter, QLabel
+    QSplitter, QLabel, QMessageBox
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 
 from presentation.menu_manager import MenuManager
 from presentation.toolbar_manager import ToolbarManager
@@ -57,6 +59,7 @@ class MainWindow(QMainWindow):
         self._i18n_manager = None
         self._event_bus = None
         self._logger = None
+        self._context_manager = None
         
         # UI 组件引用
         self._panels: Dict[str, QWidget] = {}
@@ -70,10 +73,14 @@ class MainWindow(QMainWindow):
         self._session_manager: Optional[SessionManager] = None
         self._action_handlers: Optional[ActionHandlers] = None
         
+        # LLM Worker 实例
+        self._llm_worker = None
+        
         # 初始化 UI
         self._setup_window()
         self._setup_central_widget()
         self._setup_managers()
+        self._setup_llm_worker()
         self._connect_panel_signals()
         
         # 应用国际化文本
@@ -88,7 +95,6 @@ class MainWindow(QMainWindow):
         )
         
         # 延迟恢复会话状态（等待窗口显示后执行）
-        from PyQt6.QtCore import QTimer
         QTimer.singleShot(100, self._restore_session)
 
 
@@ -130,6 +136,18 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
         return self._logger
+
+    @property
+    def context_manager(self):
+        """延迟获取 ContextManager"""
+        if self._context_manager is None:
+            try:
+                from shared.service_locator import ServiceLocator
+                from shared.service_names import SVC_CONTEXT_MANAGER
+                self._context_manager = ServiceLocator.get_optional(SVC_CONTEXT_MANAGER)
+            except Exception:
+                pass
+        return self._context_manager
 
     def _get_text(self, key: str, default: Optional[str] = None) -> str:
         """获取国际化文本"""
@@ -196,8 +214,9 @@ class MainWindow(QMainWindow):
             self._panels["code_editor"].load_file
         )
         
-        # 右栏 - 对话面板（占位）
-        self._panels["chat"] = self._create_placeholder_panel("panel.chat")
+        # 右栏 - 对话面板（使用实际组件）
+        from presentation.panels.conversation_panel import ConversationPanel
+        self._panels["chat"] = ConversationPanel()
         self._panels["chat"].setMinimumWidth(250)
         self._splitters["horizontal"].addWidget(self._panels["chat"])
         
@@ -255,6 +274,9 @@ class MainWindow(QMainWindow):
         callbacks["on_recent_click"] = self._action_handlers.on_recent_project_clicked
         callbacks["on_clear_recent"] = self._action_handlers.on_clear_recent_projects
         
+        # 添加对话历史回调
+        callbacks["on_show_history"] = self._on_show_history_dialog
+        
         # 菜单栏管理器
         self._menu_manager = MenuManager(self)
         self._menu_manager.setup_menus(callbacks)
@@ -272,6 +294,25 @@ class MainWindow(QMainWindow):
         
         # 会话管理器
         self._session_manager = SessionManager(self, self._panels)
+
+    def _setup_llm_worker(self):
+        """初始化 LLM Worker 并连接信号"""
+        try:
+            from application.workers.llm_worker import LLMWorker
+            self._llm_worker = LLMWorker()
+            
+            # 连接 Worker 信号
+            self._llm_worker.chunk.connect(self._on_llm_chunk)
+            self._llm_worker.phase_changed.connect(self._on_llm_phase_changed)
+            self._llm_worker.result.connect(self._on_llm_result)
+            self._llm_worker.error.connect(self._on_llm_error)
+            self._llm_worker.finished.connect(self._on_llm_finished)
+            
+            if self.logger:
+                self.logger.info("LLM Worker initialized")
+        except Exception as e:
+            if self.logger:
+                self.logger.error(f"Failed to initialize LLM Worker: {e}")
 
     # ============================================================
     # 面板信号连接
@@ -292,6 +333,25 @@ class MainWindow(QMainWindow):
             self._panels["code_editor"].editable_file_state_changed.connect(
                 self._on_editable_file_state_changed
             )
+        
+        # 连接对话面板信号
+        if "chat" in self._panels:
+            chat_panel = self._panels["chat"]
+            # 消息发送
+            chat_panel.message_sent.connect(self._on_message_sent)
+            # 压缩请求
+            chat_panel.compress_requested.connect(self._on_compress_requested)
+            # 文件点击（跳转到代码编辑器）
+            chat_panel.file_clicked.connect(self._on_file_clicked)
+            # 新开对话请求
+            chat_panel.new_conversation_requested.connect(self._on_new_conversation)
+            # 历史对话请求
+            chat_panel.history_requested.connect(self._on_show_history_dialog)
+            # 会话名称变更
+            chat_panel.session_name_changed.connect(self._on_session_name_changed)
+            # 注意：不在这里调用 chat_panel.initialize()
+            # 对话面板的初始化延迟到 EVENT_INIT_COMPLETE 事件后执行
+            # 因为 ContextManager 在 Phase 3.4 才注册，此时（Phase 2.2）还不可用
 
     # ============================================================
     # 国际化支持
@@ -340,11 +400,35 @@ class MainWindow(QMainWindow):
             from shared.event_types import (
                 EVENT_LANGUAGE_CHANGED,
                 EVENT_STATE_PROJECT_OPENED,
-                EVENT_STATE_PROJECT_CLOSED
+                EVENT_STATE_PROJECT_CLOSED,
+                EVENT_INIT_COMPLETE,
             )
             self.event_bus.subscribe(EVENT_LANGUAGE_CHANGED, self._on_language_changed)
             self.event_bus.subscribe(EVENT_STATE_PROJECT_OPENED, self._on_project_opened)
             self.event_bus.subscribe(EVENT_STATE_PROJECT_CLOSED, self._on_project_closed)
+            # 订阅初始化完成事件，用于延迟初始化对话面板
+            self.event_bus.subscribe(EVENT_INIT_COMPLETE, self._on_init_complete)
+
+    def _on_init_complete(self, event_data: Dict[str, Any]):
+        """
+        初始化完成事件处理
+        
+        在 Phase 3 延迟初始化完成后调用，此时 ContextManager 已注册。
+        用于初始化需要依赖 Phase 3 服务的组件。
+        """
+        # 初始化对话面板（此时 ContextManager 已可用）
+        if "chat" in self._panels:
+            self._panels["chat"].initialize()
+            if self.logger:
+                self.logger.info("ConversationPanel initialized after EVENT_INIT_COMPLETE")
+        
+        # 恢复对话会话（延迟执行，确保对话面板已初始化）
+        QTimer.singleShot(100, self._restore_conversation_session)
+
+    def _restore_conversation_session(self):
+        """恢复对话会话"""
+        if self._session_manager:
+            self._session_manager.restore_conversation_session()
 
     def _on_language_changed(self, event_data: Dict[str, Any]):
         """语言变更事件处理"""
@@ -507,6 +591,251 @@ class MainWindow(QMainWindow):
         if self._toolbar_manager:
             self._toolbar_manager.set_action_enabled("toolbar_save", has_editable_file)
             self._toolbar_manager.set_action_enabled("toolbar_save_all", has_editable_file)
+
+    # ============================================================
+    # 对话面板信号处理
+    # ============================================================
+
+    def _on_message_sent(self, text: str, attachments: List[Dict[str, Any]]):
+        """
+        处理用户发送消息
+        
+        Args:
+            text: 消息文本
+            attachments: 附件列表
+        """
+        if not text.strip() and not attachments:
+            return
+        
+        if self.logger:
+            self.logger.info(f"User message sent: {text[:50]}...")
+        
+        # 发布工作流锁定事件
+        if self.event_bus:
+            from shared.event_types import EVENT_WORKFLOW_LOCKED
+            self.event_bus.publish(EVENT_WORKFLOW_LOCKED, {"source": "llm_call"})
+        
+        # 更新状态栏
+        if self._statusbar_manager:
+            self._statusbar_manager.set_status(
+                self._get_text("status.llm_processing", "LLM processing...")
+            )
+            self._statusbar_manager.set_worker_status("llm", "running")
+        
+        # 通过 ContextManager 添加用户消息
+        if self.context_manager:
+            self.context_manager.add_user_message(text, attachments)
+        
+        # 构建 LLM 请求
+        self._send_llm_request()
+
+    def _send_llm_request(self):
+        """构建并发送 LLM 请求"""
+        if not self._llm_worker:
+            if self.logger:
+                self.logger.error("LLM Worker not available")
+            self._on_llm_finished()
+            return
+        
+        # 从 ContextManager 获取消息列表
+        messages = []
+        if self.context_manager:
+            messages = self.context_manager.get_messages_for_llm()
+        
+        if not messages:
+            if self.logger:
+                self.logger.warning("No messages to send to LLM")
+            self._on_llm_finished()
+            return
+        
+        # 设置请求参数
+        self._llm_worker.set_request(
+            messages=messages,
+            streaming=True,
+            thinking=None,  # 从配置读取
+        )
+        
+        # 启动 Worker
+        self._llm_worker.start()
+
+    def _on_compress_requested(self):
+        """处理压缩上下文请求"""
+        try:
+            from presentation.dialogs.context_compress_dialog import ContextCompressDialog
+            dialog = ContextCompressDialog(self)
+            dialog.exec()
+        except Exception as e:
+            if self.logger:
+                self.logger.error(f"Failed to open compress dialog: {e}")
+
+    def _on_file_clicked(self, file_path: str):
+        """处理文件点击（跳转到代码编辑器）"""
+        if "code_editor" in self._panels:
+            self._panels["code_editor"].load_file(file_path)
+
+    def _on_new_conversation(self):
+        """处理新开对话请求"""
+        # 确认对话框
+        result = QMessageBox.question(
+            self,
+            self._get_text("dialog.confirm", "Confirm"),
+            self._get_text(
+                "dialog.new_conversation.confirm",
+                "Archive current conversation and start a new one?"
+            ),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        
+        if result != QMessageBox.StandardButton.Yes:
+            return
+        
+        # 归档当前对话并重置
+        if self.context_manager:
+            self.context_manager.archive_and_reset()
+        
+        # 刷新对话面板
+        if "chat" in self._panels:
+            self._panels["chat"].refresh_display()
+        
+        # 发布对话重置事件
+        if self.event_bus:
+            from shared.event_types import EVENT_CONVERSATION_RESET
+            self.event_bus.publish(EVENT_CONVERSATION_RESET, {})
+        
+        if self.logger:
+            self.logger.info("Conversation archived and reset")
+
+    def _on_show_history_dialog(self):
+        """显示对话历史对话框"""
+        try:
+            from presentation.dialogs.history_dialog import HistoryDialog
+            dialog = HistoryDialog(self)
+            dialog.exec()
+        except ImportError:
+            # 对话框尚未实现
+            QMessageBox.information(
+                self,
+                self._get_text("dialog.info", "Information"),
+                self._get_text(
+                    "dialog.history.not_implemented",
+                    "History dialog will be implemented soon."
+                )
+            )
+        except Exception as e:
+            if self.logger:
+                self.logger.error(f"Failed to open history dialog: {e}")
+
+    def _on_session_name_changed(self, name: str):
+        """处理会话名称变更"""
+        if self.logger:
+            self.logger.info(f"Session name changed to: {name}")
+        
+        # 保存会话名称到配置
+        if self._session_manager:
+            self._session_manager.set_current_session_name(name)
+
+    # ============================================================
+    # LLM Worker 信号处理
+    # ============================================================
+
+    def _on_llm_chunk(self, chunk_data: str):
+        """
+        处理 LLM 流式输出块
+        
+        Args:
+            chunk_data: JSON 格式的数据块 {"type": "reasoning"|"content", "text": str}
+        """
+        try:
+            data = json.loads(chunk_data)
+            chunk_type = data.get("type", "content")
+            text = data.get("text", "")
+            
+            # 转发给对话面板
+            if "chat" in self._panels:
+                self._panels["chat"].handle_stream_chunk(chunk_type, text)
+                
+        except json.JSONDecodeError as e:
+            if self.logger:
+                self.logger.warning(f"Failed to parse LLM chunk: {e}")
+
+    def _on_llm_phase_changed(self, phase: str):
+        """
+        处理 LLM 阶段切换
+        
+        Args:
+            phase: 新阶段 ("reasoning" -> "content")
+        """
+        if "chat" in self._panels:
+            self._panels["chat"].handle_phase_change(phase)
+
+    def _on_llm_result(self, result: Dict[str, Any]):
+        """
+        处理 LLM 完成结果
+        
+        Args:
+            result: 完整响应结果
+        """
+        content = result.get("content", "")
+        reasoning_content = result.get("reasoning_content", "")
+        tool_calls = result.get("tool_calls")
+        usage = result.get("usage")
+        is_partial = result.get("is_partial", False)
+        
+        if self.logger:
+            self.logger.info(
+                f"LLM result received: content_len={len(content)}, "
+                f"reasoning_len={len(reasoning_content)}, partial={is_partial}"
+            )
+        
+        # 通过 ContextManager 添加助手消息
+        if self.context_manager and content:
+            self.context_manager.add_assistant_message(
+                content=content,
+                reasoning_content=reasoning_content,
+                tool_calls=tool_calls,
+                usage=usage,
+            )
+        
+        # 刷新对话面板
+        if "chat" in self._panels:
+            self._panels["chat"].finish_stream(result)
+
+    def _on_llm_error(self, error_msg: str, error: object):
+        """
+        处理 LLM 错误
+        
+        Args:
+            error_msg: 错误消息
+            error: 错误对象
+        """
+        if self.logger:
+            self.logger.error(f"LLM error: {error_msg}")
+        
+        # 显示错误提示
+        QMessageBox.warning(
+            self,
+            self._get_text("dialog.error", "Error"),
+            error_msg
+        )
+        
+        # 通知对话面板
+        if "chat" in self._panels:
+            self._panels["chat"].handle_error(error_msg)
+
+    def _on_llm_finished(self):
+        """处理 LLM 调用完成（无论成功或失败）"""
+        # 发布工作流解锁事件
+        if self.event_bus:
+            from shared.event_types import EVENT_WORKFLOW_UNLOCKED
+            self.event_bus.publish(EVENT_WORKFLOW_UNLOCKED, {"source": "llm_call"})
+        
+        # 更新状态栏
+        if self._statusbar_manager:
+            self._statusbar_manager.set_status(
+                self._get_text("status.ready", "Ready")
+            )
+            self._statusbar_manager.set_worker_status("llm", "idle")
 
 
 # ============================================================

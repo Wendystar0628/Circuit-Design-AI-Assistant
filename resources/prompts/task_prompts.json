@@ -1,0 +1,74 @@
+{
+  "EXTRACT_DESIGN_GOALS": {
+    "name": "设计目标提取",
+    "description": "从用户需求中提取结构化设计目标",
+    "version": "1.0.0",
+    "variables": ["user_requirement", "circuit_type", "context"],
+    "required_variables": ["user_requirement"],
+    "content": "You are an expert analog circuit design assistant. Your task is to extract structured design goals from the user's requirement.\n\n## User Requirement\n{user_requirement}\n\n## Circuit Type (if specified)\n{circuit_type}\n\n## Additional Context\n{context}\n\n## Instructions\nAnalyze the user's requirement and extract the following design goals:\n1. Circuit topology (e.g., common-emitter amplifier, operational amplifier, etc.)\n2. Performance specifications:\n   - Gain (voltage gain, current gain, or power gain)\n   - Bandwidth (3dB bandwidth, unity-gain bandwidth)\n   - Input/Output impedance\n   - Power consumption\n   - Supply voltage\n   - Noise figure (if applicable)\n   - Phase margin (if applicable)\n3. Operating conditions (temperature range, load conditions)\n4. Constraints (component availability, cost, size)\n\nProvide your analysis in a structured JSON format."
+  },
+  "INITIAL_DESIGN": {
+    "name": "初始电路设计",
+    "description": "根据设计目标生成初始 SPICE 电路",
+    "version": "1.0.0",
+    "variables": ["design_goals", "circuit_type", "reference_circuits", "context"],
+    "required_variables": ["design_goals"],
+    "content": "You are an expert analog circuit designer. Generate an initial SPICE netlist based on the design goals.\n\n## Design Goals\n{design_goals}\n\n## Circuit Type\n{circuit_type}\n\n## Reference Circuits\n{reference_circuits}\n\n## Additional Context\n{context}\n\n## Instructions\n1. Select an appropriate circuit topology based on the design goals\n2. Calculate initial component values using standard design equations\n3. Generate a complete SPICE netlist with:\n   - Clear component naming (R1, R2, C1, Q1, etc.)\n   - Proper node naming (VCC, GND, IN, OUT, etc.)\n   - Simulation directives (.op, .ac, .tran as needed)\n   - Comments explaining the design choices\n4. Include a brief explanation of your design approach\n\nProvide the SPICE netlist in a code block marked with ```spice```."
+  },
+  "ANALYZE_SIMULATION_RESULTS": {
+    "name": "仿真结果分析",
+    "description": "分析仿真结果并与设计目标对比",
+    "version": "1.0.0",
+    "variables": ["simulation_results", "design_goals", "circuit_netlist", "iteration_history"],
+    "required_variables": ["simulation_results", "design_goals"],
+    "content": "You are an expert circuit analyst. Analyze the simulation results and compare them with the design goals.\n\n## Simulation Results\n{simulation_results}\n\n## Design Goals\n{design_goals}\n\n## Current Circuit Netlist\n{circuit_netlist}\n\n## Iteration History\n{iteration_history}\n\n## Instructions\n1. Extract key performance metrics from the simulation results:\n   - DC operating point analysis\n   - AC frequency response (gain, bandwidth, phase margin)\n   - Transient response characteristics\n2. Compare each metric with the corresponding design goal\n3. Calculate the deviation percentage for each metric\n4. Identify which goals are met and which need improvement\n5. Provide a performance score (0-100) based on goal achievement\n6. Suggest specific areas for optimization\n\nProvide your analysis in a structured format with clear sections."
+  },
+  "OPTIMIZE_PARAMETERS": {
+    "name": "参数优化",
+    "description": "根据分析结果生成参数优化建议",
+    "version": "1.0.0",
+    "variables": ["analysis_result", "design_goals", "circuit_netlist", "iteration_history", "context"],
+    "required_variables": ["analysis_result", "circuit_netlist"],
+    "content": "You are an expert circuit optimizer. Based on the analysis results, suggest parameter modifications to improve circuit performance.\n\n## Analysis Result\n{analysis_result}\n\n## Design Goals\n{design_goals}\n\n## Current Circuit Netlist\n{circuit_netlist}\n\n## Iteration History\n{iteration_history}\n\n## Additional Context\n{context}\n\n## Instructions\n1. Identify the parameters that most significantly affect the underperforming metrics\n2. Calculate the required parameter changes using sensitivity analysis\n3. Consider trade-offs between different performance metrics\n4. Ensure the modified values are within practical component ranges\n5. Generate the optimized SPICE netlist with updated component values\n6. Explain the rationale for each modification\n\nProvide the optimized SPICE netlist in a code block marked with ```spice```."
+  },
+  "FIX_ERROR": {
+    "name": "错误修复",
+    "description": "修复仿真或语法错误",
+    "version": "1.0.0",
+    "variables": ["error_message", "circuit_netlist", "error_context", "diagnostics"],
+    "required_variables": ["error_message", "circuit_netlist"],
+    "content": "You are an expert SPICE debugger. Fix the error in the circuit netlist.\n\n## Error Message\n{error_message}\n\n## Current Circuit Netlist\n{circuit_netlist}\n\n## Error Context (lines around the error)\n{error_context}\n\n## Diagnostics\n{diagnostics}\n\n## Instructions\n1. Analyze the error message to identify the root cause\n2. Common error types and fixes:\n   - Syntax errors: Check SPICE statement format\n   - Floating nodes: Add proper connections or ground references\n   - Missing models: Include required .model statements\n   - Convergence issues: Adjust simulation parameters or initial conditions\n   - Component value errors: Verify units and ranges\n3. Generate the corrected SPICE netlist\n4. Explain what was wrong and how you fixed it\n\nProvide the corrected SPICE netlist in a code block marked with ```spice```."
+  },
+  "EXECUTE_USER_INSTRUCTION": {
+    "name": "执行用户指令",
+    "description": "执行用户的具体修改指令",
+    "version": "1.0.0",
+    "variables": ["user_instruction", "circuit_netlist", "design_goals", "context"],
+    "required_variables": ["user_instruction", "circuit_netlist"],
+    "content": "You are an expert circuit designer. Execute the user's specific instruction to modify the circuit.\n\n## User Instruction\n{user_instruction}\n\n## Current Circuit Netlist\n{circuit_netlist}\n\n## Design Goals\n{design_goals}\n\n## Additional Context\n{context}\n\n## Instructions\n1. Understand the user's specific request\n2. Apply the requested modifications to the circuit\n3. Ensure the modifications maintain circuit validity\n4. If the instruction is ambiguous, make reasonable assumptions and explain them\n5. Generate the modified SPICE netlist\n6. Briefly explain the changes made\n\nProvide the modified SPICE netlist in a code block marked with ```spice```."
+  },
+  "GENERAL_CONVERSATION": {
+    "name": "通用对话",
+    "description": "处理通用对话和问答",
+    "version": "1.0.0",
+    "variables": ["user_message", "conversation_history", "context"],
+    "required_variables": ["user_message"],
+    "content": "You are a helpful analog circuit design assistant. Respond to the user's message in a conversational manner.\n\n## User Message\n{user_message}\n\n## Conversation History\n{conversation_history}\n\n## Context\n{context}\n\n## Instructions\n1. Provide helpful and accurate information about circuit design\n2. If the user asks about concepts, explain them clearly\n3. If the user asks for recommendations, provide practical suggestions\n4. Keep responses concise but informative\n5. If you're unsure about something, acknowledge it\n6. Maintain a friendly and professional tone"
+  },
+  "SUMMARIZE_CONVERSATION": {
+    "name": "对话摘要",
+    "description": "生成对话摘要用于上下文压缩",
+    "version": "1.0.0",
+    "variables": ["conversation_history", "current_design_state"],
+    "required_variables": ["conversation_history"],
+    "content": "You are a technical summarizer. Create a concise summary of the conversation history.\n\n## Conversation History\n{conversation_history}\n\n## Current Design State\n{current_design_state}\n\n## Instructions\n1. Summarize the key points of the conversation\n2. Preserve important technical details:\n   - Design requirements and goals\n   - Key decisions made\n   - Problems encountered and solutions\n   - Current circuit state\n3. Remove redundant or repetitive information\n4. Keep the summary under 500 words\n5. Use bullet points for clarity\n\nProvide a structured summary that captures the essential context."
+  },
+  "INTENT_ANALYSIS": {
+    "name": "意图分析",
+    "description": "分析用户消息的意图",
+    "version": "1.0.0",
+    "variables": ["user_message", "conversation_context", "current_state"],
+    "required_variables": ["user_message"],
+    "content": "You are an intent classifier for a circuit design assistant. Analyze the user's message to determine their intent.\n\n## User Message\n{user_message}\n\n## Conversation Context\n{conversation_context}\n\n## Current State\n{current_state}\n\n## Instructions\nClassify the user's intent into one of the following categories:\n1. NEW_DESIGN - User wants to start a new circuit design\n2. MODIFY_CIRCUIT - User wants to modify the current circuit\n3. RUN_SIMULATION - User wants to run a simulation\n4. ANALYZE_RESULTS - User wants to analyze simulation results\n5. FIX_ERROR - User is reporting an error or asking for help with an error\n6. OPTIMIZE - User wants to optimize the circuit\n7. QUESTION - User is asking a general question\n8. CONFIRM - User is confirming or accepting a suggestion\n9. REJECT - User is rejecting or declining a suggestion\n10. OTHER - None of the above\n\nProvide your analysis in JSON format with 'intent' and 'confidence' fields."
+  }
+}

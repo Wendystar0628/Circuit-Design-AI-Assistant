@@ -102,9 +102,77 @@ from domain.llm.context_compressor import (
 # 上下文管理器（门面类）
 from domain.llm.context_manager import ContextManager
 
-# 阶段三后续实现后导出
-# from domain.llm.prompt_builder import PromptBuilder
-# from domain.llm.external_service_manager import ExternalServiceManager
+# Prompt 模板常量
+from domain.llm.prompt_constants import (
+    # 任务级模板
+    PROMPT_EXTRACT_DESIGN_GOALS,
+    PROMPT_INITIAL_DESIGN,
+    PROMPT_ANALYZE_SIMULATION,
+    PROMPT_OPTIMIZE_PARAMETERS,
+    PROMPT_FIX_ERROR,
+    PROMPT_EXECUTE_INSTRUCTION,
+    PROMPT_GENERAL_CONVERSATION,
+    PROMPT_SUMMARIZE_CONVERSATION,
+    PROMPT_INTENT_ANALYSIS,
+    # 输出格式模板
+    FORMAT_SPICE_OUTPUT,
+    FORMAT_JSON_OUTPUT,
+    FORMAT_ANALYSIS_OUTPUT,
+    # 映射关系
+    TEMPLATE_FORMAT_MAPPING,
+    NODE_TEMPLATE_MAPPING,
+    # 节点名称常量
+    NODE_DESIGN_GOALS,
+    NODE_INITIAL_DESIGN,
+    NODE_ANALYSIS,
+    NODE_INTENT_ANALYSIS,
+    # Action 名称常量
+    ACTION_OPTIMIZE_PARAMETERS,
+    ACTION_FIX_ERROR,
+    ACTION_EXECUTE_INSTRUCTION,
+    ACTION_GENERAL_CONVERSATION,
+    # 辅助函数
+    get_template_for_node,
+)
+
+# Prompt 模板管理器
+from domain.llm.prompt_template_manager import (
+    PromptTemplateManager,
+    Template,
+    TemplateMetadata,
+)
+
+# Prompt 构建模块组
+from domain.llm.prompt_building import (
+    PromptBuilder,
+    TokenBudget,
+    PromptSection,
+    BuildResult,
+    DEFAULT_BUDGET_RATIOS,
+    TokenBudgetAllocator,
+    ContextFormatter,
+    FileContentProcessor,
+)
+
+# 外部服务管理器
+from domain.llm.external_service_manager import (
+    ExternalServiceManager,
+    ServiceCallResult,
+    CallStatistics,
+    CircuitBreaker,
+    CircuitState,
+    ServiceStatus,
+    SERVICE_LLM_ZHIPU,
+    SERVICE_LLM_GEMINI,
+    SERVICE_LLM_OPENAI,
+    SERVICE_LLM_CLAUDE,
+    SERVICE_LLM_QWEN,
+    SERVICE_LLM_DEEPSEEK,
+    SERVICE_SEARCH_ZHIPU,
+    SERVICE_SEARCH_GOOGLE,
+    SERVICE_SEARCH_BING,
+    ALL_SERVICE_TYPES,
+)
 
 __all__ = [
     # 消息类型
@@ -156,7 +224,63 @@ __all__ = [
     "CompressPreview",
     # 上下文管理器
     "ContextManager",
-    # 阶段三后续实现后导出
-    # "PromptBuilder",
-    # "ExternalServiceManager",
+    # Prompt 模板常量 - 任务级
+    "PROMPT_EXTRACT_DESIGN_GOALS",
+    "PROMPT_INITIAL_DESIGN",
+    "PROMPT_ANALYZE_SIMULATION",
+    "PROMPT_OPTIMIZE_PARAMETERS",
+    "PROMPT_FIX_ERROR",
+    "PROMPT_EXECUTE_INSTRUCTION",
+    "PROMPT_GENERAL_CONVERSATION",
+    "PROMPT_SUMMARIZE_CONVERSATION",
+    "PROMPT_INTENT_ANALYSIS",
+    # Prompt 模板常量 - 输出格式
+    "FORMAT_SPICE_OUTPUT",
+    "FORMAT_JSON_OUTPUT",
+    "FORMAT_ANALYSIS_OUTPUT",
+    # Prompt 模板常量 - 映射关系
+    "TEMPLATE_FORMAT_MAPPING",
+    "NODE_TEMPLATE_MAPPING",
+    # Prompt 模板常量 - 节点名称
+    "NODE_DESIGN_GOALS",
+    "NODE_INITIAL_DESIGN",
+    "NODE_ANALYSIS",
+    "NODE_INTENT_ANALYSIS",
+    # Prompt 模板常量 - Action 名称
+    "ACTION_OPTIMIZE_PARAMETERS",
+    "ACTION_FIX_ERROR",
+    "ACTION_EXECUTE_INSTRUCTION",
+    "ACTION_GENERAL_CONVERSATION",
+    # Prompt 模板常量 - 辅助函数
+    "get_template_for_node",
+    # Prompt 模板管理器
+    "PromptTemplateManager",
+    "Template",
+    "TemplateMetadata",
+    # Prompt 构建模块组
+    "PromptBuilder",
+    "TokenBudget",
+    "PromptSection",
+    "BuildResult",
+    "DEFAULT_BUDGET_RATIOS",
+    "TokenBudgetAllocator",
+    "ContextFormatter",
+    "FileContentProcessor",
+    # 外部服务管理器
+    "ExternalServiceManager",
+    "ServiceCallResult",
+    "CallStatistics",
+    "CircuitBreaker",
+    "CircuitState",
+    "ServiceStatus",
+    "SERVICE_LLM_ZHIPU",
+    "SERVICE_LLM_GEMINI",
+    "SERVICE_LLM_OPENAI",
+    "SERVICE_LLM_CLAUDE",
+    "SERVICE_LLM_QWEN",
+    "SERVICE_LLM_DEEPSEEK",
+    "SERVICE_SEARCH_ZHIPU",
+    "SERVICE_SEARCH_GOOGLE",
+    "SERVICE_SEARCH_BING",
+    "ALL_SERVICE_TYPES",
 ]

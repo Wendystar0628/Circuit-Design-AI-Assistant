@@ -34,7 +34,7 @@ from .settings import (
     ENCRYPTED_FIELDS,
     ENCRYPTION_SALT,
     CONFIG_API_KEY,
-    CONFIG_WEB_SEARCH_API_KEY,
+    CONFIG_GENERAL_WEB_SEARCH_API_KEY,
     CONFIG_TIMEOUT,
     CONFIG_STREAMING,
     CONFIG_LANGUAGE,
@@ -259,13 +259,13 @@ class ConfigManager:
         """
         self.set(CONFIG_API_KEY, key)
     
-    def get_web_search_api_key(self) -> str:
-        """获取解密后的搜索 API 密钥"""
-        return self.get(CONFIG_WEB_SEARCH_API_KEY, "")
+    def get_general_web_search_api_key(self) -> str:
+        """获取解密后的通用联网搜索 API 密钥"""
+        return self.get(CONFIG_GENERAL_WEB_SEARCH_API_KEY, "")
     
-    def set_web_search_api_key(self, key: str) -> None:
-        """加密存储搜索 API 密钥"""
-        self.set(CONFIG_WEB_SEARCH_API_KEY, key)
+    def set_general_web_search_api_key(self, key: str) -> None:
+        """加密存储通用联网搜索 API 密钥"""
+        self.set(CONFIG_GENERAL_WEB_SEARCH_API_KEY, key)
 
     
     # ============================================================

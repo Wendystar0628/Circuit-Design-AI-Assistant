@@ -20,6 +20,19 @@ LLM 提供商适配器模块
 - gemini/: Gemini 适配器目录
 - qwen/: Qwen 适配器目录
 - deepseek/: DeepSeek 适配器目录
+
+使用示例：
+    from infrastructure.llm_adapters import ZhipuClient, create_zhipu_client
+    
+    # 创建智谱客户端
+    client = create_zhipu_client()
+    
+    # 非流式调用
+    response = client.chat(messages=[{"role": "user", "content": "Hello"}])
+    
+    # 流式调用
+    async for chunk in client.chat_stream(messages):
+        print(chunk.content, end="")
 """
 
 from infrastructure.llm_adapters.base_client import (
@@ -33,6 +46,13 @@ from infrastructure.llm_adapters.base_client import (
     RateLimitError,
     ContextOverflowError,
     ResponseParseError,
+)
+
+# 智谱 GLM 适配器
+from infrastructure.llm_adapters.zhipu import (
+    ZhipuClient,
+    create_zhipu_client,
+    ZHIPU_MODELS,
 )
 
 __all__ = [
@@ -49,4 +69,8 @@ __all__ = [
     "RateLimitError",
     "ContextOverflowError",
     "ResponseParseError",
+    # 智谱客户端
+    "ZhipuClient",
+    "create_zhipu_client",
+    "ZHIPU_MODELS",
 ]

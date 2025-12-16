@@ -50,7 +50,7 @@ TIMESTAMP_COLOR = "#999999"
 # 布局常量
 MESSAGE_PADDING = 12
 MESSAGE_BORDER_RADIUS = 12
-MAX_WIDTH_RATIO = 0.85
+# 注意：不再使用固定的最大宽度比例，气泡宽度随对话区域自动调整
 
 # 主题色
 PRIMARY_COLOR = "#4a9eff"
@@ -82,15 +82,10 @@ class MessageBubble(QWidget):
         # 内部状态
         self._message = None
         self._reasoning_collapsed = True
-        self._max_width = 600
         
         # UI 组件引用
         self._reasoning_frame: Optional[QFrame] = None
         self._reasoning_toggle: Optional[QPushButton] = None
-    
-    def set_max_width(self, width: int) -> None:
-        """设置最大宽度"""
-        self._max_width = int(width * MAX_WIDTH_RATIO)
     
     def render(self, message) -> QWidget:
         """
@@ -123,13 +118,18 @@ class MessageBubble(QWidget):
         Returns:
             QWidget: 用户消息组件（右对齐、浅蓝背景）
         """
+        # 用户消息：右对齐，使用左侧 stretch 推到右边
         container = QWidget()
+        container.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         layout = QHBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addStretch()
+        layout.setSpacing(0)
+        
+        # 左侧弹性空间（占 30%）
+        layout.addStretch(3)
         
         bubble = QFrame()
-        bubble.setMaximumWidth(self._max_width)
+        bubble.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         bubble.setStyleSheet(f"""
             QFrame {{
                 background-color: {USER_MESSAGE_BG};
@@ -156,14 +156,8 @@ class MessageBubble(QWidget):
             attachments_widget = self._render_attachments(message.attachments)
             bubble_layout.addWidget(attachments_widget)
         
-        # 时间戳
-        if message.timestamp_display:
-            time_label = QLabel(message.timestamp_display)
-            time_label.setStyleSheet(f"color: {TIMESTAMP_COLOR}; font-size: 11px;")
-            time_label.setAlignment(Qt.AlignmentFlag.AlignRight)
-            bubble_layout.addWidget(time_label)
-        
-        layout.addWidget(bubble)
+        # 右侧占 70%
+        layout.addWidget(bubble, 7)
         return container
     
     def render_assistant_message(self, message) -> QWidget:
@@ -176,11 +170,14 @@ class MessageBubble(QWidget):
         Returns:
             QWidget: 助手消息组件（左对齐、浅灰背景、Markdown渲染）
         """
+        # 助手消息：填满整个宽度（头像 + 内容）
         container = QWidget()
+        container.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         layout = QHBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
         
-        # AI 头像
+        # AI 头像（固定宽度）
         avatar = QLabel("🤖")
         avatar.setFixedSize(32, 32)
         avatar.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -193,8 +190,9 @@ class MessageBubble(QWidget):
         """)
         layout.addWidget(avatar, 0, Qt.AlignmentFlag.AlignTop)
         
+        # 气泡填满剩余宽度
         bubble = QFrame()
-        bubble.setMaximumWidth(self._max_width)
+        bubble.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         bubble.setStyleSheet(f"""
             QFrame {{
                 background-color: {ASSISTANT_MESSAGE_BG};
@@ -227,14 +225,8 @@ class MessageBubble(QWidget):
             ops_card = self.render_operations_card(message.operations)
             bubble_layout.addWidget(ops_card)
         
-        # 时间戳
-        if message.timestamp_display:
-            time_label = QLabel(message.timestamp_display)
-            time_label.setStyleSheet(f"color: {TIMESTAMP_COLOR}; font-size: 11px;")
-            bubble_layout.addWidget(time_label)
-        
-        layout.addWidget(bubble)
-        layout.addStretch()
+        # 不使用 stretch，让 bubble 自然填满
+        layout.addWidget(bubble, 1)
         
         return container
 
@@ -249,12 +241,18 @@ class MessageBubble(QWidget):
         Returns:
             QWidget: 系统消息组件（居中、灰色小字）
         """
+        # 系统消息：居中显示
         container = QWidget()
+        container.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         layout = QHBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addStretch()
+        layout.setSpacing(0)
+        
+        # 左右各占 20%，中间 60%
+        layout.addStretch(2)
         
         label = QLabel()
+        label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         label.setTextFormat(Qt.TextFormat.RichText)
         label.setWordWrap(True)
         label.setText(message.content_html)
@@ -266,9 +264,9 @@ class MessageBubble(QWidget):
             }}
         """)
         label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(label)
+        layout.addWidget(label, 6)
         
-        layout.addStretch()
+        layout.addStretch(2)
         return container
     
     def render_operations_card(self, operations: List[str]) -> QWidget:

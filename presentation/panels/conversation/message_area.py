@@ -28,6 +28,7 @@ from PyQt6.QtWidgets import (
     QScrollArea,
     QLabel,
     QFrame,
+    QSizePolicy,
 )
 
 
@@ -39,7 +40,7 @@ from PyQt6.QtWidgets import (
 MESSAGE_SPACING = 12
 MESSAGE_PADDING = 12
 MESSAGE_BORDER_RADIUS = 12
-MAX_MESSAGE_WIDTH_RATIO = 0.85
+# 注意：不再使用固定的最大宽度比例，气泡宽度随对话区域自动调整
 
 # 颜色常量
 ASSISTANT_MESSAGE_BG = "#f8f9fa"
@@ -372,12 +373,15 @@ class MessageArea(QWidget):
     
     def _create_streaming_bubble(self) -> QWidget:
         """创建流式输出气泡"""
+        # 流式输出气泡：与助手消息相同的布局
         container = QWidget()
         container.setObjectName("streaming_bubble")
+        container.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         layout = QHBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
         
-        # AI 头像
+        # AI 头像（固定宽度）
         avatar = QLabel("🤖")
         avatar.setFixedSize(32, 32)
         avatar.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -390,9 +394,10 @@ class MessageArea(QWidget):
         """)
         layout.addWidget(avatar, 0, Qt.AlignmentFlag.AlignTop)
         
+        # 气泡填满剩余宽度
         bubble = QFrame()
         bubble.setObjectName("streaming_content")
-        bubble.setMaximumWidth(int(self.width() * MAX_MESSAGE_WIDTH_RATIO))
+        bubble.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         bubble.setStyleSheet(f"""
             QFrame {{
                 background-color: {ASSISTANT_MESSAGE_BG};
@@ -448,8 +453,8 @@ class MessageArea(QWidget):
         loading_label.setStyleSheet("color: #4a9eff; font-size: 14px;")
         bubble_layout.addWidget(loading_label)
         
-        layout.addWidget(bubble)
-        layout.addStretch()
+        # 不使用 stretch，让 bubble 自然填满
+        layout.addWidget(bubble, 1)
         
         return container
     

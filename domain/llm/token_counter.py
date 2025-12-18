@@ -25,7 +25,7 @@ _logger = logging.getLogger(__name__)
 # ============================================================
 
 DEFAULT_CONTEXT_LIMIT = 128_000
-DEFAULT_OUTPUT_LIMIT = 4_096
+DEFAULT_OUTPUT_LIMIT = 32_768  # 现代大模型普遍支持 32K+ 输出
 
 
 # ============================================================

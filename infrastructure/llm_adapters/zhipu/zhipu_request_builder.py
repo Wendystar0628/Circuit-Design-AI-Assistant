@@ -28,7 +28,8 @@ from infrastructure.config.settings import (
 # 默认值（当 ModelRegistry 不可用时）
 # ============================================================
 
-_DEFAULT_MAX_TOKENS = 4096
+_DEFAULT_MAX_TOKENS = 32768           # 普通模式默认 32K 输出
+_DEFAULT_MAX_TOKENS_THINKING = 65536  # 深度思考模式默认 64K 输出
 _DEFAULT_TEMPERATURE = 0.7
 _DEFAULT_THINKING_TEMPERATURE = 1.0
 
@@ -371,7 +372,7 @@ class ZhipuRequestBuilder:
             elif model_config:
                 body["max_tokens"] = model_config.max_tokens_thinking
             else:
-                body["max_tokens"] = _DEFAULT_MAX_TOKENS
+                body["max_tokens"] = _DEFAULT_MAX_TOKENS_THINKING
             
             # 深度思考模式 temperature 固定为 1.0
             body["temperature"] = model_config.thinking_temperature if model_config else _DEFAULT_THINKING_TEMPERATURE

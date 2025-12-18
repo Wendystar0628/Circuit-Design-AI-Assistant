@@ -800,7 +800,7 @@ class ModelConfigDialog(QDialog):
                 
                 # 发布 LLM 客户端重新初始化事件，通知其他组件刷新引用
                 if self.event_bus:
-                    from shared.event_types import EVENT_LLM_CLIENT_REINITIALIZED
+                    from shared.event_types import EVENT_LLM_CLIENT_REINITIALIZED, EVENT_MODEL_CHANGED
                     self.event_bus.publish(
                         EVENT_LLM_CLIENT_REINITIALIZED,
                         data={
@@ -808,6 +808,30 @@ class ModelConfigDialog(QDialog):
                             "model": model,
                             "source": "model_config_dialog",
                         }
+                    )
+                    
+                    # 发布模型变更事件，通知 UI 组件更新模型卡片显示
+                    # 获取模型的 display_name
+                    display_name = model
+                    try:
+                        from shared.model_registry import ModelRegistry
+                        model_id = f"{provider_id}:{model}"
+                        model_config = ModelRegistry.get_model(model_id)
+                        if model_config:
+                            display_name = model_config.display_name
+                    except Exception:
+                        pass
+                    
+                    self.event_bus.publish(
+                        EVENT_MODEL_CHANGED,
+                        data={
+                            "new_model_id": f"{provider_id}:{model}",
+                            "old_model_id": None,
+                            "provider": provider_id,
+                            "model_name": model,
+                            "display_name": display_name,
+                        },
+                        source="model_config_dialog"
                     )
             else:
                 if self.logger:

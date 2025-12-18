@@ -234,6 +234,9 @@ class ConversationPanel(QWidget):
             self._input_area.select_file_clicked.connect(
                 self._on_select_file_clicked
             )
+            self._input_area.model_card_clicked.connect(
+                self._on_model_card_clicked
+            )
         
         # 附件管理器信号
         if self._attachment_manager:
@@ -324,6 +327,12 @@ class ConversationPanel(QWidget):
                 EVENT_SESSION_CHANGED, self._on_session_changed
             )
             
+            # 订阅模型变更事件，更新模型卡片显示
+            from shared.event_types import EVENT_MODEL_CHANGED
+            self.event_bus.subscribe(
+                EVENT_MODEL_CHANGED, self._on_model_changed
+            )
+            
         except ImportError:
             if self.logger:
                 self.logger.warning("无法导入事件类型，事件订阅跳过")
@@ -365,6 +374,11 @@ class ConversationPanel(QWidget):
             )
             self.event_bus.unsubscribe(
                 EVENT_SESSION_CHANGED, self._on_session_changed
+            )
+            
+            from shared.event_types import EVENT_MODEL_CHANGED
+            self.event_bus.unsubscribe(
+                EVENT_MODEL_CHANGED, self._on_model_changed
             )
             
         except ImportError:
@@ -453,6 +467,23 @@ class ConversationPanel(QWidget):
         # 只更新标题栏，不刷新消息显示（避免重复刷新）
         if self._title_bar and session_name:
             self._title_bar.set_session_name(session_name)
+    
+    def _on_model_changed(self, event_data: Dict[str, Any]) -> None:
+        """
+        处理模型变更事件（由 ModelRegistry 或 ModelConfigDialog 发布）
+        
+        更新输入区域的模型卡片显示。
+        """
+        if self._input_area:
+            # 尝试从事件数据中获取 display_name
+            data = event_data.get("data", {})
+            display_name = data.get("display_name")
+            
+            if display_name:
+                self._input_area.update_model_display(display_name)
+            else:
+                # 没有 display_name，让 InputArea 自己从配置获取
+                self._input_area.update_model_display()
 
     # ============================================================
     # 事件处理 - ViewModel 信号
@@ -584,6 +615,23 @@ class ConversationPanel(QWidget):
         
         if paths:
             self.file_selected.emit(paths)
+    
+    def _on_model_card_clicked(self) -> None:
+        """处理模型卡片点击，打开模型设置对话框"""
+        try:
+            from presentation.dialogs.model_config_dialog import ModelConfigDialog
+            
+            dialog = ModelConfigDialog(self)
+            if dialog.exec():
+                # 用户保存了配置，更新模型卡片显示
+                if self._input_area:
+                    self._input_area.update_model_display()
+                
+                if self.logger:
+                    self.logger.info("Model configuration updated from conversation panel")
+        except Exception as e:
+            if self.logger:
+                self.logger.error(f"Failed to open model config dialog: {e}")
     
     def _on_attachments_changed(self, count: int) -> None:
         """处理附件数量变化"""

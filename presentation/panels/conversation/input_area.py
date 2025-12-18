@@ -6,12 +6,14 @@
 - 专注于用户输入和附件管理
 - 处理文本输入、附件上传、发送操作
 - 支持拖放上传和键盘快捷键
+- 显示当前模型卡片，点击打开模型设置
 
 使用示例：
     from presentation.panels.conversation.input_area import InputArea
     
     input_area = InputArea()
     input_area.send_clicked.connect(on_send)
+    input_area.model_card_clicked.connect(on_model_settings)
     text = input_area.get_text()
 """
 
@@ -74,6 +76,7 @@ class InputArea(QWidget):
     attachment_removed = pyqtSignal(int)           # 附件移除
     upload_image_clicked = pyqtSignal()            # 上传图片按钮点击
     select_file_clicked = pyqtSignal()             # 选择文件按钮点击
+    model_card_clicked = pyqtSignal()              # 模型卡片点击（打开模型设置）
     
     def __init__(self, parent: Optional[QWidget] = None):
         """初始化输入区域"""
@@ -86,6 +89,7 @@ class InputArea(QWidget):
         # UI 组件引用
         self._input_text: Optional[QTextEdit] = None
         self._send_button: Optional[QPushButton] = None
+        self._model_card_btn: Optional[QPushButton] = None
         self._attachments_area: Optional[QWidget] = None
         self._attachments_layout: Optional[QHBoxLayout] = None
         self._progress_bar: Optional[QProgressBar] = None
@@ -227,6 +231,31 @@ class InputArea(QWidget):
         bottom_btn_layout.addWidget(self._token_label)
         
         bottom_btn_layout.addStretch()
+        
+        # 模型卡片按钮（显示当前模型，点击打开设置）
+        self._model_card_btn = QPushButton()
+        self._model_card_btn.setFixedHeight(24)
+        self._model_card_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #f0f0f0;
+                color: #333333;
+                border: 1px solid #e0e0e0;
+                border-radius: 4px;
+                font-size: 11px;
+                padding: 0px 8px;
+            }
+            QPushButton:hover {
+                background-color: #e8e8e8;
+                border-color: #d0d0d0;
+            }
+            QPushButton:pressed {
+                background-color: #e0e0e0;
+            }
+        """)
+        self._model_card_btn.setToolTip(self._get_text("btn.model_settings", "Model settings"))
+        self._model_card_btn.clicked.connect(self._on_model_card_clicked)
+        self._update_model_card_display()  # 初始化显示
+        bottom_btn_layout.addWidget(self._model_card_btn)
         
         # 发送按钮（位于输入框内部右下角）
         self._send_button = QPushButton()
@@ -596,6 +625,64 @@ class InputArea(QWidget):
         # 只发出信号，由 ConversationPanel 处理文件选择
         self.select_file_clicked.emit()
     
+    def _on_model_card_clicked(self) -> None:
+        """处理模型卡片点击"""
+        self.model_card_clicked.emit()
+    
+    def _update_model_card_display(self) -> None:
+        """
+        更新模型卡片显示
+        
+        优先级：
+        1. 从 ConfigManager 获取当前配置的模型名称
+        2. 通过 ModelRegistry 获取模型的 display_name
+        3. 若 ModelRegistry 中不存在，则格式化模型名称显示
+        """
+        if self._model_card_btn is None:
+            return
+        
+        display_name = "GLM-4.6"  # 最终回退默认值
+        
+        try:
+            # 1. 从 ConfigManager 获取当前配置的模型和厂商
+            from shared.service_locator import ServiceLocator
+            from shared.service_names import SVC_CONFIG_MANAGER
+            from infrastructure.config.settings import CONFIG_MODEL, CONFIG_LLM_PROVIDER
+            
+            config_manager = ServiceLocator.get_optional(SVC_CONFIG_MANAGER)
+            if config_manager:
+                model_name = config_manager.get(CONFIG_MODEL, "glm-4.6")
+                provider = config_manager.get(CONFIG_LLM_PROVIDER, "zhipu")
+                
+                # 2. 通过 ModelRegistry 获取 display_name
+                from shared.model_registry import ModelRegistry
+                model_id = f"{provider}:{model_name}"
+                model_config = ModelRegistry.get_model(model_id)
+                
+                if model_config:
+                    display_name = model_config.display_name
+                else:
+                    # 3. ModelRegistry 中不存在，格式化显示
+                    # 将 "glm-4.6v" 转换为 "GLM-4.6V"
+                    display_name = model_name.upper().replace("GLM-", "GLM-")
+        except Exception:
+            pass
+        
+        self._model_card_btn.setText(display_name)
+    
+    def update_model_display(self, model_name: str = None) -> None:
+        """
+        更新模型卡片显示
+        
+        Args:
+            model_name: 模型显示名称，为 None 时自动从 ModelRegistry 获取
+        """
+        if model_name:
+            if self._model_card_btn:
+                self._model_card_btn.setText(model_name)
+        else:
+            self._update_model_card_display()
+    
     # ============================================================
     # 拖放处理
     # ============================================================
@@ -678,6 +765,10 @@ class InputArea(QWidget):
         if hasattr(self, '_select_file_btn'):
             self._select_file_btn.setToolTip(
                 self._get_text("btn.select_file", "Attach file")
+            )
+        if self._model_card_btn:
+            self._model_card_btn.setToolTip(
+                self._get_text("btn.model_settings", "Model settings")
             )
 
 

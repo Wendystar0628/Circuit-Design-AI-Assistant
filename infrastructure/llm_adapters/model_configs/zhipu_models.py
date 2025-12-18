@@ -53,10 +53,10 @@ GLM_4_6 = ModelConfig(
     supports_web_search=True,
     supports_streaming=True,
     
-    # Token 限制
+    # Token 限制（参考智谱官方文档）
     context_limit=200000,
-    max_tokens_default=4096,
-    max_tokens_thinking=65536,  # 纯文本模型支持更大的 max_tokens
+    max_tokens_default=32768,     # 普通模式 32K 输出
+    max_tokens_thinking=65536,    # 深度思考模式 64K 输出
     
     # 深度思考配置
     thinking_temperature=1.0,
@@ -87,10 +87,10 @@ GLM_4_6V = ModelConfig(
     supports_web_search=True,
     supports_streaming=True,
     
-    # Token 限制（视觉模型的 max_tokens 限制较小）
+    # Token 限制（视觉模型限制较纯文本模型小）
     context_limit=128000,
-    max_tokens_default=4096,
-    max_tokens_thinking=4096,  # 视觉模型深度思考 max_tokens 限制
+    max_tokens_default=16384,     # 普通模式 16K 输出
+    max_tokens_thinking=16384,    # 视觉模型深度思考 max_tokens 限制
     
     # 深度思考配置
     thinking_temperature=1.0,
@@ -123,8 +123,8 @@ GLM_4_6V_FLASH = ModelConfig(
     
     # Token 限制
     context_limit=128000,
-    max_tokens_default=4096,
-    max_tokens_thinking=4096,
+    max_tokens_default=16384,     # 普通模式 16K 输出
+    max_tokens_thinking=16384,    # 深度思考模式 16K 输出
     
     # 深度思考配置
     thinking_temperature=1.0,

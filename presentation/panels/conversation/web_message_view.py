@@ -12,8 +12,10 @@
 - 附件预览（图片、文件）
 - 文件路径点击处理
 - 流式输出支持
+- 使用 SVG 图标（无 emoji）
 """
 
+import os
 from typing import Any, Dict, List, Optional
 from PyQt6.QtCore import Qt, pyqtSignal, pyqtSlot, QTimer, QUrl
 
@@ -26,6 +28,48 @@ except ImportError:
     WEBENGINE_AVAILABLE = False
 
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QSizePolicy, QLabel
+
+
+# ============================================================
+# SVG 图标定义（内联，避免文件加载问题）
+# ============================================================
+
+# AI 机器人头像
+SVG_ROBOT = '''<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#4a9eff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="3" y="8" width="18" height="12" rx="2"/><circle cx="9" cy="14" r="2"/><circle cx="15" cy="14" r="2"/>
+  <path d="M12 2v4"/><path d="M8 8V6a4 4 0 0 1 8 0v2"/></svg>'''
+
+# 思考气泡
+SVG_THINKING = '''<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#666" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+  <circle cx="9" cy="10" r="1" fill="#666"/><circle cx="12" cy="10" r="1" fill="#666"/><circle cx="15" cy="10" r="1" fill="#666"/></svg>'''
+
+# 操作记录/剪贴板
+SVG_CLIPBOARD = '''<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4a9eff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>
+  <rect x="8" y="2" width="8" height="4" rx="1" ry="1"/><path d="M9 12h6"/><path d="M9 16h6"/></svg>'''
+
+# 成功/完成
+SVG_SUCCESS = '''<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>'''
+
+# 进行中/加载
+SVG_LOADING = '''<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ff9800" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>'''
+
+# 错误/失败
+SVG_ERROR = '''<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>'''
+
+# 图片文件
+SVG_IMAGE = '''<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#666" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/>
+  <polyline points="21 15 16 10 5 21"/></svg>'''
+
+# 普通文件
+SVG_FILE = '''<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#666" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+  <polyline points="14 2 14 8 20 8"/></svg>'''
 
 
 class WebMessageView(QWidget):
@@ -52,8 +96,8 @@ class WebMessageView(QWidget):
         self._stream_content = ""
         self._messages = []
         self._page_loaded = False
-        self._pending_messages = []  # 等待页面加载完成后渲染的消息
-        self._is_rendering = False   # 防止重复渲染
+        self._pending_messages = []
+        self._is_rendering = False
         self._stream_timer = QTimer(self)
         self._stream_timer.setInterval(50)
         self._stream_timer.timeout.connect(self._flush_stream)
@@ -69,9 +113,7 @@ class WebMessageView(QWidget):
             self._web_view.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
             settings = self._web_view.settings()
             settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, True)
-            # 设置 WebChannel 用于 JS 与 Python 通信
             self._setup_web_channel()
-            # 拦截导航请求处理文件/链接点击
             self._web_view.page().acceptNavigationRequest = self._handle_navigation
             self._web_view.loadFinished.connect(self._on_page_loaded)
             self._load_initial_page()
@@ -82,7 +124,6 @@ class WebMessageView(QWidget):
             layout.addWidget(label)
     
     def _setup_web_channel(self):
-        """设置 WebChannel 用于 JS 调用 Python"""
         if not WEBENGINE_AVAILABLE or not self._web_view:
             return
         try:
@@ -90,20 +131,15 @@ class WebMessageView(QWidget):
             self._web_channel.registerObject("pyBridge", self)
             self._web_view.page().setWebChannel(self._web_channel)
         except Exception:
-            pass  # WebChannel 可选，失败不影响基本功能
+            pass
     
     def _handle_navigation(self, url, nav_type, is_main_frame):
-        """处理导航请求，拦截文件和外部链接"""
         url_str = url.toString()
-        # 允许 about:blank 和 data: URL
         if url_str.startswith(('about:', 'data:')):
             return True
-        # 处理文件链接
         if url_str.startswith('file://'):
-            file_path = url_str[7:]
-            self.file_clicked.emit(file_path)
+            self.file_clicked.emit(url_str[7:])
             return False
-        # 处理外部链接
         if url_str.startswith(('http://', 'https://')):
             self.link_clicked.emit(url_str)
             return False
@@ -111,27 +147,22 @@ class WebMessageView(QWidget):
     
     @pyqtSlot(str)
     def handleFileClick(self, path: str):
-        """处理 JS 调用的文件点击"""
         self.file_clicked.emit(path)
     
     @pyqtSlot(str)
     def handleLinkClick(self, url: str):
-        """处理 JS 调用的链接点击"""
         self.link_clicked.emit(url)
     
     def _on_page_loaded(self, ok):
         self._page_loaded = ok
-        # 只在有待渲染消息且不在渲染中时才渲染
         if ok and self._pending_messages and not self._is_rendering:
             self._do_render(self._pending_messages)
             self._pending_messages = []
     
     def _load_initial_page(self):
-        html = self._build_html("")
-        self._web_view.setHtml(html)
+        self._web_view.setHtml(self._build_html(""))
 
     def _build_html(self, content: str) -> str:
-        """构建完整 HTML 页面"""
         css, js, auto_js = self._load_katex()
         return f'''<!DOCTYPE html>
 <html><head><meta charset="UTF-8">
@@ -166,7 +197,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial
 .row { display: flex; gap: 8px; align-items: flex-start; }
 .row.user { flex-direction: row-reverse; }
 .avatar { width: 32px; height: 32px; border-radius: 50%; display: flex; 
-          align-items: center; justify-content: center; font-size: 18px; background: #e8f5e9; flex-shrink: 0; }
+          align-items: center; justify-content: center; background: #e8f5e9; flex-shrink: 0; }
+.avatar svg { width: 20px; height: 20px; }
 h1,h2,h3 { margin: 16px 0 8px; font-weight: 600; }
 h1 { font-size: 1.5em; } h2 { font-size: 1.3em; } h3 { font-size: 1.1em; }
 p { margin-bottom: 8px; }
@@ -182,23 +214,22 @@ a:hover { text-decoration: underline; }
 .katex-block,.katex-display { text-align: center; margin: 12px 0; overflow-x: auto; }
 .katex { font-size: 1.1em; }
 .think { background: #f5f5f5; border-radius: 8px; padding: 8px 12px; margin-bottom: 8px; font-size: 13px; color: #555; }
-.think-toggle { cursor: pointer; color: #666; font-size: 12px; }
+.think-toggle { cursor: pointer; color: #666; font-size: 12px; display: flex; align-items: center; gap: 4px; }
+.think-toggle svg { vertical-align: middle; }
 .think-content { display: none; margin-top: 8px; }
 .think-content.show { display: block; }
-/* 操作摘要卡片样式 */
 .ops-card { background: #f0f7ff; border-left: 3px solid #4a9eff; border-radius: 4px; padding: 8px 12px; margin-top: 8px; }
-.ops-title { color: #4a9eff; font-size: 12px; font-weight: bold; margin-bottom: 4px; }
+.ops-title { color: #4a9eff; font-size: 12px; font-weight: bold; margin-bottom: 4px; display: flex; align-items: center; gap: 4px; }
 .ops-item { display: flex; align-items: center; gap: 6px; padding: 2px 0; font-size: 12px; color: #555; }
-.ops-icon { width: 16px; text-align: center; }
+.ops-icon { width: 16px; display: flex; align-items: center; justify-content: center; }
 .ops-more { color: #999; font-size: 11px; margin-top: 4px; }
 .file-link { color: #4a9eff; cursor: pointer; text-decoration: underline; }
 .file-link:hover { color: #2979ff; }
-/* 附件预览样式 */
 .attachments { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
 .att-item { display: flex; align-items: center; gap: 4px; background: #fff; border: 1px solid #e0e0e0; 
             border-radius: 4px; padding: 4px 8px; font-size: 12px; cursor: pointer; }
 .att-item:hover { background: #f5f5f5; }
-.att-icon { font-size: 14px; }
+.att-icon { display: flex; align-items: center; }
 .att-name { color: #333; max-width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .att-more { background: #e0e0e0; border-radius: 4px; padding: 4px 8px; font-size: 12px; color: #666; }
 '''
@@ -223,35 +254,25 @@ function onFileClick(path) { window.location.href = 'file://' + path; }
 '''
 
     def render_messages(self, messages: List[Any]) -> None:
-        """渲染消息列表"""
         self._messages = messages
-        
         if not self._web_view:
             return
-        
-        # 如果页面还没加载完成，保存待渲染消息
         if not self._page_loaded:
             self._pending_messages = messages
             return
-        
-        # 使用 JavaScript 增量更新，避免重新加载页面
         self._do_render(messages)
     
     def _do_render(self, messages: List[Any]):
-        """实际执行渲染（通过 JS 更新 DOM，不重新加载页面）"""
         if not self._web_view or self._is_rendering:
             return
-        
         self._is_rendering = True
         parts = [self._msg_to_html(m) for m in messages]
         content = '\n'.join(parts)
-        # 使用 JS 更新内容，而不是 setHtml 重新加载整个页面
         escaped_content = self._esc(content)
         self._run_js(f"document.getElementById('msgs').innerHTML = `{escaped_content}`; renderMath();")
         self._is_rendering = False
     
     def _msg_to_html(self, msg) -> str:
-        """将消息转换为 HTML"""
         role = getattr(msg, 'role', 'assistant')
         content = getattr(msg, 'content', '') or ''
         reasoning = getattr(msg, 'reasoning_html', '') or ''
@@ -270,26 +291,25 @@ function onFileClick(path) { window.location.href = 'file://' + path; }
             think = ""
             if reasoning:
                 think = f'''<div class="think">
-<div class="think-toggle" onclick="toggleThink('{msg_id}')">💭 思考过程 ▶</div>
+<div class="think-toggle" onclick="toggleThink('{msg_id}')">{SVG_THINKING} 思考过程 ▶</div>
 <div class="think-content" id="think-{msg_id}">{reasoning}</div></div>'''
             ops_html = self._render_operations_html(operations) if operations else ''
-            return f'<div class="row"><div class="avatar">🤖</div><div class="msg assistant">{think}{content_html}{ops_html}</div></div>'
+            return f'<div class="row"><div class="avatar">{SVG_ROBOT}</div><div class="msg assistant">{think}{content_html}{ops_html}</div></div>'
 
     def _render_operations_html(self, operations: List[str]) -> str:
-        """渲染操作摘要卡片 HTML"""
         if not operations:
             return ""
         
         max_display = 5
         items = []
         for op in operations[:max_display]:
-            icon = "✅"
             if "进行中" in op or "running" in op.lower():
-                icon = "⏳"
+                icon = SVG_LOADING
             elif "失败" in op or "error" in op.lower():
-                icon = "❌"
+                icon = SVG_ERROR
+            else:
+                icon = SVG_SUCCESS
             
-            # 检查是否包含文件路径，添加点击链接
             op_html = self._linkify_file_paths(op)
             items.append(f'<div class="ops-item"><span class="ops-icon">{icon}</span><span>{op_html}</span></div>')
         
@@ -298,13 +318,12 @@ function onFileClick(path) { window.location.href = 'file://' + path; }
             more = f'<div class="ops-more">... 还有 {len(operations) - max_display} 条操作</div>'
         
         return f'''<div class="ops-card">
-<div class="ops-title">📋 操作记录</div>
+<div class="ops-title">{SVG_CLIPBOARD} 操作记录</div>
 {''.join(items)}
 {more}
 </div>'''
     
     def _render_attachments_html(self, attachments: List[Dict[str, Any]]) -> str:
-        """渲染附件预览 HTML"""
         if not attachments:
             return ""
         
@@ -314,7 +333,7 @@ function onFileClick(path) { window.location.href = 'file://' + path; }
             name = att.get("name", "未知文件")
             path = att.get("path", "")
             
-            icon = "🖼️" if att_type == "image" else "📄"
+            icon = SVG_IMAGE if att_type == "image" else SVG_FILE
             display_name = name[:12] + "..." if len(name) > 15 else name
             
             onclick = f'onclick="onFileClick(\'{self._esc_attr(path)}\')"' if path else ''
@@ -327,24 +346,18 @@ function onFileClick(path) { window.location.href = 'file://' + path; }
         return f'<div class="attachments">{"".join(items)}{more}</div>'
     
     def _linkify_file_paths(self, text: str) -> str:
-        """将文本中的文件路径转换为可点击链接"""
         import re
         import html
-        
-        # 匹配文件路径模式
         patterns = [
             (r'`([^`]+\.(py|cir|json|txt|md|spice))`', r'<a class="file-link" href="file://\1">`\1`</a>'),
             (r'"([^"]+\.(py|cir|json|txt|md|spice))"', r'<a class="file-link" href="file://\1">"\1"</a>'),
         ]
-        
         result = html.escape(text)
         for pattern, replacement in patterns:
             result = re.sub(pattern, replacement, result, flags=re.IGNORECASE)
-        
         return result
     
     def _md_to_html(self, text: str) -> str:
-        """Markdown 转 HTML"""
         if not text:
             return ""
         try:
@@ -353,14 +366,14 @@ function onFileClick(path) { window.location.href = 'file://' + path; }
         except:
             import html
             return html.escape(text).replace('\n', '<br>')
-    
+
     # 流式输出
     def start_streaming(self):
         if not self._web_view:
             return
         self._is_streaming = True
         self._stream_content = ""
-        html = '<div class="row"><div class="avatar">🤖</div><div class="msg assistant streaming"></div></div>'
+        html = f'<div class="row"><div class="avatar">{SVG_ROBOT}</div><div class="msg assistant streaming"></div></div>'
         self._run_js(f"addMsg(`{self._esc(html)}`)")
         self._stream_timer.start()
     

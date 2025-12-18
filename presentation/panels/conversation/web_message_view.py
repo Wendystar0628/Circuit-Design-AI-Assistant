@@ -3,28 +3,51 @@
 基于 WebEngine 的消息显示组件
 
 使用单个 QWebEngineView 渲染所有消息，支持 Markdown 和 LaTeX。
+
+功能特性：
+- Markdown 渲染（标题、列表、代码块、表格等）
+- LaTeX 公式渲染（行内 $...$ 和块级 $$...$$）
+- 深度思考内容折叠
+- 操作摘要卡片（显示 AI 执行的操作）
+- 附件预览（图片、文件）
+- 文件路径点击处理
+- 流式输出支持
 """
 
-from typing import Any, List, Optional
-from PyQt6.QtCore import Qt, pyqtSignal, QTimer
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QSizePolicy, QLabel
+from typing import Any, Dict, List, Optional
+from PyQt6.QtCore import Qt, pyqtSignal, pyqtSlot, QTimer, QUrl
 
 try:
     from PyQt6.QtWebEngineWidgets import QWebEngineView
     from PyQt6.QtWebEngineCore import QWebEngineSettings
+    from PyQt6.QtWebChannel import QWebChannel
     WEBENGINE_AVAILABLE = True
 except ImportError:
     WEBENGINE_AVAILABLE = False
 
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QSizePolicy, QLabel
+
 
 class WebMessageView(QWidget):
-    """基于 WebEngine 的消息显示组件"""
+    """
+    基于 WebEngine 的消息显示组件
     
-    link_clicked = pyqtSignal(str)
+    整合了原 MessageBubble 的所有功能：
+    - 消息渲染（用户/助手/系统）
+    - 深度思考折叠
+    - 操作摘要卡片
+    - 附件预览
+    - 文件/链接点击处理
+    """
+    
+    # 信号定义
+    link_clicked = pyqtSignal(str)      # 链接点击 (url)
+    file_clicked = pyqtSignal(str)      # 文件点击 (file_path)
     
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self._web_view = None
+        self._web_channel = None
         self._is_streaming = False
         self._stream_content = ""
         self._messages = []
@@ -46,6 +69,10 @@ class WebMessageView(QWidget):
             self._web_view.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
             settings = self._web_view.settings()
             settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, True)
+            # 设置 WebChannel 用于 JS 与 Python 通信
+            self._setup_web_channel()
+            # 拦截导航请求处理文件/链接点击
+            self._web_view.page().acceptNavigationRequest = self._handle_navigation
             self._web_view.loadFinished.connect(self._on_page_loaded)
             self._load_initial_page()
             layout.addWidget(self._web_view)
@@ -53,6 +80,44 @@ class WebMessageView(QWidget):
             label = QLabel("请安装 PyQt6-WebEngine")
             label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             layout.addWidget(label)
+    
+    def _setup_web_channel(self):
+        """设置 WebChannel 用于 JS 调用 Python"""
+        if not WEBENGINE_AVAILABLE or not self._web_view:
+            return
+        try:
+            self._web_channel = QWebChannel()
+            self._web_channel.registerObject("pyBridge", self)
+            self._web_view.page().setWebChannel(self._web_channel)
+        except Exception:
+            pass  # WebChannel 可选，失败不影响基本功能
+    
+    def _handle_navigation(self, url, nav_type, is_main_frame):
+        """处理导航请求，拦截文件和外部链接"""
+        url_str = url.toString()
+        # 允许 about:blank 和 data: URL
+        if url_str.startswith(('about:', 'data:')):
+            return True
+        # 处理文件链接
+        if url_str.startswith('file://'):
+            file_path = url_str[7:]
+            self.file_clicked.emit(file_path)
+            return False
+        # 处理外部链接
+        if url_str.startswith(('http://', 'https://')):
+            self.link_clicked.emit(url_str)
+            return False
+        return True
+    
+    @pyqtSlot(str)
+    def handleFileClick(self, path: str):
+        """处理 JS 调用的文件点击"""
+        self.file_clicked.emit(path)
+    
+    @pyqtSlot(str)
+    def handleLinkClick(self, url: str):
+        """处理 JS 调用的链接点击"""
+        self.link_clicked.emit(url)
     
     def _on_page_loaded(self, ok):
         self._page_loaded = ok
@@ -85,7 +150,7 @@ class WebMessageView(QWidget):
             return _load_katex_resources()
         except:
             return ("", "", "")
-    
+
     def _get_styles(self) -> str:
         return '''
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -120,6 +185,22 @@ a:hover { text-decoration: underline; }
 .think-toggle { cursor: pointer; color: #666; font-size: 12px; }
 .think-content { display: none; margin-top: 8px; }
 .think-content.show { display: block; }
+/* 操作摘要卡片样式 */
+.ops-card { background: #f0f7ff; border-left: 3px solid #4a9eff; border-radius: 4px; padding: 8px 12px; margin-top: 8px; }
+.ops-title { color: #4a9eff; font-size: 12px; font-weight: bold; margin-bottom: 4px; }
+.ops-item { display: flex; align-items: center; gap: 6px; padding: 2px 0; font-size: 12px; color: #555; }
+.ops-icon { width: 16px; text-align: center; }
+.ops-more { color: #999; font-size: 11px; margin-top: 4px; }
+.file-link { color: #4a9eff; cursor: pointer; text-decoration: underline; }
+.file-link:hover { color: #2979ff; }
+/* 附件预览样式 */
+.attachments { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.att-item { display: flex; align-items: center; gap: 4px; background: #fff; border: 1px solid #e0e0e0; 
+            border-radius: 4px; padding: 4px 8px; font-size: 12px; cursor: pointer; }
+.att-item:hover { background: #f5f5f5; }
+.att-icon { font-size: 14px; }
+.att-name { color: #333; max-width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.att-more { background: #e0e0e0; border-radius: 4px; padding: 4px 8px; font-size: 12px; color: #666; }
 '''
 
     def _get_scripts(self) -> str:
@@ -138,6 +219,7 @@ function updateStream(html) { var s = document.querySelector('.msg.streaming'); 
 function finishStream() { var s = document.querySelector('.msg.streaming'); if(s) s.classList.remove('streaming'); }
 function clearMsgs() { document.getElementById('msgs').innerHTML = ''; }
 function toggleThink(id) { var c = document.getElementById('think-'+id); if(c) c.classList.toggle('show'); }
+function onFileClick(path) { window.location.href = 'file://' + path; }
 '''
 
     def render_messages(self, messages: List[Any]) -> None:
@@ -174,11 +256,14 @@ function toggleThink(id) { var c = document.getElementById('think-'+id); if(c) c
         content = getattr(msg, 'content', '') or ''
         reasoning = getattr(msg, 'reasoning_html', '') or ''
         msg_id = getattr(msg, 'id', 'x')
+        operations = getattr(msg, 'operations', []) or []
+        attachments = getattr(msg, 'attachments', []) or []
         
         content_html = self._md_to_html(content)
         
         if role == 'user':
-            return f'<div class="row user"><div class="msg user">{content_html}</div></div>'
+            att_html = self._render_attachments_html(attachments) if attachments else ''
+            return f'<div class="row user"><div class="msg user">{content_html}{att_html}</div></div>'
         elif role == 'system':
             return f'<div class="row"><div class="msg system">{content_html}</div></div>'
         else:
@@ -187,7 +272,76 @@ function toggleThink(id) { var c = document.getElementById('think-'+id); if(c) c
                 think = f'''<div class="think">
 <div class="think-toggle" onclick="toggleThink('{msg_id}')">💭 思考过程 ▶</div>
 <div class="think-content" id="think-{msg_id}">{reasoning}</div></div>'''
-            return f'<div class="row"><div class="avatar">🤖</div><div class="msg assistant">{think}{content_html}</div></div>'
+            ops_html = self._render_operations_html(operations) if operations else ''
+            return f'<div class="row"><div class="avatar">🤖</div><div class="msg assistant">{think}{content_html}{ops_html}</div></div>'
+
+    def _render_operations_html(self, operations: List[str]) -> str:
+        """渲染操作摘要卡片 HTML"""
+        if not operations:
+            return ""
+        
+        max_display = 5
+        items = []
+        for op in operations[:max_display]:
+            icon = "✅"
+            if "进行中" in op or "running" in op.lower():
+                icon = "⏳"
+            elif "失败" in op or "error" in op.lower():
+                icon = "❌"
+            
+            # 检查是否包含文件路径，添加点击链接
+            op_html = self._linkify_file_paths(op)
+            items.append(f'<div class="ops-item"><span class="ops-icon">{icon}</span><span>{op_html}</span></div>')
+        
+        more = ""
+        if len(operations) > max_display:
+            more = f'<div class="ops-more">... 还有 {len(operations) - max_display} 条操作</div>'
+        
+        return f'''<div class="ops-card">
+<div class="ops-title">📋 操作记录</div>
+{''.join(items)}
+{more}
+</div>'''
+    
+    def _render_attachments_html(self, attachments: List[Dict[str, Any]]) -> str:
+        """渲染附件预览 HTML"""
+        if not attachments:
+            return ""
+        
+        items = []
+        for att in attachments[:3]:
+            att_type = att.get("type", "file")
+            name = att.get("name", "未知文件")
+            path = att.get("path", "")
+            
+            icon = "🖼️" if att_type == "image" else "📄"
+            display_name = name[:12] + "..." if len(name) > 15 else name
+            
+            onclick = f'onclick="onFileClick(\'{self._esc_attr(path)}\')"' if path else ''
+            items.append(f'<div class="att-item" {onclick}><span class="att-icon">{icon}</span><span class="att-name">{display_name}</span></div>')
+        
+        more = ""
+        if len(attachments) > 3:
+            more = f'<span class="att-more">+{len(attachments) - 3}</span>'
+        
+        return f'<div class="attachments">{"".join(items)}{more}</div>'
+    
+    def _linkify_file_paths(self, text: str) -> str:
+        """将文本中的文件路径转换为可点击链接"""
+        import re
+        import html
+        
+        # 匹配文件路径模式
+        patterns = [
+            (r'`([^`]+\.(py|cir|json|txt|md|spice))`', r'<a class="file-link" href="file://\1">`\1`</a>'),
+            (r'"([^"]+\.(py|cir|json|txt|md|spice))"', r'<a class="file-link" href="file://\1">"\1"</a>'),
+        ]
+        
+        result = html.escape(text)
+        for pattern, replacement in patterns:
+            result = re.sub(pattern, replacement, result, flags=re.IGNORECASE)
+        
+        return result
     
     def _md_to_html(self, text: str) -> str:
         """Markdown 转 HTML"""
@@ -251,6 +405,10 @@ function toggleThink(id) { var c = document.getElementById('think-'+id); if(c) c
     def _esc(self, text: str) -> str:
         """转义 JavaScript 模板字符串中的特殊字符"""
         return text.replace('\\', '\\\\').replace('`', '\\`').replace('$', '\\$').replace('\r', '').replace('\n', '\\n')
+    
+    def _esc_attr(self, text: str) -> str:
+        """转义 HTML 属性中的特殊字符"""
+        return text.replace("'", "\\'").replace('"', '\\"').replace('\\', '\\\\')
     
     def cleanup(self):
         self._stream_timer.stop()

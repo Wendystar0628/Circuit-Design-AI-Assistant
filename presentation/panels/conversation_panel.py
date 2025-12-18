@@ -827,23 +827,22 @@ class ConversationPanel(QWidget):
         
         Args:
             result: LLM 完整响应结果
+        
+        注意：助手消息已在 MainWindow._on_llm_result() 中通过 ContextManager 添加，
+        这里只需要结束流式输出并刷新显示，不需要重复添加消息。
         """
         # 结束流式输出气泡
         if self._message_area:
             self._message_area.finish_streaming()
         
-        # 将助手消息添加到 ViewModel
+        # 更新 ViewModel 状态（不添加消息，消息已由 ContextManager 添加）
         if self.view_model:
-            content = result.get("content", "")
-            reasoning_content = result.get("reasoning_content", "")
-            
-            if content:
-                self.view_model.add_assistant_message(
-                    content=content,
-                    reasoning_content=reasoning_content,
-                )
+            self.view_model._is_loading = False
+            self.view_model._current_stream_content = ""
+            self.view_model._current_reasoning_content = ""
+            self.view_model.can_send_changed.emit(True)
         
-        # 刷新显示
+        # 刷新显示（从 ContextManager 获取最新消息）
         self.refresh_display()
     
     def handle_error(self, error_msg: str) -> None:

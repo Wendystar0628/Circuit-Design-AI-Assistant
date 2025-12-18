@@ -214,6 +214,72 @@ class ModelConfigDialog(QDialog):
         )
         self.setMinimumWidth(520)
         self.setModal(True)
+        
+        # 设置全局样式：复选框使用打钩样式，下拉框添加下拉箭头
+        self.setStyleSheet("""
+            /* 复选框样式：使用打钩而非蓝色填充 */
+            QCheckBox::indicator {
+                width: 18px;
+                height: 18px;
+                border: 2px solid #ccc;
+                border-radius: 3px;
+                background-color: #fff;
+            }
+            QCheckBox::indicator:hover {
+                border-color: #4a9eff;
+            }
+            QCheckBox::indicator:checked {
+                background-color: #fff;
+                border-color: #4a9eff;
+                image: url(data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNCIgaGVpZ2h0PSIxNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IiM0YTllZmYiIHN0cm9rZS13aWR0aD0iMyIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48cG9seWxpbmUgcG9pbnRzPSIyMCA2IDkgMTcgNCAxMiI+PC9wb2x5bGluZT48L3N2Zz4=);
+            }
+            QCheckBox::indicator:disabled {
+                border-color: #ddd;
+                background-color: #f5f5f5;
+            }
+            
+            /* 下拉框样式：添加下拉箭头指示 */
+            QComboBox {
+                border: 1px solid #ccc;
+                border-radius: 4px;
+                padding: 6px 30px 6px 10px;
+                background-color: #fff;
+                min-height: 20px;
+            }
+            QComboBox:hover {
+                border-color: #4a9eff;
+            }
+            QComboBox:focus {
+                border-color: #4a9eff;
+                outline: none;
+            }
+            QComboBox::drop-down {
+                subcontrol-origin: padding;
+                subcontrol-position: center right;
+                width: 24px;
+                border: none;
+                background: transparent;
+            }
+            QComboBox::down-arrow {
+                image: url(data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMiIgaGVpZ2h0PSIxMiIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IiM2NjYiIHN0cm9rZS13aWR0aD0iMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48cG9seWxpbmUgcG9pbnRzPSI2IDkgMTIgMTUgMTggOSI+PC9wb2x5bGluZT48L3N2Zz4=);
+                width: 12px;
+                height: 12px;
+            }
+            QComboBox::down-arrow:hover {
+                image: url(data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMiIgaGVpZ2h0PSIxMiIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IiM0YTllZmYiIHN0cm9rZS13aWR0aD0iMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48cG9seWxpbmUgcG9pbnRzPSI2IDkgMTIgMTUgMTggOSI+PC9wb2x5bGluZT48L3N2Zz4=);
+            }
+            QComboBox:disabled {
+                background-color: #f5f5f5;
+                color: #999;
+            }
+            QComboBox QAbstractItemView {
+                border: 1px solid #ccc;
+                border-radius: 4px;
+                background-color: #fff;
+                selection-background-color: #e3f2fd;
+                selection-color: #333;
+            }
+        """)
 
     def _setup_ui(self):
         """设置 UI 布局"""
@@ -539,8 +605,8 @@ class ModelConfigDialog(QDialog):
         if provider_search:
             self._on_provider_web_search_changed(Qt.CheckState.Checked.value)
         
-        # 更新验证状态
-        self._update_validation_status("not_verified", "")
+        # 更新验证状态：检查是否之前已验证过
+        self._check_and_update_verification_status(provider)
 
     def save_config(self) -> bool:
         """保存配置到文件"""
@@ -1034,8 +1100,39 @@ class ModelConfigDialog(QDialog):
             self.accept()
 
     def _reset_validation_status(self):
-        """重置验证状态"""
-        self._update_validation_status("not_verified", "")
+        """重置验证状态（厂商切换时调用）"""
+        # 检查新厂商是否之前已验证过
+        provider_id = self._provider_combo.currentData()
+        self._check_and_update_verification_status(provider_id)
+    
+    def _check_and_update_verification_status(self, provider_id: str):
+        """
+        检查并更新验证状态
+        
+        如果该厂商之前已验证过且 API Key 未变更，显示"已验证"状态。
+        """
+        if not provider_id:
+            self._update_validation_status("not_verified", "")
+            return
+        
+        # 检查是否有验证时间戳
+        verified_at = self._load_verification_timestamp(provider_id)
+        if not verified_at:
+            self._update_validation_status("not_verified", "")
+            return
+        
+        # 检查当前 API Key 是否与已保存的一致
+        current_api_key = self._api_key_edit.text().strip()
+        saved_api_key = ""
+        if self.credential_manager:
+            saved_api_key = self.credential_manager.get_llm_api_key(provider_id)
+        
+        if current_api_key and current_api_key == saved_api_key:
+            # API Key 未变更，显示已验证状态
+            self._update_validation_status("verified", "")
+        else:
+            # API Key 已变更或为空，需要重新验证
+            self._update_validation_status("not_verified", "")
 
     def _update_validation_status(self, status: str, message: str):
         """更新验证状态显示"""

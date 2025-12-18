@@ -94,6 +94,7 @@ class WebMessageView(QWidget):
         self._web_channel = None
         self._is_streaming = False
         self._stream_content = ""
+        self._stream_reasoning = ""  # 流式思考内容
         self._messages = []
         self._page_loaded = False
         self._pending_messages = []
@@ -102,6 +103,7 @@ class WebMessageView(QWidget):
         self._stream_timer.setInterval(50)
         self._stream_timer.timeout.connect(self._flush_stream)
         self._pending_update = False
+        self._pending_reasoning_update = False  # 思考内容更新标志
         self._setup_ui()
     
     def _setup_ui(self):
@@ -214,10 +216,17 @@ a:hover { text-decoration: underline; }
 .katex-block,.katex-display { text-align: center; margin: 12px 0; overflow-x: auto; }
 .katex { font-size: 1.1em; }
 .think { background: #f5f5f5; border-radius: 8px; padding: 8px 12px; margin-bottom: 8px; font-size: 13px; color: #555; }
-.think-toggle { cursor: pointer; color: #666; font-size: 12px; display: flex; align-items: center; gap: 4px; }
+.think-toggle { cursor: pointer; color: #666; font-size: 12px; display: flex; align-items: center; gap: 4px; user-select: none; }
 .think-toggle svg { vertical-align: middle; }
-.think-content { display: none; margin-top: 8px; }
+.think-toggle .arrow { transition: transform 0.2s; display: inline-block; }
+.think-toggle.expanded .arrow { transform: rotate(90deg); }
+.think-content { display: none; margin-top: 8px; max-height: 300px; overflow-y: auto; }
 .think-content.show { display: block; }
+.think.streaming .think-content { display: block; }
+.think.streaming .think-toggle .arrow { transform: rotate(90deg); }
+.think-status { color: #999; font-size: 11px; margin-left: 4px; }
+.think.streaming .think-status::after { content: "..."; animation: dots 1.5s infinite; }
+@keyframes dots { 0%,20% { content: "."; } 40% { content: ".."; } 60%,100% { content: "..."; } }
 .ops-card { background: #f0f7ff; border-left: 3px solid #4a9eff; border-radius: 4px; padding: 8px 12px; margin-top: 8px; }
 .ops-title { color: #4a9eff; font-size: 12px; font-weight: bold; margin-bottom: 4px; display: flex; align-items: center; gap: 4px; }
 .ops-item { display: flex; align-items: center; gap: 6px; padding: 2px 0; font-size: 12px; color: #555; }
@@ -246,10 +255,37 @@ function renderMath() {
 }
 function scrollBottom() { window.scrollTo(0, document.body.scrollHeight); }
 function addMsg(html) { document.getElementById('msgs').insertAdjacentHTML('beforeend', html); renderMath(); scrollBottom(); }
-function updateStream(html) { var s = document.querySelector('.msg.streaming'); if(s) { s.innerHTML = html; renderMath(); scrollBottom(); } }
-function finishStream() { var s = document.querySelector('.msg.streaming'); if(s) s.classList.remove('streaming'); }
+function updateStream(html) { 
+    var s = document.querySelector('.msg.streaming .stream-content'); 
+    if(s) { s.innerHTML = html; renderMath(); scrollBottom(); } 
+}
+function updateStreamReasoning(html) {
+    var s = document.querySelector('.msg.streaming .think-content');
+    if(s) { s.innerHTML = html; scrollBottom(); }
+}
+function finishStream() { 
+    var s = document.querySelector('.msg.streaming'); 
+    if(s) { 
+        s.classList.remove('streaming'); 
+        var think = s.querySelector('.think.streaming');
+        if(think) { 
+            think.classList.remove('streaming');
+            var content = think.querySelector('.think-content');
+            if(content) content.classList.remove('show');
+            var toggle = think.querySelector('.think-toggle');
+            if(toggle) toggle.classList.remove('expanded');
+        }
+    } 
+}
 function clearMsgs() { document.getElementById('msgs').innerHTML = ''; }
-function toggleThink(id) { var c = document.getElementById('think-'+id); if(c) c.classList.toggle('show'); }
+function toggleThink(id) { 
+    var c = document.getElementById('think-'+id); 
+    var t = c ? c.previousElementSibling : null;
+    if(c) { 
+        c.classList.toggle('show'); 
+        if(t && t.classList.contains('think-toggle')) t.classList.toggle('expanded');
+    } 
+}
 function onFileClick(path) { window.location.href = 'file://' + path; }
 '''
 
@@ -369,37 +405,98 @@ function onFileClick(path) { window.location.href = 'file://' + path; }
 
     # 流式输出
     def start_streaming(self):
+        """
+        开始流式输出
+        
+        创建一个包含思考区域和内容区域的流式消息气泡。
+        思考区域在流式输出时默认展开显示，完成后自动折叠。
+        """
         if not self._web_view:
             return
         self._is_streaming = True
         self._stream_content = ""
-        html = f'<div class="row"><div class="avatar">{SVG_ROBOT}</div><div class="msg assistant streaming"></div></div>'
+        self._stream_reasoning = ""
+        # 创建包含思考区域的流式消息结构
+        # streaming 类添加到 think 上，使其在流式输出时展开
+        html = f'''<div class="row"><div class="avatar">{SVG_ROBOT}</div><div class="msg assistant streaming">
+<div class="think streaming">
+<div class="think-toggle expanded" onclick="toggleThink('stream')">{SVG_THINKING} 思考过程<span class="arrow">▶</span><span class="think-status">思考中</span></div>
+<div class="think-content show" id="think-stream"></div>
+</div>
+<div class="stream-content"></div>
+</div></div>'''
         self._run_js(f"addMsg(`{self._esc(html)}`)")
         self._stream_timer.start()
     
     def append_streaming_chunk(self, chunk: str, chunk_type: str = "content"):
-        if chunk_type == "content":
+        """
+        追加流式输出块
+        
+        Args:
+            chunk: 文本内容
+            chunk_type: 内容类型 ("reasoning" | "content")
+        """
+        if chunk_type == "reasoning":
+            self._stream_reasoning += chunk
+            self._pending_reasoning_update = True
+        else:
             self._stream_content += chunk
-        self._pending_update = True
+            self._pending_update = True
     
     def _flush_stream(self):
-        if not self._pending_update:
-            return
-        self._pending_update = False
-        html = self._md_to_html(self._stream_content)
-        self._run_js(f"updateStream(`{self._esc(html)}`)")
+        """刷新流式输出缓冲区"""
+        # 更新思考内容
+        if self._pending_reasoning_update:
+            self._pending_reasoning_update = False
+            # 简单转义，不做 Markdown 渲染（思考内容通常是纯文本）
+            import html as html_module
+            reasoning_html = html_module.escape(self._stream_reasoning).replace('\n', '<br>')
+            self._run_js(f"updateStreamReasoning(`{self._esc(reasoning_html)}`)")
+        
+        # 更新主内容
+        if self._pending_update:
+            self._pending_update = False
+            html = self._md_to_html(self._stream_content)
+            self._run_js(f"updateStream(`{self._esc(html)}`)")
     
     def finish_streaming(self):
+        """
+        完成流式输出
+        
+        停止定时器，最终更新内容，并折叠思考区域。
+        """
         self._stream_timer.stop()
         self._is_streaming = False
+        
+        # 最终更新内容
         html = self._md_to_html(self._stream_content)
         self._run_js(f"updateStream(`{self._esc(html)}`)")
+        
+        # 如果有思考内容，最终更新
+        if self._stream_reasoning:
+            import html as html_module
+            reasoning_html = html_module.escape(self._stream_reasoning).replace('\n', '<br>')
+            self._run_js(f"updateStreamReasoning(`{self._esc(reasoning_html)}`)")
+        
+        # 调用 finishStream 折叠思考区域
         self._run_js("finishStream()")
+        
         self._stream_content = ""
+        self._stream_reasoning = ""
     
     def update_streaming(self, content: str, reasoning: str = ""):
+        """
+        更新流式内容（兼容旧接口）
+        
+        Args:
+            content: 主内容
+            reasoning: 思考内容
+        """
         self._stream_content = content
+        self._stream_reasoning = reasoning
         self._pending_update = True
+        if reasoning:
+            self._pending_reasoning_update = True
     
     def is_streaming(self) -> bool:
         return self._is_streaming

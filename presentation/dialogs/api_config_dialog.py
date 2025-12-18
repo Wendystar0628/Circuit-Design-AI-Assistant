@@ -25,17 +25,16 @@ from PyQt6.QtCore import Qt
 # 智谱GLM配置数据
 # ============================================================
 
-# 默认 Base URL
-DEFAULT_BASE_URL = "https://open.bigmodel.cn/api/paas/v4"
+from infrastructure.config.settings import DEFAULT_BASE_URL
 
-# 智谱GLM模型列表
-ZHIPU_MODELS: List[str] = [
-    "GLM-4.6",
-    "GLM-4.5",
-    "GLM-4.5-Flash",
-    "GLM-4.6V",
-    "CodeGeeX-4",
-]
+
+def get_zhipu_models() -> List[str]:
+    """从 ModelRegistry 获取智谱模型列表"""
+    try:
+        from shared.model_registry import ModelRegistry
+        return ModelRegistry.list_model_names("zhipu")
+    except Exception:
+        return ["glm-4.6", "glm-4.6v", "glm-4.6v-flash"]
 
 # 搜索供应商列表
 # 智谱内置搜索：无需额外配置，使用 LLM 的 API Key
@@ -228,7 +227,7 @@ class ApiConfigDialog(QDialog):
         
         # 模型选择
         self._model_combo = QComboBox()
-        for model in ZHIPU_MODELS:
+        for model in get_zhipu_models():
             self._model_combo.addItem(model)
         
         model_label = QLabel()
@@ -669,6 +668,6 @@ class ApiConfigDialog(QDialog):
 
 __all__ = [
     "ApiConfigDialog",
-    "ZHIPU_MODELS",
+    "get_zhipu_models",
     "DEFAULT_BASE_URL",
 ]

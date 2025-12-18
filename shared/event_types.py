@@ -104,6 +104,16 @@ EVENT_LLM_TOOL_CALL = "llm_tool_call"
 #   - source: str - 触发来源（如 "model_config_dialog"）
 EVENT_LLM_CLIENT_REINITIALIZED = "llm_client_reinitialized"
 
+# 模型切换
+# 携带数据：
+#   - new_model_id: str - 新模型 ID（格式: "provider:model_name"）
+#   - old_model_id: str - 旧模型 ID（可能为 None）
+#   - provider: str - 厂商 ID
+#   - model_name: str - 模型名称
+#   - supports_thinking: bool - 是否支持深度思考
+#   - supports_vision: bool - 是否支持视觉
+EVENT_MODEL_CHANGED = "model_changed"
+
 # ============================================================
 # 联网搜索事件
 # ============================================================
@@ -358,6 +368,7 @@ __all__ = [
     "EVENT_LLM_COMPLETE",
     "EVENT_LLM_TOOL_CALL",
     "EVENT_LLM_CLIENT_REINITIALIZED",
+    "EVENT_MODEL_CHANGED",
     # 联网搜索事件
     "EVENT_WEB_SEARCH_STARTED",
     "EVENT_WEB_SEARCH_COMPLETE",

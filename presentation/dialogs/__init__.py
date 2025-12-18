@@ -11,7 +11,7 @@
 """
 
 from .model_config_dialog import ModelConfigDialog, PROVIDER_DISPLAY_NAMES
-from .api_config_dialog import ApiConfigDialog, ZHIPU_MODELS, DEFAULT_BASE_URL
+from .api_config_dialog import ApiConfigDialog, get_zhipu_models, DEFAULT_BASE_URL
 from .about_dialog import AboutDialog, APP_VERSION
 from .context_compress_dialog import ContextCompressDialog
 from .history_dialog import HistoryDialog, SessionInfo
@@ -20,9 +20,9 @@ __all__ = [
     # 新版模型配置对话框
     "ModelConfigDialog",
     "PROVIDER_DISPLAY_NAMES",
-    # 旧版 API 配置对话框（保留兼容）
+    # 旧版 API 配置对话框（保留兼容，建议使用 ModelConfigDialog）
     "ApiConfigDialog",
-    "ZHIPU_MODELS",
+    "get_zhipu_models",
     "DEFAULT_BASE_URL",
     # 关于对话框
     "AboutDialog",

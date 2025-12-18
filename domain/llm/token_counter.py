@@ -21,90 +21,11 @@ _logger = logging.getLogger(__name__)
 
 
 # ============================================================
-# 模型上下文限制配置
+# 默认值（当 ModelRegistry 不可用时）
 # ============================================================
 
-# 模型上下文限制（tokens）
-MODEL_CONTEXT_LIMITS: Dict[str, int] = {
-    # ============================================================
-    # 智谱 GLM 系列（已实现）
-    # ============================================================
-    "glm-4.6": 200_000,       # 最新旗舰模型，355B/32B MoE，支持深度思考
-    "glm-4.5": 128_000,       # 平衡性能与成本
-    "glm-4.5-flash": 128_000, # 快速响应，适合简单任务
-    "glm-4.6v": 200_000,      # 多模态模型，支持图像理解
-    "codegeex-4": 128_000,    # 代码生成专用模型
-    
-    # ============================================================
-    # DeepSeek 系列（占位）
-    # ============================================================
-    "deepseek-chat": 64_000,
-    "deepseek-coder": 64_000,
-    
-    # ============================================================
-    # 阿里通义千问系列（占位）
-    # ============================================================
-    "qwen-max": 32_000,
-    "qwen-plus": 32_000,
-    "qwen-turbo": 8_000,
-    
-    # ============================================================
-    # OpenAI 系列（占位）
-    # ============================================================
-    "gpt-4o": 128_000,
-    "gpt-4o-mini": 128_000,
-    "gpt-4-turbo": 128_000,
-    
-    # ============================================================
-    # Anthropic Claude 系列（占位）
-    # ============================================================
-    "claude-3-5-sonnet-20241022": 200_000,
-    "claude-3-5-haiku-20241022": 200_000,
-    
-    # 默认值
-    "default": 128_000,
-}
-
-# 模型输出限制（tokens）
-MODEL_OUTPUT_LIMITS: Dict[str, int] = {
-    # ============================================================
-    # 智谱 GLM 系列（已实现）
-    # ============================================================
-    "glm-4.6": 16_384,
-    "glm-4.5": 16_384,
-    "glm-4.5-flash": 16_384,
-    "glm-4.6v": 16_384,
-    "codegeex-4": 16_384,
-    
-    # ============================================================
-    # DeepSeek 系列（占位）
-    # ============================================================
-    "deepseek-chat": 8_192,
-    "deepseek-coder": 8_192,
-    
-    # ============================================================
-    # 阿里通义千问系列（占位）
-    # ============================================================
-    "qwen-max": 8_192,
-    "qwen-plus": 8_192,
-    "qwen-turbo": 8_192,
-    
-    # ============================================================
-    # OpenAI 系列（占位）
-    # ============================================================
-    "gpt-4o": 16_384,
-    "gpt-4o-mini": 16_384,
-    "gpt-4-turbo": 4_096,
-    
-    # ============================================================
-    # Anthropic Claude 系列（占位）
-    # ============================================================
-    "claude-3-5-sonnet-20241022": 8_192,
-    "claude-3-5-haiku-20241022": 8_192,
-    
-    # 默认值
-    "default": 4_096,
-}
+DEFAULT_CONTEXT_LIMIT = 128_000
+DEFAULT_OUTPUT_LIMIT = 4_096
 
 
 # ============================================================
@@ -349,46 +270,50 @@ def count_image_tokens(
 # 模型限制查询
 # ============================================================
 
-def get_model_context_limit(model: str = "default") -> int:
+def get_model_context_limit(model: str = "default", provider: str = "zhipu") -> int:
     """
-    获取模型的上下文限制
+    获取模型的上下文限制（从 ModelRegistry 获取）
     
     Args:
         model: 模型名称
+        provider: 厂商 ID（默认 zhipu）
         
     Returns:
         上下文限制（tokens）
     """
-    # 尝试精确匹配
-    if model in MODEL_CONTEXT_LIMITS:
-        return MODEL_CONTEXT_LIMITS[model]
+    try:
+        from shared.model_registry import ModelRegistry
+        model_id = f"{provider}:{model}"
+        model_config = ModelRegistry.get_model(model_id)
+        if model_config:
+            return model_config.context_limit
+    except Exception as e:
+        _logger.debug(f"ModelRegistry not available: {e}")
     
-    # 尝试前缀匹配
-    for key in MODEL_CONTEXT_LIMITS:
-        if model.startswith(key):
-            return MODEL_CONTEXT_LIMITS[key]
-    
-    return MODEL_CONTEXT_LIMITS["default"]
+    return DEFAULT_CONTEXT_LIMIT
 
 
-def get_model_output_limit(model: str = "default") -> int:
+def get_model_output_limit(model: str = "default", provider: str = "zhipu") -> int:
     """
-    获取模型的输出限制
+    获取模型的输出限制（从 ModelRegistry 获取）
     
     Args:
         model: 模型名称
+        provider: 厂商 ID（默认 zhipu）
         
     Returns:
         输出限制（tokens）
     """
-    if model in MODEL_OUTPUT_LIMITS:
-        return MODEL_OUTPUT_LIMITS[model]
+    try:
+        from shared.model_registry import ModelRegistry
+        model_id = f"{provider}:{model}"
+        model_config = ModelRegistry.get_model(model_id)
+        if model_config:
+            return model_config.max_tokens_default
+    except Exception as e:
+        _logger.debug(f"ModelRegistry not available: {e}")
     
-    for key in MODEL_OUTPUT_LIMITS:
-        if model.startswith(key):
-            return MODEL_OUTPUT_LIMITS[key]
-    
-    return MODEL_OUTPUT_LIMITS["default"]
+    return DEFAULT_OUTPUT_LIMIT
 
 
 def get_available_context(
@@ -429,7 +354,7 @@ __all__ = [
     "get_model_context_limit",
     "get_model_output_limit",
     "get_available_context",
-    # 常量
-    "MODEL_CONTEXT_LIMITS",
-    "MODEL_OUTPUT_LIMITS",
+    # 默认值
+    "DEFAULT_CONTEXT_LIMIT",
+    "DEFAULT_OUTPUT_LIMIT",
 ]

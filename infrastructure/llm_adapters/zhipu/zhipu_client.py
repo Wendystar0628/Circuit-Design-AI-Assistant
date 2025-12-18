@@ -49,33 +49,10 @@ from infrastructure.config.settings import (
 
 
 # ============================================================
-# 模型信息定义
+# 默认值（当 ModelRegistry 不可用时）
 # ============================================================
 
-# 智谱 GLM 模型信息（仅保留当前实现的三个模型）
-ZHIPU_MODELS: Dict[str, ModelInfo] = {
-    "glm-4.6": ModelInfo(
-        name="glm-4.6",
-        context_limit=200000,
-        supports_vision=False,  # glm-4.6 是纯文本模型，视觉能力需要使用 glm-4.6v
-        supports_tools=True,
-        supports_thinking=True,
-    ),
-    "glm-4.6v": ModelInfo(
-        name="glm-4.6v",
-        context_limit=128000,  # GLM-4.6V 系列支持 128k tokens
-        supports_vision=True,
-        supports_tools=True,   # GLM-4.6V 原生支持 Function Call
-        supports_thinking=True,  # GLM-4.6V 支持深度思考
-    ),
-    "glm-4.6v-flash": ModelInfo(
-        name="glm-4.6v-flash",
-        context_limit=128000,
-        supports_vision=True,
-        supports_tools=True,
-        supports_thinking=True,
-    ),
-}
+_DEFAULT_CONTEXT_LIMIT = 128_000
 
 
 class ZhipuClient(BaseLLMClient):
@@ -432,7 +409,7 @@ class ZhipuClient(BaseLLMClient):
     
     def get_model_info(self, model: Optional[str] = None) -> ModelInfo:
         """
-        获取模型信息
+        获取模型信息（从 ModelRegistry 获取）
         
         Args:
             model: 模型名称（可选，使用实例默认模型）
@@ -442,14 +419,26 @@ class ZhipuClient(BaseLLMClient):
         """
         use_model = model or self.model
         
-        if use_model in ZHIPU_MODELS:
-            return ZHIPU_MODELS[use_model]
+        try:
+            from shared.model_registry import ModelRegistry
+            model_id = f"zhipu:{use_model}"
+            model_config = ModelRegistry.get_model(model_id)
+            
+            if model_config:
+                return ModelInfo(
+                    name=model_config.name,
+                    context_limit=model_config.context_limit,
+                    supports_vision=model_config.supports_vision,
+                    supports_tools=model_config.supports_tools,
+                    supports_thinking=model_config.supports_thinking,
+                )
+        except Exception as e:
+            self._logger.warning(f"ModelRegistry not available: {e}")
         
-        # 未知模型返回默认信息
-        self._logger.warning(f"Unknown model: {use_model}, using default info")
+        # 返回基本默认信息
         return ModelInfo(
             name=use_model,
-            context_limit=128000,
+            context_limit=_DEFAULT_CONTEXT_LIMIT,
             supports_vision=False,
             supports_tools=True,
             supports_thinking=False,
@@ -669,5 +658,4 @@ def create_zhipu_client(
 __all__ = [
     "ZhipuClient",
     "create_zhipu_client",
-    "ZHIPU_MODELS",
 ]

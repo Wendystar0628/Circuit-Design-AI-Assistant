@@ -210,6 +210,16 @@ def _init_phase_1() -> bool:
         if _logger:
             _logger.info("Phase 1.4 AppState 初始化完成")
 
+        # --------------------------------------------------------
+        # 1.5 ModelRegistry 初始化
+        # 依赖：Logger
+        # 职责：注册所有内置模型配置，作为模型信息的单一信息源
+        # --------------------------------------------------------
+        from shared.model_registry import ModelRegistry
+        ModelRegistry.initialize()
+        if _logger:
+            _logger.info("Phase 1.5 ModelRegistry 初始化完成")
+
         return True
 
     except Exception as e:

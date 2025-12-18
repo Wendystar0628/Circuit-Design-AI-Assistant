@@ -12,7 +12,7 @@
 API 文档参考：
 - https://open.bigmodel.cn/dev/api
 - https://docs.bigmodel.cn/cn/guide/models/vlm/glm-4.6v (GLM-4.6V 视觉模型)
-- https://zhipu-ef7018ed.mintlify.app/cn/guide/capabilities/thinking
+- https://docs.bigmodel.cn/cn/guide/capabilities/thinking
 """
 
 import logging
@@ -21,25 +21,16 @@ from typing import Any, Dict, List, Optional
 from infrastructure.config.settings import (
     DEFAULT_MODEL,
     DEFAULT_ENABLE_THINKING,
-    DEFAULT_THINKING_MAX_TOKENS,
-    DEFAULT_THINKING_TEMPERATURE,
 )
 
-# 视觉模型映射：当检测到图片时，自动切换到对应的视觉模型
-# 格式：{文本模型: 视觉模型}
-VISION_MODEL_MAPPING = {
-    "glm-4.6": "glm-4.6v",
-}
 
-# 已经是视觉模型的列表（无需切换）
-VISION_MODELS = {
-    "glm-4.6v", "glm-4.6v-flash",
-}
+# ============================================================
+# 默认值（当 ModelRegistry 不可用时）
+# ============================================================
 
-# 视觉模型深度思考的 max_tokens 限制
-# GLM-4.6V 系列的 max_tokens 上限与纯文本模型不同
-# 根据官方文档示例，使用 4096 作为默认值
-VISION_MODEL_THINKING_MAX_TOKENS = 4096
+_DEFAULT_MAX_TOKENS = 4096
+_DEFAULT_TEMPERATURE = 0.7
+_DEFAULT_THINKING_TEMPERATURE = 1.0
 
 
 class ZhipuRequestBuilder:
@@ -52,11 +43,12 @@ class ZhipuRequestBuilder:
     - 工具调用配置
     - 结构化输出配置
     - 自动检测多模态内容并切换到视觉模型
-    """
     
-    # 默认配置
-    DEFAULT_MAX_TOKENS = 4096          # 普通模式下的 max_tokens
-    DEFAULT_TEMPERATURE = 0.7          # 普通模式下的 temperature
+    配置来源优先级：
+    1. 方法参数（最高优先级）
+    2. ModelRegistry（推荐，单一信息源）
+    3. 硬编码回退常量（仅当 ModelRegistry 不可用时）
+    """
     
     def __init__(self):
         """初始化请求构建器"""
@@ -98,8 +90,8 @@ class ZhipuRequestBuilder:
         has_images = self._contains_images(normalized_messages)
         actual_model = self._get_vision_model_if_needed(model, has_images)
         
-        # 判断是否为视觉模型
-        is_vision_model = actual_model in VISION_MODELS
+        # 判断是否为视觉模型（优先从 ModelRegistry 获取）
+        is_vision_model = self._is_vision_model(actual_model)
         
         if has_images:
             self._logger.info(f"Detected images in messages, using vision model: {actual_model}")
@@ -111,9 +103,9 @@ class ZhipuRequestBuilder:
             "stream": stream,
         }
         
-        # 应用深度思考配置（视觉模型使用不同的 max_tokens 限制）
+        # 应用深度思考配置（从 ModelRegistry 获取模型特定配置）
         body = self._apply_thinking_config(
-            body, thinking, max_tokens, temperature, is_vision_model
+            body, thinking, max_tokens, temperature, is_vision_model, actual_model
         )
         
         # 应用工具配置
@@ -155,6 +147,26 @@ class ZhipuRequestBuilder:
                         return True
         return False
     
+    def _is_vision_model(self, model: str) -> bool:
+        """
+        判断模型是否为视觉模型（从 ModelRegistry 获取）
+        
+        Args:
+            model: 模型名称
+            
+        Returns:
+            是否为视觉模型
+        """
+        try:
+            from shared.model_registry import ModelRegistry
+            model_id = f"zhipu:{model}"
+            model_config = ModelRegistry.get_model(model_id)
+            if model_config:
+                return model_config.is_vision_model or model_config.supports_vision
+        except Exception:
+            pass
+        return False
+    
     def _get_vision_model_if_needed(self, model: str, has_images: bool) -> str:
         """
         如果消息包含图片且当前模型不支持视觉，则切换到对应的视觉模型
@@ -169,18 +181,27 @@ class ZhipuRequestBuilder:
         if not has_images:
             return model
         
-        # 如果已经是视觉模型，无需切换
-        if model in VISION_MODELS:
-            return model
+        try:
+            from shared.model_registry import ModelRegistry
+            
+            model_id = f"zhipu:{model}"
+            model_config = ModelRegistry.get_model(model_id)
+            
+            if model_config:
+                # 如果已经是视觉模型，无需切换
+                if model_config.is_vision_model or model_config.supports_vision:
+                    return model
+                
+                # 获取视觉回退模型
+                if model_config.vision_fallback:
+                    fallback_model = model_config.vision_fallback.split(":")[-1]
+                    return fallback_model
+        except Exception as e:
+            self._logger.warning(f"ModelRegistry not available: {e}")
         
-        # 查找对应的视觉模型
-        vision_model = VISION_MODEL_MAPPING.get(model)
-        if vision_model:
-            return vision_model
-        
-        # 未找到映射，使用默认视觉模型
-        self._logger.warning(f"No vision model mapping for {model}, using glm-4.6v")
-        return "glm-4.6v"
+        # ModelRegistry 不可用时，返回原模型（可能导致 API 错误）
+        self._logger.warning(f"Cannot determine vision model for {model}")
+        return model
     
     def build_tool_request(
         self,
@@ -306,14 +327,18 @@ class ZhipuRequestBuilder:
         thinking: bool,
         max_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
-        is_vision_model: bool = False
+        is_vision_model: bool = False,
+        model_name: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         应用深度思考配置
         
+        优先从 ModelRegistry 获取模型特定的配置，
+        如果 ModelRegistry 未初始化则使用默认值。
+        
         深度思考模式特殊要求：
         - thinking.type = "enabled"
-        - max_tokens 使用 thinking_max_tokens（纯文本模型默认 65536，视觉模型默认 16384）
+        - max_tokens 使用模型配置的 max_tokens_thinking
         - temperature 固定为 1.0
         
         Args:
@@ -322,28 +347,51 @@ class ZhipuRequestBuilder:
             max_tokens: 自定义 max_tokens
             temperature: 自定义 temperature
             is_vision_model: 是否为视觉模型（GLM-4.6V 系列）
+            model_name: 模型名称（用于从 ModelRegistry 获取配置）
             
         Returns:
             更新后的请求体
         """
+        # 尝试从 ModelRegistry 获取模型配置
+        model_config = None
+        if model_name:
+            try:
+                from shared.model_registry import ModelRegistry
+                model_id = f"zhipu:{model_name}"
+                model_config = ModelRegistry.get_model(model_id)
+            except Exception:
+                pass
+        
         if thinking:
             # 深度思考模式
             body["thinking"] = {"type": "enabled"}
             
-            # 视觉模型使用较小的 max_tokens 限制
             if max_tokens:
                 body["max_tokens"] = max_tokens
-            elif is_vision_model:
-                body["max_tokens"] = VISION_MODEL_THINKING_MAX_TOKENS
+            elif model_config:
+                body["max_tokens"] = model_config.max_tokens_thinking
             else:
-                body["max_tokens"] = DEFAULT_THINKING_MAX_TOKENS
+                body["max_tokens"] = _DEFAULT_MAX_TOKENS
             
-            body["temperature"] = DEFAULT_THINKING_TEMPERATURE  # 固定为 1.0
+            # 深度思考模式 temperature 固定为 1.0
+            body["temperature"] = model_config.thinking_temperature if model_config else _DEFAULT_THINKING_TEMPERATURE
         else:
             # 普通模式
             body["thinking"] = {"type": "disabled"}
-            body["max_tokens"] = max_tokens or self.DEFAULT_MAX_TOKENS
-            body["temperature"] = temperature if temperature is not None else self.DEFAULT_TEMPERATURE
+            
+            if max_tokens:
+                body["max_tokens"] = max_tokens
+            elif model_config:
+                body["max_tokens"] = model_config.max_tokens_default
+            else:
+                body["max_tokens"] = _DEFAULT_MAX_TOKENS
+            
+            if temperature is not None:
+                body["temperature"] = temperature
+            elif model_config:
+                body["temperature"] = model_config.default_temperature
+            else:
+                body["temperature"] = _DEFAULT_TEMPERATURE
         
         return body
     

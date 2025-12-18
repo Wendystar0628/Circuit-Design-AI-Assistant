@@ -826,18 +826,18 @@ class ModelConfigDialog(QDialog):
         provider_id = self._provider_combo.currentData()
         defaults = PROVIDER_DEFAULTS.get(provider_id, {})
         
-        # 更新模型列表
+        # 更新模型列表（从 ModelRegistry 获取）
         self._model_combo.clear()
-        models = defaults.get("models", [])
+        models = self._get_models_for_provider(provider_id)
         for model in models:
             self._model_combo.addItem(model)
         
         # 设置默认模型
         default_model = defaults.get("default_model", "")
         if default_model:
-            index = self._model_combo.findText(default_model, Qt.MatchFlag.MatchFixedString)
-            if index >= 0:
-                self._model_combo.setCurrentIndex(index)
+            idx = self._model_combo.findText(default_model, Qt.MatchFlag.MatchFixedString)
+            if idx >= 0:
+                self._model_combo.setCurrentIndex(idx)
         
         # 更新 Base URL 占位符
         base_url = defaults.get("base_url", "")
@@ -852,9 +852,9 @@ class ModelConfigDialog(QDialog):
         else:
             self._api_key_edit.setText("")
         
-        # 检查是否已实现
+        # 检查是否已实现和支持的功能（从 ModelRegistry 获取）
         implemented = defaults.get("implemented", False)
-        supports_thinking = defaults.get("supports_thinking", False)
+        supports_thinking = self._provider_supports_thinking(provider_id)
         supports_web_search = defaults.get("supports_web_search", False)
         
         # 更新厂商专属功能组
@@ -862,6 +862,23 @@ class ModelConfigDialog(QDialog):
         
         # 重置验证状态
         self._reset_validation_status()
+    
+    def _get_models_for_provider(self, provider_id: str) -> List[str]:
+        """从 ModelRegistry 获取厂商的模型列表"""
+        try:
+            from shared.model_registry import ModelRegistry
+            return ModelRegistry.list_model_names(provider_id)
+        except Exception:
+            return []
+    
+    def _provider_supports_thinking(self, provider_id: str) -> bool:
+        """检查厂商是否有任何模型支持深度思考"""
+        try:
+            from shared.model_registry import ModelRegistry
+            models = ModelRegistry.list_models(provider_id)
+            return any(m.supports_thinking for m in models)
+        except Exception:
+            return False
 
     def _update_provider_features(self, implemented: bool, supports_thinking: bool, supports_web_search: bool):
         """更新厂商专属功能组的显示状态"""
@@ -903,8 +920,7 @@ class ModelConfigDialog(QDialog):
         """深度思考开关变化"""
         enabled = state == Qt.CheckState.Checked.value
         provider_id = self._provider_combo.currentData()
-        defaults = PROVIDER_DEFAULTS.get(provider_id, {})
-        supports_thinking = defaults.get("supports_thinking", False)
+        supports_thinking = self._provider_supports_thinking(provider_id)
         
         self._thinking_timeout_spin.setEnabled(enabled and supports_thinking)
 
@@ -1088,7 +1104,8 @@ class ModelConfigDialog(QDialog):
         import httpx
         
         # 使用默认 base_url 如果未提供
-        actual_base_url = base_url if base_url else "https://open.bigmodel.cn/api/paas/v4"
+        from infrastructure.config.settings import DEFAULT_BASE_URL
+        actual_base_url = base_url if base_url else DEFAULT_BASE_URL
         url = f"{actual_base_url}/chat/completions"
         
         # 构建请求

@@ -52,8 +52,10 @@ from infrastructure.llm_adapters.base_client import (
 from infrastructure.llm_adapters.zhipu import (
     ZhipuClient,
     create_zhipu_client,
-    ZHIPU_MODELS,
 )
+
+# 模型配置已迁移到 ModelRegistry
+# 参见：shared/model_registry.py 和 infrastructure/llm_adapters/model_configs/
 
 __all__ = [
     # 基类
@@ -72,5 +74,4 @@ __all__ = [
     # 智谱客户端
     "ZhipuClient",
     "create_zhipu_client",
-    "ZHIPU_MODELS",
 ]

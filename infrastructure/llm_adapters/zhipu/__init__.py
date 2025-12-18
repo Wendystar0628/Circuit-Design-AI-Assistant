@@ -41,7 +41,6 @@ API 文档参考：
 from infrastructure.llm_adapters.zhipu.zhipu_client import (
     ZhipuClient,
     create_zhipu_client,
-    ZHIPU_MODELS,
 )
 from infrastructure.llm_adapters.zhipu.zhipu_request_builder import ZhipuRequestBuilder
 from infrastructure.llm_adapters.zhipu.zhipu_response_parser import ZhipuResponseParser
@@ -51,11 +50,13 @@ from infrastructure.llm_adapters.zhipu.zhipu_stream_handler import (
     collect_stream,
 )
 
+# 模型配置已迁移到 ModelRegistry
+# 参见：shared/model_registry.py 和 infrastructure/llm_adapters/model_configs/
+
 __all__ = [
     # 客户端主类和工厂函数
     "ZhipuClient",
     "create_zhipu_client",
-    "ZHIPU_MODELS",
     # 请求构建器（供高级用户使用）
     "ZhipuRequestBuilder",
     # 响应解析器（供高级用户使用）

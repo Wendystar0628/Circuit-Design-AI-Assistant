@@ -115,47 +115,42 @@ SUPPORTED_LLM_PROVIDERS = [
     LLM_PROVIDER_ANTHROPIC,
 ]
 
-# 厂商默认配置字典
+# ============================================================
+# 厂商基础配置（仅包含 UI 显示和厂商级别信息）
+# 
+# 模型列表、模型能力等从 ModelRegistry 动态获取
+# 参见：shared/model_registry.py
+# ============================================================
 PROVIDER_DEFAULTS = {
     LLM_PROVIDER_ZHIPU: {
         "base_url": "https://open.bigmodel.cn/api/paas/v4",
         "default_model": "glm-4.6",
-        "models": ["glm-4.6", "glm-4.6v", "glm-4.6v-flash"],  # 仅保留当前实现的三个模型
-        "supports_thinking": True,
         "supports_web_search": True,  # 厂商专属联网搜索
         "implemented": True,
     },
     LLM_PROVIDER_DEEPSEEK: {
         "base_url": "https://api.deepseek.com/v1",
         "default_model": "deepseek-chat",
-        "models": ["deepseek-chat", "deepseek-coder"],
-        "supports_thinking": True,
         "supports_web_search": False,
-        "implemented": False,  # 占位，待实现
+        "implemented": False,
     },
     LLM_PROVIDER_QWEN: {
         "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
         "default_model": "qwen-max",
-        "models": ["qwen-max", "qwen-plus", "qwen-turbo"],
-        "supports_thinking": False,
         "supports_web_search": False,
-        "implemented": False,  # 占位，待实现
+        "implemented": False,
     },
     LLM_PROVIDER_OPENAI: {
         "base_url": "https://api.openai.com/v1",
         "default_model": "gpt-4o",
-        "models": ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo"],
-        "supports_thinking": False,
         "supports_web_search": False,
-        "implemented": False,  # 占位，待实现
+        "implemented": False,
     },
     LLM_PROVIDER_ANTHROPIC: {
         "base_url": "https://api.anthropic.com/v1",
         "default_model": "claude-3-5-sonnet-20241022",
-        "models": ["claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022"],
-        "supports_thinking": True,
         "supports_web_search": False,
-        "implemented": False,  # 占位，待实现
+        "implemented": False,
     },
 }
 
@@ -163,9 +158,7 @@ PROVIDER_DEFAULTS = {
 # 深度思考相关默认值
 # ============================================================
 
-DEFAULT_ENABLE_THINKING = True       # 默认开启深度思考
-DEFAULT_THINKING_MAX_TOKENS = 65536  # 深度思考模式下的 max_tokens
-DEFAULT_THINKING_TEMPERATURE = 1.0   # 深度思考模式下的 temperature（固定值）
+DEFAULT_ENABLE_THINKING = True       # 默认开启深度思考（全局开关）
 DEFAULT_THINKING_TIMEOUT = 300       # 深度思考模式下的超时秒数
 
 # ============================================================
@@ -257,8 +250,6 @@ CONFIG_STREAMING = "streaming"
 
 # 深度思考配置
 CONFIG_ENABLE_THINKING = "enable_thinking"
-CONFIG_THINKING_MAX_TOKENS = "thinking_max_tokens"
-CONFIG_THINKING_TEMPERATURE = "thinking_temperature"
 CONFIG_THINKING_TIMEOUT = "thinking_timeout"
 
 # 厂商专属联网搜索配置
@@ -288,8 +279,6 @@ DEFAULT_CONFIG = {
     
     # 深度思考配置
     CONFIG_ENABLE_THINKING: DEFAULT_ENABLE_THINKING,
-    CONFIG_THINKING_MAX_TOKENS: DEFAULT_THINKING_MAX_TOKENS,
-    CONFIG_THINKING_TEMPERATURE: DEFAULT_THINKING_TEMPERATURE,
     CONFIG_THINKING_TIMEOUT: DEFAULT_THINKING_TIMEOUT,
     
     # 厂商专属联网搜索配置

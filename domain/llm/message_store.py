@@ -126,6 +126,7 @@ class MessageStore:
         reasoning_content: str = "",
         usage: Optional[Dict[str, int]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        web_search_results: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """
         添加消息到状态
@@ -141,6 +142,7 @@ class MessageStore:
             reasoning_content: 思考内容（仅助手消息）
             usage: Token 使用统计（仅助手消息）
             metadata: 额外元数据
+            web_search_results: 联网搜索结果（仅助手消息）
             
         Returns:
             更新后的状态副本
@@ -164,6 +166,7 @@ class MessageStore:
                     operations=operations,
                     usage=token_usage,
                     metadata=metadata,
+                    web_search_results=web_search_results,
                 )
             elif role == ROLE_SYSTEM:
                 msg = create_system_message(

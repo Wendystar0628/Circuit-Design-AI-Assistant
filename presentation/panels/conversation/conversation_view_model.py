@@ -82,6 +82,7 @@ class DisplayMessage:
     attachments: List[Dict[str, Any]] = field(default_factory=list)  # 附件列表
     timestamp_display: str = ""                  # 格式化的时间戳字符串
     is_streaming: bool = False                   # 是否正在流式输出
+    web_search_results: List[Dict[str, Any]] = field(default_factory=list)  # 联网搜索结果
     
     # 建议选项相关（仅 role=suggestion 时有效）
     suggestions: List[SuggestionItem] = field(default_factory=list)
@@ -438,6 +439,9 @@ class ConversationViewModel(QObject):
             for att in internal_msg.attachments
         ]
         
+        # 获取联网搜索结果
+        web_search_results = getattr(internal_msg, 'web_search_results', []) or []
+        
         return DisplayMessage(
             id=msg_id,
             role=internal_msg.role,
@@ -448,6 +452,7 @@ class ConversationViewModel(QObject):
             attachments=attachments,
             timestamp_display=timestamp_display,
             is_streaming=False,
+            web_search_results=web_search_results,
         )
 
     # ============================================================

@@ -129,15 +129,20 @@ class MessageArea(QWidget):
     # 公共方法 - 流式输出
     # ============================================================
     
-    def start_streaming(self) -> None:
-        """开始流式输出显示"""
+    def start_streaming(self, with_search: bool = False) -> None:
+        """
+        开始流式输出显示
+        
+        Args:
+            with_search: 是否显示搜索区域
+        """
         if self._is_streaming:
             return
         self._is_streaming = True
         self._stream_buffer = ""
         self._reasoning_buffer = ""
         if self._web_view:
-            self._web_view.start_streaming()
+            self._web_view.start_streaming(with_search=with_search)
     
     def update_streaming(self, content: str, reasoning: str = "") -> None:
         """更新流式内容"""
@@ -160,6 +165,21 @@ class MessageArea(QWidget):
         """完成思考阶段，更新状态显示"""
         if self._web_view:
             self._web_view.finish_thinking()
+    
+    def start_searching(self) -> None:
+        """开始搜索阶段"""
+        if self._web_view:
+            self._web_view.start_searching()
+    
+    def finish_searching(self, result_count: int = 0) -> None:
+        """完成搜索阶段"""
+        if self._web_view:
+            self._web_view.finish_searching(result_count)
+    
+    def update_search_results(self, results: list) -> None:
+        """更新搜索结果显示"""
+        if self._web_view:
+            self._web_view.update_search_results(results)
     
     def is_streaming(self) -> bool:
         """获取流式输出状态"""

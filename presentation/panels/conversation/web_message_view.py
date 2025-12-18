@@ -49,6 +49,11 @@ SVG_CLIPBOARD = '''<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14
   <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>
   <rect x="8" y="2" width="8" height="4" rx="1" ry="1"/><path d="M9 12h6"/><path d="M9 16h6"/></svg>'''
 
+# 搜索/地球图标
+SVG_SEARCH = '''<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4a9eff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/>
+  <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>'''
+
 # 成功/完成
 SVG_SUCCESS = '''<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
   <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>'''
@@ -223,8 +228,29 @@ a:hover { text-decoration: underline; }
 .think-content.show { display: block; }
 .think-status { color: #999; font-size: 11px; margin-left: 4px; }
 .think-status.thinking::after { content: "..."; animation: dots 1.5s infinite; }
+.think-status.searching::after { content: "..."; animation: dots 1.5s infinite; }
 .think-status.done { color: #4caf50; }
 @keyframes dots { 0%,20% { content: "."; } 40% { content: ".."; } 60%,100% { content: "..."; } }
+.search-card { background: #e8f4fd; border-left: 3px solid #4a9eff; border-radius: 4px; padding: 8px 12px; margin-bottom: 8px; }
+.search-toggle { cursor: pointer; color: #4a9eff; font-size: 12px; display: flex; align-items: center; gap: 4px; user-select: none; }
+.search-toggle svg { vertical-align: middle; }
+.search-toggle .arrow { transition: transform 0.2s; display: inline-block; }
+.search-toggle.expanded .arrow { transform: rotate(90deg); }
+.search-content { display: none; margin-top: 8px; max-height: 200px; overflow-y: auto; }
+.search-content.show { display: block; }
+.search-item { padding: 4px 0; border-bottom: 1px solid #e0e0e0; font-size: 12px; }
+.search-item:last-child { border-bottom: none; }
+.search-item-title { color: #333; font-weight: 500; }
+.search-item-url { color: #4a9eff; font-size: 11px; word-break: break-all; }
+.search-item-snippet { color: #666; font-size: 11px; margin-top: 2px; }
+.search-status { color: #999; font-size: 11px; margin-left: 4px; }
+.sources-card { margin-top: 16px; padding-top: 12px; border-top: 1px solid #e0e0e0; }
+.sources-title { color: #666; font-size: 12px; margin-bottom: 8px; display: flex; align-items: center; gap: 4px; }
+.sources-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.source-item { display: inline-flex; align-items: center; gap: 4px; background: #f5f5f5; border-radius: 4px; padding: 4px 8px; font-size: 12px; color: #4a9eff; text-decoration: none; transition: background 0.2s; }
+.source-item:hover { background: #e8f4fd; }
+.source-num { color: #999; font-size: 11px; }
+.source-domain { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ops-card { background: #f0f7ff; border-left: 3px solid #4a9eff; border-radius: 4px; padding: 8px 12px; margin-top: 8px; }
 .ops-title { color: #4a9eff; font-size: 12px; font-weight: bold; margin-bottom: 4px; display: flex; align-items: center; gap: 4px; }
 .ops-item { display: flex; align-items: center; gap: 6px; padding: 2px 0; font-size: 12px; color: #555; }
@@ -274,6 +300,45 @@ function finishThinking() {
         status.classList.remove('thinking');
         status.classList.add('done');
         status.textContent = '思考完成';
+    }
+}
+function startSearching() {
+    var search = document.querySelector('.msg.streaming .search-card');
+    if(search) {
+        search.style.display = 'block';
+        var status = search.querySelector('.search-status');
+        if(status) {
+            status.classList.add('searching');
+            status.textContent = '搜索中';
+        }
+    }
+    // 搜索时隐藏思考区域
+    var think = document.querySelector('.msg.streaming .think');
+    if(think) { think.style.display = 'none'; }
+}
+function finishSearching(resultCount) {
+    var search = document.querySelector('.msg.streaming .search-card');
+    if(search) {
+        var status = search.querySelector('.search-status');
+        if(status) {
+            status.classList.remove('searching');
+            status.textContent = '已搜索 ' + resultCount + ' 条结果';
+        }
+    }
+    // 搜索完成后显示思考区域
+    var think = document.querySelector('.msg.streaming .think');
+    if(think) { think.style.display = 'block'; }
+}
+function updateSearchResults(html) {
+    var content = document.querySelector('.msg.streaming .search-content');
+    if(content) { content.innerHTML = html; }
+}
+function toggleSearch(id) {
+    var c = document.getElementById('search-'+id);
+    var t = c ? c.previousElementSibling : null;
+    if(c) {
+        c.classList.toggle('show');
+        if(t && t.classList.contains('search-toggle')) t.classList.toggle('expanded');
     }
 }
 function finishStream() { 
@@ -333,6 +398,7 @@ function onFileClick(path) { window.location.href = 'file://' + path; }
         msg_id = getattr(msg, 'id', 'x')
         operations = getattr(msg, 'operations', []) or []
         attachments = getattr(msg, 'attachments', []) or []
+        web_search_results = getattr(msg, 'web_search_results', []) or []
         
         content_html = self._md_to_html(content)
         
@@ -348,7 +414,8 @@ function onFileClick(path) { window.location.href = 'file://' + path; }
 <div class="think-toggle" onclick="toggleThink('{msg_id}')">{SVG_THINKING} 思考过程 ▶</div>
 <div class="think-content" id="think-{msg_id}">{reasoning}</div></div>'''
             ops_html = self._render_operations_html(operations) if operations else ''
-            return f'<div class="row"><div class="avatar">{SVG_ROBOT}</div><div class="msg assistant">{think}{content_html}{ops_html}</div></div>'
+            sources_html = self._render_sources_html(web_search_results) if web_search_results else ''
+            return f'<div class="row"><div class="avatar">{SVG_ROBOT}</div><div class="msg assistant">{think}{content_html}{sources_html}{ops_html}</div></div>'
 
     def _render_operations_html(self, operations: List[str]) -> str:
         if not operations:
@@ -399,6 +466,52 @@ function onFileClick(path) { window.location.href = 'file://' + path; }
         
         return f'<div class="attachments">{"".join(items)}{more}</div>'
     
+    def _render_sources_html(self, results: List[Dict[str, Any]]) -> str:
+        """
+        渲染搜索来源链接（类似 Google AI Studio 风格）
+        
+        Args:
+            results: 搜索结果列表，每项包含 title, url, snippet
+            
+        Returns:
+            HTML 字符串
+        """
+        if not results:
+            return ""
+        
+        import html
+        from urllib.parse import urlparse
+        
+        items = []
+        for i, result in enumerate(results, 1):
+            url = result.get("url", "")
+            title = result.get("title", "")
+            
+            # 提取域名
+            try:
+                domain = urlparse(url).netloc
+                if domain.startswith("www."):
+                    domain = domain[4:]
+            except:
+                domain = url[:30] if url else "unknown"
+            
+            # 转义 HTML
+            safe_url = html.escape(url)
+            safe_domain = html.escape(domain)
+            safe_title = html.escape(title) if title else safe_domain
+            
+            items.append(
+                f'<a class="source-item" href="{safe_url}" target="_blank" title="{safe_title}">'
+                f'<span class="source-num">{i}.</span>'
+                f'<span class="source-domain">{safe_domain}</span>'
+                f'</a>'
+            )
+        
+        return f'''<div class="sources-card">
+<div class="sources-title">{SVG_SEARCH} Sources</div>
+<div class="sources-list">{"".join(items)}</div>
+</div>'''
+    
     def _linkify_file_paths(self, text: str) -> str:
         import re
         import html
@@ -422,22 +535,34 @@ function onFileClick(path) { window.location.href = 'file://' + path; }
             return html.escape(text).replace('\n', '<br>')
 
     # 流式输出
-    def start_streaming(self):
+    def start_streaming(self, with_search: bool = False):
         """
         开始流式输出
         
-        创建一个包含思考区域和内容区域的流式消息气泡。
-        思考区域在流式输出时默认展开显示，完成后自动折叠。
+        创建一个包含搜索区域、思考区域和内容区域的流式消息气泡。
+        
+        Args:
+            with_search: 是否显示搜索区域
         """
         if not self._web_view:
             return
         self._is_streaming = True
         self._stream_content = ""
         self._stream_reasoning = ""
-        # 创建包含思考区域的流式消息结构
-        # 思考区域默认展开，用户可以点击折叠
+        
+        # 搜索区域（默认隐藏，启用搜索时显示）
+        search_html = f'''<div class="search-card" style="display: {'block' if with_search else 'none'};">
+<div class="search-toggle" onclick="toggleSearch('stream')">{SVG_SEARCH} 联网搜索<span class="arrow">▶</span><span class="search-status {'searching' if with_search else ''}">{'搜索中' if with_search else ''}</span></div>
+<div class="search-content" id="search-stream"></div>
+</div>'''
+        
+        # 思考区域（启用搜索时初始隐藏，等搜索完成后显示）
+        think_display = 'none' if with_search else 'block'
+        
+        # 创建包含搜索区域和思考区域的流式消息结构
         html = f'''<div class="row"><div class="avatar">{SVG_ROBOT}</div><div class="msg assistant streaming">
-<div class="think">
+{search_html}
+<div class="think" style="display: {think_display};">
 <div class="think-toggle expanded" onclick="toggleThink('stream')">{SVG_THINKING} 思考过程<span class="arrow">▶</span><span class="think-status thinking">思考中</span></div>
 <div class="think-content show" id="think-stream"></div>
 </div>
@@ -482,6 +607,54 @@ function onFileClick(path) { window.location.href = 'file://' + path; }
         更新思考状态显示为"思考完成"，但不折叠思考区域。
         """
         self._run_js("finishThinking()")
+    
+    def start_searching(self):
+        """
+        开始搜索阶段
+        
+        显示搜索区域并更新状态为"搜索中"。
+        """
+        self._run_js("startSearching()")
+    
+    def finish_searching(self, result_count: int = 0):
+        """
+        完成搜索阶段
+        
+        更新搜索状态显示搜索结果数量。
+        
+        Args:
+            result_count: 搜索结果数量
+        """
+        self._run_js(f"finishSearching({result_count})")
+    
+    def update_search_results(self, results: List[Dict[str, Any]]):
+        """
+        更新搜索结果显示
+        
+        Args:
+            results: 搜索结果列表，每项包含 title, snippet, url
+        """
+        if not results:
+            return
+        
+        items_html = []
+        for r in results:
+            title = r.get("title", "")
+            snippet = r.get("snippet", "")
+            url = r.get("url", "")
+            items_html.append(f'''<div class="search-item">
+<div class="search-item-title">{self._esc_html(title)}</div>
+<div class="search-item-url"><a href="{url}" target="_blank">{url}</a></div>
+<div class="search-item-snippet">{self._esc_html(snippet[:150])}</div>
+</div>''')
+        
+        html = "".join(items_html)
+        self._run_js(f"updateSearchResults(`{self._esc(html)}`)")
+    
+    def _esc_html(self, text: str) -> str:
+        """转义 HTML 特殊字符"""
+        import html
+        return html.escape(text) if text else ""
     
     def finish_streaming(self):
         """

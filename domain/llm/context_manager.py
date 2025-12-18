@@ -111,6 +111,7 @@ class ContextManager:
         reasoning_content: str = "",
         usage: Optional[Dict[str, int]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        web_search_results: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """
         添加消息到状态
@@ -124,6 +125,7 @@ class ContextManager:
             reasoning_content: 思考内容（仅助手消息）
             usage: Token 使用统计（仅助手消息）
             metadata: 额外元数据
+            web_search_results: 联网搜索结果（仅助手消息）
             
         Returns:
             更新后的状态副本
@@ -137,6 +139,7 @@ class ContextManager:
             reasoning_content=reasoning_content,
             usage=usage,
             metadata=metadata,
+            web_search_results=web_search_results,
         )
     
     def get_messages(
@@ -714,6 +717,7 @@ class ContextManager:
         reasoning_content: str = "",
         tool_calls: Optional[List[Dict[str, Any]]] = None,
         usage: Optional[Dict[str, Any]] = None,
+        web_search_results: Optional[List[Dict[str, Any]]] = None,
     ) -> None:
         """
         添加助手消息（有状态版本，供 UI 层使用）
@@ -723,6 +727,7 @@ class ContextManager:
             reasoning_content: 思考内容
             tool_calls: 工具调用列表
             usage: Token 使用统计
+            web_search_results: 联网搜索结果
         """
         state = self._get_internal_state()
         
@@ -740,6 +745,7 @@ class ContextManager:
             reasoning_content=reasoning_content,
             operations=operations if operations else None,
             usage=usage,
+            web_search_results=web_search_results,
         )
         self._set_internal_state(new_state)
         

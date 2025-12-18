@@ -98,6 +98,33 @@ EVENT_LLM_COMPLETE = "llm_complete"
 EVENT_LLM_TOOL_CALL = "llm_tool_call"
 
 # ============================================================
+# 联网搜索事件
+# ============================================================
+
+# 联网搜索开始
+# 携带数据：
+#   - query: str - 搜索查询
+#   - search_type: str - 搜索类型（"provider" | "general"）
+#   - provider: str - 搜索提供商（"zhipu" | "google" | "bing"）
+EVENT_WEB_SEARCH_STARTED = "web_search_started"
+
+# 联网搜索完成
+# 携带数据：
+#   - query: str - 搜索查询
+#   - results: list - 搜索结果列表
+#   - result_count: int - 结果数量
+#   - search_type: str - 搜索类型
+#   - provider: str - 搜索提供商
+EVENT_WEB_SEARCH_COMPLETE = "web_search_complete"
+
+# 联网搜索错误
+# 携带数据：
+#   - query: str - 搜索查询
+#   - error: str - 错误信息
+#   - provider: str - 搜索提供商
+EVENT_WEB_SEARCH_ERROR = "web_search_error"
+
+# ============================================================
 # 仿真事件
 # ============================================================
 
@@ -323,6 +350,10 @@ __all__ = [
     "EVENT_LLM_CHUNK",
     "EVENT_LLM_COMPLETE",
     "EVENT_LLM_TOOL_CALL",
+    # 联网搜索事件
+    "EVENT_WEB_SEARCH_STARTED",
+    "EVENT_WEB_SEARCH_COMPLETE",
+    "EVENT_WEB_SEARCH_ERROR",
     # 仿真事件
     "EVENT_SIM_STARTED",
     "EVENT_SIM_COMPLETE",

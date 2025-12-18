@@ -63,6 +63,9 @@ class LLMRequest:
     tools: Optional[List[Dict[str, Any]]] = None
     thinking: bool = True
     timeout: Optional[int] = None
+    web_search_enabled: bool = False  # 是否启用联网搜索
+    web_search_type: str = ""  # 搜索类型: "provider" | "general"
+    web_search_provider: str = ""  # 搜索提供商
 
 
 @dataclass
@@ -73,6 +76,7 @@ class LLMResult:
     tool_calls: Optional[List[Dict[str, Any]]] = None
     usage: Optional[Dict[str, Any]] = None
     is_partial: bool = False
+    web_search_results: Optional[List[Dict[str, Any]]] = None  # 联网搜索结果
     
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典"""
@@ -82,6 +86,7 @@ class LLMResult:
             "tool_calls": self.tool_calls,
             "usage": self.usage,
             "is_partial": self.is_partial,
+            "web_search_results": self.web_search_results,
         }
 
 
@@ -96,18 +101,27 @@ class LLMWorker(BaseWorker):
     在后台线程中异步执行 LLM API 调用，支持：
     - 流式和非流式输出
     - 深度思考模式
+    - 联网搜索（厂商专属/通用）
     - 中途取消
     - 错误处理和重试
     
     信号说明：
-    - chunk(str): 流式数据块，JSON 格式 {"type": "reasoning"|"content", "text": str}
-    - phase_changed(str): 阶段切换信号，"reasoning" -> "content"
+    - chunk(str): 流式数据块，JSON 格式 {"type": "reasoning"|"content"|"searching", "text": str}
+    - phase_changed(str): 阶段切换信号，"searching" -> "reasoning" -> "content"
     - result(object): 完整响应结果
     - error(str, object): 错误信息
+    
+    阶段流程（启用联网搜索时）：
+    1. searching - 正在搜索（仅通用搜索时显示）
+    2. reasoning - 深度思考中（如果启用）
+    3. content - 生成回答
     """
 
-    # 阶段切换信号：从思考阶段切换到回答阶段
+    # 阶段切换信号：搜索 -> 思考 -> 回答
     phase_changed = pyqtSignal(str)
+    
+    # 联网搜索完成信号：携带搜索结果
+    web_search_complete = pyqtSignal(list)
 
     def __init__(self):
         super().__init__(worker_type=WORKER_TYPE_LLM)
@@ -117,12 +131,17 @@ class LLMWorker(BaseWorker):
         
         # 流式处理状态
         self._thinking_phase = True  # 当前是否在思考阶段
+        self._searching_phase = False  # 当前是否在搜索阶段
         self._last_chunk_time = 0.0  # 上次发送 chunk 的时间
         self._pending_chunk = ""     # 待发送的聚合内容
+        
+        # 联网搜索结果
+        self._web_search_results: List[Dict[str, Any]] = []
         
         # 延迟获取的服务
         self._config_manager = None
         self._llm_client = None
+        self._web_search_tool = None
 
 
     # ============================================================
@@ -152,6 +171,17 @@ class LLMWorker(BaseWorker):
             except Exception:
                 pass
         return self._llm_client
+    
+    @property
+    def web_search_tool(self):
+        """延迟获取联网搜索工具"""
+        if self._web_search_tool is None:
+            try:
+                from infrastructure.utils.web_search_tool import get_web_search_tool
+                self._web_search_tool = get_web_search_tool()
+            except Exception:
+                pass
+        return self._web_search_tool
 
     # ============================================================
     # 请求设置
@@ -165,6 +195,7 @@ class LLMWorker(BaseWorker):
         tools: Optional[List[Dict[str, Any]]] = None,
         thinking: Optional[bool] = None,
         timeout: Optional[int] = None,
+        web_search: Optional[bool] = None,
     ) -> None:
         """
         设置请求参数
@@ -176,6 +207,7 @@ class LLMWorker(BaseWorker):
             tools: 工具定义列表
             thinking: 是否启用深度思考（默认从配置读取）
             timeout: 超时秒数（可选，根据 thinking 自动选择）
+            web_search: 是否启用联网搜索（默认从配置读取）
         """
         # 从配置读取默认值
         if thinking is None:
@@ -187,6 +219,36 @@ class LLMWorker(BaseWorker):
             else:
                 timeout = self._get_config("timeout", DEFAULT_TIMEOUT)
         
+        # 读取联网搜索配置
+        web_search_enabled = False
+        web_search_type = ""
+        web_search_provider = ""
+        
+        if web_search is None:
+            # 从配置读取
+            provider_search = self._get_config("enable_provider_web_search", False)
+            general_search = self._get_config("enable_general_web_search", False)
+            
+            if provider_search:
+                web_search_enabled = True
+                web_search_type = "provider"
+                web_search_provider = self._get_config("llm_provider", "")
+            elif general_search:
+                web_search_enabled = True
+                web_search_type = "general"
+                web_search_provider = self._get_config("general_web_search_provider", "google")
+        elif web_search:
+            # 显式启用，自动检测类型
+            provider_search = self._get_config("enable_provider_web_search", False)
+            if provider_search:
+                web_search_enabled = True
+                web_search_type = "provider"
+                web_search_provider = self._get_config("llm_provider", "")
+            else:
+                web_search_enabled = True
+                web_search_type = "general"
+                web_search_provider = self._get_config("general_web_search_provider", "google")
+        
         self._request = LLMRequest(
             messages=messages,
             model=model,
@@ -194,12 +256,17 @@ class LLMWorker(BaseWorker):
             tools=tools,
             thinking=thinking,
             timeout=timeout,
+            web_search_enabled=web_search_enabled,
+            web_search_type=web_search_type,
+            web_search_provider=web_search_provider,
         )
         
         # 重置流式处理状态
         self._thinking_phase = True
+        self._searching_phase = False
         self._last_chunk_time = 0.0
         self._pending_chunk = ""
+        self._web_search_results = []
 
     def _get_config(self, key: str, default: Any) -> Any:
         """从 ConfigManager 获取配置"""
@@ -216,7 +283,10 @@ class LLMWorker(BaseWorker):
         """
         执行 LLM 调用
         
-        根据 streaming 参数选择流式或非流式调用。
+        流程：
+        1. 如果启用通用联网搜索，先执行搜索
+        2. 将搜索结果注入消息
+        3. 根据 streaming 参数选择流式或非流式调用
         """
         if self._request is None:
             self.emit_error("No request set", ValueError("Request not configured"))
@@ -233,10 +303,18 @@ class LLMWorker(BaseWorker):
             self.logger.info(
                 f"LLM request: streaming={self._request.streaming}, "
                 f"thinking={self._request.thinking}, "
+                f"web_search={self._request.web_search_enabled}, "
                 f"timeout={self._request.timeout}s"
             )
         
         try:
+            # 执行联网搜索（如果启用通用搜索）
+            if self._request.web_search_enabled:
+                self._do_web_search()
+            
+            if self.is_cancelled():
+                return
+            
             if self._request.streaming:
                 self._do_streaming_call()
             else:
@@ -244,6 +322,180 @@ class LLMWorker(BaseWorker):
                 
         except Exception as e:
             self._handle_error(e)
+    
+    def _do_web_search(self) -> None:
+        """
+        执行联网搜索
+        
+        - 厂商专属搜索：通过 LLM 工具调用实现，不在此处执行
+        - 通用搜索：调用 web_search_tool 执行搜索，将结果注入消息
+        """
+        if not self._request or not self._request.web_search_enabled:
+            return
+        
+        # 厂商专属搜索通过 LLM 工具调用实现，不在此处执行
+        if self._request.web_search_type == "provider":
+            # 为智谱等厂商添加 web_search 工具
+            self._add_provider_web_search_tool()
+            return
+        
+        # 通用搜索：提取用户最后一条消息作为查询
+        query = self._extract_search_query()
+        if not query:
+            return
+        
+        # 发出搜索开始信号
+        self._searching_phase = True
+        self.phase_changed.emit("searching")
+        
+        # 发布搜索开始事件
+        if self.event_bus:
+            from shared.event_types import EVENT_WEB_SEARCH_STARTED
+            self.event_bus.publish(
+                EVENT_WEB_SEARCH_STARTED,
+                data={
+                    "query": query,
+                    "search_type": self._request.web_search_type,
+                    "provider": self._request.web_search_provider,
+                },
+                source="llm_worker"
+            )
+        
+        if self.logger:
+            self.logger.info(f"Web search started: query='{query[:50]}...', provider={self._request.web_search_provider}")
+        
+        try:
+            # 执行搜索
+            if self.web_search_tool:
+                from infrastructure.utils.web_search_tool import SEARCH_TYPE_GENERAL
+                results = self.web_search_tool.search(
+                    query=query,
+                    search_type=SEARCH_TYPE_GENERAL,
+                    provider=self._request.web_search_provider,
+                    max_results=5,
+                )
+                
+                # 保存搜索结果
+                self._web_search_results = [r.to_dict() for r in results]
+                
+                # 发出搜索完成信号
+                self.web_search_complete.emit(self._web_search_results)
+                
+                # 发布搜索完成事件
+                if self.event_bus:
+                    from shared.event_types import EVENT_WEB_SEARCH_COMPLETE
+                    self.event_bus.publish(
+                        EVENT_WEB_SEARCH_COMPLETE,
+                        data={
+                            "query": query,
+                            "results": self._web_search_results,
+                            "result_count": len(self._web_search_results),
+                            "search_type": self._request.web_search_type,
+                            "provider": self._request.web_search_provider,
+                        },
+                        source="llm_worker"
+                    )
+                
+                if self.logger:
+                    self.logger.info(f"Web search complete: {len(results)} results")
+                
+                # 将搜索结果注入消息
+                if results:
+                    self._inject_search_results(results)
+                    
+        except Exception as e:
+            if self.logger:
+                self.logger.warning(f"Web search failed: {e}")
+            
+            # 发布搜索错误事件
+            if self.event_bus:
+                from shared.event_types import EVENT_WEB_SEARCH_ERROR
+                self.event_bus.publish(
+                    EVENT_WEB_SEARCH_ERROR,
+                    data={
+                        "query": query,
+                        "error": str(e),
+                        "provider": self._request.web_search_provider,
+                    },
+                    source="llm_worker"
+                )
+        
+        finally:
+            self._searching_phase = False
+    
+    def _add_provider_web_search_tool(self) -> None:
+        """为厂商专属搜索添加 web_search 工具"""
+        if not self._request:
+            return
+        
+        # 智谱联网搜索工具
+        web_search_tool = {
+            "type": "web_search",
+            "web_search": {"enable": True}
+        }
+        
+        if self._request.tools is None:
+            self._request.tools = []
+        
+        # 检查是否已添加
+        has_web_search = any(
+            t.get("type") == "web_search" for t in self._request.tools
+        )
+        
+        if not has_web_search:
+            self._request.tools.append(web_search_tool)
+            if self.logger:
+                self.logger.info("Added provider web_search tool to request")
+    
+    def _extract_search_query(self) -> str:
+        """从消息中提取搜索查询"""
+        if not self._request or not self._request.messages:
+            return ""
+        
+        # 获取最后一条用户消息
+        for msg in reversed(self._request.messages):
+            if msg.get("role") == "user":
+                content = msg.get("content", "")
+                if isinstance(content, str):
+                    return content[:200]  # 限制查询长度
+                elif isinstance(content, list):
+                    # 多模态消息，提取文本部分
+                    for item in content:
+                        if item.get("type") == "text":
+                            return item.get("text", "")[:200]
+        return ""
+    
+    def _inject_search_results(self, results) -> None:
+        """将搜索结果注入消息"""
+        if not self._request or not results:
+            return
+        
+        # 格式化搜索结果
+        if self.web_search_tool:
+            formatted = self.web_search_tool.format_search_results(results)
+        else:
+            # 简单格式化
+            lines = []
+            for i, r in enumerate(results, 1):
+                lines.append(f"[webpage {i}] {r.title} | {r.snippet} | {r.url}")
+            formatted = "\n".join(lines)
+        
+        # 创建搜索结果系统消息
+        search_msg = {
+            "role": "system",
+            "content": f"以下是联网搜索结果，请参考这些信息回答用户问题：\n\n{formatted}"
+        }
+        
+        # 在消息列表开头插入（系统消息之后）
+        messages = self._request.messages
+        insert_idx = 0
+        for i, msg in enumerate(messages):
+            if msg.get("role") == "system":
+                insert_idx = i + 1
+            else:
+                break
+        
+        messages.insert(insert_idx, search_msg)
 
     def _do_non_streaming_call(self) -> None:
         """执行非流式调用"""
@@ -269,6 +521,7 @@ class LLMWorker(BaseWorker):
                 tool_calls=response.tool_calls,
                 usage=self._extract_usage(response.usage),
                 is_partial=False,
+                web_search_results=self._web_search_results if self._web_search_results else None,
             )
             
             # 记录缓存统计
@@ -371,6 +624,9 @@ class LLMWorker(BaseWorker):
             # 刷新剩余的待发送内容
             self._flush_pending_chunk()
             
+            # 添加搜索结果
+            result.web_search_results = self._web_search_results if self._web_search_results else None
+            
             # 记录缓存统计
             self._log_cache_stats(result.usage)
             
@@ -384,6 +640,7 @@ class LLMWorker(BaseWorker):
             # 流式传输中断，返回部分内容
             if result.content or result.reasoning_content:
                 result.is_partial = True
+                result.web_search_results = self._web_search_results if self._web_search_results else None
                 self.emit_result(result.to_dict())
             raise e
         finally:

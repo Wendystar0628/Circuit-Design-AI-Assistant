@@ -60,6 +60,7 @@ class MainWindow(QMainWindow):
         self._event_bus = None
         self._logger = None
         self._context_manager = None
+        self._config_manager = None
         
         # UI 组件引用
         self._panels: Dict[str, QWidget] = {}
@@ -148,6 +149,18 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
         return self._context_manager
+
+    @property
+    def config_manager(self):
+        """延迟获取 ConfigManager"""
+        if self._config_manager is None:
+            try:
+                from shared.service_locator import ServiceLocator
+                from shared.service_names import SVC_CONFIG_MANAGER
+                self._config_manager = ServiceLocator.get_optional(SVC_CONFIG_MANAGER)
+            except Exception:
+                pass
+        return self._config_manager
 
     def _get_text(self, key: str, default: Optional[str] = None) -> str:
         """获取国际化文本"""
@@ -307,6 +320,7 @@ class MainWindow(QMainWindow):
             self._llm_worker.result.connect(self._on_llm_result)
             self._llm_worker.error.connect(self._on_llm_error)
             self._llm_worker.finished.connect(self._on_llm_finished)
+            self._llm_worker.web_search_complete.connect(self._on_web_search_complete)
             
             if self.logger:
                 self.logger.info("LLM Worker initialized")
@@ -650,12 +664,26 @@ class MainWindow(QMainWindow):
             self._on_llm_finished()
             return
         
+        # 检查是否启用联网搜索
+        web_search_enabled = False
+        if self.config_manager:
+            provider_search = self.config_manager.get("enable_provider_web_search", False)
+            general_search = self.config_manager.get("enable_general_web_search", False)
+            web_search_enabled = provider_search or general_search
+        
         # 设置请求参数
         self._llm_worker.set_request(
             messages=messages,
             streaming=True,
             thinking=None,  # 从配置读取
+            web_search=None,  # 从配置读取
         )
+        
+        # 启动流式输出显示（传递是否启用搜索）
+        if "chat" in self._panels and self._panels["chat"]._message_area:
+            # 通用搜索时显示搜索区域，厂商专属搜索不显示（由 LLM 内部处理）
+            general_search = self.config_manager.get("enable_general_web_search", False) if self.config_manager else False
+            self._panels["chat"]._message_area.start_streaming(with_search=general_search)
         
         # 启动 Worker
         self._llm_worker.start()
@@ -742,10 +770,24 @@ class MainWindow(QMainWindow):
         处理 LLM 阶段切换
         
         Args:
-            phase: 新阶段 ("reasoning" -> "content")
+            phase: 新阶段 ("searching" -> "reasoning" -> "content")
         """
         if "chat" in self._panels:
             self._panels["chat"].handle_phase_change(phase)
+    
+    def _on_web_search_complete(self, results: list):
+        """
+        处理联网搜索完成
+        
+        Args:
+            results: 搜索结果列表
+        """
+        if self.logger:
+            self.logger.info(f"Web search complete: {len(results)} results")
+        
+        # 更新对话面板的搜索结果显示
+        if "chat" in self._panels:
+            self._panels["chat"].handle_search_complete(results)
 
     def _on_llm_result(self, result: Dict[str, Any]):
         """
@@ -759,6 +801,7 @@ class MainWindow(QMainWindow):
         tool_calls = result.get("tool_calls")
         usage = result.get("usage")
         is_partial = result.get("is_partial", False)
+        web_search_results = result.get("web_search_results")
         
         if self.logger:
             self.logger.info(
@@ -773,6 +816,7 @@ class MainWindow(QMainWindow):
                 reasoning_content=reasoning_content,
                 tool_calls=tool_calls,
                 usage=usage,
+                web_search_results=web_search_results,
             )
         
         # 直接调用对话面板完成流式输出并刷新显示

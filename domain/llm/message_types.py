@@ -132,6 +132,7 @@ class Message:
     operations: List[str] = field(default_factory=list)          # 操作摘要（压缩时合并去重）
     reasoning_content: str = ""                  # 深度思考内容（压缩时清理）
     usage: Optional[TokenUsage] = None           # Token 使用统计（仅助手）
+    web_search_results: List[Dict[str, Any]] = field(default_factory=list)  # 联网搜索结果（仅助手）
     
     def __post_init__(self):
         """初始化后处理"""
@@ -159,6 +160,8 @@ class Message:
             result["reasoning_content"] = self.reasoning_content
             if self.usage:
                 result["usage"] = self.usage.to_dict()
+            if self.web_search_results:
+                result["web_search_results"] = self.web_search_results
         
         return result
     
@@ -183,6 +186,7 @@ class Message:
             operations=data.get("operations", []),
             reasoning_content=data.get("reasoning_content", ""),
             usage=usage,
+            web_search_results=data.get("web_search_results", []),
         )
     
     def is_user(self) -> bool:
@@ -233,6 +237,7 @@ def create_assistant_message(
     operations: Optional[List[str]] = None,
     usage: Optional[TokenUsage] = None,
     metadata: Optional[Dict[str, Any]] = None,
+    web_search_results: Optional[List[Dict[str, Any]]] = None,
 ) -> Message:
     """
     创建助手消息
@@ -243,6 +248,7 @@ def create_assistant_message(
         operations: 操作摘要列表
         usage: Token 使用统计
         metadata: 额外元数据
+        web_search_results: 联网搜索结果
         
     Returns:
         Message: 助手消息对象
@@ -254,6 +260,7 @@ def create_assistant_message(
         operations=operations or [],
         usage=usage,
         metadata=metadata or {},
+        web_search_results=web_search_results or [],
     )
 
 

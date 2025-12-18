@@ -798,11 +798,28 @@ class ConversationPanel(QWidget):
         处理阶段切换（由 MainWindow 调用）
         
         Args:
-            phase: 新阶段 ("content")
+            phase: 新阶段 ("searching" | "reasoning" | "content")
         """
-        # 当从思考阶段切换到内容阶段时，更新思考状态显示
-        if phase == "content" and self._message_area:
+        if not self._message_area:
+            return
+        
+        if phase == "searching":
+            # 开始搜索阶段
+            self._message_area.start_searching()
+        elif phase == "content":
+            # 从思考阶段切换到内容阶段，更新思考状态显示
             self._message_area.finish_thinking()
+    
+    def handle_search_complete(self, results: List[Dict[str, Any]]) -> None:
+        """
+        处理联网搜索完成（由 MainWindow 调用）
+        
+        Args:
+            results: 搜索结果列表
+        """
+        if self._message_area:
+            self._message_area.finish_searching(len(results))
+            self._message_area.update_search_results(results)
     
     def finish_stream(self, result: Dict[str, Any]) -> None:
         """

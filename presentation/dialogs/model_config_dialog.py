@@ -13,6 +13,8 @@
 - 订阅 EVENT_LANGUAGE_CHANGED 事件
 """
 
+import os
+import tempfile
 from typing import Optional, Dict, Any, List
 
 from PyQt6.QtWidgets import (
@@ -21,6 +23,7 @@ from PyQt6.QtWidgets import (
     QPushButton, QGroupBox, QMessageBox, QWidget, QFrame
 )
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QPixmap, QPainter, QColor
 
 from infrastructure.config.settings import (
     PROVIDER_DEFAULTS,
@@ -215,70 +218,108 @@ class ModelConfigDialog(QDialog):
         self.setMinimumWidth(520)
         self.setModal(True)
         
-        # 设置全局样式：复选框使用打钩样式，下拉框添加下拉箭头
-        self.setStyleSheet("""
+        # 创建临时图标文件并设置样式
+        self._setup_custom_styles()
+    
+    def _setup_custom_styles(self):
+        """设置自定义样式：复选框打钩、下拉框箭头"""
+        # 创建临时目录存放图标
+        self._temp_dir = tempfile.mkdtemp(prefix="circuit_ai_icons_")
+        
+        # 创建打钩图标 (checkmark.svg) - 白色打钩在蓝色背景上
+        checkmark_svg = '''<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>'''
+        checkmark_path = os.path.join(self._temp_dir, "checkmark.svg")
+        with open(checkmark_path, "w", encoding="utf-8") as f:
+            f.write(checkmark_svg)
+        
+        # 创建下拉箭头图标 (dropdown.svg)
+        dropdown_svg = '''<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#666" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>'''
+        dropdown_path = os.path.join(self._temp_dir, "dropdown.svg")
+        with open(dropdown_path, "w", encoding="utf-8") as f:
+            f.write(dropdown_svg)
+        
+        # 转换路径为 Qt 样式表格式（使用正斜杠）
+        checkmark_url = checkmark_path.replace("\\", "/")
+        dropdown_url = dropdown_path.replace("\\", "/")
+        
+        # 设置样式表
+        self.setStyleSheet(f"""
             /* 复选框样式：使用打钩而非蓝色填充 */
-            QCheckBox::indicator {
+            QCheckBox::indicator {{
                 width: 18px;
                 height: 18px;
                 border: 2px solid #ccc;
                 border-radius: 3px;
                 background-color: #fff;
-            }
-            QCheckBox::indicator:hover {
+            }}
+            QCheckBox::indicator:hover {{
                 border-color: #4a9eff;
-            }
-            QCheckBox::indicator:checked {
-                background-color: #fff;
+            }}
+            QCheckBox::indicator:checked {{
+                background-color: #4a9eff;
                 border-color: #4a9eff;
-                image: url(data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNCIgaGVpZ2h0PSIxNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IiM0YTllZmYiIHN0cm9rZS13aWR0aD0iMyIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48cG9seWxpbmUgcG9pbnRzPSIyMCA2IDkgMTcgNCAxMiI+PC9wb2x5bGluZT48L3N2Zz4=);
-            }
-            QCheckBox::indicator:disabled {
+                image: url({checkmark_url});
+            }}
+            QCheckBox::indicator:checked:hover {{
+                background-color: #3d8ce6;
+                border-color: #3d8ce6;
+            }}
+            QCheckBox::indicator:disabled {{
                 border-color: #ddd;
                 background-color: #f5f5f5;
-            }
+            }}
+            QCheckBox::indicator:checked:disabled {{
+                background-color: #ccc;
+                border-color: #ccc;
+            }}
             
             /* 下拉框样式：添加下拉箭头指示 */
-            QComboBox {
+            QComboBox {{
                 border: 1px solid #ccc;
                 border-radius: 4px;
-                padding: 6px 30px 6px 10px;
+                padding: 6px 28px 6px 10px;
                 background-color: #fff;
                 min-height: 20px;
-            }
-            QComboBox:hover {
+            }}
+            QComboBox:hover {{
                 border-color: #4a9eff;
-            }
-            QComboBox:focus {
+            }}
+            QComboBox:focus {{
                 border-color: #4a9eff;
-                outline: none;
-            }
-            QComboBox::drop-down {
+            }}
+            QComboBox::drop-down {{
                 subcontrol-origin: padding;
                 subcontrol-position: center right;
                 width: 24px;
                 border: none;
                 background: transparent;
-            }
-            QComboBox::down-arrow {
-                image: url(data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMiIgaGVpZ2h0PSIxMiIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IiM2NjYiIHN0cm9rZS13aWR0aD0iMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48cG9seWxpbmUgcG9pbnRzPSI2IDkgMTIgMTUgMTggOSI+PC9wb2x5bGluZT48L3N2Zz4=);
+            }}
+            QComboBox::down-arrow {{
+                image: url({dropdown_url});
                 width: 12px;
                 height: 12px;
-            }
-            QComboBox::down-arrow:hover {
-                image: url(data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMiIgaGVpZ2h0PSIxMiIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IiM0YTllZmYiIHN0cm9rZS13aWR0aD0iMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48cG9seWxpbmUgcG9pbnRzPSI2IDkgMTIgMTUgMTggOSI+PC9wb2x5bGluZT48L3N2Zz4=);
-            }
-            QComboBox:disabled {
+            }}
+            QComboBox:disabled {{
                 background-color: #f5f5f5;
                 color: #999;
-            }
-            QComboBox QAbstractItemView {
+            }}
+            QComboBox QAbstractItemView {{
                 border: 1px solid #ccc;
-                border-radius: 4px;
                 background-color: #fff;
                 selection-background-color: #e3f2fd;
                 selection-color: #333;
-            }
+                outline: none;
+            }}
+            QComboBox QAbstractItemView::item {{
+                padding: 6px 10px;
+                min-height: 24px;
+            }}
+            QComboBox QAbstractItemView::item:hover {{
+                background-color: #f5f5f5;
+            }}
+            QComboBox QAbstractItemView::item:selected {{
+                background-color: #e3f2fd;
+            }}
         """)
 
     def _setup_ui(self):
@@ -1244,6 +1285,20 @@ class ModelConfigDialog(QDialog):
     def _on_event_language_changed(self, event_data: Dict[str, Any]):
         """语言变更事件处理"""
         self.retranslate_ui()
+    
+    def closeEvent(self, event):
+        """对话框关闭时清理临时文件"""
+        self._cleanup_temp_files()
+        super().closeEvent(event)
+    
+    def _cleanup_temp_files(self):
+        """清理临时图标文件"""
+        if hasattr(self, "_temp_dir") and self._temp_dir and os.path.exists(self._temp_dir):
+            try:
+                import shutil
+                shutil.rmtree(self._temp_dir, ignore_errors=True)
+            except Exception:
+                pass
 
 
 # ============================================================

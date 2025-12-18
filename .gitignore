@@ -70,10 +70,9 @@ Thumbs.db
 Desktop.ini
 
 # ngspice binaries (large files, download separately)
-vendor/ngspice/win64/*.exe
-vendor/ngspice/win64/*.dll
-vendor/ngspice/linux64/*.so
-vendor/ngspice/macos/*.dylib
+vendor/ngspice/win64/
+vendor/ngspice/linux64/
+vendor/ngspice/macos/
 
 # Large Models
 vendor/models/
@@ -86,6 +85,10 @@ htmlcov/
 .tox/
 .nox/
 tests/
+
+# Test output files
+test_output.html
+*.test.html
 
 
 # Build artifacts

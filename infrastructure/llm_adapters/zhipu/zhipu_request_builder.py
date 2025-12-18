@@ -7,12 +7,15 @@
 - 处理深度思考配置
 - 处理工具调用配置
 - 处理结构化输出配置
+- 自动检测多模态内容并切换到视觉模型
 
 API 文档参考：
 - https://open.bigmodel.cn/dev/api
+- https://docs.bigmodel.cn/cn/guide/models/vlm/glm-4.6v (GLM-4.6V 视觉模型)
 - https://zhipu-ef7018ed.mintlify.app/cn/guide/capabilities/thinking
 """
 
+import logging
 from typing import Any, Dict, List, Optional
 
 from infrastructure.config.settings import (
@@ -21,6 +24,22 @@ from infrastructure.config.settings import (
     DEFAULT_THINKING_MAX_TOKENS,
     DEFAULT_THINKING_TEMPERATURE,
 )
+
+# 视觉模型映射：当检测到图片时，自动切换到对应的视觉模型
+# 格式：{文本模型: 视觉模型}
+VISION_MODEL_MAPPING = {
+    "glm-4.6": "glm-4.6v",
+}
+
+# 已经是视觉模型的列表（无需切换）
+VISION_MODELS = {
+    "glm-4.6v", "glm-4.6v-flash",
+}
+
+# 视觉模型深度思考的 max_tokens 限制
+# GLM-4.6V 系列的 max_tokens 上限与纯文本模型不同
+# 根据官方文档示例，使用 4096 作为默认值
+VISION_MODEL_THINKING_MAX_TOKENS = 4096
 
 
 class ZhipuRequestBuilder:
@@ -32,6 +51,7 @@ class ZhipuRequestBuilder:
     - 深度思考配置
     - 工具调用配置
     - 结构化输出配置
+    - 自动检测多模态内容并切换到视觉模型
     """
     
     # 默认配置
@@ -40,7 +60,7 @@ class ZhipuRequestBuilder:
     
     def __init__(self):
         """初始化请求构建器"""
-        pass
+        self._logger = logging.getLogger(__name__)
     
     def build_chat_request(
         self,
@@ -71,15 +91,30 @@ class ZhipuRequestBuilder:
         Returns:
             符合智谱 API 规范的请求体字典
         """
+        # 规范化消息
+        normalized_messages = self._normalize_messages(messages)
+        
+        # 检测是否包含图片，如果包含则自动切换到视觉模型
+        has_images = self._contains_images(normalized_messages)
+        actual_model = self._get_vision_model_if_needed(model, has_images)
+        
+        # 判断是否为视觉模型
+        is_vision_model = actual_model in VISION_MODELS
+        
+        if has_images:
+            self._logger.info(f"Detected images in messages, using vision model: {actual_model}")
+        
         # 基础请求体
         body: Dict[str, Any] = {
-            "model": model,
-            "messages": self._normalize_messages(messages),
+            "model": actual_model,
+            "messages": normalized_messages,
             "stream": stream,
         }
         
-        # 应用深度思考配置
-        body = self._apply_thinking_config(body, thinking, max_tokens, temperature)
+        # 应用深度思考配置（视觉模型使用不同的 max_tokens 限制）
+        body = self._apply_thinking_config(
+            body, thinking, max_tokens, temperature, is_vision_model
+        )
         
         # 应用工具配置
         if tools:
@@ -94,7 +129,58 @@ class ZhipuRequestBuilder:
             if value is not None and key not in body:
                 body[key] = value
         
+        # 记录请求体日志（调试用）
+        self._logger.debug(
+            f"Built request: model={actual_model}, thinking={thinking}, "
+            f"max_tokens={body.get('max_tokens')}, is_vision={is_vision_model}"
+        )
+        
         return body
+    
+    def _contains_images(self, messages: List[Dict[str, Any]]) -> bool:
+        """
+        检测消息列表中是否包含图片
+        
+        Args:
+            messages: 规范化后的消息列表
+            
+        Returns:
+            是否包含图片
+        """
+        for msg in messages:
+            content = msg.get("content")
+            if isinstance(content, list):
+                for item in content:
+                    if item.get("type") == "image_url":
+                        return True
+        return False
+    
+    def _get_vision_model_if_needed(self, model: str, has_images: bool) -> str:
+        """
+        如果消息包含图片且当前模型不支持视觉，则切换到对应的视觉模型
+        
+        Args:
+            model: 当前模型名称
+            has_images: 是否包含图片
+            
+        Returns:
+            实际使用的模型名称
+        """
+        if not has_images:
+            return model
+        
+        # 如果已经是视觉模型，无需切换
+        if model in VISION_MODELS:
+            return model
+        
+        # 查找对应的视觉模型
+        vision_model = VISION_MODEL_MAPPING.get(model)
+        if vision_model:
+            return vision_model
+        
+        # 未找到映射，使用默认视觉模型
+        self._logger.warning(f"No vision model mapping for {model}, using glm-4.6v")
+        return "glm-4.6v"
     
     def build_tool_request(
         self,
@@ -219,14 +305,15 @@ class ZhipuRequestBuilder:
         body: Dict[str, Any],
         thinking: bool,
         max_tokens: Optional[int] = None,
-        temperature: Optional[float] = None
+        temperature: Optional[float] = None,
+        is_vision_model: bool = False
     ) -> Dict[str, Any]:
         """
         应用深度思考配置
         
         深度思考模式特殊要求：
         - thinking.type = "enabled"
-        - max_tokens 使用 thinking_max_tokens（默认 65536）
+        - max_tokens 使用 thinking_max_tokens（纯文本模型默认 65536，视觉模型默认 16384）
         - temperature 固定为 1.0
         
         Args:
@@ -234,6 +321,7 @@ class ZhipuRequestBuilder:
             thinking: 是否启用深度思考
             max_tokens: 自定义 max_tokens
             temperature: 自定义 temperature
+            is_vision_model: 是否为视觉模型（GLM-4.6V 系列）
             
         Returns:
             更新后的请求体
@@ -241,7 +329,15 @@ class ZhipuRequestBuilder:
         if thinking:
             # 深度思考模式
             body["thinking"] = {"type": "enabled"}
-            body["max_tokens"] = max_tokens or DEFAULT_THINKING_MAX_TOKENS
+            
+            # 视觉模型使用较小的 max_tokens 限制
+            if max_tokens:
+                body["max_tokens"] = max_tokens
+            elif is_vision_model:
+                body["max_tokens"] = VISION_MODEL_THINKING_MAX_TOKENS
+            else:
+                body["max_tokens"] = DEFAULT_THINKING_MAX_TOKENS
+            
             body["temperature"] = DEFAULT_THINKING_TEMPERATURE  # 固定为 1.0
         else:
             # 普通模式

@@ -797,6 +797,18 @@ class ModelConfigDialog(QDialog):
                 
                 if self.logger:
                     self.logger.info(f"LLM 客户端已重新初始化：{provider_id}, model={model}")
+                
+                # 发布 LLM 客户端重新初始化事件，通知其他组件刷新引用
+                if self.event_bus:
+                    from shared.event_types import EVENT_LLM_CLIENT_REINITIALIZED
+                    self.event_bus.publish(
+                        EVENT_LLM_CLIENT_REINITIALIZED,
+                        data={
+                            "provider": provider_id,
+                            "model": model,
+                            "source": "model_config_dialog",
+                        }
+                    )
             else:
                 if self.logger:
                     self.logger.warning(f"LLM 客户端重新初始化跳过：厂商 {provider_id} 暂未实现")

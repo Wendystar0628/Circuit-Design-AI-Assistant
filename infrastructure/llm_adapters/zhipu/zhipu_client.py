@@ -52,63 +52,28 @@ from infrastructure.config.settings import (
 # 模型信息定义
 # ============================================================
 
-# 智谱 GLM 模型信息
+# 智谱 GLM 模型信息（仅保留当前实现的三个模型）
 ZHIPU_MODELS: Dict[str, ModelInfo] = {
     "glm-4.6": ModelInfo(
         name="glm-4.6",
         context_limit=200000,
-        supports_vision=True,
+        supports_vision=False,  # glm-4.6 是纯文本模型，视觉能力需要使用 glm-4.6v
         supports_tools=True,
         supports_thinking=True,
     ),
-    "glm-4-plus": ModelInfo(
-        name="glm-4-plus",
+    "glm-4.6v": ModelInfo(
+        name="glm-4.6v",
+        context_limit=128000,  # GLM-4.6V 系列支持 128k tokens
+        supports_vision=True,
+        supports_tools=True,   # GLM-4.6V 原生支持 Function Call
+        supports_thinking=True,  # GLM-4.6V 支持深度思考
+    ),
+    "glm-4.6v-flash": ModelInfo(
+        name="glm-4.6v-flash",
         context_limit=128000,
         supports_vision=True,
         supports_tools=True,
-        supports_thinking=False,
-    ),
-    "glm-4-air": ModelInfo(
-        name="glm-4-air",
-        context_limit=128000,
-        supports_vision=False,
-        supports_tools=True,
-        supports_thinking=False,
-    ),
-    "glm-4-airx": ModelInfo(
-        name="glm-4-airx",
-        context_limit=8192,
-        supports_vision=False,
-        supports_tools=True,
-        supports_thinking=False,
-    ),
-    "glm-4-flash": ModelInfo(
-        name="glm-4-flash",
-        context_limit=128000,
-        supports_vision=False,
-        supports_tools=True,
-        supports_thinking=False,
-    ),
-    "glm-4v": ModelInfo(
-        name="glm-4v",
-        context_limit=2048,
-        supports_vision=True,
-        supports_tools=False,
-        supports_thinking=False,
-    ),
-    "glm-4v-plus": ModelInfo(
-        name="glm-4v-plus",
-        context_limit=8192,
-        supports_vision=True,
-        supports_tools=False,
-        supports_thinking=False,
-    ),
-    "codegeex-4": ModelInfo(
-        name="codegeex-4",
-        context_limit=128000,
-        supports_vision=False,
-        supports_tools=True,
-        supports_thinking=False,
+        supports_thinking=True,
     ),
 }
 
@@ -267,6 +232,14 @@ class ZhipuClient(BaseLLMClient):
         # 发送请求
         client = self._get_sync_client()
         
+        # 记录请求体（调试用，不记录敏感信息）
+        self._logger.debug(
+            f"Sending request: model={request_body.get('model')}, "
+            f"thinking={request_body.get('thinking')}, "
+            f"max_tokens={request_body.get('max_tokens')}, "
+            f"stream={request_body.get('stream')}"
+        )
+        
         try:
             response = client.post(
                 self.CHAT_ENDPOINT,
@@ -276,6 +249,13 @@ class ZhipuClient(BaseLLMClient):
             
             # 检查 HTTP 状态码
             if response.status_code != 200:
+                # 记录详细错误信息
+                self._logger.error(
+                    f"API error: status={response.status_code}, "
+                    f"model={request_body.get('model')}, "
+                    f"thinking={request_body.get('thinking')}, "
+                    f"response={response.text[:500]}"
+                )
                 self._response_parser.handle_http_error(
                     response.status_code,
                     response.text
@@ -394,6 +374,13 @@ class ZhipuClient(BaseLLMClient):
         # 发送请求
         client = await self._get_async_client()
         
+        # 记录请求体（调试用）
+        self._logger.debug(
+            f"Sending stream request: model={request_body.get('model')}, "
+            f"thinking={request_body.get('thinking')}, "
+            f"max_tokens={request_body.get('max_tokens')}"
+        )
+        
         # 使用显式的响应对象管理，确保在生成器关闭时正确清理
         response = None
         stream_iterator = None
@@ -411,6 +398,13 @@ class ZhipuClient(BaseLLMClient):
             # 检查 HTTP 状态码
             if response.status_code != 200:
                 body = await response.aread()
+                # 记录详细错误信息
+                self._logger.error(
+                    f"Stream API error: status={response.status_code}, "
+                    f"model={request_body.get('model')}, "
+                    f"thinking={request_body.get('thinking')}, "
+                    f"response={body.decode('utf-8')[:500]}"
+                )
                 self._response_parser.handle_http_error(
                     response.status_code,
                     body.decode("utf-8")

@@ -120,7 +120,7 @@ PROVIDER_DEFAULTS = {
     LLM_PROVIDER_ZHIPU: {
         "base_url": "https://open.bigmodel.cn/api/paas/v4",
         "default_model": "glm-4.6",
-        "models": ["glm-4.6", "glm-4.5", "glm-4.5-flash", "glm-4.6v", "codegeex-4"],
+        "models": ["glm-4.6", "glm-4.6v", "glm-4.6v-flash"],  # 仅保留当前实现的三个模型
         "supports_thinking": True,
         "supports_web_search": True,  # 厂商专属联网搜索
         "implemented": True,

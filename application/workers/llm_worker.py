@@ -142,7 +142,51 @@ class LLMWorker(BaseWorker):
         self._config_manager = None
         self._llm_client = None
         self._web_search_tool = None
+        
+        # 订阅 LLM 客户端重新初始化事件
+        self._subscribe_llm_events()
 
+
+    # ============================================================
+    # 事件订阅
+    # ============================================================
+
+    def _subscribe_llm_events(self) -> None:
+        """订阅 LLM 相关事件"""
+        try:
+            from shared.service_locator import ServiceLocator
+            from shared.service_names import SVC_EVENT_BUS
+            from shared.event_types import EVENT_LLM_CLIENT_REINITIALIZED
+            
+            event_bus = ServiceLocator.get_optional(SVC_EVENT_BUS)
+            if event_bus:
+                event_bus.subscribe(
+                    EVENT_LLM_CLIENT_REINITIALIZED,
+                    self._on_llm_client_reinitialized
+                )
+        except Exception:
+            pass  # 事件订阅失败不影响主流程
+
+    def _on_llm_client_reinitialized(self, event_data: Dict[str, Any]) -> None:
+        """
+        处理 LLM 客户端重新初始化事件
+        
+        当用户在模型配置对话框中更改配置并保存后，
+        需要刷新本地缓存的客户端引用，以使用新的客户端。
+        
+        Args:
+            event_data: 事件数据，包含 provider, model, source
+        """
+        # 清除缓存的客户端引用，下次调用时会从 ServiceLocator 获取新的客户端
+        self._llm_client = None
+        
+        if self.logger:
+            data = event_data.get("data", {})
+            provider = data.get("provider", "unknown")
+            model = data.get("model", "unknown")
+            self.logger.info(
+                f"LLM client reference refreshed: provider={provider}, model={model}"
+            )
 
     # ============================================================
     # 服务获取

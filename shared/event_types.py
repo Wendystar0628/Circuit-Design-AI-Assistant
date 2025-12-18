@@ -97,6 +97,13 @@ EVENT_LLM_COMPLETE = "llm_complete"
 # LLM 工具调用
 EVENT_LLM_TOOL_CALL = "llm_tool_call"
 
+# LLM 客户端重新初始化
+# 携带数据：
+#   - provider: str - LLM 厂商 ID
+#   - model: str - 模型名称
+#   - source: str - 触发来源（如 "model_config_dialog"）
+EVENT_LLM_CLIENT_REINITIALIZED = "llm_client_reinitialized"
+
 # ============================================================
 # 联网搜索事件
 # ============================================================
@@ -350,6 +357,7 @@ __all__ = [
     "EVENT_LLM_CHUNK",
     "EVENT_LLM_COMPLETE",
     "EVENT_LLM_TOOL_CALL",
+    "EVENT_LLM_CLIENT_REINITIALIZED",
     # 联网搜索事件
     "EVENT_WEB_SEARCH_STARTED",
     "EVENT_WEB_SEARCH_COMPLETE",

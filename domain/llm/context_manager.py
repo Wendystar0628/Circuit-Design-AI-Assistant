@@ -814,13 +814,19 @@ class ContextManager:
         # 构建最终内容
         if content_parts:
             # 有图片，使用多模态格式
-            # 先添加文本内容
+            # 根据 GLM-4.6V API 文档，图片应该在文本之前
+            # 参考: https://docs.bigmodel.cn/cn/guide/models/vlm/glm-4.6v
             text_content = msg.content
             if file_contents:
                 text_content += "\n\n" + "\n\n".join(file_contents)
             
+            # 图片在前，文本在后（符合官方示例）
+            # 注意：GLM-4.6V API 要求必须有 text 部分，即使为空也要提供默认文本
             if text_content.strip():
-                content_parts.insert(0, {"type": "text", "text": text_content})
+                content_parts.append({"type": "text", "text": text_content})
+            else:
+                # 如果没有文本，添加默认提示
+                content_parts.append({"type": "text", "text": "请描述这张图片"})
             
             return {
                 "role": msg.role,
@@ -840,6 +846,15 @@ class ContextManager:
     def _convert_image_to_base64(self, image_path: str) -> Optional[Dict[str, Any]]:
         """
         将图片转换为 base64 编码的多模态内容
+        
+        根据 GLM-4.6V API 文档，支持以下图片格式：
+        - HTTP/HTTPS URL
+        - Base64 编码（格式：data:{mime_type};base64,{base64_data}）
+        
+        注意：GLM-4.6V 对 base64 图片有以下限制：
+        - 单张图片最大 10MB
+        - 支持 PNG、JPEG、WebP、GIF 格式
+        - base64 字符串不能包含换行符
         
         Args:
             image_path: 图片文件路径
@@ -867,14 +882,27 @@ class ContextManager:
             }
             mime_type = mime_types.get(ext, "image/png")
             
-            # 读取并编码
+            # 检查文件大小（GLM-4.6V 限制单张图片最大 10MB）
+            file_size = os.path.getsize(image_path)
+            if file_size > 10 * 1024 * 1024:  # 10MB
+                if self.logger:
+                    self.logger.warning(f"Image file too large: {file_size} bytes (max 10MB)")
+                return None
+            
+            # 读取并编码（确保不包含换行符）
             with open(image_path, "rb") as f:
-                image_data = base64.b64encode(f.read()).decode("utf-8")
+                image_bytes = f.read()
+            
+            # 使用标准 base64 编码（不添加换行符）
+            image_data = base64.b64encode(image_bytes).decode("ascii")
+            
+            # 构建 data URL
+            data_url = f"data:{mime_type};base64,{image_data}"
             
             return {
                 "type": "image_url",
                 "image_url": {
-                    "url": f"data:{mime_type};base64,{image_data}"
+                    "url": data_url
                 }
             }
         except Exception as e:

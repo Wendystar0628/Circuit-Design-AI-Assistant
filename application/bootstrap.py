@@ -608,6 +608,20 @@ def run() -> int:
     # 2.0 安装 Qt 消息过滤器（过滤无害的 Qt 内部警告）
     _install_qt_message_filter()
 
+    # 2.0.1 预导入 WebEngine（必须在 QApplication 创建之前）
+    # PyQt6-WebEngine 要求在 QCoreApplication 实例化之前导入
+    try:
+        from PyQt6.QtWebEngineWidgets import QWebEngineView
+        if _logger:
+            _logger.info("Phase 2.0.1 WebEngine 预导入成功")
+        else:
+            print("[Phase 2.0.1] WebEngine 预导入成功")
+    except ImportError as e:
+        if _logger:
+            _logger.warning(f"Phase 2.0.1 WebEngine 预导入失败: {e}")
+        else:
+            print(f"[Phase 2.0.1] WebEngine 预导入失败: {e}")
+
     # 2.1 创建 QApplication 实例
     from PyQt6.QtWidgets import QApplication
     app = QApplication(sys.argv)

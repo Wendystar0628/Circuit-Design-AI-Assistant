@@ -76,6 +76,7 @@ class DisplayMessage:
     id: str                                      # 消息唯一标识
     role: str                                    # 角色（user/assistant/system/suggestion）
     content_html: str                            # 已渲染的 HTML 内容
+    content: str = ""                            # 原始内容（用于 LaTeX 检测）
     reasoning_html: str = ""                     # 思考过程 HTML（可选）
     operations: List[str] = field(default_factory=list)  # 操作摘要列表
     attachments: List[Dict[str, Any]] = field(default_factory=list)  # 附件列表
@@ -441,6 +442,7 @@ class ConversationViewModel(QObject):
             id=msg_id,
             role=internal_msg.role,
             content_html=content_html,
+            content=internal_msg.content,  # 保留原始内容用于 LaTeX 检测
             reasoning_html=reasoning_html,
             operations=internal_msg.operations.copy(),
             attachments=attachments,
@@ -926,7 +928,7 @@ class ConversationViewModel(QObject):
     
     def _markdown_to_html(self, text: str) -> str:
         """
-        将 Markdown 转换为 HTML
+        将 Markdown 转换为 HTML（使用 MarkdownRenderer 支持 LaTeX）
         
         Args:
             text: Markdown 文本
@@ -937,6 +939,14 @@ class ConversationViewModel(QObject):
         if not text:
             return ""
         
+        # 优先使用 MarkdownRenderer（支持 LaTeX 公式保护）
+        try:
+            from infrastructure.utils.markdown_renderer import render_markdown
+            return render_markdown(text)
+        except ImportError:
+            pass
+        
+        # 回退：使用普通 markdown 库
         converter = self._get_markdown_converter()
         if converter:
             try:
@@ -945,7 +955,7 @@ class ConversationViewModel(QObject):
             except Exception:
                 pass
         
-        # 回退：简单转义
+        # 最终回退：简单转义
         return text.replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br>")
     
     def _format_timestamp(self, iso_timestamp: str) -> str:

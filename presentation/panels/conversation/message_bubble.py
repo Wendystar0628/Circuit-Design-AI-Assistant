@@ -1,4 +1,4 @@
-# Message Bubble Component
+﻿# Message Bubble Component
 """
 消息气泡组件
 
@@ -17,7 +17,7 @@
 
 from typing import Any, Callable, Dict, List, Optional
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal, QUrl
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QWidget,
@@ -28,6 +28,14 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QSizePolicy,
 )
+
+# 尝试导入 WebEngine 用于 LaTeX 渲染
+try:
+    from PyQt6.QtWebEngineWidgets import QWebEngineView
+    from PyQt6.QtWebEngineCore import QWebEnginePage
+    WEBENGINE_AVAILABLE = True
+except ImportError:
+    WEBENGINE_AVAILABLE = False
 
 # ============================================================
 # 样式常量
@@ -162,13 +170,13 @@ class MessageBubble(QWidget):
     
     def render_assistant_message(self, message) -> QWidget:
         """
-        渲染助手消息（含深度思考）
+        渲染助手消息（含深度思考和 LaTeX 公式）
         
         Args:
             message: DisplayMessage 对象
             
         Returns:
-            QWidget: 助手消息组件（左对齐、浅灰背景、Markdown渲染）
+            QWidget: 助手消息组件（左对齐、浅灰背景、Markdown+LaTeX渲染）
         """
         # 助手消息：填满整个宽度（头像 + 内容）
         container = QWidget()
@@ -210,15 +218,24 @@ class MessageBubble(QWidget):
             thinking_widget = self._render_thinking_section(message.reasoning_html)
             bubble_layout.addWidget(thinking_widget)
         
-        # 消息内容
-        content_label = QLabel()
-        content_label.setTextFormat(Qt.TextFormat.RichText)
-        content_label.setWordWrap(True)
-        content_label.setText(message.content_html)
-        content_label.setStyleSheet(f"color: {ASSISTANT_TEXT_COLOR}; font-size: 14px;")
-        content_label.setOpenExternalLinks(True)
-        content_label.linkActivated.connect(self._on_link_activated)
-        bubble_layout.addWidget(content_label)
+        # 消息内容 - 检查是否包含 LaTeX 公式
+        content_text = getattr(message, 'content', '') or ''
+        has_latex = self._contains_latex(content_text)
+        
+        if has_latex and WEBENGINE_AVAILABLE:
+            # 使用 WebView 渲染 LaTeX
+            content_widget = self._create_latex_content_view(content_text)
+            bubble_layout.addWidget(content_widget)
+        else:
+            # 使用普通 QLabel 渲染
+            content_label = QLabel()
+            content_label.setTextFormat(Qt.TextFormat.RichText)
+            content_label.setWordWrap(True)
+            content_label.setText(message.content_html)
+            content_label.setStyleSheet(f"color: {ASSISTANT_TEXT_COLOR}; font-size: 14px;")
+            content_label.setOpenExternalLinks(True)
+            content_label.linkActivated.connect(self._on_link_activated)
+            bubble_layout.addWidget(content_label)
         
         # 操作摘要卡片
         if message.operations:
@@ -229,6 +246,81 @@ class MessageBubble(QWidget):
         layout.addWidget(bubble, 1)
         
         return container
+    
+    def _contains_latex(self, text: str) -> bool:
+        """检查文本是否包含 LaTeX 公式"""
+        if not text:
+            return False
+        import re
+        # 检查块级公式: $$...$$
+        if re.search(r'\$\$.+?\$\$', text, re.DOTALL):
+            return True
+        # 检查行内公式: $...$ (但不是 $$)
+        if re.search(r'(?<!\$)\$(?!\$).+?(?<!\$)\$(?!\$)', text, re.DOTALL):
+            return True
+        return False
+    
+    def _create_latex_content_view(self, content: str) -> QWidget:
+        """
+        创建支持 LaTeX 渲染的内容视图
+        
+        Args:
+            content: 原始 Markdown+LaTeX 内容
+            
+        Returns:
+            QWebEngineView 或 QLabel（回退）
+        """
+        if not WEBENGINE_AVAILABLE:
+            # 回退到普通 QLabel
+            label = QLabel()
+            label.setTextFormat(Qt.TextFormat.RichText)
+            label.setWordWrap(True)
+            label.setText(content)
+            return label
+        
+        try:
+            from infrastructure.utils.markdown_renderer import get_full_html
+            
+            # 生成完整 HTML（包含内联的 KaTeX 资源）
+            full_html = get_full_html(content)
+            
+            # 创建 WebView
+            web_view = QWebEngineView()
+            web_view.setMinimumHeight(50)
+            web_view.setSizePolicy(
+                QSizePolicy.Policy.Expanding, 
+                QSizePolicy.Policy.Minimum
+            )
+            
+            # 设置透明背景
+            web_view.page().setBackgroundColor(Qt.GlobalColor.transparent)
+            
+            # 加载 HTML - 内联资源不需要 baseUrl
+            web_view.setHtml(full_html)
+            
+            # 自动调整高度
+            web_view.loadFinished.connect(
+                lambda ok: self._adjust_webview_height(web_view) if ok else None
+            )
+            
+            return web_view
+            
+        except Exception as e:
+            # 出错时回退到普通 QLabel
+            print(f"[MessageBubble] LaTeX render error: {e}")
+            label = QLabel()
+            label.setTextFormat(Qt.TextFormat.RichText)
+            label.setWordWrap(True)
+            label.setText(content)
+            return label
+    
+    def _adjust_webview_height(self, web_view: 'QWebEngineView') -> None:
+        """根据内容自动调整 WebView 高度"""
+        # 通过 JavaScript 获取内容高度
+        web_view.page().runJavaScript(
+            "document.body.scrollHeight",
+            lambda height: web_view.setFixedHeight(int(height) + 20) if height else None
+        )
 
 
     def render_system_message(self, message) -> QWidget:
@@ -541,4 +633,5 @@ __all__ = [
     "THINKING_BG",
     "PRIMARY_COLOR",
 ]
+
 

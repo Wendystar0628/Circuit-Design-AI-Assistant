@@ -407,9 +407,10 @@ class ConversationPanel(QWidget):
     
     def _on_project_opened(self, event_data: Dict[str, Any]) -> None:
         """处理项目打开事件"""
+        # 只调用 load_messages，它会触发 messages_changed 信号
+        # 然后 _on_messages_changed 会调用 refresh_display
         if self.view_model:
             self.view_model.load_messages()
-        self.refresh_display()
     
     def _on_project_closed(self, event_data: Dict[str, Any]) -> None:
         """处理项目关闭事件"""
@@ -431,13 +432,16 @@ class ConversationPanel(QWidget):
     
     def _on_iteration_awaiting(self, event_data: Dict[str, Any]) -> None:
         """处理迭代等待确认事件"""
-        QTimer.singleShot(100, self.refresh_display)
+        # ViewModel 的 _on_iteration_awaiting 会调用 append_suggestion_message
+        # 它会触发 messages_changed 信号，由 _on_messages_changed 处理刷新
+        pass
     
     def _on_session_changed(self, event_data: Dict[str, Any]) -> None:
         """
         处理会话变更事件（由 SessionStateManager 发布）
         
-        更新标题栏显示会话名称，刷新消息显示。
+        更新标题栏显示会话名称。
+        注意：不在这里刷新消息显示，由 ViewModel 的 messages_changed 信号触发。
         """
         data = event_data.get("data", {})
         session_name = data.get("session_name", "")
@@ -446,12 +450,9 @@ class ConversationPanel(QWidget):
         if self.logger:
             self.logger.debug(f"Session changed in panel: {action}, name={session_name}")
         
-        # 更新标题栏
+        # 只更新标题栏，不刷新消息显示（避免重复刷新）
         if self._title_bar and session_name:
             self._title_bar.set_session_name(session_name)
-        
-        # 刷新显示（ViewModel 会在其 _on_session_changed 中重新加载消息）
-        QTimer.singleShot(50, self.refresh_display)
 
     # ============================================================
     # 事件处理 - ViewModel 信号
@@ -490,7 +491,8 @@ class ConversationPanel(QWidget):
     @pyqtSlot(str)
     def _on_suggestion_added(self, message_id: str) -> None:
         """处理建议选项消息添加"""
-        self.refresh_display()
+        # 不需要调用 refresh_display，因为 append_suggestion_message 
+        # 已经触发了 messages_changed 信号，会由 _on_messages_changed 处理
         if self._message_area:
             self._message_area.scroll_to_bottom()
     

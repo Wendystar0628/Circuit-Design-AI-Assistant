@@ -1,0 +1,2 @@
+# Mark KaTeX as vendored third-party code (exclude from GitHub language statistics)
+resources/katex/** linguist-vendored

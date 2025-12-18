@@ -463,12 +463,10 @@ function onFileClick(path) { window.location.href = 'file://' + path; }
     
     def _flush_stream(self):
         """刷新流式输出缓冲区"""
-        # 更新思考内容
+        # 更新思考内容（使用 Markdown 渲染）
         if self._pending_reasoning_update:
             self._pending_reasoning_update = False
-            # 简单转义，不做 Markdown 渲染（思考内容通常是纯文本）
-            import html as html_module
-            reasoning_html = html_module.escape(self._stream_reasoning).replace('\n', '<br>')
+            reasoning_html = self._md_to_html(self._stream_reasoning)
             self._run_js(f"updateStreamReasoning(`{self._esc(reasoning_html)}`)")
         
         # 更新主内容
@@ -498,10 +496,9 @@ function onFileClick(path) { window.location.href = 'file://' + path; }
         html = self._md_to_html(self._stream_content)
         self._run_js(f"updateStream(`{self._esc(html)}`)")
         
-        # 如果有思考内容，最终更新
+        # 如果有思考内容，最终更新（使用 Markdown 渲染）
         if self._stream_reasoning:
-            import html as html_module
-            reasoning_html = html_module.escape(self._stream_reasoning).replace('\n', '<br>')
+            reasoning_html = self._md_to_html(self._stream_reasoning)
             self._run_js(f"updateStreamReasoning(`{self._esc(reasoning_html)}`)")
         
         # 调用 finishStream 折叠思考区域

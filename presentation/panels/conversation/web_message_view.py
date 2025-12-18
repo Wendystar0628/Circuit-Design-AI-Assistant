@@ -194,8 +194,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial
 .msg.user { align-self: flex-end; background: #e3f2fd; }
 .msg.assistant { align-self: flex-start; background: #f8f9fa; }
 .msg.system { align-self: center; background: transparent; color: #6c757d; font-size: 12px; }
-.msg.streaming::after { content: "▌"; color: #4a9eff; animation: blink 1s infinite; }
-@keyframes blink { 0%,50% { opacity: 1; } 51%,100% { opacity: 0; } }
+
 .row { display: flex; gap: 8px; align-items: flex-start; }
 .row.user { flex-direction: row-reverse; }
 .avatar { width: 32px; height: 32px; border-radius: 50%; display: flex; 

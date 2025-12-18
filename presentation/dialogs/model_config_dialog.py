@@ -221,9 +221,36 @@ class ModelConfigDialog(QDialog):
         # 创建临时图标文件并设置样式
         self._setup_custom_styles()
     
-    def _setup_custom_styles(self):
-        """设置自定义样式：复选框打钩、下拉框箭头"""
-        # 创建临时目录存放图标
+    def _get_icon_paths(self) -> tuple:
+        """
+        获取 UI 图标路径
+        
+        优先使用本地 resources/icons/ui/ 目录下的图标，
+        如果不存在则创建临时文件。
+        
+        Returns:
+            (checkmark_path, dropdown_path)
+        """
+        # 尝试获取本地图标路径
+        try:
+            # 获取项目根目录
+            current_file = os.path.abspath(__file__)
+            dialogs_dir = os.path.dirname(current_file)
+            presentation_dir = os.path.dirname(dialogs_dir)
+            project_root = os.path.dirname(presentation_dir)
+            
+            icons_dir = os.path.join(project_root, "resources", "icons", "ui")
+            checkmark_path = os.path.join(icons_dir, "checkmark.svg")
+            dropdown_path = os.path.join(icons_dir, "dropdown.svg")
+            
+            # 检查本地图标是否存在
+            if os.path.exists(checkmark_path) and os.path.exists(dropdown_path):
+                self._temp_dir = None  # 不需要临时目录
+                return checkmark_path, dropdown_path
+        except Exception:
+            pass
+        
+        # 本地图标不存在，创建临时文件
         self._temp_dir = tempfile.mkdtemp(prefix="circuit_ai_icons_")
         
         # 创建打钩图标 (checkmark.svg) - 白色打钩在蓝色背景上
@@ -233,10 +260,17 @@ class ModelConfigDialog(QDialog):
             f.write(checkmark_svg)
         
         # 创建下拉箭头图标 (dropdown.svg)
-        dropdown_svg = '''<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#666" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>'''
+        dropdown_svg = '''<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#666666" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>'''
         dropdown_path = os.path.join(self._temp_dir, "dropdown.svg")
         with open(dropdown_path, "w", encoding="utf-8") as f:
             f.write(dropdown_svg)
+        
+        return checkmark_path, dropdown_path
+    
+    def _setup_custom_styles(self):
+        """设置自定义样式：复选框打钩、下拉框箭头"""
+        # 获取本地图标路径
+        checkmark_path, dropdown_path = self._get_icon_paths()
         
         # 转换路径为 Qt 样式表格式（使用正斜杠）
         checkmark_url = checkmark_path.replace("\\", "/")
@@ -1292,13 +1326,15 @@ class ModelConfigDialog(QDialog):
         super().closeEvent(event)
     
     def _cleanup_temp_files(self):
-        """清理临时图标文件"""
-        if hasattr(self, "_temp_dir") and self._temp_dir and os.path.exists(self._temp_dir):
-            try:
-                import shutil
-                shutil.rmtree(self._temp_dir, ignore_errors=True)
-            except Exception:
-                pass
+        """清理临时图标文件（仅在使用临时目录时）"""
+        if hasattr(self, "_temp_dir") and self._temp_dir:
+            if os.path.exists(self._temp_dir):
+                try:
+                    import shutil
+                    shutil.rmtree(self._temp_dir, ignore_errors=True)
+                except Exception:
+                    pass
+            self._temp_dir = None
 
 
 # ============================================================

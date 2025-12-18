@@ -800,8 +800,9 @@ class ConversationPanel(QWidget):
         Args:
             phase: 新阶段 ("content")
         """
-        # 阶段切换时可以更新 UI 状态
-        pass
+        # 当从思考阶段切换到内容阶段时，更新思考状态显示
+        if phase == "content" and self._message_area:
+            self._message_area.finish_thinking()
     
     def finish_stream(self, result: Dict[str, Any]) -> None:
         """

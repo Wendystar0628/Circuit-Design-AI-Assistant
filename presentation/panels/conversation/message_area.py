@@ -156,6 +156,11 @@ class MessageArea(QWidget):
         self._stream_buffer = ""
         self._reasoning_buffer = ""
     
+    def finish_thinking(self) -> None:
+        """完成思考阶段，更新状态显示"""
+        if self._web_view:
+            self._web_view.finish_thinking()
+    
     def is_streaming(self) -> bool:
         """获取流式输出状态"""
         return self._is_streaming

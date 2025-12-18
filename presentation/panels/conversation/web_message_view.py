@@ -222,10 +222,9 @@ a:hover { text-decoration: underline; }
 .think-toggle.expanded .arrow { transform: rotate(90deg); }
 .think-content { display: none; margin-top: 8px; max-height: 300px; overflow-y: auto; }
 .think-content.show { display: block; }
-.think.streaming .think-content { display: block; }
-.think.streaming .think-toggle .arrow { transform: rotate(90deg); }
 .think-status { color: #999; font-size: 11px; margin-left: 4px; }
-.think.streaming .think-status::after { content: "..."; animation: dots 1.5s infinite; }
+.think-status.thinking::after { content: "..."; animation: dots 1.5s infinite; }
+.think-status.done { color: #4caf50; }
 @keyframes dots { 0%,20% { content: "."; } 40% { content: ".."; } 60%,100% { content: "..."; } }
 .ops-card { background: #f0f7ff; border-left: 3px solid #4a9eff; border-radius: 4px; padding: 8px 12px; margin-top: 8px; }
 .ops-title { color: #4a9eff; font-size: 12px; font-weight: bold; margin-bottom: 4px; display: flex; align-items: center; gap: 4px; }
@@ -263,17 +262,30 @@ function updateStreamReasoning(html) {
     var s = document.querySelector('.msg.streaming .think-content');
     if(s) { s.innerHTML = html; scrollBottom(); }
 }
+function finishThinking() {
+    var status = document.querySelector('.msg.streaming .think-status');
+    if(status) { 
+        status.classList.remove('thinking');
+        status.classList.add('done');
+        status.textContent = '思考完成';
+    }
+}
 function finishStream() { 
     var s = document.querySelector('.msg.streaming'); 
     if(s) { 
         s.classList.remove('streaming'); 
-        var think = s.querySelector('.think.streaming');
+        var think = s.querySelector('.think');
         if(think) { 
-            think.classList.remove('streaming');
             var content = think.querySelector('.think-content');
             if(content) content.classList.remove('show');
             var toggle = think.querySelector('.think-toggle');
             if(toggle) toggle.classList.remove('expanded');
+            var status = think.querySelector('.think-status');
+            if(status) {
+                status.classList.remove('thinking');
+                status.classList.add('done');
+                status.textContent = '思考完成';
+            }
         }
     } 
 }
@@ -417,10 +429,10 @@ function onFileClick(path) { window.location.href = 'file://' + path; }
         self._stream_content = ""
         self._stream_reasoning = ""
         # 创建包含思考区域的流式消息结构
-        # streaming 类添加到 think 上，使其在流式输出时展开
+        # 思考区域默认展开，用户可以点击折叠
         html = f'''<div class="row"><div class="avatar">{SVG_ROBOT}</div><div class="msg assistant streaming">
-<div class="think streaming">
-<div class="think-toggle expanded" onclick="toggleThink('stream')">{SVG_THINKING} 思考过程<span class="arrow">▶</span><span class="think-status">思考中</span></div>
+<div class="think">
+<div class="think-toggle expanded" onclick="toggleThink('stream')">{SVG_THINKING} 思考过程<span class="arrow">▶</span><span class="think-status thinking">思考中</span></div>
 <div class="think-content show" id="think-stream"></div>
 </div>
 <div class="stream-content"></div>
@@ -458,6 +470,14 @@ function onFileClick(path) { window.location.href = 'file://' + path; }
             self._pending_update = False
             html = self._md_to_html(self._stream_content)
             self._run_js(f"updateStream(`{self._esc(html)}`)")
+    
+    def finish_thinking(self):
+        """
+        完成思考阶段
+        
+        更新思考状态显示为"思考完成"，但不折叠思考区域。
+        """
+        self._run_js("finishThinking()")
     
     def finish_streaming(self):
         """

@@ -251,8 +251,15 @@ function renderMath() {
         });
     }
 }
-function scrollBottom() { window.scrollTo(0, document.body.scrollHeight); }
-function addMsg(html) { document.getElementById('msgs').insertAdjacentHTML('beforeend', html); renderMath(); scrollBottom(); }
+var _autoScroll = true;
+var _scrollThreshold = 100;
+window.addEventListener('scroll', function() {
+    var atBottom = (window.innerHeight + window.scrollY) >= (document.body.scrollHeight - _scrollThreshold);
+    _autoScroll = atBottom;
+});
+function scrollBottom() { if(_autoScroll) window.scrollTo(0, document.body.scrollHeight); }
+function forceScrollBottom() { window.scrollTo(0, document.body.scrollHeight); _autoScroll = true; }
+function addMsg(html) { document.getElementById('msgs').insertAdjacentHTML('beforeend', html); renderMath(); forceScrollBottom(); }
 function updateStream(html) { 
     var s = document.querySelector('.msg.streaming .stream-content'); 
     if(s) { s.innerHTML = html; renderMath(); scrollBottom(); } 
@@ -288,7 +295,7 @@ function finishStream() {
         }
     } 
 }
-function clearMsgs() { document.getElementById('msgs').innerHTML = ''; }
+function clearMsgs() { document.getElementById('msgs').innerHTML = ''; _autoScroll = true; }
 function toggleThink(id) { 
     var c = document.getElementById('think-'+id); 
     var t = c ? c.previousElementSibling : null;

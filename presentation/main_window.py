@@ -15,6 +15,8 @@
 - 窗口状态管理委托给 WindowStateManager
 - 会话管理委托给 SessionManager
 - 动作处理委托给 ActionHandlers
+- 面板管理委托给 PanelManager
+- 右栏标签页管理委托给 TabController
 
 初始化顺序：
 - Phase 2.2，依赖 ServiceLocator（获取 I18nManager 等）
@@ -30,7 +32,7 @@ from typing import Optional, Dict, Any, List
 
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout,
-    QSplitter, QLabel, QMessageBox
+    QSplitter, QLabel, QMessageBox, QTabWidget
 )
 from PyQt6.QtCore import Qt, QTimer
 
@@ -40,6 +42,8 @@ from presentation.statusbar_manager import StatusbarManager
 from presentation.window_state_manager import WindowStateManager
 from presentation.session_manager import SessionManager
 from presentation.action_handlers import ActionHandlers
+from presentation.core.panel_manager import PanelManager, PanelRegion
+from presentation.core.tab_controller import TabController, TabId
 
 
 class MainWindow(QMainWindow):
@@ -49,6 +53,7 @@ class MainWindow(QMainWindow):
     布局结构：
     - 外层：垂直 QSplitter，分割上部主区域和下部仿真结果区
     - 上部：水平 QSplitter，分割左栏、中栏、右栏
+    - 右栏：QTabWidget 承载多个面板（对话、信息、元器件）
     - 初始比例：左栏 10%、中栏 60%、右栏 30%、下栏 20% 高度
     """
 
@@ -65,6 +70,7 @@ class MainWindow(QMainWindow):
         # UI 组件引用
         self._panels: Dict[str, QWidget] = {}
         self._splitters: Dict[str, QSplitter] = {}
+        self._right_tab_widget: Optional[QTabWidget] = None
         
         # 管理器实例（延迟初始化）
         self._menu_manager: Optional[MenuManager] = None
@@ -73,6 +79,8 @@ class MainWindow(QMainWindow):
         self._window_state_manager: Optional[WindowStateManager] = None
         self._session_manager: Optional[SessionManager] = None
         self._action_handlers: Optional[ActionHandlers] = None
+        self._panel_manager: Optional[PanelManager] = None
+        self._tab_controller: Optional[TabController] = None
         
         # LLM Worker 实例
         self._llm_worker = None
@@ -161,6 +169,16 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
         return self._config_manager
+    
+    @property
+    def panel_manager(self) -> Optional[PanelManager]:
+        """获取面板管理器"""
+        return self._panel_manager
+    
+    @property
+    def tab_controller(self) -> Optional[TabController]:
+        """获取标签页控制器"""
+        return self._tab_controller
 
     def _get_text(self, key: str, default: Optional[str] = None) -> str:
         """获取国际化文本"""
@@ -184,6 +202,7 @@ class MainWindow(QMainWindow):
         布局结构：
         - 外层垂直 QSplitter：上部主区域 + 下部仿真结果区
         - 上部水平 QSplitter：左栏 + 中栏 + 右栏
+        - 右栏使用 QTabWidget 承载多个面板
         """
         # 创建中央部件
         central_widget = QWidget()
@@ -202,6 +221,11 @@ class MainWindow(QMainWindow):
         self._splitters["horizontal"] = QSplitter(Qt.Orientation.Horizontal)
         self._splitters["vertical"].addWidget(self._splitters["horizontal"])
         
+        # 初始化 PanelManager 和 TabController
+        self._panel_manager = PanelManager()
+        self._right_tab_widget = QTabWidget()
+        self._tab_controller = TabController(self._right_tab_widget)
+        
         # 创建四个面板占位
         self._create_panel_placeholders()
         
@@ -216,27 +240,57 @@ class MainWindow(QMainWindow):
         self._panels["file_browser"].setMinimumWidth(150)
         self._splitters["horizontal"].addWidget(self._panels["file_browser"])
         
+        # 注册到 PanelManager
+        self._panel_manager.register_panel(
+            "file_browser", self._panels["file_browser"], PanelRegion.LEFT
+        )
+        
         # 中栏 - 代码编辑器（使用实际组件）
         from presentation.panels.code_editor_panel import CodeEditorPanel
         self._panels["code_editor"] = CodeEditorPanel()
         self._panels["code_editor"].setMinimumWidth(400)
         self._splitters["horizontal"].addWidget(self._panels["code_editor"])
         
+        # 注册到 PanelManager
+        self._panel_manager.register_panel(
+            "code_editor", self._panels["code_editor"], PanelRegion.CENTER
+        )
+        
         # 连接文件浏览器和代码编辑器
         self._panels["file_browser"].file_selected.connect(
             self._panels["code_editor"].load_file
         )
         
-        # 右栏 - 对话面板（使用实际组件）
+        # 右栏 - 使用 QTabWidget 承载多个面板
+        self._right_tab_widget.setMinimumWidth(250)
+        self._splitters["horizontal"].addWidget(self._right_tab_widget)
+        
+        # 对话面板（使用实际组件）
         from presentation.panels.conversation_panel import ConversationPanel
         self._panels["chat"] = ConversationPanel()
-        self._panels["chat"].setMinimumWidth(250)
-        self._splitters["horizontal"].addWidget(self._panels["chat"])
+        
+        # 注册到 TabController
+        chat_title = self._get_text("panel.conversation", "Chat")
+        self._tab_controller.register_tab(
+            TabId.CONVERSATION.value, 
+            self._panels["chat"], 
+            chat_title
+        )
+        
+        # 注册到 PanelManager
+        self._panel_manager.register_panel(
+            "chat", self._panels["chat"], PanelRegion.RIGHT
+        )
         
         # 下栏 - 仿真结果（占位）
         self._panels["simulation"] = self._create_placeholder_panel("panel.simulation")
         self._panels["simulation"].setMinimumHeight(100)
         self._splitters["vertical"].addWidget(self._panels["simulation"])
+        
+        # 注册到 PanelManager
+        self._panel_manager.register_panel(
+            "simulation", self._panels["simulation"], PanelRegion.BOTTOM
+        )
 
     def _create_placeholder_panel(self, title_key: str) -> QWidget:
         """创建占位面板"""
@@ -290,6 +344,9 @@ class MainWindow(QMainWindow):
         # 添加对话历史回调
         callbacks["on_show_history"] = self._on_show_history_dialog
         
+        # 添加面板切换回调（使用 PanelManager）
+        callbacks["on_toggle_panel"] = self._on_toggle_panel
+        
         # 菜单栏管理器
         self._menu_manager = MenuManager(self)
         self._menu_manager.setup_menus(callbacks)
@@ -307,6 +364,17 @@ class MainWindow(QMainWindow):
         
         # 会话管理器
         self._session_manager = SessionManager(self, self._panels)
+    
+    def _on_toggle_panel(self, panel_name: str, visible: bool):
+        """
+        切换面板显示/隐藏（通过 PanelManager）
+        
+        Args:
+            panel_name: 面板名称
+            visible: 是否可见
+        """
+        if self._panel_manager:
+            self._panel_manager.set_panel_visible(panel_name, visible)
 
     def _setup_llm_worker(self):
         """初始化 LLM Worker 并连接信号"""
@@ -386,6 +454,13 @@ class MainWindow(QMainWindow):
         
         if self._statusbar_manager:
             self._statusbar_manager.retranslate_ui()
+        
+        # 更新标签页标题
+        if self._tab_controller:
+            self._tab_controller.update_tab_title(
+                TabId.CONVERSATION.value,
+                self._get_text("panel.conversation", "Chat")
+            )
         
         # 面板占位文本
         self._update_panel_placeholders()
@@ -529,6 +604,10 @@ class MainWindow(QMainWindow):
                 self._splitters, self._panels
             )
         
+        # 保存面板布局状态
+        if self._panel_manager:
+            self._panel_manager.save_layout_state()
+        
         # 保存会话状态（编辑器会话）
         if self._session_manager:
             self._session_manager.save_session_state()
@@ -536,15 +615,6 @@ class MainWindow(QMainWindow):
             self._session_manager.save_current_conversation()
         
         super().closeEvent(event)
-
-    # ============================================================
-    # 面板显示/隐藏
-    # ============================================================
-
-    def _toggle_panel(self, panel_name: str, visible: bool):
-        """切换面板显示/隐藏"""
-        if self._action_handlers:
-            self._action_handlers.on_toggle_panel(panel_name, visible)
 
     # ============================================================
     # 辅助方法

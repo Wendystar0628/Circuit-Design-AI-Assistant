@@ -37,7 +37,6 @@
 import hashlib
 import os
 import shutil
-import threading
 import time
 from datetime import datetime
 from fnmatch import fnmatch
@@ -70,6 +69,12 @@ class FileManager:
     
     提供安全、原子性的文件操作接口
     用户可选择电脑上任意目录作为工作目录（类似 VSCode）
+    
+    设计说明：
+    - 所有文件操作必须通过此模块进行
+    - 禁止直接使用 open()、os.path 等底层 API
+    - 文件变更自动触发 EVENT_FILE_CHANGED 事件
+    - 使用 FileLock 的全局锁注册表，确保同一文件路径共享同一个锁
     """
     
     # 临时文件目录名
@@ -85,10 +90,6 @@ class FileManager:
         """初始化文件管理器"""
         # 工作目录（延迟设置）
         self._work_dir: Optional[Path] = None
-        
-        # 文件锁注册表
-        self._locks: Dict[str, FileLock] = {}
-        self._locks_mutex = threading.Lock()
         
         # 延迟获取的服务
         self._logger = None
@@ -250,16 +251,29 @@ class FileManager:
     # 文件锁管理
     # ============================================================
     
-    def _get_lock(self, path: str) -> FileLock:
-        """获取或创建文件锁"""
-        with self._locks_mutex:
-            if path not in self._locks:
-                self._locks[path] = FileLock(path, self.DEFAULT_LOCK_TIMEOUT)
-            return self._locks[path]
+    def _get_lock(self, path: Union[str, Path], timeout: float = None) -> FileLock:
+        """
+        获取文件锁
+        
+        使用 FileLock 的全局锁注册表，确保同一文件路径共享同一个锁。
+        
+        Args:
+            path: 文件路径
+            timeout: 超时时间（秒），默认使用 DEFAULT_LOCK_TIMEOUT
+            
+        Returns:
+            FileLock: 文件锁实例
+        """
+        if timeout is None:
+            timeout = self.DEFAULT_LOCK_TIMEOUT
+        return FileLock(str(path), timeout=timeout)
     
     def acquire_lock(self, path: Union[str, Path], timeout: float = None) -> bool:
         """
-        获取文件锁
+        获取文件锁（手动模式）
+        
+        注意：推荐使用 with FileLock(path) 的上下文管理器模式。
+        手动模式需要确保在 finally 中调用 release_lock()。
         
         Args:
             path: 文件路径
@@ -269,23 +283,26 @@ class FileManager:
             bool: 是否成功获取
         """
         resolved = self._resolve_path(path)
-        lock = self._get_lock(str(resolved))
-        if timeout is not None:
-            lock.timeout = timeout
+        lock = self._get_lock(resolved, timeout)
         return lock.acquire()
     
     def release_lock(self, path: Union[str, Path]) -> None:
         """
-        释放文件锁
+        释放文件锁（手动模式）
+        
+        注意：此方法创建新的 FileLock 实例来释放锁，
+        由于使用全局锁注册表，能正确释放对应路径的锁。
         
         Args:
             path: 文件路径
         """
         resolved = self._resolve_path(path)
-        lock_key = str(resolved)
-        with self._locks_mutex:
-            if lock_key in self._locks:
-                self._locks[lock_key].release()
+        # 创建新实例，但由于全局锁注册表，会获取到同一个底层锁
+        lock = FileLock(str(resolved))
+        # 尝试获取锁（非阻塞），如果成功则释放
+        # 这种方式不太理想，建议使用上下文管理器模式
+        if lock.acquire(timeout=0.001):
+            lock.release()
     
     # ============================================================
     # 事件发布

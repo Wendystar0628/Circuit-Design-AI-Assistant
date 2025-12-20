@@ -198,6 +198,21 @@ def setup_logger(
         file_handler.addFilter(sensitive_filter)
         root_logger.addHandler(file_handler)
         
+        # 配置每日轮转文件处理器（按时间轮转，保留7天）
+        daily_log_file = log_dir / "app_daily.log"
+        daily_handler = TimedRotatingFileHandler(
+            daily_log_file,
+            when='midnight',
+            interval=1,
+            backupCount=7,
+            encoding='utf-8'
+        )
+        daily_handler.setLevel(file_level)
+        daily_handler.setFormatter(FileFormatter())
+        daily_handler.addFilter(sensitive_filter)
+        daily_handler.suffix = "%Y-%m-%d"
+        root_logger.addHandler(daily_handler)
+        
         _initialized = True
     
     # 记录初始化完成（在锁外执行，避免死锁）
@@ -355,9 +370,13 @@ def cleanup_old_logs(log_dir: Optional[Path] = None, max_age_days: int = 7) -> i
     """
     清理过期的日志文件
     
+    自动清理超过指定天数的日志文件，包括：
+    - 按大小轮转的日志文件（app.log.1, app.log.2 等）
+    - 按时间轮转的日志文件（app_daily.log.2024-01-01 等）
+    
     Args:
         log_dir: 日志目录，默认使用 GLOBAL_LOG_DIR
-        max_age_days: 最大保留天数
+        max_age_days: 最大保留天数，默认 7 天
         
     Returns:
         int: 删除的文件数量
@@ -371,15 +390,18 @@ def cleanup_old_logs(log_dir: Optional[Path] = None, max_age_days: int = 7) -> i
     deleted_count = 0
     cutoff_time = datetime.now().timestamp() - (max_age_days * 24 * 60 * 60)
     
-    for log_file in log_dir.glob("*.log*"):
-        try:
-            if log_file.stat().st_mtime < cutoff_time:
-                log_file.unlink()
-                deleted_count += 1
-        except Exception as e:
-            # 删除失败不影响其他文件
-            logger = get_logger("logger")
-            logger.warning(f"删除日志文件失败: {log_file}, 错误: {e}")
+    # 清理所有日志文件（包括轮转文件）
+    log_patterns = ["*.log", "*.log.*"]
+    for pattern in log_patterns:
+        for log_file in log_dir.glob(pattern):
+            try:
+                if log_file.stat().st_mtime < cutoff_time:
+                    log_file.unlink()
+                    deleted_count += 1
+            except Exception as e:
+                # 删除失败不影响其他文件
+                logger = get_logger("logger")
+                logger.warning(f"删除日志文件失败: {log_file}, 错误: {e}")
     
     if deleted_count > 0:
         logger = get_logger("logger")

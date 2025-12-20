@@ -57,7 +57,8 @@ MIN_DISK_SPACE_MB = 100
 
 # 项目隐藏目录结构
 HIDDEN_DIR_STRUCTURE = [
-    "undo_snapshots",
+    "snapshots",      # 全量快照目录
+    "sim_results",    # 仿真结果目录
 ]
 
 # 推荐的项目目录结构

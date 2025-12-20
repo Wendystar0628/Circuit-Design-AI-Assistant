@@ -15,7 +15,7 @@
 """
 
 import os
-from typing import Optional, Dict, Any, Callable
+from typing import Optional, Dict, Any, Callable, Union
 
 from PyQt6.QtWidgets import QMainWindow, QFileDialog, QMessageBox
 
@@ -327,10 +327,24 @@ class ActionHandlers:
     # 视图操作回调
     # ============================================================
 
-    def on_toggle_panel(self, panel_name: str, visible: bool):
-        """切换面板显示/隐藏"""
-        if panel_name in self._panels:
-            self._panels[panel_name].setVisible(visible)
+    def on_toggle_panel(self, panel_id: str, visible: Optional[bool] = None):
+        """
+        切换面板显示/隐藏
+        
+        Args:
+            panel_id: 面板 ID
+            visible: 指定可见性，None 表示切换当前状态
+        """
+        # 优先使用 MainWindow 的面板管理方法
+        if hasattr(self._main_window, '_on_toggle_panel'):
+            self._main_window._on_toggle_panel(panel_id, visible)
+        elif panel_id in self._panels:
+            # 兼容旧代码
+            if visible is None:
+                current = self._panels[panel_id].isVisible()
+                self._panels[panel_id].setVisible(not current)
+            else:
+                self._panels[panel_id].setVisible(visible)
 
     # ============================================================
     # 设计操作回调

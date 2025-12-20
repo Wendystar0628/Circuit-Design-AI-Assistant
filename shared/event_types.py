@@ -43,6 +43,23 @@ EVENT_UI_SEND_MESSAGE = "ui_send_message"
 EVENT_UI_REQUEST_SIMULATION = "ui_request_simulation"
 
 # ============================================================
+# 面板管理事件
+# ============================================================
+
+# 面板可见性变更
+# 携带数据：
+#   - panel_id: str - 面板 ID
+#   - visible: bool - 是否可见
+#   - region: str - 面板所属区域
+EVENT_PANEL_VISIBILITY_CHANGED = "panel_visibility_changed"
+
+# 标签页切换
+# 携带数据：
+#   - previous_tab: str - 之前的标签页 ID
+#   - current_tab: str - 当前标签页 ID
+EVENT_TAB_CHANGED = "tab_changed"
+
+# ============================================================
 # 状态变更事件
 # ============================================================
 
@@ -475,6 +492,9 @@ __all__ = [
     "EVENT_UI_FILE_SELECTED",
     "EVENT_UI_SEND_MESSAGE",
     "EVENT_UI_REQUEST_SIMULATION",
+    # 面板管理事件
+    "EVENT_PANEL_VISIBILITY_CHANGED",
+    "EVENT_TAB_CHANGED",
     # 状态变更事件
     "EVENT_STATE_PROJECT_OPENED",
     "EVENT_STATE_PROJECT_CLOSED",

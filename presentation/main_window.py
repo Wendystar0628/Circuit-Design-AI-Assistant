@@ -14,6 +14,7 @@
 - 窗口状态管理委托给 WindowStateManager
 - 会话管理委托给 SessionManager
 - 动作处理委托给 ActionHandlers
+- 面板生命周期管理委托给 PanelManager
 
 初始化顺序：
 - Phase 2.2，依赖 ServiceLocator（获取 I18nManager 等）
@@ -22,6 +23,7 @@
 - 单一职责：主窗口类仅负责布局协调和组件初始化
 - 延迟获取 ServiceLocator 中的服务
 - 所有用户可见文本通过 i18n_manager.get_text() 获取
+- 面板管理通过 PanelManager 统一处理
 """
 
 from typing import Optional, Dict, Any
@@ -38,6 +40,7 @@ from presentation.statusbar_manager import StatusbarManager
 from presentation.window_state_manager import WindowStateManager
 from presentation.session_manager import SessionManager
 from presentation.action_handlers import ActionHandlers
+from presentation.core.panel_manager import PanelManager, PanelRegion
 
 
 class MainWindow(QMainWindow):
@@ -59,9 +62,12 @@ class MainWindow(QMainWindow):
         self._logger = None
         self._config_manager = None
         
-        # UI 组件引用
+        # UI 组件引用（兼容旧代码，逐步迁移到 PanelManager）
         self._panels: Dict[str, QWidget] = {}
         self._splitters: Dict[str, QSplitter] = {}
+        
+        # 面板管理器
+        self._panel_manager: Optional[PanelManager] = None
         
         # 管理器实例（延迟初始化）
         self._menu_manager: Optional[MenuManager] = None
@@ -73,6 +79,7 @@ class MainWindow(QMainWindow):
         
         # 初始化 UI（按照设计规范的顺序）
         self._setup_window()
+        self._setup_panel_manager()
         self._setup_central_widget()
         self._setup_managers()
         self._connect_panel_signals()
@@ -142,6 +149,11 @@ class MainWindow(QMainWindow):
                 pass
         return self._config_manager
 
+    @property
+    def panel_manager(self) -> Optional[PanelManager]:
+        """获取面板管理器"""
+        return self._panel_manager
+
     def _get_text(self, key: str, default: Optional[str] = None) -> str:
         """获取国际化文本"""
         if self.i18n_manager:
@@ -156,6 +168,10 @@ class MainWindow(QMainWindow):
         """设置窗口基本属性"""
         self.setMinimumSize(1200, 800)
         self.resize(1400, 900)
+
+    def _setup_panel_manager(self):
+        """初始化面板管理器"""
+        self._panel_manager = PanelManager()
 
     def _setup_central_widget(self):
         """
@@ -189,34 +205,52 @@ class MainWindow(QMainWindow):
         self._setup_splitter_sizes()
 
     def _create_panels(self):
-        """创建面板部件"""
+        """创建面板部件并注册到 PanelManager"""
         # 左栏 - 文件浏览器
         from presentation.panels.file_browser_panel import FileBrowserPanel
-        self._panels["file_browser"] = FileBrowserPanel()
-        self._panels["file_browser"].setMinimumWidth(150)
-        self._splitters["horizontal"].addWidget(self._panels["file_browser"])
+        file_browser = FileBrowserPanel()
+        file_browser.setMinimumWidth(150)
+        self._splitters["horizontal"].addWidget(file_browser)
+        self._panels["file_browser"] = file_browser
+        self._panel_manager.register_panel(
+            "file_browser", file_browser, PanelRegion.LEFT,
+            title_key="panel.file_browser"
+        )
         
         # 中栏 - 代码编辑器
         from presentation.panels.code_editor_panel import CodeEditorPanel
-        self._panels["code_editor"] = CodeEditorPanel()
-        self._panels["code_editor"].setMinimumWidth(400)
-        self._splitters["horizontal"].addWidget(self._panels["code_editor"])
+        code_editor = CodeEditorPanel()
+        code_editor.setMinimumWidth(400)
+        self._splitters["horizontal"].addWidget(code_editor)
+        self._panels["code_editor"] = code_editor
+        self._panel_manager.register_panel(
+            "code_editor", code_editor, PanelRegion.CENTER,
+            title_key="panel.code_editor"
+        )
         
         # 连接文件浏览器和代码编辑器
-        self._panels["file_browser"].file_selected.connect(
-            self._panels["code_editor"].load_file
-        )
+        file_browser.file_selected.connect(code_editor.load_file)
         
         # 右栏 - 对话面板
         from presentation.panels.conversation_panel import ConversationPanel
-        self._panels["chat"] = ConversationPanel()
-        self._panels["chat"].setMinimumWidth(250)
-        self._splitters["horizontal"].addWidget(self._panels["chat"])
+        chat_panel = ConversationPanel()
+        chat_panel.setMinimumWidth(250)
+        self._splitters["horizontal"].addWidget(chat_panel)
+        self._panels["chat"] = chat_panel
+        self._panel_manager.register_panel(
+            "conversation", chat_panel, PanelRegion.RIGHT,
+            title_key="panel.conversation"
+        )
         
         # 下栏 - 仿真结果（占位）
-        self._panels["simulation"] = self._create_placeholder_panel("panel.simulation")
-        self._panels["simulation"].setMinimumHeight(100)
-        self._splitters["vertical"].addWidget(self._panels["simulation"])
+        simulation_panel = self._create_placeholder_panel("panel.simulation")
+        simulation_panel.setMinimumHeight(100)
+        self._splitters["vertical"].addWidget(simulation_panel)
+        self._panels["simulation"] = simulation_panel
+        self._panel_manager.register_panel(
+            "simulation", simulation_panel, PanelRegion.BOTTOM,
+            title_key="panel.simulation"
+        )
 
     def _create_placeholder_panel(self, title_key: str) -> QWidget:
         """创建占位面板"""
@@ -268,6 +302,9 @@ class MainWindow(QMainWindow):
         
         # 添加对话历史回调
         callbacks["on_show_history"] = self._on_show_history_dialog
+        
+        # 添加面板切换回调
+        callbacks["on_toggle_panel"] = self._on_toggle_panel
         
         # 菜单栏管理器
         self._menu_manager = MenuManager(self)
@@ -386,6 +423,10 @@ class MainWindow(QMainWindow):
             if self.logger:
                 self.logger.info("ConversationPanel initialized after EVENT_INIT_COMPLETE")
         
+        # 恢复布局状态
+        if self._panel_manager:
+            self._panel_manager.restore_layout_state()
+        
         # 恢复对话会话（延迟执行，确保对话面板已初始化）
         QTimer.singleShot(100, self._restore_conversation_session)
 
@@ -471,6 +512,10 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         """窗口关闭事件"""
+        # 保存布局状态
+        if self._panel_manager:
+            self._panel_manager.save_layout_state()
+        
         # 保存窗口状态
         if self._window_state_manager:
             self._window_state_manager.save_window_state(
@@ -489,10 +534,39 @@ class MainWindow(QMainWindow):
     # 面板显示/隐藏
     # ============================================================
 
-    def _toggle_panel(self, panel_name: str, visible: bool):
-        """切换面板显示/隐藏"""
-        if self._action_handlers:
-            self._action_handlers.on_toggle_panel(panel_name, visible)
+    def _on_toggle_panel(self, panel_id: str, visible: Optional[bool] = None):
+        """
+        切换面板显示/隐藏
+        
+        Args:
+            panel_id: 面板 ID
+            visible: 指定可见性，None 表示切换
+        """
+        if not self._panel_manager:
+            return
+        
+        if visible is None:
+            self._panel_manager.toggle_panel(panel_id)
+        elif visible:
+            self._panel_manager.show_panel(panel_id)
+        else:
+            self._panel_manager.hide_panel(panel_id)
+
+    def show_panel(self, panel_id: str):
+        """显示面板"""
+        if self._panel_manager:
+            self._panel_manager.show_panel(panel_id)
+
+    def hide_panel(self, panel_id: str):
+        """隐藏面板"""
+        if self._panel_manager:
+            self._panel_manager.hide_panel(panel_id)
+
+    def toggle_panel(self, panel_id: str) -> bool:
+        """切换面板可见性，返回新状态"""
+        if self._panel_manager:
+            return self._panel_manager.toggle_panel(panel_id)
+        return False
 
     # ============================================================
     # 辅助方法
@@ -604,17 +678,24 @@ class MainWindow(QMainWindow):
     # 公共接口
     # ============================================================
 
-    def get_panel(self, panel_name: str) -> Optional[QWidget]:
+    def get_panel(self, panel_id: str) -> Optional[QWidget]:
         """
         获取指定面板实例
         
         Args:
-            panel_name: 面板名称
+            panel_id: 面板 ID（支持旧的 panel_name 兼容）
             
         Returns:
             面板实例，不存在则返回 None
         """
-        return self._panels.get(panel_name)
+        # 优先从 PanelManager 获取
+        if self._panel_manager:
+            panel = self._panel_manager.get_panel(panel_id)
+            if panel:
+                return panel
+        
+        # 兼容旧代码：从 _panels 字典获取
+        return self._panels.get(panel_id)
 
     def get_statusbar_manager(self) -> Optional[StatusbarManager]:
         """获取状态栏管理器"""

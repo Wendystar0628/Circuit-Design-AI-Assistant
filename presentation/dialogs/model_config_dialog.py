@@ -935,13 +935,63 @@ class ModelConfigDialog(QDialog):
         重新初始化 LLM 客户端
         
         在配置保存后调用，根据新配置创建 LLM 客户端并注册到 ServiceLocator。
+        支持云端厂商和本地模型（Ollama）。
         """
         try:
             from shared.service_locator import ServiceLocator
             from shared.service_names import SVC_LLM_CLIENT
-            from infrastructure.config.settings import LLM_PROVIDER_ZHIPU
+            from infrastructure.config.settings import LLM_PROVIDER_ZHIPU, LLM_PROVIDER_LOCAL
             
-            # 获取凭证
+            defaults = PROVIDER_DEFAULTS.get(provider_id, {})
+            is_local = defaults.get("is_local", False)
+            
+            if is_local:
+                # 本地模型（Ollama）：无需 API Key
+                host = self._local_host_edit.text().strip() or DEFAULT_LOCAL_LLM_HOST
+                model = self._local_model_combo.currentData() or self._local_model_combo.currentText()
+                timeout = self._local_timeout_spin.value()
+                streaming = self._local_streaming_check.isChecked()
+                
+                from infrastructure.llm_adapters.ollama import OllamaClient
+                
+                client = OllamaClient(
+                    host=host,
+                    model=model if model else None,
+                    timeout=timeout,
+                    streaming=streaming,
+                )
+                ServiceLocator.register(SVC_LLM_CLIENT, client)
+                
+                if self.logger:
+                    self.logger.info(f"LLM 客户端已重新初始化：{provider_id}, model={model}, host={host}")
+                
+                # 发布事件
+                if self.event_bus:
+                    from shared.event_types import EVENT_LLM_CLIENT_REINITIALIZED, EVENT_MODEL_CHANGED
+                    self.event_bus.publish(
+                        EVENT_LLM_CLIENT_REINITIALIZED,
+                        data={
+                            "provider": provider_id,
+                            "model": model,
+                            "host": host,
+                            "source": "model_config_dialog",
+                        }
+                    )
+                    
+                    self.event_bus.publish(
+                        EVENT_MODEL_CHANGED,
+                        data={
+                            "new_model_id": f"{provider_id}:{model}",
+                            "old_model_id": None,
+                            "provider": provider_id,
+                            "model_name": model,
+                            "display_name": model,  # 本地模型直接使用模型名
+                        },
+                        source="model_config_dialog"
+                    )
+                return
+            
+            # 云端厂商：需要 API Key
             if not self.credential_manager:
                 return
             

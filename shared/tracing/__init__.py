@@ -50,6 +50,7 @@ from shared.tracing.tracing_context import (
 )
 from shared.tracing.tracing_events import TracingEvents
 from shared.tracing.tracing_logger import TracingLogger
+from shared.tracing.tracing_store import TracingStore
 
 __all__ = [
     # 数据类型
@@ -63,4 +64,6 @@ __all__ = [
     "TracingEvents",
     # 日志记录器
     "TracingLogger",
+    # 存储
+    "TracingStore",
 ]

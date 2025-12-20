@@ -61,6 +61,9 @@ SVC_CONFIG_MANAGER = "config_manager"
 # 文件管理器 - 统一文件操作
 SVC_FILE_MANAGER = "file_manager"
 
+# 文件搜索服务 - 智能文件搜索
+SVC_FILE_SEARCH_SERVICE = "file_search_service"
+
 # ============================================================
 # 应用层服务
 # ============================================================
@@ -145,6 +148,7 @@ __all__ = [
     "SVC_CREDENTIAL_MANAGER",
     "SVC_CONFIG_MANAGER",
     "SVC_FILE_MANAGER",
+    "SVC_FILE_SEARCH_SERVICE",
     "SVC_LLM_CLIENT",
     "SVC_OLLAMA_SERVICE",
     "SVC_TRACING_STORE",

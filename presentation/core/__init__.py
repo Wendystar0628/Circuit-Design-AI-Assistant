@@ -12,7 +12,7 @@ UI层核心基础设施
 
 from presentation.core.base_view_model import BaseViewModel
 from presentation.core.panel_manager import PanelManager, PanelRegion
-from presentation.core.panel_registry import PanelRegistry, PANEL_DEFINITIONS
+from presentation.core.panel_registry import PanelRegistry, PanelDefinition, PANEL_DEFINITIONS
 from presentation.core.tab_controller import (
     TabController,
     TabInfo,
@@ -34,6 +34,7 @@ __all__ = [
     "PanelManager",
     "PanelRegion",
     "PanelRegistry",
+    "PanelDefinition",
     "PANEL_DEFINITIONS",
     # Tab Controller
     "TabController",

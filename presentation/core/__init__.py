@@ -13,11 +13,37 @@ UI层核心基础设施
 from presentation.core.base_view_model import BaseViewModel
 from presentation.core.panel_manager import PanelManager, PanelRegion
 from presentation.core.panel_registry import PanelRegistry, PANEL_DEFINITIONS
+from presentation.core.tab_controller import (
+    TabController,
+    TabInfo,
+    AutoSwitchPolicy,
+    TAB_CONVERSATION,
+    TAB_INFO,
+    TAB_COMPONENT,
+)
+from presentation.core.ui_event_bridge import (
+    UIEventBridge,
+    ensure_main_thread,
+    CommonEventBridges,
+)
 
 __all__ = [
+    # ViewModel
     "BaseViewModel",
+    # Panel Management
     "PanelManager",
     "PanelRegion",
     "PanelRegistry",
     "PANEL_DEFINITIONS",
+    # Tab Controller
+    "TabController",
+    "TabInfo",
+    "AutoSwitchPolicy",
+    "TAB_CONVERSATION",
+    "TAB_INFO",
+    "TAB_COMPONENT",
+    # UI Event Bridge
+    "UIEventBridge",
+    "ensure_main_thread",
+    "CommonEventBridges",
 ]

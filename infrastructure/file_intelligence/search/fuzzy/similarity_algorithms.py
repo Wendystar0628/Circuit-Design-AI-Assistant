@@ -5,21 +5,17 @@
 职责：
 - 封装底层相似度算法库（rapidfuzz）
 - 提供统一的算法调用接口
-- 支持降级到标准库实现
+
+依赖：rapidfuzz>=3.0.0
+安装：pip install rapidfuzz
 
 被调用方：fuzzy_matcher.py, match_scorer.py
 """
 
-from typing import Callable, List, Tuple
+from typing import Callable
 
-# 尝试导入 rapidfuzz，失败则使用标准库降级
-try:
-    from rapidfuzz import fuzz
-    from rapidfuzz.distance import Levenshtein, JaroWinkler
-    RAPIDFUZZ_AVAILABLE = True
-except ImportError:
-    RAPIDFUZZ_AVAILABLE = False
-    from difflib import SequenceMatcher
+from rapidfuzz import fuzz
+from rapidfuzz.distance import JaroWinkler, Levenshtein
 
 
 class SimilarityAlgorithms:
@@ -27,7 +23,6 @@ class SimilarityAlgorithms:
     相似度算法封装类
     
     封装 rapidfuzz 库的核心算法，提供统一接口。
-    若 rapidfuzz 不可用，自动降级到标准库实现。
     """
     
     @staticmethod
@@ -50,10 +45,7 @@ class SimilarityAlgorithms:
         if not s1 or not s2:
             return 0.0
         
-        if RAPIDFUZZ_AVAILABLE:
-            return Levenshtein.normalized_similarity(s1, s2)
-        else:
-            return SequenceMatcher(None, s1, s2).ratio()
+        return Levenshtein.normalized_similarity(s1, s2)
     
     @staticmethod
     def jaro_winkler_ratio(s1: str, s2: str, prefix_weight: float = 0.1) -> float:
@@ -75,19 +67,7 @@ class SimilarityAlgorithms:
         if not s1 or not s2:
             return 0.0
         
-        if RAPIDFUZZ_AVAILABLE:
-            return JaroWinkler.similarity(s1, s2, prefix_weight=prefix_weight)
-        else:
-            # 降级实现：使用 SequenceMatcher + 前缀加权
-            base_ratio = SequenceMatcher(None, s1, s2).ratio()
-            # 计算公共前缀长度（最多4个字符）
-            prefix_len = 0
-            for i in range(min(len(s1), len(s2), 4)):
-                if s1[i] == s2[i]:
-                    prefix_len += 1
-                else:
-                    break
-            return base_ratio + prefix_len * prefix_weight * (1 - base_ratio)
+        return JaroWinkler.similarity(s1, s2, prefix_weight=prefix_weight)
     
     @staticmethod
     def partial_ratio(s1: str, s2: str) -> float:
@@ -109,21 +89,7 @@ class SimilarityAlgorithms:
         if not s1 or not s2:
             return 0.0
         
-        if RAPIDFUZZ_AVAILABLE:
-            return fuzz.partial_ratio(s1, s2) / 100.0
-        else:
-            # 降级实现：滑动窗口匹配
-            shorter, longer = (s1, s2) if len(s1) <= len(s2) else (s2, s1)
-            if len(shorter) == 0:
-                return 0.0
-            
-            best_ratio = 0.0
-            for i in range(len(longer) - len(shorter) + 1):
-                window = longer[i:i + len(shorter)]
-                ratio = SequenceMatcher(None, shorter, window).ratio()
-                best_ratio = max(best_ratio, ratio)
-            
-            return best_ratio
+        return fuzz.partial_ratio(s1, s2) / 100.0
     
     @staticmethod
     def token_sort_ratio(s1: str, s2: str) -> float:
@@ -145,13 +111,7 @@ class SimilarityAlgorithms:
         if not s1 or not s2:
             return 0.0
         
-        if RAPIDFUZZ_AVAILABLE:
-            return fuzz.token_sort_ratio(s1, s2) / 100.0
-        else:
-            # 降级实现：排序后比较
-            sorted1 = ' '.join(sorted(s1.lower().split()))
-            sorted2 = ' '.join(sorted(s2.lower().split()))
-            return SequenceMatcher(None, sorted1, sorted2).ratio()
+        return fuzz.token_sort_ratio(s1, s2) / 100.0
     
     @staticmethod
     def token_set_ratio(s1: str, s2: str) -> float:
@@ -173,17 +133,7 @@ class SimilarityAlgorithms:
         if not s1 or not s2:
             return 0.0
         
-        if RAPIDFUZZ_AVAILABLE:
-            return fuzz.token_set_ratio(s1, s2) / 100.0
-        else:
-            # 降级实现：集合比较
-            set1 = set(s1.lower().split())
-            set2 = set(s2.lower().split())
-            if not set1 and not set2:
-                return 1.0
-            intersection = set1 & set2
-            union = set1 | set2
-            return len(intersection) / len(union) if union else 0.0
+        return fuzz.token_set_ratio(s1, s2) / 100.0
     
     @staticmethod
     def get_algorithm(name: str) -> Callable[[str, str], float]:
@@ -204,11 +154,6 @@ class SimilarityAlgorithms:
             'token_set': SimilarityAlgorithms.token_set_ratio,
         }
         return algorithms.get(name, SimilarityAlgorithms.levenshtein_ratio)
-    
-    @staticmethod
-    def is_rapidfuzz_available() -> bool:
-        """检查 rapidfuzz 是否可用"""
-        return RAPIDFUZZ_AVAILABLE
 
 
 # ============================================================
@@ -217,5 +162,4 @@ class SimilarityAlgorithms:
 
 __all__ = [
     'SimilarityAlgorithms',
-    'RAPIDFUZZ_AVAILABLE',
 ]

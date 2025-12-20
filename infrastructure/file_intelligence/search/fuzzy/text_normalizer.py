@@ -36,7 +36,7 @@ class TextNormalizer:
     # 注释模式（按语言）
     COMMENT_PATTERNS = {
         'python': r'#.*$',
-        'spice': r'[*;].*$',
+        'spice': r'^\s*\*.*$|;.*$',  # SPICE: 行首*是注释，;后是行内注释
         'c': r'//.*$|/\*[\s\S]*?\*/',
         'json': None,  # JSON 不支持注释
     }

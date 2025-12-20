@@ -678,15 +678,17 @@ class ContextRetriever:
         self,
         circuit_ai_dir: Path
     ) -> Optional[Dict[str, Any]]:
-        """获取设计目标"""
-        import json
+        """
+        获取设计目标
         
-        goals_file = circuit_ai_dir / "design_goals.json"
-        if not goals_file.exists():
-            return None
-        
+        委托给 design_service 处理
+        """
         try:
-            return json.loads(goals_file.read_text(encoding="utf-8"))
+            from domain.services.design_service import load_design_goals
+            # circuit_ai_dir 是 .circuit_ai 目录，需要获取其父目录作为 project_root
+            project_root = circuit_ai_dir.parent
+            goals = load_design_goals(str(project_root))
+            return goals if goals else None
         except Exception:
             return None
     

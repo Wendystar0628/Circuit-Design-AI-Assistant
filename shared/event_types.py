@@ -361,6 +361,14 @@ EVENT_ERROR_OCCURRED = "error_occurred"
 # 错误恢复
 EVENT_ERROR_RECOVERED = "error_recovered"
 
+# 异步槽函数错误（qasync @asyncSlot 异常）
+# 携带数据：
+#   - function: str - 函数名
+#   - error: str - 错误信息
+#   - error_type: str - 错误类型名
+#   - traceback: str - 完整堆栈跟踪
+EVENT_ASYNC_SLOT_ERROR = "async_slot_error"
+
 # ============================================================
 # 文件操作事件
 # ============================================================
@@ -558,6 +566,7 @@ __all__ = [
     # 错误处理事件
     "EVENT_ERROR_OCCURRED",
     "EVENT_ERROR_RECOVERED",
+    "EVENT_ASYNC_SLOT_ERROR",
     # 文件操作事件
     "EVENT_FILE_CHANGED",
     "EVENT_FILE_LOCKED",

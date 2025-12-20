@@ -51,6 +51,7 @@ from shared.tracing.tracing_context import (
 from shared.tracing.tracing_events import TracingEvents
 from shared.tracing.tracing_logger import TracingLogger
 from shared.tracing.tracing_store import TracingStore
+from shared.tracing.safe_async_slot import safe_async_slot
 
 __all__ = [
     # 数据类型
@@ -66,4 +67,6 @@ __all__ = [
     "TracingLogger",
     # 存储
     "TracingStore",
+    # 装饰器
+    "safe_async_slot",
 ]

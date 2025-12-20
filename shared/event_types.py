@@ -383,6 +383,31 @@ EVENT_FILE_LOCKED = "file_locked"
 EVENT_FILE_UNLOCKED = "file_unlocked"
 
 # ============================================================
+# 智能文件操作事件（File Intelligence）
+# ============================================================
+
+# 搜索索引更新完成
+# 携带数据：
+#   - file_count: int - 索引的文件数量
+#   - build_time_ms: float - 构建耗时（毫秒）
+EVENT_FILE_SEARCH_INDEX_UPDATED = "file_intelligence.search_index_updated"
+
+# 符号定位完成
+# 携带数据：
+#   - symbol_name: str - 符号名称
+#   - file_path: str - 定位到的文件路径
+#   - line: int - 行号
+#   - scope: str - 定位范围（current_file/include_files/project）
+EVENT_SYMBOL_LOCATED = "file_intelligence.symbol_located"
+
+# 引用查找完成
+# 携带数据：
+#   - symbol_name: str - 符号名称
+#   - reference_count: int - 引用数量
+#   - files_searched: int - 搜索的文件数量
+EVENT_REFERENCES_FOUND = "file_intelligence.references_found"
+
+# ============================================================
 # 外部服务事件
 # ============================================================
 
@@ -571,6 +596,10 @@ __all__ = [
     "EVENT_FILE_CHANGED",
     "EVENT_FILE_LOCKED",
     "EVENT_FILE_UNLOCKED",
+    # 智能文件操作事件
+    "EVENT_FILE_SEARCH_INDEX_UPDATED",
+    "EVENT_SYMBOL_LOCATED",
+    "EVENT_REFERENCES_FOUND",
     # 外部服务事件
     "EVENT_SERVICE_CIRCUIT_OPEN",
     "EVENT_SERVICE_CIRCUIT_CLOSE",

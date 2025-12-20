@@ -14,6 +14,7 @@
 - context_service: 对话历史读写服务（阶段三实现）
 - rag_service: RAG 检索服务（阶段五实现）
 - iteration_history_service: 迭代历史视图服务（从 SqliteSaver 查询）
+- snapshot_service: 全量快照服务（项目文件备份与恢复）
 """
 
 from domain.services.design_service import (
@@ -49,6 +50,15 @@ from domain.services.iteration_history_service import (
     get_latest_iteration,
 )
 
+from domain.services.snapshot_service import (
+    SnapshotInfo,
+    create_snapshot,
+    restore_snapshot,
+    list_snapshots,
+    delete_snapshot,
+    cleanup_old_snapshots,
+)
+
 
 __all__ = [
     # Design Service
@@ -74,4 +84,11 @@ __all__ = [
     "get_iteration_history",
     "get_iteration_detail",
     "get_latest_iteration",
+    # Snapshot Service
+    "SnapshotInfo",
+    "create_snapshot",
+    "restore_snapshot",
+    "list_snapshots",
+    "delete_snapshot",
+    "cleanup_old_snapshots",
 ]

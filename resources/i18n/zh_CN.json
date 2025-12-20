@@ -27,6 +27,9 @@
   "menu.view.chat_panel": "对话面板",
   "menu.view.simulation": "仿真结果",
 
+  "menu.design": "设计",
+  "menu.design.goals": "设计目标",
+
   "menu.simulation": "仿真",
   "menu.simulation.run": "运行仿真",
   "menu.simulation.stop": "停止仿真",

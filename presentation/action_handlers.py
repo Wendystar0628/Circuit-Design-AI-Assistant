@@ -120,6 +120,7 @@ class ActionHandlers:
             "on_editor_redo": self.on_editor_redo,
             "on_undo_iteration": self.on_undo_iteration,
             "on_toggle_panel": self.on_toggle_panel,
+            "on_design_goals": self.on_design_goals,
             "on_api_config": self.on_api_config,
             "on_help_docs": self.on_help_docs,
             "on_about": self.on_about,
@@ -330,6 +331,37 @@ class ActionHandlers:
         """切换面板显示/隐藏"""
         if panel_name in self._panels:
             self._panels[panel_name].setVisible(visible)
+
+    # ============================================================
+    # 设计操作回调
+    # ============================================================
+
+    def on_design_goals(self):
+        """打开设计目标编辑对话框"""
+        # 检查是否已打开项目
+        try:
+            from shared.service_locator import ServiceLocator
+            from shared.service_names import SVC_APP_STATE
+            from shared.app_state import STATE_PROJECT_INITIALIZED
+            
+            app_state = ServiceLocator.get_optional(SVC_APP_STATE)
+            if app_state and not app_state.get(STATE_PROJECT_INITIALIZED, False):
+                QMessageBox.warning(
+                    self._main_window,
+                    self._get_text("dialog.warning.title", "Warning"),
+                    self._get_text("status.open_workspace", "Please open a workspace folder")
+                )
+                return
+        except Exception:
+            pass
+        
+        # TODO: 阶段四实现完整的设计目标编辑对话框
+        # 当前显示占位提示
+        QMessageBox.information(
+            self._main_window,
+            self._get_text("menu.design.goals", "Design Goals"),
+            "Design Goals editor will be implemented in Phase 4"
+        )
 
     # ============================================================
     # 工具操作回调

@@ -80,6 +80,10 @@ class MenuManager:
         self._menus["view"] = menubar.addMenu("")
         self._setup_view_menu()
         
+        # 设计菜单
+        self._menus["design"] = menubar.addMenu("")
+        self._setup_design_menu()
+        
         # 仿真菜单
         self._menus["simulation"] = menubar.addMenu("")
         self._setup_simulation_menu()
@@ -242,6 +246,16 @@ class MenuManager:
             )
         menu.addAction(self._actions["view_simulation"])
 
+    def _setup_design_menu(self) -> None:
+        """设置设计菜单"""
+        menu = self._menus["design"]
+        
+        # 设计目标（打开设计目标编辑对话框）
+        self._actions["design_goals"] = QAction(self._main_window)
+        if "on_design_goals" in self._callbacks:
+            self._actions["design_goals"].triggered.connect(self._callbacks["on_design_goals"])
+        menu.addAction(self._actions["design_goals"])
+
     def _setup_simulation_menu(self) -> None:
         """设置仿真菜单"""
         menu = self._menus["simulation"]
@@ -370,6 +384,7 @@ class MenuManager:
         self._menus["file"].setTitle(self._get_text("menu.file", "File"))
         self._menus["edit"].setTitle(self._get_text("menu.edit", "Edit"))
         self._menus["view"].setTitle(self._get_text("menu.view", "View"))
+        self._menus["design"].setTitle(self._get_text("menu.design", "Design"))
         self._menus["simulation"].setTitle(self._get_text("menu.simulation", "Simulation"))
         self._menus["knowledge"].setTitle(self._get_text("menu.knowledge", "Knowledge Base"))
         self._menus["model"].setTitle(self._get_text("menu.model", "Model"))
@@ -412,6 +427,11 @@ class MenuManager:
         )
         self._actions["view_simulation"].setText(
             self._get_text("menu.view.simulation", "Simulation Results")
+        )
+        
+        # 设计菜单项
+        self._actions["design_goals"].setText(
+            self._get_text("menu.design.goals", "Design Goals")
         )
         
         # 仿真菜单项

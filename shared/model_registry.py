@@ -31,7 +31,7 @@
 import logging
 from typing import Dict, List, Optional, Callable
 
-from shared.model_types import ModelConfig, ProviderConfig
+from shared.model_types import ModelConfig, ProviderConfig, LocalModelInfo
 
 
 # ============================================================
@@ -51,6 +51,10 @@ class ModelRegistry:
     _current_model_id: Optional[str] = None
     _initialized: bool = False
     _logger: Optional[logging.Logger] = None
+    
+    # 本地模型缓存
+    _local_models: List[LocalModelInfo] = []
+    _local_models_loaded: bool = False
     
     # 模型切换回调（用于不依赖 EventBus 的场景）
     _on_model_changed_callbacks: List[Callable[[str, Optional[str]], None]] = []
@@ -397,6 +401,105 @@ class ModelRegistry:
         return model_id
     
     # ============================================================
+    # 本地模型管理
+    # ============================================================
+    
+    @classmethod
+    def refresh_local_models(cls, host: str = "http://localhost:11434") -> List[LocalModelInfo]:
+        """
+        刷新本地模型列表（从 Ollama 服务获取）
+        
+        调用 Ollama API 获取已安装的模型列表，并缓存结果。
+        
+        Args:
+            host: Ollama 服务地址
+            
+        Returns:
+            本地模型信息列表
+        """
+        import httpx
+        from datetime import datetime
+        
+        cls._local_models = []
+        
+        try:
+            # 调用 Ollama API 获取模型列表
+            response = httpx.get(
+                f"{host}/api/tags",
+                timeout=5.0
+            )
+            response.raise_for_status()
+            
+            data = response.json()
+            models = data.get("models", [])
+            
+            for model_data in models:
+                model_info = LocalModelInfo(
+                    name=model_data.get("name", ""),
+                    size=model_data.get("size", 0),
+                    parameter_size=model_data.get("details", {}).get("parameter_size", ""),
+                    digest=model_data.get("digest", ""),
+                )
+                
+                # 解析修改时间
+                modified_at_str = model_data.get("modified_at", "")
+                if modified_at_str:
+                    try:
+                        # Ollama 返回 ISO 格式时间
+                        model_info.modified_at = datetime.fromisoformat(
+                            modified_at_str.replace("Z", "+00:00")
+                        )
+                    except Exception:
+                        pass
+                
+                cls._local_models.append(model_info)
+            
+            cls._local_models_loaded = True
+            
+            if cls._logger:
+                cls._logger.info(f"Loaded {len(cls._local_models)} local models from Ollama")
+            
+        except httpx.ConnectError:
+            if cls._logger:
+                cls._logger.warning(f"Cannot connect to Ollama at {host}")
+        except httpx.TimeoutException:
+            if cls._logger:
+                cls._logger.warning(f"Timeout connecting to Ollama at {host}")
+        except Exception as e:
+            if cls._logger:
+                cls._logger.error(f"Failed to refresh local models: {e}")
+        
+        return cls._local_models
+    
+    @classmethod
+    def get_local_models(cls) -> List[LocalModelInfo]:
+        """
+        获取已缓存的本地模型列表
+        
+        如果尚未加载，返回空列表。
+        调用 refresh_local_models() 来刷新列表。
+        
+        Returns:
+            本地模型信息列表
+        """
+        return cls._local_models.copy()
+    
+    @classmethod
+    def is_local_models_loaded(cls) -> bool:
+        """检查本地模型列表是否已加载"""
+        return cls._local_models_loaded
+    
+    @classmethod
+    def get_local_model_names(cls) -> List[str]:
+        """
+        获取本地模型名称列表
+        
+        Returns:
+            模型名称列表
+        """
+        return [m.name for m in cls._local_models]
+    
+    # ============================================================
     # 事件和回调
     # ============================================================
     
@@ -455,6 +558,8 @@ class ModelRegistry:
         cls._current_model_id = None
         cls._initialized = False
         cls._on_model_changed_callbacks.clear()
+        cls._local_models.clear()
+        cls._local_models_loaded = False
 
 
 # ============================================================

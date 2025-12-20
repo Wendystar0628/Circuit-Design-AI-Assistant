@@ -38,7 +38,14 @@ from .settings import (
     CONFIG_TIMEOUT,
     CONFIG_STREAMING,
     CONFIG_LANGUAGE,
+    CONFIG_LLM_PROVIDER,
+    CONFIG_LLM_TIMEOUT,
+    CONFIG_LLM_STREAMING,
+    CONFIG_EMBEDDING_PROVIDER,
     SUPPORTED_LANGUAGES,
+    SUPPORTED_LLM_PROVIDERS,
+    SUPPORTED_EMBEDDING_PROVIDERS,
+    LLM_PROVIDER_LOCAL,
 )
 
 
@@ -266,6 +273,91 @@ class ConfigManager:
     def set_general_web_search_api_key(self, key: str) -> None:
         """加密存储通用联网搜索 API 密钥"""
         self.set(CONFIG_GENERAL_WEB_SEARCH_API_KEY, key)
+    
+    def get_current_llm_credential(self) -> Optional[Dict[str, str]]:
+        """
+        获取当前选中 LLM 厂商的凭证
+        
+        委托给 CredentialManager 获取
+        
+        Returns:
+            凭证字典，包含 api_key 等字段，未配置时返回 None
+        """
+        try:
+            from shared.service_locator import ServiceLocator
+            from shared.service_names import SVC_CREDENTIAL_MANAGER
+            
+            credential_manager = ServiceLocator.get_optional(SVC_CREDENTIAL_MANAGER)
+            if not credential_manager:
+                return None
+            
+            provider = self.get(CONFIG_LLM_PROVIDER, "")
+            if not provider:
+                return None
+            
+            # 本地模型不需要凭证
+            if provider == LLM_PROVIDER_LOCAL:
+                return {"api_key": ""}
+            
+            return credential_manager.get_credential("llm", provider)
+        except Exception:
+            return None
+    
+    def get_current_embedding_credential(self) -> Optional[Dict[str, str]]:
+        """
+        获取当前选中嵌入模型厂商的凭证
+        
+        委托给 CredentialManager 获取
+        
+        Returns:
+            凭证字典，包含 api_key 等字段，未配置时返回 None
+        """
+        try:
+            from shared.service_locator import ServiceLocator
+            from shared.service_names import SVC_CREDENTIAL_MANAGER
+            from .settings import EMBEDDING_PROVIDER_LOCAL
+            
+            credential_manager = ServiceLocator.get_optional(SVC_CREDENTIAL_MANAGER)
+            if not credential_manager:
+                return None
+            
+            provider = self.get(CONFIG_EMBEDDING_PROVIDER, "")
+            if not provider:
+                return None
+            
+            # 本地嵌入模型不需要凭证
+            if provider == EMBEDDING_PROVIDER_LOCAL:
+                return {"api_key": ""}
+            
+            return credential_manager.get_credential("embedding", provider)
+        except Exception:
+            return None
+    
+    def get_current_search_credential(self) -> Optional[Dict[str, str]]:
+        """
+        获取当前选中搜索厂商的凭证
+        
+        委托给 CredentialManager 获取
+        
+        Returns:
+            凭证字典，包含 api_key 等字段（Google 还包含 cx），未配置时返回 None
+        """
+        try:
+            from shared.service_locator import ServiceLocator
+            from shared.service_names import SVC_CREDENTIAL_MANAGER
+            from .settings import CONFIG_GENERAL_WEB_SEARCH_PROVIDER
+            
+            credential_manager = ServiceLocator.get_optional(SVC_CREDENTIAL_MANAGER)
+            if not credential_manager:
+                return None
+            
+            provider = self.get(CONFIG_GENERAL_WEB_SEARCH_PROVIDER, "")
+            if not provider:
+                return None
+            
+            return credential_manager.get_credential("search", provider)
+        except Exception:
+            return None
 
     
     # ============================================================
@@ -287,6 +379,11 @@ class ConfigManager:
             if not isinstance(timeout, (int, float)) or timeout <= 0:
                 errors.append(f"超时值必须大于 0，当前值: {timeout}")
             
+            # 校验 LLM 超时值
+            llm_timeout = self._config.get(CONFIG_LLM_TIMEOUT, 0)
+            if llm_timeout and (not isinstance(llm_timeout, (int, float)) or llm_timeout <= 0):
+                errors.append(f"LLM 超时值必须大于 0，当前值: {llm_timeout}")
+            
             # 校验流式输出开关
             streaming = self._config.get(CONFIG_STREAMING)
             if not isinstance(streaming, bool):
@@ -296,6 +393,16 @@ class ConfigManager:
             language = self._config.get(CONFIG_LANGUAGE, "")
             if language and language not in SUPPORTED_LANGUAGES:
                 errors.append(f"不支持的语言: {language}，支持: {SUPPORTED_LANGUAGES}")
+            
+            # 校验 LLM 厂商标识
+            llm_provider = self._config.get(CONFIG_LLM_PROVIDER, "")
+            if llm_provider and llm_provider not in SUPPORTED_LLM_PROVIDERS:
+                errors.append(f"不支持的 LLM 厂商: {llm_provider}，支持: {SUPPORTED_LLM_PROVIDERS}")
+            
+            # 校验嵌入模型厂商标识
+            embedding_provider = self._config.get(CONFIG_EMBEDDING_PROVIDER, "")
+            if embedding_provider and embedding_provider not in SUPPORTED_EMBEDDING_PROVIDERS:
+                errors.append(f"不支持的嵌入模型厂商: {embedding_provider}，支持: {SUPPORTED_EMBEDDING_PROVIDERS}")
         
         return len(errors) == 0, errors
     
@@ -304,12 +411,22 @@ class ConfigManager:
         检查 LLM 是否已配置
         
         Returns:
-            bool: API 密钥和提供者是否都已设置
+            bool: LLM 是否已正确配置
+            - 对于需要 API Key 的厂商：检查 provider 和 api_key
+            - 对于本地模型（local）：只检查 provider
         """
         with self._lock:
-            provider = self._config.get("llm_provider", "")
+            provider = self._config.get(CONFIG_LLM_PROVIDER, "")
+            if not provider:
+                return False
+            
+            # 本地模型不需要 API Key
+            if provider == LLM_PROVIDER_LOCAL:
+                return True
+            
+            # 其他厂商需要 API Key
             api_key = self._config.get(CONFIG_API_KEY, "")
-            return bool(provider and api_key)
+            return bool(api_key)
     
     # ============================================================
     # 变更通知机制

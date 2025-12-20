@@ -71,7 +71,6 @@ RECOMMENDED_DIRS = [
 # 初始化创建的 JSON 文件
 INIT_JSON_FILES = {
     "design_goals.json": {},
-    "iteration_history.json": [],
 }
 
 
@@ -100,12 +99,11 @@ class ProjectInfo:
     status: ProjectStatus
     has_checkpoints: bool
     has_design_goals: bool
-    has_iteration_history: bool
     disk_space_mb: float
     is_degraded: bool
     degraded_reason: Optional[str]
     is_existing: bool = False  # 是否为已有项目（存在 checkpoints.sqlite3）
-    has_history: bool = False  # 是否有历史对话和迭代记录
+    has_history: bool = False  # 是否有历史对话（从 checkpoints.sqlite3 判断）
 
 
 # ============================================================
@@ -275,10 +273,9 @@ class ProjectService:
             checkpoint_file = hidden_dir / "checkpoints.sqlite3"
             is_existing = checkpoint_file.exists()
             
-            # 检查是否有历史记录（对话历史或迭代记录）
+            # 检查是否有历史记录（设计目标或检查点）
             design_goals_file = hidden_dir / "design_goals.json"
-            iteration_history_file = hidden_dir / "iteration_history.json"
-            has_history = self._check_has_history(design_goals_file, iteration_history_file)
+            has_history = self._check_has_history(design_goals_file, checkpoint_file)
             
             if self.logger:
                 if is_existing:
@@ -359,14 +356,14 @@ class ProjectService:
     def _check_has_history(
         self,
         design_goals_file: Path,
-        iteration_history_file: Path
+        checkpoint_file: Path
     ) -> bool:
         """
         检查项目是否有历史记录
         
         Args:
             design_goals_file: 设计目标文件路径
-            iteration_history_file: 迭代历史文件路径
+            checkpoint_file: 检查点数据库文件路径
             
         Returns:
             bool: 是否有历史记录
@@ -382,15 +379,9 @@ class ProjectService:
                 if goals:
                     return True
             
-            # 检查迭代历史是否非空
-            if iteration_history_file.exists():
-                if self.json_repo:
-                    history = self.json_repo.load_json(iteration_history_file, default=[])
-                else:
-                    import json
-                    history = json.loads(iteration_history_file.read_text())
-                if history:
-                    return True
+            # 检查检查点数据库是否存在（迭代历史从此处查询）
+            if checkpoint_file.exists():
+                return True
             
             return False
             
@@ -703,7 +694,6 @@ class ProjectService:
                 status=ProjectStatus.NOT_OPENED,
                 has_checkpoints=False,
                 has_design_goals=False,
-                has_iteration_history=False,
                 disk_space_mb=0,
                 is_degraded=False,
                 degraded_reason=None,
@@ -715,15 +705,15 @@ class ProjectService:
         hidden_dir = path / WORK_FOLDER_HIDDEN_DIR
         
         # 检查文件存在性
-        has_checkpoints = (hidden_dir / "checkpoints.sqlite3").exists()
+        checkpoint_file = hidden_dir / "checkpoints.sqlite3"
+        has_checkpoints = checkpoint_file.exists()
         has_design_goals = (hidden_dir / "design_goals.json").exists()
-        has_iteration_history = (hidden_dir / "iteration_history.json").exists()
         
         # 检查是否为已有项目和是否有历史
         is_existing = has_checkpoints
         has_history = self._check_has_history(
             hidden_dir / "design_goals.json",
-            hidden_dir / "iteration_history.json"
+            checkpoint_file
         )
         
         # 获取磁盘空间
@@ -739,7 +729,6 @@ class ProjectService:
             status=self._status,
             has_checkpoints=has_checkpoints,
             has_design_goals=has_design_goals,
-            has_iteration_history=has_iteration_history,
             disk_space_mb=disk_space_mb,
             is_degraded=self._degraded_reason is not None,
             degraded_reason=self._degraded_reason,

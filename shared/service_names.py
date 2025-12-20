@@ -30,11 +30,23 @@ SVC_APP_STATE = "app_state"
 # 错误处理器 - 统一错误处理
 SVC_ERROR_HANDLER = "error_handler"
 
-# Worker管理器 - 后台任务调度
+# Worker管理器 - 后台任务调度（旧名称，保留兼容）
 SVC_WORKER_MANAGER = "worker_manager"
+
+# 异步任务注册表 - 异步任务管理（新名称）
+SVC_ASYNC_TASK_REGISTRY = "async_task_registry"
+
+# CPU 任务执行器 - CPU 密集型任务执行
+SVC_CPU_TASK_EXECUTOR = "cpu_task_executor"
+
+# 进程管理器 - 子进程管理
+SVC_PROCESS_MANAGER = "process_manager"
 
 # 国际化管理器 - 多语言支持
 SVC_I18N_MANAGER = "i18n_manager"
+
+# 停止控制器 - 全局停止状态管理
+SVC_STOP_CONTROLLER = "stop_controller"
 
 # ============================================================
 # 基础设施层服务
@@ -69,6 +81,19 @@ SVC_TOOL_EXECUTOR = "tool_executor"
 # LLM 客户端 - 大模型 API 调用
 SVC_LLM_CLIENT = "llm_client"
 
+# Ollama 服务 - 本地模型管理
+SVC_OLLAMA_SERVICE = "ollama_service"
+
+# ============================================================
+# 基础设施层服务 - 追踪系统（阶段 1.5）
+# ============================================================
+
+# 追踪存储 - SQLite 持久化
+SVC_TRACING_STORE = "tracing_store"
+
+# 追踪日志器 - 内存缓冲 + 定时刷新
+SVC_TRACING_LOGGER = "tracing_logger"
+
 # ============================================================
 # 领域层服务
 # ============================================================
@@ -85,8 +110,8 @@ SVC_PROMPT_TEMPLATE_MANAGER = "prompt_template_manager"
 # 外部服务管理器 - API 调用熔断和重试
 SVC_EXTERNAL_SERVICE_MANAGER = "external_service_manager"
 
-# 迭代跟踪器 - 状态同步
-SVC_ITERATION_TRACKER = "iteration_tracker"
+# 迭代历史服务 - 从 SqliteSaver 查询迭代历史视图
+SVC_ITERATION_HISTORY_SERVICE = "iteration_history_service"
 
 # 向量存储 - RAG 知识库
 SVC_VECTOR_STORE = "vector_store"
@@ -111,12 +136,19 @@ __all__ = [
     "SVC_APP_STATE",
     "SVC_ERROR_HANDLER",
     "SVC_WORKER_MANAGER",
+    "SVC_ASYNC_TASK_REGISTRY",
+    "SVC_CPU_TASK_EXECUTOR",
+    "SVC_PROCESS_MANAGER",
     "SVC_I18N_MANAGER",
+    "SVC_STOP_CONTROLLER",
     # 基础设施层
     "SVC_CREDENTIAL_MANAGER",
     "SVC_CONFIG_MANAGER",
     "SVC_FILE_MANAGER",
     "SVC_LLM_CLIENT",
+    "SVC_OLLAMA_SERVICE",
+    "SVC_TRACING_STORE",
+    "SVC_TRACING_LOGGER",
     # 应用层
     "SVC_PROJECT_SERVICE",
     "SVC_DESIGN_WORKFLOW",
@@ -126,7 +158,7 @@ __all__ = [
     "SVC_SESSION_STATE_MANAGER",
     "SVC_PROMPT_TEMPLATE_MANAGER",
     "SVC_EXTERNAL_SERVICE_MANAGER",
-    "SVC_ITERATION_TRACKER",
+    "SVC_ITERATION_HISTORY_SERVICE",
     "SVC_VECTOR_STORE",
     "SVC_CODE_INDEXER",
     "SVC_SIMULATION_SERVICE",

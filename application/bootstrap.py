@@ -10,23 +10,31 @@
 初始化顺序（严格按此顺序执行）：
 - Phase -1: ngspice 和 AI 模型路径配置（必须在所有其他导入之前）
 - Phase 0: 基础设施初始化（同步，阻塞式）
+  - 0.0 全局配置目录初始化
   - 0.1 Logger 初始化
   - 0.2 ServiceLocator 初始化
   - 0.3 EventBus 初始化
 - Phase 1: 核心管理器初始化（同步，阻塞式）
+  - 1.0 CredentialManager 初始化
   - 1.1 ConfigManager 初始化
   - 1.2 ErrorHandler 初始化
   - 1.3 I18nManager 初始化
   - 1.4 AppState 初始化
+  - 1.5 ModelRegistry 初始化
 - Phase 2: GUI 框架初始化（同步，阻塞式）
+  - 2.0.1 预导入 WebEngine
   - 2.1 创建 QApplication 实例
   - 2.2 创建 MainWindow 实例
   - 2.3 显示主窗口
   - 2.4 触发延迟初始化
 - Phase 3: 延迟初始化（异步，在事件循环中执行）
   - 3.1 WorkerManager 初始化
-  - 3.2 FileManager 初始化（阶段二实现）
-  - 3.3 发布 EVENT_INIT_COMPLETE 事件
+  - 3.2 FileManager 初始化
+  - 3.3 ProjectService 初始化
+  - 3.4 ContextManager 初始化
+  - 3.5 SessionStateManager 初始化
+  - 3.6 LLM 客户端初始化
+  - 3.7 发布 EVENT_INIT_COMPLETE 事件
 
 注意：ngspice 路径配置必须在任何 PySpice 导入之前执行
 """
@@ -88,6 +96,7 @@ def _init_phase_0() -> bool:
     """
     Phase 0: 基础设施初始化（同步，阻塞式）
     
+    0.0 全局配置目录初始化
     0.1 Logger 初始化（最先，其他模块都需要日志）
     0.2 ServiceLocator 初始化（创建空容器）
     0.3 EventBus 初始化（创建事件总线并注册）
@@ -98,6 +107,29 @@ def _init_phase_0() -> bool:
     global _logger
 
     try:
+        # --------------------------------------------------------
+        # 0.0 全局配置目录初始化
+        # 创建 ~/.circuit_design_ai/ 及其子目录
+        # --------------------------------------------------------
+        from infrastructure.config.settings import GLOBAL_CONFIG_DIR, GLOBAL_LOG_DIR
+        
+        # 创建全局配置目录
+        GLOBAL_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        
+        # 创建日志目录
+        GLOBAL_LOG_DIR.mkdir(parents=True, exist_ok=True)
+        
+        # 创建 prompts 目录结构
+        prompts_system_dir = GLOBAL_CONFIG_DIR / "prompts" / "system"
+        prompts_custom_dir = GLOBAL_CONFIG_DIR / "prompts" / "custom"
+        prompts_system_dir.mkdir(parents=True, exist_ok=True)
+        prompts_custom_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 复制内置 Prompt 模板到 prompts/system/（若不存在或版本更新）
+        _copy_builtin_prompts(prompts_system_dir)
+        
+        print("[Phase 0.0] 全局配置目录初始化完成")
+
         # --------------------------------------------------------
         # 0.1 Logger 初始化（最先，其他模块都需要日志）
         # --------------------------------------------------------
@@ -129,6 +161,51 @@ def _init_phase_0() -> bool:
         print(f"[Phase 0] 初始化失败: {e}")
         traceback.print_exc()
         return False
+
+
+def _copy_builtin_prompts(target_dir: Path) -> None:
+    """
+    复制内置 Prompt 模板到全局配置目录
+    
+    仅在目标文件不存在或版本更新时复制
+    
+    Args:
+        target_dir: 目标目录（~/.circuit_design_ai/prompts/system/）
+    """
+    import shutil
+    import json
+    
+    # 获取内置 prompts 目录
+    base_path = Path(__file__).parent.parent
+    builtin_prompts_dir = base_path / "resources" / "prompts"
+    
+    if not builtin_prompts_dir.exists():
+        return
+    
+    # 检查版本文件
+    builtin_version_file = builtin_prompts_dir / "version.json"
+    target_version_file = target_dir / "version.json"
+    
+    need_copy = False
+    
+    if not target_version_file.exists():
+        need_copy = True
+    elif builtin_version_file.exists():
+        try:
+            with open(builtin_version_file, 'r', encoding='utf-8') as f:
+                builtin_version = json.load(f).get("version", "0.0.0")
+            with open(target_version_file, 'r', encoding='utf-8') as f:
+                target_version = json.load(f).get("version", "0.0.0")
+            if builtin_version > target_version:
+                need_copy = True
+        except Exception:
+            need_copy = True
+    
+    if need_copy:
+        # 复制所有 prompt 文件
+        for file_path in builtin_prompts_dir.glob("*.json"):
+            target_file = target_dir / file_path.name
+            shutil.copy2(file_path, target_file)
 
 
 

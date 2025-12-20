@@ -13,14 +13,19 @@
 - worker_manager: Worker 生命周期管理器
 - app_state: 应用状态容器
 - i18n_manager: 国际化管理器
+- model_types: 模型类型定义
+- model_registry: LLM 模型注册表
+- embedding_model_registry: 嵌入模型注册表
 
 依赖方向（严格遵守，避免循环依赖）：
-- service_names.py, event_types.py, error_types.py, worker_types.py: 纯常量定义，不依赖任何其他模块
+- service_names.py, event_types.py, error_types.py, worker_types.py, model_types.py: 纯常量/类型定义，不依赖任何其他模块
 - service_locator.py: 仅依赖 service_names.py
 - event_bus.py: 依赖 event_types.py，不依赖 error_handler.py
 - error_handler.py: 依赖 event_bus.py、error_types.py，内部错误处理不能再调用自身
 - worker_manager.py: 依赖 event_bus.py、worker_types.py
 - app_state.py: 依赖 event_bus.py、event_types.py
+- model_registry.py: 依赖 model_types.py
+- embedding_model_registry.py: 依赖 model_types.py
 - 其他模块可依赖以上所有，但不能被以上模块反向依赖
 """
 
@@ -39,7 +44,7 @@ from shared.service_names import (
     SVC_CONTEXT_MANAGER,
     SVC_PROMPT_TEMPLATE_MANAGER,
     SVC_EXTERNAL_SERVICE_MANAGER,
-    SVC_ITERATION_TRACKER,
+    SVC_ITERATION_HISTORY_SERVICE,
     SVC_VECTOR_STORE,
     SVC_CODE_INDEXER,
 )
@@ -170,6 +175,21 @@ from shared.i18n_manager import (
     LANGUAGE_NAMES,
 )
 
+# 模型类型
+from shared.model_types import (
+    ModelConfig,
+    ProviderConfig,
+    LocalModelInfo,
+    EmbeddingModelConfig,
+    EmbeddingProviderConfig,
+)
+
+# 模型注册表
+from shared.model_registry import ModelRegistry
+
+# 嵌入模型注册表
+from shared.embedding_model_registry import EmbeddingModelRegistry
+
 __all__ = [
     # 服务名常量
     "SVC_EVENT_BUS",
@@ -185,7 +205,7 @@ __all__ = [
     "SVC_CONTEXT_MANAGER",
     "SVC_PROMPT_TEMPLATE_MANAGER",
     "SVC_EXTERNAL_SERVICE_MANAGER",
-    "SVC_ITERATION_TRACKER",
+    "SVC_ITERATION_HISTORY_SERVICE",
     "SVC_VECTOR_STORE",
     "SVC_CODE_INDEXER",
     # 服务定位器
@@ -274,4 +294,14 @@ __all__ = [
     "LANG_ZH_CN",
     "SUPPORTED_LANGUAGES",
     "LANGUAGE_NAMES",
+    # 模型类型
+    "ModelConfig",
+    "ProviderConfig",
+    "LocalModelInfo",
+    "EmbeddingModelConfig",
+    "EmbeddingProviderConfig",
+    # 模型注册表
+    "ModelRegistry",
+    # 嵌入模型注册表
+    "EmbeddingModelRegistry",
 ]

@@ -114,6 +114,45 @@ EVENT_LLM_CLIENT_REINITIALIZED = "llm_client_reinitialized"
 #   - supports_vision: bool - 是否支持视觉
 EVENT_MODEL_CHANGED = "model_changed"
 
+# LLM 厂商切换
+# 携带数据：
+#   - old_provider: str - 旧厂商 ID
+#   - new_provider: str - 新厂商 ID
+EVENT_LLM_PROVIDER_CHANGED = "llm_provider_changed"
+
+# ============================================================
+# 本地模型事件（Ollama）
+# ============================================================
+
+# Ollama 服务状态变更
+# 携带数据：
+#   - status: str - 服务状态（"running", "not_running", "not_installed", "error"）
+#   - base_url: str - Ollama 服务地址
+#   - error_message: str - 错误信息（若状态为 error）
+EVENT_OLLAMA_STATUS_CHANGED = "ollama_status_changed"
+
+# Ollama 模型列表更新
+# 携带数据：
+#   - models: list - 模型列表，每项包含 name, size, parameter_size, modified_at
+#   - count: int - 模型数量
+EVENT_OLLAMA_MODELS_UPDATED = "ollama_models_updated"
+
+# ============================================================
+# 嵌入模型事件
+# ============================================================
+
+# 嵌入模型厂商切换
+# 携带数据：
+#   - old_provider: str - 旧厂商 ID
+#   - new_provider: str - 新厂商 ID
+EVENT_EMBEDDING_PROVIDER_CHANGED = "embedding_provider_changed"
+
+# 嵌入模型就绪
+# 携带数据：
+#   - provider: str - 厂商 ID
+#   - model: str - 模型名称
+EVENT_EMBEDDING_MODEL_READY = "embedding_model_ready"
+
 # ============================================================
 # 联网搜索事件
 # ============================================================
@@ -328,6 +367,58 @@ EVENT_WORKFLOW_LOCKED = "workflow_locked"
 # 工作流解锁
 EVENT_WORKFLOW_UNLOCKED = "workflow_unlocked"
 
+# ============================================================
+# 停止控制事件
+# ============================================================
+
+# 停止请求
+# 携带数据：
+#   - task_id: str - 被停止的任务 ID
+#   - reason: str - 停止原因（"user_requested", "timeout", "error", "session_switch", "app_shutdown"）
+#   - timestamp: float - 请求时间戳
+EVENT_STOP_REQUESTED = "stop_requested"
+
+# 停止完成
+# 携带数据：
+#   - task_id: str - 被停止的任务 ID
+#   - reason: str - 停止原因
+#   - partial_result: Any - 部分结果（若有）
+#   - is_partial: bool - 是否为部分结果
+#   - cleanup_success: bool - 资源清理是否成功
+EVENT_STOP_COMPLETED = "stop_completed"
+
+# 停止状态变更
+# 携带数据：
+#   - old_state: str - 旧状态（"idle", "running", "stop_requested", "stopping", "stopped"）
+#   - new_state: str - 新状态
+#   - task_id: str - 相关任务 ID（若有）
+EVENT_STOP_STATE_CHANGED = "stop_state_changed"
+
+# ============================================================
+# 设计目标事件
+# ============================================================
+
+# 设计目标更新
+# 携带数据：
+#   - goals: list - 更新后的设计目标列表
+#   - source: str - 更新来源（"dialog" 表示用户通过对话框编辑，"llm" 表示 LLM 提取）
+#   - previous_goals: list - 更新前的设计目标（用于撤销）
+EVENT_DESIGN_GOALS_UPDATED = "design_goals_updated"
+
+# 设计完成
+# 携带数据：
+#   - termination_reason: str - 终止原因（"user_accepted", "goals_satisfied", "max_checkpoints", "stagnated", "user_stopped"）
+#   - final_score: float - 最终性能得分
+#   - checkpoint_count: int - 总检查点次数
+#   - report_path: str - 生成的报告路径（若有）
+EVENT_DESIGN_COMPLETED = "design_completed"
+
+# 设计被接受
+EVENT_DESIGN_ACCEPTED = "design_accepted"
+
+# 设计被停止
+EVENT_DESIGN_STOPPED = "design_stopped"
+
 
 # ============================================================
 # 关键事件列表（需要特殊保护）
@@ -338,6 +429,7 @@ CRITICAL_EVENTS = [
     EVENT_WORKFLOW_LOCKED,
     EVENT_WORKFLOW_UNLOCKED,
     EVENT_ERROR_OCCURRED,
+    EVENT_STOP_REQUESTED,
 ]
 
 
@@ -369,6 +461,13 @@ __all__ = [
     "EVENT_LLM_TOOL_CALL",
     "EVENT_LLM_CLIENT_REINITIALIZED",
     "EVENT_MODEL_CHANGED",
+    "EVENT_LLM_PROVIDER_CHANGED",
+    # 本地模型事件
+    "EVENT_OLLAMA_STATUS_CHANGED",
+    "EVENT_OLLAMA_MODELS_UPDATED",
+    # 嵌入模型事件
+    "EVENT_EMBEDDING_PROVIDER_CHANGED",
+    "EVENT_EMBEDDING_MODEL_READY",
     # 联网搜索事件
     "EVENT_WEB_SEARCH_STARTED",
     "EVENT_WEB_SEARCH_COMPLETE",
@@ -420,6 +519,15 @@ __all__ = [
     # 工作流锁定事件
     "EVENT_WORKFLOW_LOCKED",
     "EVENT_WORKFLOW_UNLOCKED",
+    # 停止控制事件
+    "EVENT_STOP_REQUESTED",
+    "EVENT_STOP_COMPLETED",
+    "EVENT_STOP_STATE_CHANGED",
+    # 设计目标事件
+    "EVENT_DESIGN_GOALS_UPDATED",
+    "EVENT_DESIGN_COMPLETED",
+    "EVENT_DESIGN_ACCEPTED",
+    "EVENT_DESIGN_STOPPED",
     # 关键事件列表
     "CRITICAL_EVENTS",
 ]

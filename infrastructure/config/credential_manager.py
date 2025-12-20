@@ -38,6 +38,7 @@ from .settings import (
     CREDENTIALS_FILE,
     CREDENTIAL_TYPE_LLM,
     CREDENTIAL_TYPE_SEARCH,
+    CREDENTIAL_TYPE_EMBEDDING,
     ENCRYPTION_SALT,
 )
 
@@ -86,6 +87,7 @@ class CredentialManager:
                     self._credentials = {
                         CREDENTIAL_TYPE_LLM: {},
                         CREDENTIAL_TYPE_SEARCH: {},
+                        CREDENTIAL_TYPE_EMBEDDING: {},
                     }
                     self._save_credentials_internal()
                 
@@ -98,6 +100,7 @@ class CredentialManager:
                 self._credentials = {
                     CREDENTIAL_TYPE_LLM: {},
                     CREDENTIAL_TYPE_SEARCH: {},
+                    CREDENTIAL_TYPE_EMBEDDING: {},
                 }
                 self._loaded = True
                 return False
@@ -107,6 +110,7 @@ class CredentialManager:
                 self._credentials = {
                     CREDENTIAL_TYPE_LLM: {},
                     CREDENTIAL_TYPE_SEARCH: {},
+                    CREDENTIAL_TYPE_EMBEDDING: {},
                 }
                 self._loaded = True
                 return False
@@ -274,6 +278,42 @@ class CredentialManager:
                 pid for pid, cred in type_credentials.items()
                 if cred.get("api_key")
             ]
+    
+    def validate_credential(
+        self, 
+        provider_type: str, 
+        provider_id: str
+    ) -> tuple[bool, str]:
+        """
+        校验凭证格式
+        
+        Args:
+            provider_type: 厂商类型
+            provider_id: 厂商标识
+            
+        Returns:
+            (是否有效, 错误信息)
+        """
+        credential = self.get_credential(provider_type, provider_id)
+        
+        if not credential:
+            return False, "凭证不存在"
+        
+        api_key = credential.get("api_key", "")
+        if not api_key:
+            return False, "API Key 为空"
+        
+        # 基本格式校验
+        if len(api_key) < 10:
+            return False, "API Key 长度过短"
+        
+        # 特定厂商的额外校验
+        if provider_type == CREDENTIAL_TYPE_SEARCH and provider_id == "google":
+            cx = credential.get("cx", "")
+            if not cx:
+                return False, "Google 搜索引擎 ID (cx) 为空"
+        
+        return True, ""
 
     
     # ============================================================
@@ -343,6 +383,52 @@ class CredentialManager:
         if cx is not None:
             credential_data["cx"] = cx
         return self.set_credential(CREDENTIAL_TYPE_SEARCH, provider_id, credential_data)
+    
+    # ============================================================
+    # 便捷方法（嵌入模型凭证）
+    # ============================================================
+    
+    def get_embedding_api_key(self, provider_id: str) -> str:
+        """
+        获取嵌入模型厂商的 API Key
+        
+        Args:
+            provider_id: 厂商标识（zhipu/openai）
+            
+        Returns:
+            解密后的 API Key，不存在则返回空字符串
+        """
+        credential = self.get_credential(CREDENTIAL_TYPE_EMBEDDING, provider_id)
+        return credential.get("api_key", "") if credential else ""
+    
+    def set_embedding_api_key(self, provider_id: str, api_key: str) -> bool:
+        """
+        设置嵌入模型厂商的 API Key
+        
+        Args:
+            provider_id: 厂商标识
+            api_key: API Key 明文
+            
+        Returns:
+            bool: 保存是否成功
+        """
+        return self.set_credential(
+            CREDENTIAL_TYPE_EMBEDDING, 
+            provider_id, 
+            {"api_key": api_key}
+        )
+    
+    def has_embedding_credential(self, provider_id: str) -> bool:
+        """
+        检查嵌入模型厂商凭证是否存在
+        
+        Args:
+            provider_id: 厂商标识
+            
+        Returns:
+            bool: 凭证是否存在且 api_key 非空
+        """
+        return self.has_credential(CREDENTIAL_TYPE_EMBEDDING, provider_id)
     
     # ============================================================
     # 加密/解密

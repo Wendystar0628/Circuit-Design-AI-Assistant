@@ -12,10 +12,10 @@ JSON存储操作
 
 使用场景：
 - design_goals.json - 设计目标存储
-- iteration_history.json - 迭代记录存储
 
 说明：
 - 对话历史由 Checkpointer 统一管理，不再使用独立的 JSON 文件
+- 迭代历史从 SqliteSaver 查询，不再使用独立的 JSON 文件
 
 使用示例：
     from infrastructure.persistence.json_repository import JsonRepository

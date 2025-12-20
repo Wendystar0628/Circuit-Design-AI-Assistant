@@ -3,8 +3,10 @@
 模型相关类型定义
 
 职责：
-- 定义模型配置数据结构
-- 定义厂商配置数据结构
+- 定义 LLM 模型配置数据结构
+- 定义 LLM 厂商配置数据结构
+- 定义嵌入模型配置数据结构
+- 定义本地模型信息数据结构
 - 提供类型安全的模型信息访问
 
 设计原则：
@@ -13,6 +15,7 @@
 """
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Dict, List, Optional
 
 
@@ -124,10 +127,104 @@ class ProviderConfig:
 
 
 # ============================================================
+# 本地模型信息
+# ============================================================
+
+@dataclass
+class LocalModelInfo:
+    """
+    本地模型信息数据类
+    
+    用于存储从 Ollama 服务获取的本地模型信息。
+    """
+    
+    name: str                         # 模型名称（如 "qwen2.5:7b"）
+    size: int = 0                     # 模型文件大小（字节）
+    parameter_size: str = ""          # 参数量估算（如 "7B"）
+    modified_at: Optional[datetime] = None  # 最后修改时间
+    digest: str = ""                  # 模型摘要/哈希
+    
+    @property
+    def size_gb(self) -> float:
+        """获取模型大小（GB）"""
+        return self.size / (1024 ** 3) if self.size > 0 else 0.0
+    
+    @property
+    def display_size(self) -> str:
+        """获取显示用的大小字符串"""
+        if self.size <= 0:
+            return "Unknown"
+        gb = self.size_gb
+        if gb >= 1:
+            return f"{gb:.1f} GB"
+        mb = self.size / (1024 ** 2)
+        return f"{mb:.0f} MB"
+
+
+# ============================================================
+# 嵌入模型配置
+# ============================================================
+
+@dataclass
+class EmbeddingModelConfig:
+    """
+    嵌入模型配置数据类
+    
+    定义嵌入模型的完整配置信息。
+    """
+    
+    id: str                           # 模型唯一标识（格式: "provider:model_name"）
+    provider: str                     # 厂商标识（如 "local", "zhipu"）
+    name: str                         # 模型名称（如 "gte-modernbert-base"）
+    display_name: str                 # 显示名称（如 "GTE ModernBERT Base"）
+    
+    # 模型参数
+    dimensions: int = 768             # 输出向量维度
+    max_tokens: int = 8192            # 单次请求最大 token 数
+    
+    # 模型属性
+    is_local: bool = False            # 是否为本地模型
+    
+    # 元数据
+    description: str = ""             # 模型描述
+    
+    def __post_init__(self):
+        """初始化后处理"""
+        if not self.id:
+            self.id = f"{self.provider}:{self.name}"
+
+
+@dataclass
+class EmbeddingProviderConfig:
+    """
+    嵌入模型厂商配置数据类
+    
+    定义嵌入模型厂商的基础信息。
+    """
+    
+    id: str                           # 厂商唯一标识（如 "local", "zhipu"）
+    display_name: str                 # 显示名称（如 "本地模型"）
+    
+    # API 配置
+    base_url: str = ""                # API 端点
+    
+    # 默认模型
+    default_model: str = ""           # 默认模型名称
+    
+    # 厂商属性
+    requires_api_key: bool = False    # 是否需要 API Key
+    is_local: bool = False            # 是否为本地厂商
+    implemented: bool = False         # 是否已实现
+
+
+# ============================================================
 # 模块导出
 # ============================================================
 
 __all__ = [
     "ModelConfig",
     "ProviderConfig",
+    "LocalModelInfo",
+    "EmbeddingModelConfig",
+    "EmbeddingProviderConfig",
 ]

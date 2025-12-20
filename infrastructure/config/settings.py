@@ -16,6 +16,19 @@ DEFAULT_STAGNATION_THRESHOLD = 3     # 停滞判断阈值（连续N次无改进�
 DEFAULT_CONTEXT_LIMIT_RATIO = 0.8    # 上下文占用触发总结的阈值（80%）
 
 # ============================================================
+# 追踪相关常量（阶段 1.5）
+# ============================================================
+
+DEFAULT_TRACING_ENABLED = True                # 默认启用追踪
+DEFAULT_TRACING_FLUSH_INTERVAL_MS = 500       # 追踪缓冲区刷新间隔（毫秒）
+DEFAULT_TRACING_MAX_BUFFER_SIZE = 100         # 追踪缓冲区上限
+DEFAULT_TRACING_RETENTION_DAYS = 7            # 追踪数据保留天数
+DEFAULT_TRACING_LOG_INPUTS_OUTPUTS = True     # 是否记录输入输出
+DEFAULT_DEBUG_RERAISE_ASYNC_ERRORS = False    # 异步槽异常是否重新抛出
+DEFAULT_DEBUG_SHOW_DEVTOOLS_PANEL = True      # 是否显示调试面板
+TRACING_DB_FILE = "traces.sqlite3"            # 追踪数据库文件名
+
+# ============================================================
 # 上下文压缩相关默认值
 # ============================================================
 
@@ -102,17 +115,21 @@ DEFAULT_BASE_URL = "https://open.bigmodel.cn/api/paas/v4"  # 智谱 API 默认�
 # ============================================================
 
 LLM_PROVIDER_ZHIPU = "zhipu"           # 智谱 AI（已实现）
+LLM_PROVIDER_SILICONFLOW = "siliconflow"  # 硅基流动（多模型聚合平台）
 LLM_PROVIDER_DEEPSEEK = "deepseek"     # DeepSeek（占位）
 LLM_PROVIDER_QWEN = "qwen"             # 阿里通义千问（占位）
 LLM_PROVIDER_OPENAI = "openai"         # OpenAI（占位）
 LLM_PROVIDER_ANTHROPIC = "anthropic"   # Anthropic Claude（占位）
+LLM_PROVIDER_LOCAL = "local"           # 本地模型（Ollama）
 
 SUPPORTED_LLM_PROVIDERS = [
     LLM_PROVIDER_ZHIPU,
+    LLM_PROVIDER_SILICONFLOW,
     LLM_PROVIDER_DEEPSEEK,
     LLM_PROVIDER_QWEN,
     LLM_PROVIDER_OPENAI,
     LLM_PROVIDER_ANTHROPIC,
+    LLM_PROVIDER_LOCAL,
 ]
 
 # ============================================================
@@ -126,31 +143,54 @@ PROVIDER_DEFAULTS = {
         "base_url": "https://open.bigmodel.cn/api/paas/v4",
         "default_model": "glm-4.6",
         "supports_web_search": True,  # 厂商专属联网搜索
+        "requires_api_key": True,     # 需要 API Key
+        "implemented": True,
+    },
+    LLM_PROVIDER_SILICONFLOW: {
+        "base_url": "https://api.siliconflow.cn/v1",
+        "default_model": "",  # 无默认模型，用户必须手动输入
+        "supports_web_search": False,
+        "requires_api_key": True,
+        "model_input_mode": "text",  # 纯文本输入模式，不使用下拉选择
+        "model_name_hint": "从模型广场复制模型名称，如 Qwen/Qwen2.5-72B-Instruct",
+        "model_gallery_url": "https://cloud.siliconflow.cn/models",  # 模型广场链接
         "implemented": True,
     },
     LLM_PROVIDER_DEEPSEEK: {
         "base_url": "https://api.deepseek.com/v1",
         "default_model": "deepseek-chat",
         "supports_web_search": False,
+        "requires_api_key": True,
         "implemented": False,
     },
     LLM_PROVIDER_QWEN: {
         "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
         "default_model": "qwen-max",
         "supports_web_search": False,
+        "requires_api_key": True,
         "implemented": False,
     },
     LLM_PROVIDER_OPENAI: {
         "base_url": "https://api.openai.com/v1",
         "default_model": "gpt-4o",
         "supports_web_search": False,
+        "requires_api_key": True,
         "implemented": False,
     },
     LLM_PROVIDER_ANTHROPIC: {
         "base_url": "https://api.anthropic.com/v1",
         "default_model": "claude-3-5-sonnet-20241022",
         "supports_web_search": False,
+        "requires_api_key": True,
         "implemented": False,
+    },
+    LLM_PROVIDER_LOCAL: {
+        "base_url": "http://localhost:11434",  # Ollama 默认地址
+        "default_model": "qwen2.5:7b",
+        "supports_web_search": False,
+        "requires_api_key": False,    # 本地模型无需 API Key
+        "is_local": True,             # 标识为本地厂商
+        "implemented": True,
     },
 }
 
@@ -160,6 +200,16 @@ PROVIDER_DEFAULTS = {
 
 DEFAULT_ENABLE_THINKING = True       # 默认开启深度思考（全局开关）
 DEFAULT_THINKING_TIMEOUT = 300       # 深度思考模式下的超时秒数
+
+# ============================================================
+# 本地大模型相关常量
+# ============================================================
+
+DEFAULT_LOCAL_LLM_HOST = "http://localhost:11434"  # Ollama 默认服务地址
+DEFAULT_LOCAL_LLM_MODEL = "qwen2.5:7b"             # 默认本地模型（推荐 Qwen2.5 7B）
+LOCAL_LLM_CONNECT_TIMEOUT = 5                      # 本地服务连接超时秒数
+LOCAL_LLM_REQUEST_TIMEOUT = 300                    # 本地模型请求超时秒数（本地推理较慢）
+LOCAL_LLM_HEALTH_CHECK_INTERVAL = 30               # 健康检查间隔秒数
 
 # ============================================================
 # RAG 相关默认值
@@ -182,6 +232,50 @@ DEFAULT_RERANKER_MODEL = "mixedbread-ai/mxbai-rerank-base-v1"  # 默认重排序
 VENDOR_MODELS_DIR = "vendor/models/"
 EMBEDDINGS_MODEL_DIR = "vendor/models/embeddings/"
 RERANKERS_MODEL_DIR = "vendor/models/rerankers/"
+
+# ============================================================
+# 嵌入模型厂商相关常量
+# ============================================================
+
+EMBEDDING_PROVIDER_LOCAL = "local"     # 本地嵌入模型（默认，使用内嵌模型）
+EMBEDDING_PROVIDER_ZHIPU = "zhipu"     # 智谱嵌入模型（Embedding-3）
+EMBEDDING_PROVIDER_OPENAI = "openai"   # OpenAI 嵌入模型（占位）
+
+SUPPORTED_EMBEDDING_PROVIDERS = ["local", "zhipu", "openai"]
+DEFAULT_EMBEDDING_PROVIDER = "local"   # 默认使用本地嵌入模型
+
+# 嵌入模型厂商配置字典
+EMBEDDING_PROVIDER_DEFAULTS = {
+    EMBEDDING_PROVIDER_LOCAL: {
+        "display_name": "本地模型",
+        "default_model": "gte-modernbert-base",
+        "requires_api_key": False,
+        "is_local": True,
+        "implemented": True,
+    },
+    EMBEDDING_PROVIDER_ZHIPU: {
+        "display_name": "智谱 AI",
+        "base_url": "https://open.bigmodel.cn/api/paas/v4/embeddings",
+        "default_model": "embedding-3",
+        "requires_api_key": True,
+        "is_local": False,
+        "implemented": True,
+        "dimensions": 2048,  # Embedding-3 输出维度
+        "max_tokens": 8192,  # 单次请求最大 token 数
+    },
+    EMBEDDING_PROVIDER_OPENAI: {
+        "display_name": "OpenAI",
+        "base_url": "https://api.openai.com/v1/embeddings",
+        "default_model": "text-embedding-3-small",
+        "requires_api_key": True,
+        "is_local": False,
+        "implemented": False,
+    },
+}
+
+# 嵌入模型相关默认值
+DEFAULT_EMBEDDING_BATCH_SIZE = 32      # 批量嵌入请求大小
+DEFAULT_EMBEDDING_TIMEOUT = 30         # 嵌入 API 请求超时秒数
 
 # ============================================================
 # 路径相关常量
@@ -242,11 +336,25 @@ CONFIG_LANGUAGE = "language"
 
 # LLM 厂商配置
 CONFIG_LLM_PROVIDER = "llm_provider"
+CONFIG_LLM_MODEL = "llm_model"
+CONFIG_LLM_BASE_URL = "llm_base_url"
+CONFIG_LLM_TIMEOUT = "llm_timeout"
+CONFIG_LLM_STREAMING = "llm_streaming"
+
+# 旧版配置字段（保留兼容）
 CONFIG_API_KEY = "api_key"
 CONFIG_BASE_URL = "base_url"
 CONFIG_MODEL = "model"
 CONFIG_TIMEOUT = "timeout"
 CONFIG_STREAMING = "streaming"
+
+# 硅基流动配置
+CONFIG_SILICONFLOW_MODEL = "siliconflow_model"
+CONFIG_SILICONFLOW_BASE_URL = "siliconflow_base_url"
+
+# 本地大模型配置
+CONFIG_LOCAL_LLM_HOST = "local_llm_host"
+CONFIG_LOCAL_LLM_MODEL = "local_llm_model"
 
 # 深度思考配置
 CONFIG_ENABLE_THINKING = "enable_thinking"
@@ -261,6 +369,13 @@ CONFIG_GENERAL_WEB_SEARCH_PROVIDER = "general_web_search_provider"
 CONFIG_GENERAL_WEB_SEARCH_API_KEY = "general_web_search_api_key"
 CONFIG_GOOGLE_SEARCH_CX = "google_search_cx"  # Google 自定义搜索引擎 ID
 
+# 嵌入模型配置
+CONFIG_EMBEDDING_PROVIDER = "embedding_provider"
+CONFIG_EMBEDDING_MODEL = "embedding_model"
+CONFIG_EMBEDDING_BASE_URL = "embedding_base_url"
+CONFIG_EMBEDDING_TIMEOUT = "embedding_timeout"
+CONFIG_EMBEDDING_BATCH_SIZE = "embedding_batch_size"
+
 # ============================================================
 # 默认配置模板
 # ============================================================
@@ -271,11 +386,25 @@ DEFAULT_CONFIG = {
     
     # LLM 厂商配置
     CONFIG_LLM_PROVIDER: DEFAULT_LLM_PROVIDER,
+    CONFIG_LLM_MODEL: DEFAULT_MODEL,
+    CONFIG_LLM_BASE_URL: "",  # 空则使用厂商默认
+    CONFIG_LLM_TIMEOUT: DEFAULT_TIMEOUT,
+    CONFIG_LLM_STREAMING: DEFAULT_STREAMING,
+    
+    # 旧版配置字段（保留兼容）
     CONFIG_API_KEY: "",
     CONFIG_BASE_URL: DEFAULT_BASE_URL,
     CONFIG_MODEL: DEFAULT_MODEL,
     CONFIG_TIMEOUT: DEFAULT_TIMEOUT,
     CONFIG_STREAMING: DEFAULT_STREAMING,
+    
+    # 硅基流动配置
+    CONFIG_SILICONFLOW_MODEL: "",  # 用户手动输入
+    CONFIG_SILICONFLOW_BASE_URL: "https://api.siliconflow.cn/v1",
+    
+    # 本地大模型配置
+    CONFIG_LOCAL_LLM_HOST: DEFAULT_LOCAL_LLM_HOST,
+    CONFIG_LOCAL_LLM_MODEL: DEFAULT_LOCAL_LLM_MODEL,
     
     # 深度思考配置
     CONFIG_ENABLE_THINKING: DEFAULT_ENABLE_THINKING,
@@ -289,6 +418,13 @@ DEFAULT_CONFIG = {
     CONFIG_GENERAL_WEB_SEARCH_PROVIDER: DEFAULT_GENERAL_WEB_SEARCH_PROVIDER,
     CONFIG_GENERAL_WEB_SEARCH_API_KEY: "",
     CONFIG_GOOGLE_SEARCH_CX: "",
+    
+    # 嵌入模型配置
+    CONFIG_EMBEDDING_PROVIDER: DEFAULT_EMBEDDING_PROVIDER,
+    CONFIG_EMBEDDING_MODEL: "",  # 空则使用厂商默认
+    CONFIG_EMBEDDING_BASE_URL: "",  # 空则使用厂商默认
+    CONFIG_EMBEDDING_TIMEOUT: DEFAULT_EMBEDDING_TIMEOUT,
+    CONFIG_EMBEDDING_BATCH_SIZE: DEFAULT_EMBEDDING_BATCH_SIZE,
 }
 
 # ============================================================
@@ -307,3 +443,5 @@ ENCRYPTION_SALT = b"circuit_design_ai_v1"
 
 CREDENTIAL_TYPE_LLM = "llm"           # LLM 厂商凭证类型
 CREDENTIAL_TYPE_SEARCH = "search"     # 搜索厂商凭证类型
+CREDENTIAL_TYPE_EMBEDDING = "embedding"  # 嵌入模型厂商凭证类型
+CREDENTIAL_TYPE_COMPONENT = "component"  # 元器件商城凭证类型（阶段十）

@@ -62,8 +62,8 @@ class MainWindow(QMainWindow):
         self._logger = None
         self._config_manager = None
         
-        # UI 组件引用（兼容旧代码，逐步迁移到 PanelManager）
-        self._panels: Dict[str, QWidget] = {}
+        # UI 组件引用
+        self._panels: Dict[str, QWidget] = {}  # 内部使用，外部通过 PanelManager 访问
         self._splitters: Dict[str, QSplitter] = {}
         
         # 面板管理器
@@ -683,19 +683,14 @@ class MainWindow(QMainWindow):
         获取指定面板实例
         
         Args:
-            panel_id: 面板 ID（支持旧的 panel_name 兼容）
+            panel_id: 面板 ID
             
         Returns:
             面板实例，不存在则返回 None
         """
-        # 优先从 PanelManager 获取
         if self._panel_manager:
-            panel = self._panel_manager.get_panel(panel_id)
-            if panel:
-                return panel
-        
-        # 兼容旧代码：从 _panels 字典获取
-        return self._panels.get(panel_id)
+            return self._panel_manager.get_panel(panel_id)
+        return None
 
     def get_statusbar_manager(self) -> Optional[StatusbarManager]:
         """获取状态栏管理器"""

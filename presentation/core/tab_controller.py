@@ -30,6 +30,7 @@ from PyQt6.QtWidgets import QTabWidget, QWidget
 
 TAB_CONVERSATION = "TAB_CONVERSATION"
 TAB_INFO = "TAB_INFO"
+TAB_DEVTOOLS = "TAB_DEVTOOLS"
 TAB_COMPONENT = "TAB_COMPONENT"
 
 
@@ -530,5 +531,6 @@ __all__ = [
     "AutoSwitchPolicy",
     "TAB_CONVERSATION",
     "TAB_INFO",
+    "TAB_DEVTOOLS",
     "TAB_COMPONENT",
 ]

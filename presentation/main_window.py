@@ -15,6 +15,7 @@
 - 会话管理委托给 SessionManager
 - 动作处理委托给 ActionHandlers
 - 面板生命周期管理委托给 PanelManager
+- 右栏标签页管理委托给 TabController
 
 初始化顺序：
 - Phase 2.2，依赖 ServiceLocator（获取 I18nManager 等）
@@ -24,13 +25,14 @@
 - 延迟获取 ServiceLocator 中的服务
 - 所有用户可见文本通过 i18n_manager.get_text() 获取
 - 面板管理通过 PanelManager 统一处理
+- 右栏使用 QTabWidget + TabController 管理多个标签页
 """
 
 from typing import Optional, Dict, Any
 
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout,
-    QSplitter, QLabel
+    QSplitter, QLabel, QTabWidget
 )
 from PyQt6.QtCore import Qt, QTimer
 
@@ -41,6 +43,9 @@ from presentation.window_state_manager import WindowStateManager
 from presentation.session_manager import SessionManager
 from presentation.action_handlers import ActionHandlers
 from presentation.core.panel_manager import PanelManager, PanelRegion
+from presentation.core.tab_controller import (
+    TabController, TAB_CONVERSATION, TAB_DEVTOOLS
+)
 
 
 class MainWindow(QMainWindow):
@@ -50,6 +55,7 @@ class MainWindow(QMainWindow):
     布局结构：
     - 外层：垂直 QSplitter，分割上部主区域和下部仿真结果区
     - 上部：水平 QSplitter，分割左栏、中栏、右栏
+    - 右栏：QTabWidget 承载多个标签页（对话、调试等）
     - 初始比例：左栏 10%、中栏 60%、右栏 30%、下栏 20% 高度
     """
 
@@ -68,6 +74,9 @@ class MainWindow(QMainWindow):
         
         # 面板管理器
         self._panel_manager: Optional[PanelManager] = None
+        
+        # 右栏标签页控制器
+        self._tab_controller: Optional[TabController] = None
         
         # 管理器实例（延迟初始化）
         self._menu_manager: Optional[MenuManager] = None
@@ -154,6 +163,11 @@ class MainWindow(QMainWindow):
         """获取面板管理器"""
         return self._panel_manager
 
+    @property
+    def tab_controller(self) -> Optional[TabController]:
+        """获取右栏标签页控制器"""
+        return self._tab_controller
+
     def _get_text(self, key: str, default: Optional[str] = None) -> str:
         """获取国际化文本"""
         if self.i18n_manager:
@@ -231,16 +245,8 @@ class MainWindow(QMainWindow):
         # 连接文件浏览器和代码编辑器
         file_browser.file_selected.connect(code_editor.load_file)
         
-        # 右栏 - 对话面板
-        from presentation.panels.conversation_panel import ConversationPanel
-        chat_panel = ConversationPanel()
-        chat_panel.setMinimumWidth(250)
-        self._splitters["horizontal"].addWidget(chat_panel)
-        self._panels["chat"] = chat_panel
-        self._panel_manager.register_panel(
-            "conversation", chat_panel, PanelRegion.RIGHT,
-            title_key="panel.conversation"
-        )
+        # 右栏 - 使用 QTabWidget 承载多个面板
+        self._create_right_panel_tabs()
         
         # 下栏 - 仿真结果（占位）
         simulation_panel = self._create_placeholder_panel("panel.simulation")
@@ -251,6 +257,58 @@ class MainWindow(QMainWindow):
             "simulation", simulation_panel, PanelRegion.BOTTOM,
             title_key="panel.simulation"
         )
+
+    def _create_right_panel_tabs(self):
+        """创建右栏标签页容器和面板"""
+        # 创建标签页容器
+        right_tab_widget = QTabWidget()
+        right_tab_widget.setMinimumWidth(250)
+        right_tab_widget.setDocumentMode(True)  # 更现代的外观
+        
+        # 初始化标签页控制器
+        self._tab_controller = TabController()
+        self._tab_controller.bind_tab_widget(right_tab_widget)
+        
+        # 注册对话面板
+        from presentation.panels.conversation_panel import ConversationPanel
+        chat_panel = ConversationPanel()
+        self._tab_controller.register_tab(
+            TAB_CONVERSATION,
+            chat_panel,
+            self._get_text("panel.conversation", "对话"),
+            "resources/icons/panel/chat.svg"
+        )
+        self._panels["chat"] = chat_panel
+        self._panel_manager.register_panel(
+            "conversation", chat_panel, PanelRegion.RIGHT,
+            title_key="panel.conversation"
+        )
+        
+        # 注册调试面板（根据配置）
+        if self._should_show_devtools():
+            from presentation.panels.devtools_panel import DevToolsPanel
+            devtools_panel = DevToolsPanel()
+            self._tab_controller.register_tab(
+                TAB_DEVTOOLS,
+                devtools_panel,
+                self._get_text("panel.devtools", "调试"),
+                "resources/icons/panel/bug.svg"
+            )
+            self._panels["devtools"] = devtools_panel
+            self._panel_manager.register_panel(
+                "devtools", devtools_panel, PanelRegion.RIGHT,
+                title_key="panel.devtools"
+            )
+        
+        # 添加到分割器
+        self._splitters["horizontal"].addWidget(right_tab_widget)
+        self._panels["right_tabs"] = right_tab_widget
+
+    def _should_show_devtools(self) -> bool:
+        """检查是否应显示调试面板"""
+        if self.config_manager:
+            return self.config_manager.get("debug.show_devtools_panel", True)
+        return True  # 默认显示
 
     def _create_placeholder_panel(self, title_key: str) -> QWidget:
         """创建占位面板"""
@@ -374,8 +432,30 @@ class MainWindow(QMainWindow):
         if self._statusbar_manager:
             self._statusbar_manager.retranslate_ui()
         
+        # 刷新右栏标签页标题
+        if self._tab_controller:
+            self._retranslate_tab_titles()
+        
         # 面板占位文本
         self._update_panel_placeholders()
+
+    def _retranslate_tab_titles(self):
+        """刷新右栏标签页标题"""
+        if not self._tab_controller:
+            return
+        
+        # 更新对话标签页标题
+        self._tab_controller.update_tab_title(
+            TAB_CONVERSATION,
+            self._get_text("panel.conversation", "对话")
+        )
+        
+        # 更新调试标签页标题（如果存在）
+        if "devtools" in self._panels:
+            self._tab_controller.update_tab_title(
+                TAB_DEVTOOLS,
+                self._get_text("panel.devtools", "调试")
+            )
 
     def _update_panel_placeholders(self):
         """更新面板占位文本"""

@@ -263,7 +263,7 @@ class DevToolsPanel(QWidget):
                 pass
         
         if self._i18n:
-            return self._i18n.get(f"devtools.{key}", default)
+            return self._i18n.get_text(f"devtools.{key}", default)
         return default
     
     # --------------------------------------------------------

@@ -27,19 +27,20 @@
     results = search_service.search_files("opamp", options)
 """
 
-import fnmatch
-import re
 import threading
 import time
 from difflib import SequenceMatcher
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Set, Union
+from typing import Any, Dict, List, Optional, Union
 
 from infrastructure.file_intelligence.models.search_result import (
-    SearchMatch,
     SearchOptions,
     SearchResult,
     SearchType,
+)
+from infrastructure.file_intelligence.search.content_searcher import (
+    ContentSearcher,
+    ContentSearchOptions,
 )
 
 
@@ -252,6 +253,9 @@ class FileSearchService:
         # 文件名索引
         self._file_index = FileNameIndex()
         
+        # 内容搜索器（延迟初始化）
+        self._content_searcher: Optional[ContentSearcher] = None
+        
         # 延迟获取的服务
         self._file_manager = None
         self._event_bus = None
@@ -259,6 +263,13 @@ class FileSearchService:
         
         # 事件订阅状态
         self._subscribed = False
+    
+    @property
+    def content_searcher(self) -> ContentSearcher:
+        """延迟获取内容搜索器"""
+        if self._content_searcher is None:
+            self._content_searcher = ContentSearcher(self.file_manager)
+        return self._content_searcher
     
     # ============================================================
     # 延迟获取服务
@@ -513,17 +524,15 @@ class FileSearchService:
         if not self._file_index.is_built:
             self.build_index()
         
+        # 构建内容搜索选项
+        search_options = ContentSearchOptions(
+            case_sensitive=case_sensitive,
+            context_lines=context_lines,
+            max_file_size=self.LARGE_FILE_THRESHOLD,
+        )
+        
         results = []
         files = self._file_index.get_all_files()
-        
-        # 编译正则表达式
-        flags = 0 if case_sensitive else re.IGNORECASE
-        try:
-            pattern = re.compile(re.escape(query), flags)
-        except re.error:
-            if self.logger:
-                self.logger.warning(f"无效的搜索模式: {query}")
-            return []
         
         for relative_path, absolute_path in files.items():
             # 过滤文件类型
@@ -532,19 +541,11 @@ class FileSearchService:
                 if ext not in [t.lower() for t in file_types]:
                     continue
             
-            # 跳过大文件
-            try:
-                file_size = Path(absolute_path).stat().st_size
-                if file_size > self.LARGE_FILE_THRESHOLD:
-                    continue
-            except Exception:
-                continue
-            
-            # 搜索文件内容
-            matches = self._search_file_content(
+            # 使用 ContentSearcher 搜索
+            matches = self.content_searcher.search_in_file(
                 absolute_path,
-                pattern,
-                context_lines
+                query,
+                search_options
             )
             
             if matches:
@@ -566,60 +567,6 @@ class FileSearchService:
         results.sort(key=lambda r: r.match_count, reverse=True)
         
         return results
-    
-    def _search_file_content(
-        self,
-        file_path: str,
-        pattern: re.Pattern,
-        context_lines: int = 2
-    ) -> List[SearchMatch]:
-        """
-        搜索单个文件的内容
-        
-        Args:
-            file_path: 文件路径
-            pattern: 编译后的正则表达式
-            context_lines: 上下文行数
-            
-        Returns:
-            List[SearchMatch]: 匹配列表
-        """
-        matches = []
-        
-        try:
-            # 读取文件
-            if self.file_manager is not None:
-                content = self.file_manager.read_file(file_path)
-            else:
-                content = Path(file_path).read_text(encoding='utf-8')
-            
-            lines = content.split('\n')
-            
-            for i, line in enumerate(lines):
-                for match in pattern.finditer(line):
-                    # 获取上下文
-                    start_ctx = max(0, i - context_lines)
-                    end_ctx = min(len(lines), i + context_lines + 1)
-                    
-                    search_match = SearchMatch(
-                        line_number=i + 1,
-                        line_content=line,
-                        match_start=match.start(),
-                        match_end=match.end(),
-                        context_before=lines[start_ctx:i],
-                        context_after=lines[i + 1:end_ctx],
-                    )
-                    matches.append(search_match)
-                    
-                    # 限制每个文件的匹配数量
-                    if len(matches) >= 100:
-                        return matches
-                        
-        except Exception as e:
-            if self.logger:
-                self.logger.debug(f"搜索文件内容失败: {file_path} - {e}")
-        
-        return matches
     
     # ============================================================
     # 按符号搜索

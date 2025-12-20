@@ -20,6 +20,23 @@
 - 采用内存缓冲 + 定时刷新 + aiosqlite 方案
 - 上下文穿透通过 contextvars + LangGraph config["configurable"] 实现
 - 可视化更新通过 EventBus 事件驱动，不轮询数据库
+
+使用示例：
+    from shared.tracing import TracingContext, SpanType
+    
+    # 开始追踪链路
+    async with TracingContext.trace("user_request") as trace:
+        # 创建子 Span
+        async with TracingContext.span(SpanType.LLM_CALL, "llm_executor") as span:
+            span.set_input({"messages": messages})
+            result = await llm_client.chat(messages)
+            span.set_output({"response": result})
+    
+    # LangGraph 节点中恢复上下文
+    async def my_node(state, config):
+        TracingContext.restore_from_langgraph(config)
+        async with TracingContext.span("my_node", "graph"):
+            ...
 """
 
 from shared.tracing.tracing_types import (
@@ -27,10 +44,23 @@ from shared.tracing.tracing_types import (
     SpanType,
     SpanRecord,
 )
+from shared.tracing.tracing_context import (
+    TracingContext,
+    SpanContext,
+)
+from shared.tracing.tracing_events import TracingEvents
+from shared.tracing.tracing_logger import TracingLogger
 
 __all__ = [
     # 数据类型
     "TraceStatus",
     "SpanType",
     "SpanRecord",
+    # 上下文管理
+    "TracingContext",
+    "SpanContext",
+    # 事件定义
+    "TracingEvents",
+    # 日志记录器
+    "TracingLogger",
 ]

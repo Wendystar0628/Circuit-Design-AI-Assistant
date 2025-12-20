@@ -10,7 +10,7 @@
 架构说明：
 - search/ - 实时文件搜索，不依赖向量索引
 - analysis/ - 轻量级符号提取，用于跳转定义和查找引用
-- location/ - 符号定位服务，支持多种定位策略
+- location/ - 符号定位服务，支持多种定位策略（后续实现）
 - models/ - 数据模型
 
 与其他模块的关系：
@@ -22,13 +22,34 @@
 # 搜索模块
 from infrastructure.file_intelligence.search import FileSearchService
 
+# 分析模块
+from infrastructure.file_intelligence.analysis import (
+    FileAnalyzer,
+    SymbolType,
+    SymbolInfo,
+    FileStructure,
+)
+
 # 数据模型
-from infrastructure.file_intelligence.models import SearchResult, SearchOptions
+from infrastructure.file_intelligence.models import (
+    SearchType,
+    SearchResult,
+    SearchOptions,
+    SearchMatch,
+)
 
 __all__ = [
     # 搜索服务
     "FileSearchService",
-    # 数据模型
+    # 分析服务
+    "FileAnalyzer",
+    # 符号类型
+    "SymbolType",
+    "SymbolInfo",
+    "FileStructure",
+    # 搜索数据模型
+    "SearchType",
     "SearchResult",
     "SearchOptions",
+    "SearchMatch",
 ]

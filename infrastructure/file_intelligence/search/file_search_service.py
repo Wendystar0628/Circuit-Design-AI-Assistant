@@ -23,6 +23,9 @@
     # 按内容搜索
     results = search_service.search_by_content("SUBCKT", file_types=[".cir"])
     
+    # 按符号搜索
+    results = search_service.search_symbols("LM741", file_types=[".cir"])
+    
     # 主搜索入口
     results = search_service.search_files("opamp", options)
 """
@@ -36,6 +39,7 @@ from typing import Any, Dict, List, Optional, Union
 from infrastructure.file_intelligence.models.search_result import (
     SearchOptions,
     SearchResult,
+    SearchMatch,
     SearchType,
 )
 from infrastructure.file_intelligence.search.content_searcher import (
@@ -231,7 +235,7 @@ class FileSearchService:
     提供统一的实时文件搜索入口，支持：
     - 按文件名搜索（支持模糊匹配）
     - 按内容搜索
-    - 按符号搜索（委托给 file_analyzer）
+    - 按符号搜索（委托给 FileAnalyzer）
     
     性能优化：
     - 文件名索引缓存（项目打开时构建）
@@ -256,6 +260,9 @@ class FileSearchService:
         # 内容搜索器（延迟初始化）
         self._content_searcher: Optional[ContentSearcher] = None
         
+        # 文件分析器（延迟初始化）
+        self._file_analyzer = None
+        
         # 延迟获取的服务
         self._file_manager = None
         self._event_bus = None
@@ -270,6 +277,14 @@ class FileSearchService:
         if self._content_searcher is None:
             self._content_searcher = ContentSearcher(self.file_manager)
         return self._content_searcher
+    
+    @property
+    def file_analyzer(self):
+        """延迟获取文件分析器"""
+        if self._file_analyzer is None:
+            from infrastructure.file_intelligence.analysis import FileAnalyzer
+            self._file_analyzer = FileAnalyzer()
+        return self._file_analyzer
     
     # ============================================================
     # 延迟获取服务
@@ -577,32 +592,111 @@ class FileSearchService:
         symbol_name: str,
         symbol_type: str = None,
         file_types: List[str] = None,
-        max_results: int = 50
+        max_results: int = 50,
+        fuzzy: bool = True
     ) -> List[SearchResult]:
         """
         按符号搜索
         
-        委托给 file_analyzer 实现（后续阶段实现）
+        使用 FileAnalyzer 提取符号，支持模糊匹配。
         
         Args:
             symbol_name: 符号名称
-            symbol_type: 符号类型（function/class/variable 等）
+            symbol_type: 符号类型（subcircuit/parameter/model/class/function 等）
             file_types: 限定文件类型
             max_results: 最大结果数
+            fuzzy: 是否模糊匹配符号名
             
         Returns:
             List[SearchResult]: 搜索结果列表
         """
-        # TODO: 委托给 file_analyzer 实现
-        # 当前使用内容搜索作为降级方案
-        if self.logger:
-            self.logger.debug(f"符号搜索降级为内容搜索: {symbol_name}")
+        # 确保索引已构建
+        if not self._file_index.is_built:
+            self.build_index()
         
-        return self.search_by_content(
-            symbol_name,
-            file_types=file_types,
-            max_results=max_results
-        )
+        results = []
+        files = self._file_index.get_all_files()
+        query_lower = symbol_name.lower()
+        
+        for relative_path, absolute_path in files.items():
+            # 过滤文件类型
+            ext = Path(relative_path).suffix.lower()
+            if file_types:
+                if ext not in [t.lower() for t in file_types]:
+                    continue
+            
+            # 检查文件分析器是否支持该类型
+            if not self.file_analyzer.supports(absolute_path):
+                continue
+            
+            # 提取符号
+            try:
+                symbols = self.file_analyzer.get_symbols(absolute_path)
+            except Exception as e:
+                if self.logger:
+                    self.logger.debug(f"符号提取失败 {relative_path}: {e}")
+                continue
+            
+            # 匹配符号
+            matched_symbols = []
+            for symbol in symbols:
+                # 类型过滤
+                if symbol_type and symbol.type.value != symbol_type:
+                    continue
+                
+                # 名称匹配
+                symbol_name_lower = symbol.name.lower()
+                if fuzzy:
+                    # 模糊匹配：包含查询字符串
+                    if query_lower in symbol_name_lower:
+                        # 计算匹配分数
+                        if symbol_name_lower == query_lower:
+                            score = 1.0
+                        elif symbol_name_lower.startswith(query_lower):
+                            score = 0.9
+                        else:
+                            score = 0.7
+                        matched_symbols.append((symbol, score))
+                else:
+                    # 精确匹配
+                    if symbol_name_lower == query_lower:
+                        matched_symbols.append((symbol, 1.0))
+            
+            if matched_symbols:
+                # 取最高分
+                best_symbol, best_score = max(matched_symbols, key=lambda x: x[1])
+                
+                # 创建搜索匹配
+                matches = []
+                for symbol, score in matched_symbols:
+                    match = SearchMatch(
+                        line_number=symbol.line_start,
+                        line_content=f"{symbol.type.value}: {symbol.display_name}",
+                        match_start=0,
+                        match_end=len(symbol.name),
+                    )
+                    matches.append(match)
+                
+                result = SearchResult.from_path(
+                    Path(absolute_path),
+                    relative_path,
+                    score=best_score,
+                    matches=matches
+                )
+                # 添加符号元数据
+                result.metadata["symbols"] = [
+                    {"name": s.name, "type": s.type.value, "line": s.line_start}
+                    for s, _ in matched_symbols
+                ]
+                results.append(result)
+                
+                if len(results) >= max_results:
+                    break
+        
+        # 按分数排序
+        results.sort(key=lambda r: r.score, reverse=True)
+        
+        return results[:max_results]
     
     # ============================================================
     # 便捷方法

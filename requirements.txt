@@ -37,6 +37,9 @@ cryptography>=41.0.0
 # File System Monitoring
 watchdog>=3.0.0
 
+# Fuzzy Matching (high-performance C++ implementation)
+rapidfuzz>=3.0.0
+
 # Markdown Rendering (chat panel)
 markdown>=3.5.0
 

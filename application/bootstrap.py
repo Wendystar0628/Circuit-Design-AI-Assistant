@@ -21,6 +21,7 @@
   - 1.3 I18nManager 初始化
   - 1.4 AppState 初始化
   - 1.5 ModelRegistry 初始化
+  - 1.6 TracingStore 初始化（可观测性基础设施）
 - Phase 2: GUI 框架初始化（同步，阻塞式）
   - 2.0.1 预导入 WebEngine
   - 2.1 创建 QApplication 实例
@@ -33,8 +34,12 @@
   - 3.3 ProjectService 初始化
   - 3.4 ContextManager 初始化
   - 3.5 SessionStateManager 初始化
+  - 3.5.5 TracingLogger 初始化（可观测性基础设施）
   - 3.6 LLM 客户端初始化
   - 3.7 发布 EVENT_INIT_COMPLETE 事件
+- 应用关闭时：
+  - TracingLogger 关闭（最后一次刷新）
+  - TracingStore 关闭
 
 注意：ngspice 路径配置必须在任何 PySpice 导入之前执行
 """
@@ -297,6 +302,13 @@ def _init_phase_1() -> bool:
         if _logger:
             _logger.info("Phase 1.5 ModelRegistry 初始化完成")
 
+        # --------------------------------------------------------
+        # 1.6 TracingStore 初始化
+        # 依赖：Logger
+        # 职责：初始化追踪数据存储（SQLite）
+        # --------------------------------------------------------
+        _init_tracing_store()
+
         return True
 
     except Exception as e:
@@ -306,6 +318,42 @@ def _init_phase_1() -> bool:
             print(f"[Phase 1] 初始化失败: {e}")
         traceback.print_exc()
         return False
+
+
+def _init_tracing_store():
+    """
+    初始化追踪存储（Phase 1.6）
+    
+    同步初始化 TracingStore，因为需要在 Phase 3 之前准备好。
+    使用 asyncio.run() 执行异步初始化。
+    """
+    import asyncio
+    
+    try:
+        from shared.tracing import TracingStore
+        from shared.service_locator import ServiceLocator
+        from shared.service_names import SVC_TRACING_STORE
+        
+        # 创建存储实例
+        tracing_store = TracingStore()
+        
+        # 同步执行异步初始化
+        asyncio.run(tracing_store.initialize())
+        
+        # 清理过期数据（7天）
+        asyncio.run(tracing_store.cleanup_old_traces(days=7))
+        
+        # 注册到 ServiceLocator
+        ServiceLocator.register(SVC_TRACING_STORE, tracing_store)
+        
+        if _logger:
+            _logger.info(f"Phase 1.6 TracingStore 初始化完成: {tracing_store.db_path}")
+            
+    except Exception as e:
+        if _logger:
+            _logger.warning(f"Phase 1.6 TracingStore 初始化失败（非致命）: {e}")
+        else:
+            print(f"[Phase 1.6] TracingStore 初始化失败: {e}")
 
 
 
@@ -449,6 +497,13 @@ def _delayed_init():
             _logger.info("Phase 3.5 SessionStateManager 初始化完成")
 
         # --------------------------------------------------------
+        # 3.5.5 TracingLogger 初始化
+        # 依赖：EventBus、TracingStore
+        # 职责：内存缓冲 + 定时刷新追踪日志
+        # --------------------------------------------------------
+        _init_tracing_logger()
+
+        # --------------------------------------------------------
         # 3.6 LLM 客户端初始化（可选，依赖配置）
         # 依赖：ConfigManager、CredentialManager
         # 职责：提供 LLM API 调用能力
@@ -483,6 +538,46 @@ def _delayed_init():
         # Phase 3 失败不致命，功能降级运行
         print("[WARNING] 部分功能可能不可用，应用将以降级模式运行")
 
+
+
+def _init_tracing_logger():
+    """
+    初始化追踪日志记录器（Phase 3.5.5）
+    
+    依赖 EventBus 和 TracingStore，在 Phase 3 延迟初始化中执行。
+    """
+    try:
+        from shared.tracing import TracingLogger, TracingContext
+        from shared.service_locator import ServiceLocator
+        from shared.service_names import SVC_TRACING_LOGGER, SVC_TRACING_STORE
+        
+        # 获取 TracingStore
+        tracing_store = ServiceLocator.get_optional(SVC_TRACING_STORE)
+        if not tracing_store:
+            if _logger:
+                _logger.warning("Phase 3.5.5 TracingLogger 初始化跳过：TracingStore 不可用")
+            return
+        
+        # 创建 TracingLogger
+        tracing_logger = TracingLogger(store=tracing_store)
+        
+        # 启动定时刷新
+        tracing_logger.start()
+        
+        # 连接 TracingContext 回调
+        TracingContext.set_span_finished_callback(tracing_logger.record_span)
+        
+        # 注册到 ServiceLocator
+        ServiceLocator.register(SVC_TRACING_LOGGER, tracing_logger)
+        
+        if _logger:
+            _logger.info("Phase 3.5.5 TracingLogger 初始化完成")
+            
+    except Exception as e:
+        if _logger:
+            _logger.warning(f"Phase 3.5.5 TracingLogger 初始化失败（非致命）: {e}")
+        else:
+            print(f"[Phase 3.5.5] TracingLogger 初始化失败: {e}")
 
 
 def _init_llm_client():
@@ -763,10 +858,45 @@ def run() -> int:
     exit_code = app.exec()
 
     # 清理工作
+    _shutdown_tracing()
+    
     if _logger:
         _logger.info(f"应用退出，退出码: {exit_code}")
 
     return exit_code
+
+
+def _shutdown_tracing():
+    """
+    关闭追踪系统
+    
+    在应用退出时调用，确保所有追踪数据被刷新到存储。
+    """
+    import asyncio
+    
+    try:
+        from shared.service_locator import ServiceLocator
+        from shared.service_names import SVC_TRACING_LOGGER, SVC_TRACING_STORE
+        
+        # 停止 TracingLogger（最后一次刷新）
+        tracing_logger = ServiceLocator.get_optional(SVC_TRACING_LOGGER)
+        if tracing_logger:
+            asyncio.run(tracing_logger.shutdown())
+            if _logger:
+                _logger.info("TracingLogger 已关闭")
+        
+        # 关闭 TracingStore
+        tracing_store = ServiceLocator.get_optional(SVC_TRACING_STORE)
+        if tracing_store:
+            asyncio.run(tracing_store.close())
+            if _logger:
+                _logger.info("TracingStore 已关闭")
+                
+    except Exception as e:
+        if _logger:
+            _logger.warning(f"追踪系统关闭时出错: {e}")
+        else:
+            print(f"[WARNING] 追踪系统关闭时出错: {e}")
 
 
 # ============================================================

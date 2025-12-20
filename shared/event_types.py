@@ -85,6 +85,36 @@ EVENT_WORKER_COMPLETE = "worker_complete"
 EVENT_WORKER_ERROR = "worker_error"
 
 # ============================================================
+# 异步任务事件
+# ============================================================
+
+# 任务启动
+# 携带数据：
+#   - task_id: str - 任务 ID
+#   - task_type: str - 任务类型
+EVENT_TASK_STARTED = "task_started"
+
+# 任务完成
+# 携带数据：
+#   - task_id: str - 任务 ID
+#   - task_type: str - 任务类型
+#   - result: Any - 任务结果
+EVENT_TASK_COMPLETED = "task_completed"
+
+# 任务失败
+# 携带数据：
+#   - task_id: str - 任务 ID
+#   - task_type: str - 任务类型
+#   - error: str - 错误信息
+EVENT_TASK_FAILED = "task_failed"
+
+# 任务取消
+# 携带数据：
+#   - task_id: str - 任务 ID
+#   - task_type: str - 任务类型
+EVENT_TASK_CANCELLED = "task_cancelled"
+
+# ============================================================
 # LLM 事件
 # ============================================================
 
@@ -455,6 +485,11 @@ __all__ = [
     "EVENT_WORKER_PROGRESS",
     "EVENT_WORKER_COMPLETE",
     "EVENT_WORKER_ERROR",
+    # 异步任务事件
+    "EVENT_TASK_STARTED",
+    "EVENT_TASK_COMPLETED",
+    "EVENT_TASK_FAILED",
+    "EVENT_TASK_CANCELLED",
     # LLM 事件
     "EVENT_LLM_CHUNK",
     "EVENT_LLM_COMPLETE",

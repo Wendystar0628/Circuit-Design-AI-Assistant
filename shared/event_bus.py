@@ -34,7 +34,7 @@ import time
 import threading
 from typing import Any, Callable, Dict, List, Optional
 
-from PyQt6.QtCore import QObject, QMetaObject, Qt, Q_ARG, pyqtSlot
+from PyQt6.QtCore import QObject, QMetaObject, Qt, Q_ARG, pyqtSlot, QTimer
 from PyQt6.QtWidgets import QApplication
 
 from shared.event_types import CRITICAL_EVENTS
@@ -42,6 +42,9 @@ from shared.event_types import CRITICAL_EVENTS
 
 # 事件处理器类型
 EventHandler = Callable[[Dict[str, Any]], None]
+
+# 默认节流间隔（毫秒）
+DEFAULT_THROTTLE_MS = 50
 
 
 class EventBusReceiver(QObject):
@@ -55,6 +58,12 @@ class EventBusReceiver(QObject):
         super().__init__()
         self._pending_events: List[tuple] = []
         self._lock = threading.Lock()
+        # 引用 EventBus 实例（用于启动节流定时器）
+        self._event_bus = None
+
+    def set_event_bus(self, event_bus: 'EventBus'):
+        """设置 EventBus 引用"""
+        self._event_bus = event_bus
 
     @pyqtSlot()
     def process_pending_events(self):
@@ -65,6 +74,12 @@ class EventBusReceiver(QObject):
 
         for handler, event_data, event_type in events:
             self._execute_handler(handler, event_data, event_type)
+
+    @pyqtSlot()
+    def start_throttle_timer(self):
+        """启动节流定时器（在主线程中调用）"""
+        if self._event_bus:
+            self._event_bus._start_throttle_timer()
 
     def queue_event(self, handler: EventHandler, event_data: Dict, event_type: str):
         """将事件加入队列"""
@@ -121,6 +136,11 @@ class EventBus:
     - publish() 可从任意线程调用
     - handler 始终在主线程执行（通过 QMetaObject.invokeMethod）
     - 订阅列表使用 threading.Lock 保护
+    
+    事件优先级分类：
+    - 关键事件（Critical）：使用 publish_critical()，带重试保护
+    - 普通事件（Normal）：使用 publish()，正常队列处理
+    - 高频事件（Throttled）：使用 publish_throttled()，节流聚合
     """
 
     def __init__(self):
@@ -130,10 +150,26 @@ class EventBus:
         self._lock = threading.Lock()
         # 事件接收器（主线程执行）
         self._receiver = EventBusReceiver()
+        self._receiver.set_event_bus(self)
         # 日志器（延迟获取）
         self._logger = None
         # 调试模式
         self._debug = False
+        
+        # 节流缓冲区：{event_type: {"data": Any, "timestamp": float}}
+        self._throttle_buffer: Dict[str, Dict[str, Any]] = {}
+        self._throttle_lock = threading.Lock()
+        # 节流定时器
+        self._throttle_timer: Optional[QTimer] = None
+        # 默认节流间隔
+        self._default_throttle_ms = DEFAULT_THROTTLE_MS
+        
+        # 统计信息
+        self._stats = {
+            "total_published": 0,
+            "total_throttled": 0,
+            "throttle_merged": 0,
+        }
 
     @property
     def logger(self):
@@ -227,6 +263,9 @@ class EventBus:
         if not handlers:
             return
 
+        # 更新统计
+        self._stats["total_published"] += 1
+
         # 记录事件发布
         if self._debug and self.logger:
             self.logger.debug(
@@ -310,6 +349,115 @@ class EventBus:
                     print(f"[CRITICAL] Event '{event_type}' publish failed: {retry_error}")
                 return False
 
+    def publish_throttled(
+        self,
+        event_type: str,
+        data: Any = None,
+        throttle_ms: int = None,
+        source: str = None,
+    ) -> None:
+        """
+        发布节流事件（高频事件聚合）
+        
+        将事件放入缓冲区，在指定时间窗口内的多次发布合并为一次。
+        适用于 LLM 流式输出、进度更新等高频事件。
+        
+        合并策略：保留最新的 data。
+        
+        Args:
+            event_type: 事件类型
+            data: 事件数据
+            throttle_ms: 节流间隔（毫秒），默认使用 DEFAULT_THROTTLE_MS
+            source: 发布者标识
+        """
+        if throttle_ms is None:
+            throttle_ms = self._default_throttle_ms
+        
+        with self._throttle_lock:
+            # 检查是否已有缓冲的事件
+            if event_type in self._throttle_buffer:
+                # 合并：保留最新的 data
+                self._throttle_buffer[event_type]["data"] = data
+                self._throttle_buffer[event_type]["source"] = source
+                self._stats["throttle_merged"] += 1
+            else:
+                # 新事件加入缓冲区
+                self._throttle_buffer[event_type] = {
+                    "data": data,
+                    "source": source,
+                    "timestamp": time.time(),
+                }
+                self._stats["total_throttled"] += 1
+            
+            # 确保节流定时器已启动
+            self._ensure_throttle_timer(throttle_ms)
+
+    def _ensure_throttle_timer(self, interval_ms: int):
+        """确保节流定时器已启动"""
+        if self._throttle_timer is not None and self._throttle_timer.isActive():
+            return
+        
+        # 需要在主线程创建 QTimer
+        app = QApplication.instance()
+        if app is None:
+            # 无 QApplication，直接刷新
+            self._flush_throttle_buffer()
+            return
+        
+        if threading.current_thread() is threading.main_thread():
+            self._start_throttle_timer(interval_ms)
+        else:
+            # 跨线程，通过 invokeMethod 在主线程创建定时器
+            QMetaObject.invokeMethod(
+                self._receiver,
+                "start_throttle_timer",
+                Qt.ConnectionType.QueuedConnection,
+            )
+
+    def _start_throttle_timer(self, interval_ms: int = None):
+        """启动节流定时器（必须在主线程调用）"""
+        if interval_ms is None:
+            interval_ms = self._default_throttle_ms
+        
+        if self._throttle_timer is None:
+            self._throttle_timer = QTimer()
+            self._throttle_timer.timeout.connect(self._flush_throttle_buffer)
+        
+        if not self._throttle_timer.isActive():
+            self._throttle_timer.start(interval_ms)
+
+    def _flush_throttle_buffer(self):
+        """刷新节流缓冲区，发布所有缓冲的事件"""
+        with self._throttle_lock:
+            if not self._throttle_buffer:
+                # 缓冲区为空，停止定时器
+                if self._throttle_timer and self._throttle_timer.isActive():
+                    self._throttle_timer.stop()
+                return
+            
+            # 取出所有缓冲的事件
+            events_to_publish = self._throttle_buffer.copy()
+            self._throttle_buffer.clear()
+        
+        # 发布所有事件（锁外执行）
+        for event_type, event_info in events_to_publish.items():
+            try:
+                self.publish(
+                    event_type,
+                    event_info["data"],
+                    event_info.get("source")
+                )
+            except Exception as e:
+                if self.logger:
+                    self.logger.warning(
+                        f"Failed to publish throttled event '{event_type}': {e}"
+                    )
+        
+        # 检查是否还有新事件加入
+        with self._throttle_lock:
+            if not self._throttle_buffer and self._throttle_timer:
+                self._throttle_timer.stop()
+
     def clear_all(self) -> None:
         """
         清空所有订阅
@@ -344,18 +492,35 @@ class EventBus:
         with self._lock:
             return list(self._subscribers.keys())
 
-    def get_stats(self) -> Dict[str, int]:
+    def get_stats(self) -> Dict[str, Any]:
         """
         获取事件总线统计信息
         
         Returns:
-            dict: {event_type: subscriber_count}
+            dict: 包含订阅者数量和节流统计
         """
         with self._lock:
-            return {
+            subscriber_stats = {
                 event_type: len(handlers)
                 for event_type, handlers in self._subscribers.items()
             }
+        
+        return {
+            "subscribers": subscriber_stats,
+            "total_published": self._stats["total_published"],
+            "total_throttled": self._stats["total_throttled"],
+            "throttle_merged": self._stats["throttle_merged"],
+            "throttle_buffer_size": len(self._throttle_buffer),
+        }
+
+    def stop_throttle_timer(self):
+        """停止节流定时器（应用关闭时调用）"""
+        if self._throttle_timer:
+            self._throttle_timer.stop()
+            self._throttle_timer = None
+        
+        # 刷新剩余的缓冲事件
+        self._flush_throttle_buffer()
 
 
 # ============================================================

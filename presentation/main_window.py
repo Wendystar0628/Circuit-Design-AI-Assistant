@@ -6,7 +6,6 @@
 - 窗口布局管理、面板协调
 - 组件初始化
 - 事件订阅与分发
-- LLM Worker 信号处理和对话面板集成
 
 委托关系：
 - 菜单栏创建委托给 MenuManager
@@ -15,8 +14,6 @@
 - 窗口状态管理委托给 WindowStateManager
 - 会话管理委托给 SessionManager
 - 动作处理委托给 ActionHandlers
-- 面板管理委托给 PanelManager
-- 右栏标签页管理委托给 TabController
 
 初始化顺序：
 - Phase 2.2，依赖 ServiceLocator（获取 I18nManager 等）
@@ -27,12 +24,11 @@
 - 所有用户可见文本通过 i18n_manager.get_text() 获取
 """
 
-import json
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any
 
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout,
-    QSplitter, QLabel, QMessageBox, QTabWidget
+    QSplitter, QLabel
 )
 from PyQt6.QtCore import Qt, QTimer
 
@@ -42,8 +38,6 @@ from presentation.statusbar_manager import StatusbarManager
 from presentation.window_state_manager import WindowStateManager
 from presentation.session_manager import SessionManager
 from presentation.action_handlers import ActionHandlers
-from presentation.core.panel_manager import PanelManager, PanelRegion
-from presentation.core.tab_controller import TabController, TabId
 
 
 class MainWindow(QMainWindow):
@@ -53,7 +47,6 @@ class MainWindow(QMainWindow):
     布局结构：
     - 外层：垂直 QSplitter，分割上部主区域和下部仿真结果区
     - 上部：水平 QSplitter，分割左栏、中栏、右栏
-    - 右栏：QTabWidget 承载多个面板（对话、信息、元器件）
     - 初始比例：左栏 10%、中栏 60%、右栏 30%、下栏 20% 高度
     """
 
@@ -64,13 +57,11 @@ class MainWindow(QMainWindow):
         self._i18n_manager = None
         self._event_bus = None
         self._logger = None
-        self._context_manager = None
         self._config_manager = None
         
         # UI 组件引用
         self._panels: Dict[str, QWidget] = {}
         self._splitters: Dict[str, QSplitter] = {}
-        self._right_tab_widget: Optional[QTabWidget] = None
         
         # 管理器实例（延迟初始化）
         self._menu_manager: Optional[MenuManager] = None
@@ -79,23 +70,17 @@ class MainWindow(QMainWindow):
         self._window_state_manager: Optional[WindowStateManager] = None
         self._session_manager: Optional[SessionManager] = None
         self._action_handlers: Optional[ActionHandlers] = None
-        self._panel_manager: Optional[PanelManager] = None
-        self._tab_controller: Optional[TabController] = None
         
-        # LLM Worker 实例
-        self._llm_worker = None
-        
-        # 初始化 UI
+        # 初始化 UI（按照设计规范的顺序）
         self._setup_window()
         self._setup_central_widget()
         self._setup_managers()
-        self._setup_llm_worker()
         self._connect_panel_signals()
         
         # 应用国际化文本
         self.retranslate_ui()
         
-        # 订阅语言变更事件
+        # 订阅事件
         self._subscribe_events()
         
         # 恢复窗口状态
@@ -105,7 +90,6 @@ class MainWindow(QMainWindow):
         
         # 延迟恢复会话状态（等待窗口显示后执行）
         QTimer.singleShot(100, self._restore_session)
-
 
     # ============================================================
     # 延迟获取服务
@@ -147,18 +131,6 @@ class MainWindow(QMainWindow):
         return self._logger
 
     @property
-    def context_manager(self):
-        """延迟获取 ContextManager"""
-        if self._context_manager is None:
-            try:
-                from shared.service_locator import ServiceLocator
-                from shared.service_names import SVC_CONTEXT_MANAGER
-                self._context_manager = ServiceLocator.get_optional(SVC_CONTEXT_MANAGER)
-            except Exception:
-                pass
-        return self._context_manager
-
-    @property
     def config_manager(self):
         """延迟获取 ConfigManager"""
         if self._config_manager is None:
@@ -169,16 +141,6 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
         return self._config_manager
-    
-    @property
-    def panel_manager(self) -> Optional[PanelManager]:
-        """获取面板管理器"""
-        return self._panel_manager
-    
-    @property
-    def tab_controller(self) -> Optional[TabController]:
-        """获取标签页控制器"""
-        return self._tab_controller
 
     def _get_text(self, key: str, default: Optional[str] = None) -> str:
         """获取国际化文本"""
@@ -202,7 +164,6 @@ class MainWindow(QMainWindow):
         布局结构：
         - 外层垂直 QSplitter：上部主区域 + 下部仿真结果区
         - 上部水平 QSplitter：左栏 + 中栏 + 右栏
-        - 右栏使用 QTabWidget 承载多个面板
         """
         # 创建中央部件
         central_widget = QWidget()
@@ -221,76 +182,41 @@ class MainWindow(QMainWindow):
         self._splitters["horizontal"] = QSplitter(Qt.Orientation.Horizontal)
         self._splitters["vertical"].addWidget(self._splitters["horizontal"])
         
-        # 初始化 PanelManager 和 TabController
-        self._panel_manager = PanelManager()
-        self._right_tab_widget = QTabWidget()
-        self._tab_controller = TabController(self._right_tab_widget)
-        
-        # 创建四个面板占位
-        self._create_panel_placeholders()
+        # 创建四个面板
+        self._create_panels()
         
         # 设置分割比例
         self._setup_splitter_sizes()
 
-    def _create_panel_placeholders(self):
+    def _create_panels(self):
         """创建面板部件"""
-        # 左栏 - 文件浏览器（使用实际组件）
+        # 左栏 - 文件浏览器
         from presentation.panels.file_browser_panel import FileBrowserPanel
         self._panels["file_browser"] = FileBrowserPanel()
         self._panels["file_browser"].setMinimumWidth(150)
         self._splitters["horizontal"].addWidget(self._panels["file_browser"])
         
-        # 注册到 PanelManager
-        self._panel_manager.register_panel(
-            "file_browser", self._panels["file_browser"], PanelRegion.LEFT
-        )
-        
-        # 中栏 - 代码编辑器（使用实际组件）
+        # 中栏 - 代码编辑器
         from presentation.panels.code_editor_panel import CodeEditorPanel
         self._panels["code_editor"] = CodeEditorPanel()
         self._panels["code_editor"].setMinimumWidth(400)
         self._splitters["horizontal"].addWidget(self._panels["code_editor"])
-        
-        # 注册到 PanelManager
-        self._panel_manager.register_panel(
-            "code_editor", self._panels["code_editor"], PanelRegion.CENTER
-        )
         
         # 连接文件浏览器和代码编辑器
         self._panels["file_browser"].file_selected.connect(
             self._panels["code_editor"].load_file
         )
         
-        # 右栏 - 使用 QTabWidget 承载多个面板
-        self._right_tab_widget.setMinimumWidth(250)
-        self._splitters["horizontal"].addWidget(self._right_tab_widget)
-        
-        # 对话面板（使用实际组件）
+        # 右栏 - 对话面板
         from presentation.panels.conversation_panel import ConversationPanel
         self._panels["chat"] = ConversationPanel()
-        
-        # 注册到 TabController
-        chat_title = self._get_text("panel.conversation", "Chat")
-        self._tab_controller.register_tab(
-            TabId.CONVERSATION.value, 
-            self._panels["chat"], 
-            chat_title
-        )
-        
-        # 注册到 PanelManager
-        self._panel_manager.register_panel(
-            "chat", self._panels["chat"], PanelRegion.RIGHT
-        )
+        self._panels["chat"].setMinimumWidth(250)
+        self._splitters["horizontal"].addWidget(self._panels["chat"])
         
         # 下栏 - 仿真结果（占位）
         self._panels["simulation"] = self._create_placeholder_panel("panel.simulation")
         self._panels["simulation"].setMinimumHeight(100)
         self._splitters["vertical"].addWidget(self._panels["simulation"])
-        
-        # 注册到 PanelManager
-        self._panel_manager.register_panel(
-            "simulation", self._panels["simulation"], PanelRegion.BOTTOM
-        )
 
     def _create_placeholder_panel(self, title_key: str) -> QWidget:
         """创建占位面板"""
@@ -326,7 +252,6 @@ class MainWindow(QMainWindow):
             int(total_height * 0.20),  # 下部
         ])
 
-
     # ============================================================
     # 管理器初始化
     # ============================================================
@@ -343,9 +268,6 @@ class MainWindow(QMainWindow):
         
         # 添加对话历史回调
         callbacks["on_show_history"] = self._on_show_history_dialog
-        
-        # 添加面板切换回调（使用 PanelManager）
-        callbacks["on_toggle_panel"] = self._on_toggle_panel
         
         # 菜单栏管理器
         self._menu_manager = MenuManager(self)
@@ -364,37 +286,6 @@ class MainWindow(QMainWindow):
         
         # 会话管理器
         self._session_manager = SessionManager(self, self._panels)
-    
-    def _on_toggle_panel(self, panel_name: str, visible: bool):
-        """
-        切换面板显示/隐藏（通过 PanelManager）
-        
-        Args:
-            panel_name: 面板名称
-            visible: 是否可见
-        """
-        if self._panel_manager:
-            self._panel_manager.set_panel_visible(panel_name, visible)
-
-    def _setup_llm_worker(self):
-        """初始化 LLM Worker 并连接信号"""
-        try:
-            from application.workers.llm_worker import LLMWorker
-            self._llm_worker = LLMWorker()
-            
-            # 连接 Worker 信号
-            self._llm_worker.chunk.connect(self._on_llm_chunk)
-            self._llm_worker.phase_changed.connect(self._on_llm_phase_changed)
-            self._llm_worker.result.connect(self._on_llm_result)
-            self._llm_worker.error.connect(self._on_llm_error)
-            self._llm_worker.finished.connect(self._on_llm_finished)
-            self._llm_worker.web_search_complete.connect(self._on_web_search_complete)
-            
-            if self.logger:
-                self.logger.info("LLM Worker initialized")
-        except Exception as e:
-            if self.logger:
-                self.logger.error(f"Failed to initialize LLM Worker: {e}")
 
     # ============================================================
     # 面板信号连接
@@ -402,38 +293,29 @@ class MainWindow(QMainWindow):
 
     def _connect_panel_signals(self):
         """连接面板信号"""
-        # 连接代码编辑器面板的打开工作区请求信号
+        # 连接代码编辑器面板信号
         if "code_editor" in self._panels:
-            self._panels["code_editor"].open_workspace_requested.connect(
+            editor = self._panels["code_editor"]
+            editor.open_workspace_requested.connect(
                 self._action_handlers.on_open_workspace
             )
-            # 连接撤销/重做状态变化信号
-            self._panels["code_editor"].undo_redo_state_changed.connect(
+            editor.undo_redo_state_changed.connect(
                 self._on_undo_redo_state_changed
             )
-            # 连接可编辑文件状态变化信号（用于启用/禁用保存按钮）
-            self._panels["code_editor"].editable_file_state_changed.connect(
+            editor.editable_file_state_changed.connect(
                 self._on_editable_file_state_changed
             )
         
         # 连接对话面板信号
+        # 注意：不在这里调用 chat_panel.initialize()
+        # 对话面板的初始化延迟到 EVENT_INIT_COMPLETE 事件后执行
+        # 因为 ContextManager 在 Phase 3.4 才注册，此时（Phase 2.2）还不可用
         if "chat" in self._panels:
             chat_panel = self._panels["chat"]
-            # 消息发送
-            chat_panel.message_sent.connect(self._on_message_sent)
-            # 压缩请求
-            chat_panel.compress_requested.connect(self._on_compress_requested)
-            # 文件点击（跳转到代码编辑器）
             chat_panel.file_clicked.connect(self._on_file_clicked)
-            # 新开对话请求
             chat_panel.new_conversation_requested.connect(self._on_new_conversation)
-            # 历史对话请求
             chat_panel.history_requested.connect(self._on_show_history_dialog)
-            # 会话名称变更
             chat_panel.session_name_changed.connect(self._on_session_name_changed)
-            # 注意：不在这里调用 chat_panel.initialize()
-            # 对话面板的初始化延迟到 EVENT_INIT_COMPLETE 事件后执行
-            # 因为 ContextManager 在 Phase 3.4 才注册，此时（Phase 2.2）还不可用
 
     # ============================================================
     # 国际化支持
@@ -455,19 +337,12 @@ class MainWindow(QMainWindow):
         if self._statusbar_manager:
             self._statusbar_manager.retranslate_ui()
         
-        # 更新标签页标题
-        if self._tab_controller:
-            self._tab_controller.update_tab_title(
-                TabId.CONVERSATION.value,
-                self._get_text("panel.conversation", "Chat")
-            )
-        
         # 面板占位文本
         self._update_panel_placeholders()
 
     def _update_panel_placeholders(self):
         """更新面板占位文本"""
-        placeholder_panels = ["chat", "simulation"]
+        placeholder_panels = ["simulation"]
         for panel_name in placeholder_panels:
             panel = self._panels.get(panel_name)
             if panel:
@@ -517,7 +392,6 @@ class MainWindow(QMainWindow):
     def _restore_conversation_session(self):
         """恢复对话会话"""
         if self._session_manager:
-            # 使用完整的会话恢复流程
             self._session_manager.restore_full_session()
 
     def _on_language_changed(self, event_data: Dict[str, Any]):
@@ -580,7 +454,6 @@ class MainWindow(QMainWindow):
         if self.logger:
             self.logger.info("Project closed event received")
 
-
     # ============================================================
     # 会话恢复
     # ============================================================
@@ -604,10 +477,6 @@ class MainWindow(QMainWindow):
                 self._splitters, self._panels
             )
         
-        # 保存面板布局状态
-        if self._panel_manager:
-            self._panel_manager.save_layout_state()
-        
         # 保存会话状态（编辑器会话）
         if self._session_manager:
             self._session_manager.save_session_state()
@@ -615,6 +484,15 @@ class MainWindow(QMainWindow):
             self._session_manager.save_current_conversation()
         
         super().closeEvent(event)
+
+    # ============================================================
+    # 面板显示/隐藏
+    # ============================================================
+
+    def _toggle_panel(self, panel_name: str, visible: bool):
+        """切换面板显示/隐藏"""
+        if self._action_handlers:
+            self._action_handlers.on_toggle_panel(panel_name, visible)
 
     # ============================================================
     # 辅助方法
@@ -683,91 +561,6 @@ class MainWindow(QMainWindow):
     # 对话面板信号处理
     # ============================================================
 
-    def _on_message_sent(self, text: str, attachments: List[Dict[str, Any]]):
-        """
-        处理用户发送消息
-        
-        Args:
-            text: 消息文本
-            attachments: 附件列表
-        """
-        if not text.strip() and not attachments:
-            return
-        
-        if self.logger:
-            self.logger.info(f"User message sent: {text[:50]}...")
-        
-        # 发布工作流锁定事件
-        if self.event_bus:
-            from shared.event_types import EVENT_WORKFLOW_LOCKED
-            self.event_bus.publish(EVENT_WORKFLOW_LOCKED, {"source": "llm_call"})
-        
-        # 更新状态栏
-        if self._statusbar_manager:
-            self._statusbar_manager.set_status(
-                self._get_text("status.llm_processing", "LLM processing...")
-            )
-            self._statusbar_manager.set_worker_status("llm", "running")
-        
-        # 注意：用户消息已在 ConversationViewModel.send_message() 中添加到 ContextManager
-        # 这里不再重复添加，避免消息重复
-        
-        # 构建 LLM 请求
-        self._send_llm_request()
-
-    def _send_llm_request(self):
-        """构建并发送 LLM 请求"""
-        if not self._llm_worker:
-            if self.logger:
-                self.logger.error("LLM Worker not available")
-            self._on_llm_finished()
-            return
-        
-        # 从 ContextManager 获取消息列表
-        messages = []
-        if self.context_manager:
-            messages = self.context_manager.get_messages_for_llm()
-        
-        if not messages:
-            if self.logger:
-                self.logger.warning("No messages to send to LLM")
-            self._on_llm_finished()
-            return
-        
-        # 检查是否启用联网搜索
-        web_search_enabled = False
-        if self.config_manager:
-            provider_search = self.config_manager.get("enable_provider_web_search", False)
-            general_search = self.config_manager.get("enable_general_web_search", False)
-            web_search_enabled = provider_search or general_search
-        
-        # 设置请求参数
-        self._llm_worker.set_request(
-            messages=messages,
-            streaming=True,
-            thinking=None,  # 从配置读取
-            web_search=None,  # 从配置读取
-        )
-        
-        # 启动流式输出显示（传递是否启用搜索）
-        if "chat" in self._panels and self._panels["chat"]._message_area:
-            # 通用搜索时显示搜索区域，厂商专属搜索不显示（由 LLM 内部处理）
-            general_search = self.config_manager.get("enable_general_web_search", False) if self.config_manager else False
-            self._panels["chat"]._message_area.start_streaming(with_search=general_search)
-        
-        # 启动 Worker
-        self._llm_worker.start()
-
-    def _on_compress_requested(self):
-        """处理压缩上下文请求"""
-        try:
-            from presentation.dialogs.context_compress_dialog import ContextCompressDialog
-            dialog = ContextCompressDialog(self)
-            dialog.exec()
-        except Exception as e:
-            if self.logger:
-                self.logger.error(f"Failed to open compress dialog: {e}")
-
     def _on_file_clicked(self, file_path: str):
         """处理文件点击（跳转到代码编辑器）"""
         if "code_editor" in self._panels:
@@ -775,10 +568,6 @@ class MainWindow(QMainWindow):
 
     def _on_new_conversation(self):
         """处理新开对话请求"""
-        # 直接执行，无需确认对话框（当前会话自动保存）
-        # 注意：conversation_panel.start_new_conversation() 已经处理了保存和重置逻辑
-        # 这里只需要发布事件通知其他组件
-        
         if self.logger:
             self.logger.info("New conversation requested")
 
@@ -786,10 +575,11 @@ class MainWindow(QMainWindow):
         """显示对话历史对话框"""
         try:
             from presentation.dialogs.history_dialog import HistoryDialog
+            from PyQt6.QtWidgets import QMessageBox
             dialog = HistoryDialog(self)
             dialog.exec()
         except ImportError:
-            # 对话框尚未实现
+            from PyQt6.QtWidgets import QMessageBox
             QMessageBox.information(
                 self,
                 self._get_text("dialog.info", "Information"),
@@ -807,127 +597,28 @@ class MainWindow(QMainWindow):
         if self.logger:
             self.logger.info(f"Session name changed to: {name}")
         
-        # 保存会话名称到配置
         if self._session_manager:
             self._session_manager.set_current_session_name(name)
 
     # ============================================================
-    # LLM Worker 信号处理
+    # 公共接口
     # ============================================================
 
-    def _on_llm_chunk(self, chunk_data: str):
+    def get_panel(self, panel_name: str) -> Optional[QWidget]:
         """
-        处理 LLM 流式输出块
+        获取指定面板实例
         
         Args:
-            chunk_data: JSON 格式的数据块 {"type": "reasoning"|"content", "text": str}
-        """
-        try:
-            data = json.loads(chunk_data)
-            chunk_type = data.get("type", "content")
-            text = data.get("text", "")
+            panel_name: 面板名称
             
-            # 直接调用对话面板处理流式输出
-            if "chat" in self._panels:
-                self._panels["chat"].handle_stream_chunk(chunk_type, text)
-                
-        except json.JSONDecodeError as e:
-            if self.logger:
-                self.logger.warning(f"Failed to parse LLM chunk: {e}")
+        Returns:
+            面板实例，不存在则返回 None
+        """
+        return self._panels.get(panel_name)
 
-    def _on_llm_phase_changed(self, phase: str):
-        """
-        处理 LLM 阶段切换
-        
-        Args:
-            phase: 新阶段 ("searching" -> "reasoning" -> "content")
-        """
-        if "chat" in self._panels:
-            self._panels["chat"].handle_phase_change(phase)
-    
-    def _on_web_search_complete(self, results: list):
-        """
-        处理联网搜索完成
-        
-        Args:
-            results: 搜索结果列表
-        """
-        if self.logger:
-            self.logger.info(f"Web search complete: {len(results)} results")
-        
-        # 更新对话面板的搜索结果显示
-        if "chat" in self._panels:
-            self._panels["chat"].handle_search_complete(results)
-
-    def _on_llm_result(self, result: Dict[str, Any]):
-        """
-        处理 LLM 完成结果
-        
-        Args:
-            result: 完整响应结果
-        """
-        content = result.get("content", "")
-        reasoning_content = result.get("reasoning_content", "")
-        tool_calls = result.get("tool_calls")
-        usage = result.get("usage")
-        is_partial = result.get("is_partial", False)
-        web_search_results = result.get("web_search_results")
-        
-        if self.logger:
-            self.logger.info(
-                f"LLM result received: content_len={len(content)}, "
-                f"reasoning_len={len(reasoning_content)}, partial={is_partial}"
-            )
-        
-        # 通过 ContextManager 添加助手消息
-        if self.context_manager and content:
-            self.context_manager.add_assistant_message(
-                content=content,
-                reasoning_content=reasoning_content,
-                tool_calls=tool_calls,
-                usage=usage,
-                web_search_results=web_search_results,
-            )
-        
-        # 直接调用对话面板完成流式输出并刷新显示
-        if "chat" in self._panels:
-            self._panels["chat"].finish_stream(result)
-
-    def _on_llm_error(self, error_msg: str, error: object):
-        """
-        处理 LLM 错误
-        
-        Args:
-            error_msg: 错误消息
-            error: 错误对象
-        """
-        if self.logger:
-            self.logger.error(f"LLM error: {error_msg}")
-        
-        # 显示错误提示
-        QMessageBox.warning(
-            self,
-            self._get_text("dialog.error", "Error"),
-            error_msg
-        )
-        
-        # 通知对话面板
-        if "chat" in self._panels:
-            self._panels["chat"].handle_error(error_msg)
-
-    def _on_llm_finished(self):
-        """处理 LLM 调用完成（无论成功或失败）"""
-        # 发布工作流解锁事件
-        if self.event_bus:
-            from shared.event_types import EVENT_WORKFLOW_UNLOCKED
-            self.event_bus.publish(EVENT_WORKFLOW_UNLOCKED, {"source": "llm_call"})
-        
-        # 更新状态栏
-        if self._statusbar_manager:
-            self._statusbar_manager.set_status(
-                self._get_text("status.ready", "Ready")
-            )
-            self._statusbar_manager.set_worker_status("llm", "idle")
+    def get_statusbar_manager(self) -> Optional[StatusbarManager]:
+        """获取状态栏管理器"""
+        return self._statusbar_manager
 
 
 # ============================================================

@@ -327,13 +327,7 @@ class ActionHandlers:
     # ============================================================
 
     def on_toggle_panel(self, panel_name: str, visible: bool):
-        """
-        切换面板显示/隐藏
-        
-        注意：此方法通常被 MainWindow._on_toggle_panel 覆盖，
-        后者使用 PanelManager 进行统一管理。
-        此方法作为备用实现保留。
-        """
+        """切换面板显示/隐藏"""
         if panel_name in self._panels:
             self._panels[panel_name].setVisible(visible)
 

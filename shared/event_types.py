@@ -375,32 +375,6 @@ EVENT_SERVICE_CIRCUIT_CLOSE = "service_circuit_close"
 EVENT_LANGUAGE_CHANGED = "language_changed"
 
 # ============================================================
-# 面板和标签页事件
-# ============================================================
-
-# 面板可见性变更
-# 携带数据：
-#   - panel_id: str - 面板 ID
-#   - visible: bool - 是否可见
-#   - region: str - 面板区域
-EVENT_PANEL_VISIBILITY_CHANGED = "panel_visibility_changed"
-
-# 标签页切换
-# 携带数据：
-#   - previous_tab: str - 之前的标签页 ID
-#   - current_tab: str - 当前标签页 ID
-EVENT_TAB_CHANGED = "tab_changed"
-
-# 消息接收（用于标签页徽章）
-# 携带数据：
-#   - message_type: str - 消息类型
-#   - source: str - 消息来源
-EVENT_MESSAGE_RECEIVED = "message_received"
-
-# 仿真完成（用于自动切换策略）
-EVENT_SIMULATION_COMPLETE = "simulation_complete"
-
-# ============================================================
 # 迭代确认事件
 # ============================================================
 
@@ -573,11 +547,6 @@ __all__ = [
     "EVENT_SERVICE_CIRCUIT_CLOSE",
     # 国际化事件
     "EVENT_LANGUAGE_CHANGED",
-    # 面板和标签页事件
-    "EVENT_PANEL_VISIBILITY_CHANGED",
-    "EVENT_TAB_CHANGED",
-    "EVENT_MESSAGE_RECEIVED",
-    "EVENT_SIMULATION_COMPLETE",
     # 迭代确认事件
     "EVENT_ITERATION_AWAITING_CONFIRMATION",
     "EVENT_ITERATION_USER_CONFIRMED",

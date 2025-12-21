@@ -323,6 +323,42 @@ EVENT_RAG_INDEX_COMPLETE = "rag_index_complete"
 EVENT_RAG_SEARCH_COMPLETE = "rag_search_complete"
 
 # ============================================================
+# 代码索引事件（阶段五）
+# ============================================================
+
+# 代码索引开始
+# 携带数据：
+#   - project_path: str - 项目路径
+#   - total_files: int - 总文件数
+EVENT_CODE_INDEX_STARTED = "knowledge.code_index_started"
+
+# 代码索引进度
+# 携带数据：
+#   - current_file: str - 当前处理的文件
+#   - processed: int - 已处理文件数
+#   - total: int - 总文件数
+#   - percent: float - 完成百分比
+EVENT_CODE_INDEX_PROGRESS = "knowledge.code_index_progress"
+
+# 代码索引完成
+# 携带数据：
+#   - project_path: str - 项目路径
+#   - indexed_files: int - 已索引文件数
+#   - duration_seconds: float - 耗时（秒）
+EVENT_CODE_INDEX_COMPLETE = "knowledge.code_index_complete"
+
+# 代码索引错误
+# 携带数据：
+#   - project_path: str - 项目路径
+#   - error_message: str - 错误信息
+EVENT_CODE_INDEX_ERROR = "knowledge.code_index_error"
+
+# 代码索引取消
+# 携带数据：
+#   - project_path: str - 项目路径
+EVENT_CODE_INDEX_CANCELLED = "knowledge.code_index_cancelled"
+
+# ============================================================
 # 上下文压缩事件
 # ============================================================
 
@@ -717,6 +753,12 @@ __all__ = [
     "EVENT_RAG_INDEX_PROGRESS",
     "EVENT_RAG_INDEX_COMPLETE",
     "EVENT_RAG_SEARCH_COMPLETE",
+    # 代码索引事件
+    "EVENT_CODE_INDEX_STARTED",
+    "EVENT_CODE_INDEX_PROGRESS",
+    "EVENT_CODE_INDEX_COMPLETE",
+    "EVENT_CODE_INDEX_ERROR",
+    "EVENT_CODE_INDEX_CANCELLED",
     # 上下文压缩事件
     "EVENT_CONTEXT_COMPRESS_REQUESTED",
     "EVENT_CONTEXT_COMPRESS_PREVIEW_READY",

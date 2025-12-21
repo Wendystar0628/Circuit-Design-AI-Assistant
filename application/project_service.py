@@ -322,7 +322,14 @@ class ProjectService:
             # 扫描完成后发布 EVENT_DEPENDENCY_SCAN_COMPLETE 事件
             self._start_dependency_health_check(path)
             
-            # 10. 通过 GraphStateProjector 更新 SessionState
+            # 10. 启动异步代码索引（阶段五实现）
+            # 不阻塞主流程，索引在后台执行
+            # 使用增量索引策略（比对文件哈希，仅索引变更文件）
+            # 发布 CODE_INDEX_STARTED 事件，状态栏显示索引进度
+            # 索引完成后发布 CODE_INDEX_COMPLETE 事件
+            self._start_code_index(path)
+            
+            # 11. 通过 GraphStateProjector 更新 SessionState
             # 项目状态将通过 GraphState 变更自动投影到 SessionState
             if self.graph_state_projector:
                 self.graph_state_projector.update_project_state(
@@ -343,7 +350,7 @@ class ProjectService:
             else:
                 self._status = ProjectStatus.READY
             
-            # 11. 发布项目打开事件（携带完整的项目状态信息）
+            # 12. 发布项目打开事件（携带完整的项目状态信息）
             if self.event_bus:
                 from shared.event_types import EVENT_STATE_PROJECT_OPENED
                 self.event_bus.publish(EVENT_STATE_PROJECT_OPENED, {
@@ -404,6 +411,38 @@ class ProjectService:
             
         except Exception:
             return False
+    
+    def _start_code_index(self, project_path: Path) -> None:
+        """
+        启动异步代码索引（阶段五实现）
+        
+        代码索引流程：
+        1. 调用 IndexTriggerService.trigger_project_index()
+        2. 不阻塞主流程，索引在后台执行
+        3. 使用增量索引策略（比对文件哈希，仅索引变更文件）
+        4. 发布 CODE_INDEX_STARTED 事件，状态栏显示索引进度
+        5. 索引完成后发布 CODE_INDEX_COMPLETE 事件，状态栏进度消失
+        6. 索引完成后语义搜索功能可用
+        
+        设计原则：
+        - 异步执行：不阻塞项目打开主流程
+        - 增量更新：仅索引变更文件，提高效率
+        - 可取消：支持用户取消正在进行的索引
+        
+        Args:
+            project_path: 项目根目录路径
+        """
+        try:
+            # TODO: 阶段五实现 - 调用 IndexTriggerService.trigger_project_index()
+            # 索引任务通过 AsyncTaskRegistry 提交
+            # 发布 CODE_INDEX_STARTED 事件
+            # 索引完成后发布 CODE_INDEX_COMPLETE 事件
+            if self.logger:
+                self.logger.debug(f"启动异步代码索引: {project_path}")
+        except Exception as e:
+            # 代码索引失败不阻塞项目打开
+            if self.logger:
+                self.logger.warning(f"启动代码索引失败: {e}")
     
     def _start_dependency_health_check(self, project_path: Path) -> None:
         """

@@ -200,6 +200,18 @@ class GraphState:
     """连续修复尝试次数（用于错误修复熔断机制）"""
     
     # ============================================================
+    # 控制标志
+    # ============================================================
+    
+    force_resimulate: bool = False
+    """
+    强制重新仿真标志
+    - 当 UI 发现 sim_result_path 指向的文件缺失时，设置为 True
+    - router_node 检测到此标志后直接路由到 simulation_node
+    - simulation_node 执行完成后重置为 False
+    """
+    
+    # ============================================================
     # 追踪上下文（支持 interrupt/resume 链路连续性）
     # ============================================================
     
@@ -250,6 +262,8 @@ class GraphState:
             "checkpoint_count": self.checkpoint_count,
             "stagnation_count": self.stagnation_count,
             "consecutive_fix_attempts": self.consecutive_fix_attempts,
+            # 控制标志
+            "force_resimulate": self.force_resimulate,
             # 追踪上下文
             "_trace_id": self._trace_id,
             "_last_span_id": self._last_span_id,
@@ -280,6 +294,7 @@ class GraphState:
             checkpoint_count=data.get("checkpoint_count", 0),
             stagnation_count=data.get("stagnation_count", 0),
             consecutive_fix_attempts=data.get("consecutive_fix_attempts", 0),
+            force_resimulate=data.get("force_resimulate", False),
             _trace_id=data.get("_trace_id", ""),
             _last_span_id=data.get("_last_span_id", ""),
             messages=data.get("messages", []),

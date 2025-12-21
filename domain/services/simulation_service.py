@@ -49,6 +49,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from shared.models.load_result import LoadResult, LoadErrorCode
+
 # 仿真结果目录相对路径
 SIM_RESULTS_DIR = ".circuit_ai/sim_results"
 
@@ -121,7 +123,7 @@ def run_simulation(
 def load_sim_result(
     project_root: str,
     result_path: str
-) -> Dict[str, Any]:
+) -> LoadResult[Dict[str, Any]]:
     """
     从文件加载仿真结果
     
@@ -130,15 +132,46 @@ def load_sim_result(
         result_path: 结果文件相对路径
         
     Returns:
-        Dict: 仿真结果数据，文件不存在时返回空字典
+        LoadResult[Dict]: 加载结果对象
+        - 成功时：result.success=True, result.data 包含仿真数据
+        - 路径为空：result.error_code=PATH_EMPTY
+        - 文件不存在：result.error_code=FILE_MISSING
+        - 解析失败：result.error_code=PARSE_ERROR
+        
+    使用示例：
+        result = load_sim_result(project_root, path)
+        if result.success:
+            data = result.data
+        elif result.is_file_missing():
+            # 显示文件缺失占位图
+            pass
     """
+    # 路径为空检查
+    if not result_path:
+        return LoadResult.path_empty()
+    
     root = Path(project_root)
     file_path = root / result_path
     
+    # 文件存在性检查
     if not file_path.exists():
-        return {}
+        return LoadResult.file_missing(result_path)
     
-    return _read_json_file(file_path)
+    # 尝试读取和解析
+    try:
+        content = file_path.read_text(encoding="utf-8")
+        if not content.strip():
+            return LoadResult.parse_error(result_path, "文件内容为空")
+        
+        data = json.loads(content)
+        return LoadResult.ok(data, result_path)
+        
+    except json.JSONDecodeError as e:
+        return LoadResult.parse_error(result_path, f"JSON 解析失败: {e}")
+    except PermissionError:
+        return LoadResult.permission_denied(result_path)
+    except Exception as e:
+        return LoadResult.unknown_error(result_path, str(e))
 
 
 def extract_metrics(
@@ -253,7 +286,7 @@ def list_sim_results(
     return results
 
 
-def get_latest_sim_result(project_root: str) -> Optional[Dict[str, Any]]:
+def get_latest_sim_result(project_root: str) -> LoadResult[Dict[str, Any]]:
     """
     获取最新的仿真结果
     
@@ -261,12 +294,12 @@ def get_latest_sim_result(project_root: str) -> Optional[Dict[str, Any]]:
         project_root: 项目根目录路径
         
     Returns:
-        Optional[Dict]: 最新仿真结果，无结果时返回 None
+        LoadResult[Dict]: 加载结果对象
     """
     results = list_sim_results(project_root, limit=1)
     if results:
         return load_sim_result(project_root, results[0]["path"])
-    return None
+    return LoadResult.file_missing("")
 
 
 def delete_sim_result(
@@ -334,4 +367,6 @@ __all__ = [
     "get_latest_sim_result",
     "delete_sim_result",
     "SIM_RESULTS_DIR",
+    "LoadResult",
+    "LoadErrorCode",
 ]

@@ -35,6 +35,8 @@ from domain.services.simulation_service import (
     load_sim_result,
     extract_metrics,
     get_sim_result_path,
+    LoadResult,
+    LoadErrorCode,
 )
 
 from domain.services.context_service import (
@@ -97,6 +99,8 @@ __all__ = [
     "load_sim_result",
     "extract_metrics",
     "get_sim_result_path",
+    "LoadResult",
+    "LoadErrorCode",
     # Context Service
     "save_messages",
     "load_messages",

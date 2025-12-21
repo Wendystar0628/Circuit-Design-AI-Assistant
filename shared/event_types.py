@@ -622,6 +622,16 @@ EVENT_INFO_PANEL_CLEARED = "info_panel.cleared"
 
 
 # ============================================================
+# 文件引用校验事件
+# ============================================================
+
+# UI 请求重新仿真（文件缺失时触发）
+# 携带数据：
+#   - reason: str - 触发原因（"sim_result_file_missing"）
+#   - missing_path: str - 缺失的文件路径
+EVENT_REQUEST_RESIMULATION = "ui.request_resimulation"
+
+# ============================================================
 # 关键事件列表（需要特殊保护）
 # ============================================================
 
@@ -761,6 +771,8 @@ __all__ = [
     "EVENT_INFO_CARDS_LOADED",
     "EVENT_INFO_PANEL_CATEGORY_CHANGED",
     "EVENT_INFO_PANEL_CLEARED",
+    # 文件引用校验事件
+    "EVENT_REQUEST_RESIMULATION",
     # 关键事件列表
     "CRITICAL_EVENTS",
 ]

@@ -196,6 +196,9 @@ class GraphState:
     stagnation_count: int = 0
     """停滞计数（连续未改善次数）"""
     
+    consecutive_fix_attempts: int = 0
+    """连续修复尝试次数（用于错误修复熔断机制）"""
+    
     # ============================================================
     # 消息聚合（LangGraph 内部使用）
     # ============================================================
@@ -236,6 +239,7 @@ class GraphState:
             "iteration_count": self.iteration_count,
             "checkpoint_count": self.checkpoint_count,
             "stagnation_count": self.stagnation_count,
+            "consecutive_fix_attempts": self.consecutive_fix_attempts,
             # 消息数量（不序列化完整消息）
             "message_count": len(self.messages) if self.messages else 0,
         }
@@ -262,6 +266,7 @@ class GraphState:
             iteration_count=data.get("iteration_count", 0),
             checkpoint_count=data.get("checkpoint_count", 0),
             stagnation_count=data.get("stagnation_count", 0),
+            consecutive_fix_attempts=data.get("consecutive_fix_attempts", 0),
             messages=data.get("messages", []),
         )
     

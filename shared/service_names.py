@@ -63,8 +63,11 @@ SVC_CONFIG_MANAGER = "config_manager"
 # 文件管理器 - 统一文件操作
 SVC_FILE_MANAGER = "file_manager"
 
-# 文件搜索服务 - 智能文件搜索
+# 文件搜索服务 - 精确文件搜索（正则、模糊、符号）
 SVC_FILE_SEARCH_SERVICE = "file_search_service"
+
+# 统一搜索服务 - 搜索系统门面（协调精确搜索和语义搜索）
+SVC_UNIFIED_SEARCH_SERVICE = "unified_search_service"
 
 # ============================================================
 # 应用层服务 - 三层状态分离架构
@@ -166,6 +169,7 @@ __all__ = [
     "SVC_CONFIG_MANAGER",
     "SVC_FILE_MANAGER",
     "SVC_FILE_SEARCH_SERVICE",
+    "SVC_UNIFIED_SEARCH_SERVICE",
     "SVC_LLM_CLIENT",
     "SVC_OLLAMA_SERVICE",
     "SVC_TRACING_STORE",

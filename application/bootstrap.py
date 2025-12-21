@@ -35,6 +35,8 @@
 - Phase 3: 延迟初始化（异步，在事件循环中执行）
   - 3.1 WorkerManager 初始化
   - 3.2 FileManager 初始化
+  - 3.2.1 FileSearchService 初始化（精确搜索引擎）
+  - 3.2.2 UnifiedSearchService 初始化（统一搜索门面）
   - 3.3 ProjectService 初始化
   - 3.4 ContextManager 初始化
   - 3.5 SessionStateManager 初始化
@@ -461,6 +463,30 @@ def _delayed_init():
         ServiceLocator.register(SVC_FILE_MANAGER, file_manager)
         if _logger:
             _logger.info("Phase 3.2 FileManager 初始化完成")
+
+        # --------------------------------------------------------
+        # 3.2.1 FileSearchService 初始化
+        # 依赖：FileManager、EventBus
+        # 职责：精确搜索引擎（文件名、内容、符号搜索）
+        # --------------------------------------------------------
+        from infrastructure.file_intelligence.search.file_search_service import FileSearchService
+        from shared.service_names import SVC_FILE_SEARCH_SERVICE
+        file_search_service = FileSearchService()
+        ServiceLocator.register(SVC_FILE_SEARCH_SERVICE, file_search_service)
+        if _logger:
+            _logger.info("Phase 3.2.1 FileSearchService 初始化完成")
+
+        # --------------------------------------------------------
+        # 3.2.2 UnifiedSearchService 初始化
+        # 依赖：FileSearchService、RAGService（延迟获取）
+        # 职责：统一搜索门面，协调精确搜索和语义搜索
+        # --------------------------------------------------------
+        from domain.search import UnifiedSearchService
+        from shared.service_names import SVC_UNIFIED_SEARCH_SERVICE
+        unified_search_service = UnifiedSearchService()
+        ServiceLocator.register(SVC_UNIFIED_SEARCH_SERVICE, unified_search_service)
+        if _logger:
+            _logger.info("Phase 3.2.2 UnifiedSearchService 初始化完成")
 
         # --------------------------------------------------------
         # 3.5.1 SessionState 初始化（先于 ProjectService）

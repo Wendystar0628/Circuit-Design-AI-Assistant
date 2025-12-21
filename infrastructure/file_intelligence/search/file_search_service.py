@@ -1,11 +1,26 @@
-# File Search Service - Unified File Search Entry
+# File Search Service - Exact Search Engine (Infrastructure Layer)
 """
-文件搜索服务门面类
+文件搜索服务 - 精确搜索引擎（基础设施层）
 
-职责：
-- 提供统一的实时文件搜索入口（不依赖向量索引）
-- 支持按文件名、内容、符号搜索
-- 维护文件名索引缓存，支持增量更新
+架构定位：
+- 作为统一搜索架构的底层精确搜索引擎
+- 被 UnifiedSearchService 调用，不直接暴露给 LLM 工具层
+- 专注于实时、精确的文件搜索能力
+
+职责边界：
+- 文件名搜索（精确匹配、模糊匹配）
+- 内容搜索（正则表达式、关键词）
+- 符号搜索（代码符号定位）
+- 文件名索引缓存维护
+
+不负责：
+- 语义搜索（由 RAGService 负责）
+- 搜索结果融合（由 UnifiedSearchService 负责）
+- Token 预算管理（由 UnifiedSearchService 负责）
+
+被调用方：
+- UnifiedSearchService: 统一搜索门面，协调精确搜索和语义搜索
+- IDE 功能: 文件定位、符号跳转等 IDE 原生功能
 
 初始化顺序：
 - Phase 3 延迟初始化，依赖 FileManager、Logger
@@ -25,9 +40,6 @@
     
     # 按符号搜索
     results = search_service.search_symbols("LM741", file_types=[".cir"])
-    
-    # 主搜索入口
-    results = search_service.search_files("opamp", options)
 """
 
 import threading

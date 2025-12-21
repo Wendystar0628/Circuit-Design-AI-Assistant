@@ -1,20 +1,29 @@
-# RAG Service - Stateless RAG Retrieval
+# RAG Service - Semantic Search Engine (Domain Layer)
 """
-RAG 检索服务 - 无状态检索服务
+RAG 检索服务 - 语义搜索引擎（领域层）
 
-职责：
-- 执行 RAG 检索，返回检索结果
-- 获取索引状态
-- 不缓存检索结果
+架构定位：
+- 作为统一搜索架构的语义搜索引擎
+- 被 UnifiedSearchService 调用，不直接暴露给 LLM 工具层
+- 专注于非结构化文档的语义检索能力
+
+职责边界：
+- 向量语义检索（基于 embedding 的相似度搜索）
+- 混合检索（向量 + BM25）
+- 知识库索引管理
+
+不负责：
+- 精确搜索（由 FileSearchService 负责）
+- 搜索结果融合（由 UnifiedSearchService 负责）
+- Token 预算管理（由 UnifiedSearchService 负责）
+
+被调用方：
+- UnifiedSearchService: 统一搜索门面，协调精确搜索和语义搜索
 
 设计原则：
 - 纯函数式：输入查询 → 执行检索 → 返回结果
 - 无状态：检索结果不缓存在内存中
 - 向量索引由 ChromaDB 管理，不在本服务中持有
-
-被调用方：
-- rag_node: 执行知识检索
-- free_work_node: 自由对话时的知识增强
 
 注意：
 - 完整实现在阶段五

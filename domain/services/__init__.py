@@ -12,10 +12,15 @@
 - design_service: 设计目标读写服务
 - simulation_service: 仿真执行服务（阶段四实现）
 - context_service: 对话历史读写服务（阶段三实现）
-- rag_service: RAG 检索服务（阶段五实现）
+- rag_service: RAG 语义检索服务（阶段五实现）
 - iteration_history_service: 迭代历史视图服务（从 SqliteSaver 查询）
 - snapshot_service: 全量快照服务（项目文件备份与恢复）
 - orphaned_data_cleaner: 孤儿数据清理服务（撤回后清理无引用文件）
+
+搜索系统架构：
+- UnifiedSearchService: 统一搜索门面（domain/search/）
+- FileSearchService: 精确搜索引擎（infrastructure/file_intelligence/search/）
+- RAGService: 语义搜索引擎（domain/services/rag_service.py）
 """
 
 from domain.services.design_service import (

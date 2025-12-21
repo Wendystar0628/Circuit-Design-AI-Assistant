@@ -511,6 +511,52 @@ EVENT_DESIGN_ACCEPTED = "design_accepted"
 # 设计被停止
 EVENT_DESIGN_STOPPED = "design_stopped"
 
+# ============================================================
+# 信息卡片事件（阶段九）
+# ============================================================
+
+# 信息卡片添加
+# 携带数据：
+#   - card_id: str - 卡片 ID
+#   - category: str - 信息类别
+#   - card_type: str - 卡片类型
+#   - session_id: str - 所属会话 ID
+EVENT_INFO_CARD_ADDED = "info_panel.card_added"
+
+# 信息卡片更新
+# 携带数据：
+#   - card_id: str - 卡片 ID
+#   - updates: dict - 更新的字段
+EVENT_INFO_CARD_UPDATED = "info_panel.card_updated"
+
+# 信息卡片移除
+# 携带数据：
+#   - card_id: str - 卡片 ID
+EVENT_INFO_CARD_REMOVED = "info_panel.card_removed"
+
+# 信息卡片置顶
+# 携带数据：
+#   - card_id: str - 卡片 ID
+#   - is_pinned: bool - 是否置顶
+EVENT_INFO_CARD_PINNED = "info_panel.card_pinned"
+
+# 信息卡片批量加载完成（会话切换后）
+# 携带数据：
+#   - session_id: str - 会话 ID
+#   - card_count: int - 加载的卡片数量
+EVENT_INFO_CARDS_LOADED = "info_panel.cards_loaded"
+
+# 信息面板类别切换
+# 携带数据：
+#   - previous_category: str - 之前的类别
+#   - current_category: str - 当前类别
+EVENT_INFO_PANEL_CATEGORY_CHANGED = "info_panel.category_changed"
+
+# 信息面板清空
+# 携带数据：
+#   - category: str - 被清空的类别（若为 None 表示全部清空）
+EVENT_INFO_PANEL_CLEARED = "info_panel.cleared"
+
 
 # ============================================================
 # 关键事件列表（需要特殊保护）
@@ -635,6 +681,14 @@ __all__ = [
     "EVENT_DESIGN_COMPLETED",
     "EVENT_DESIGN_ACCEPTED",
     "EVENT_DESIGN_STOPPED",
+    # 信息卡片事件
+    "EVENT_INFO_CARD_ADDED",
+    "EVENT_INFO_CARD_UPDATED",
+    "EVENT_INFO_CARD_REMOVED",
+    "EVENT_INFO_CARD_PINNED",
+    "EVENT_INFO_CARDS_LOADED",
+    "EVENT_INFO_PANEL_CATEGORY_CHANGED",
+    "EVENT_INFO_PANEL_CLEARED",
     # 关键事件列表
     "CRITICAL_EVENTS",
 ]

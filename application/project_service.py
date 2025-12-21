@@ -65,6 +65,10 @@ MIN_DISK_SPACE_MB = 100
 HIDDEN_DIR_STRUCTURE = [
     "snapshots",      # 全量快照目录
     "sim_results",    # 仿真结果目录
+    "conversations",  # 会话数据目录（消息和信息卡片）
+    "bom_reports",    # BOM 报告目录
+    "diffs",          # Diff 文件目录
+    "datasheets",     # 元器件数据手册目录
 ]
 
 # 推荐的项目目录结构

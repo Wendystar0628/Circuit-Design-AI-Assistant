@@ -60,8 +60,11 @@ SVC_CREDENTIAL_MANAGER = "credential_manager"
 # 配置管理器 - 统一配置访问
 SVC_CONFIG_MANAGER = "config_manager"
 
-# 文件管理器 - 统一文件操作
+# 文件管理器 - 统一文件操作（同步底层接口）
 SVC_FILE_MANAGER = "file_manager"
+
+# 异步文件操作 - 应用层文件操作接口（UI 层和 LangGraph 节点使用）
+SVC_ASYNC_FILE_OPS = "async_file_ops"
 
 # 文件搜索服务 - 精确文件搜索（正则、模糊、符号）
 SVC_FILE_SEARCH_SERVICE = "file_search_service"
@@ -168,6 +171,7 @@ __all__ = [
     "SVC_CREDENTIAL_MANAGER",
     "SVC_CONFIG_MANAGER",
     "SVC_FILE_MANAGER",
+    "SVC_ASYNC_FILE_OPS",
     "SVC_FILE_SEARCH_SERVICE",
     "SVC_UNIFIED_SEARCH_SERVICE",
     "SVC_LLM_CLIENT",

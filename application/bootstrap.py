@@ -453,7 +453,7 @@ def _delayed_init():
         # --------------------------------------------------------
         # 3.2 FileManager 初始化
         # 依赖：Logger、EventBus
-        # 职责：提供统一文件操作接口
+        # 职责：提供统一文件操作接口（同步底层接口）
         # --------------------------------------------------------
         from infrastructure.persistence.file_manager import FileManager
         from shared.service_names import SVC_FILE_MANAGER
@@ -463,6 +463,18 @@ def _delayed_init():
         ServiceLocator.register(SVC_FILE_MANAGER, file_manager)
         if _logger:
             _logger.info("Phase 3.2 FileManager 初始化完成")
+
+        # --------------------------------------------------------
+        # 3.2.0.1 AsyncFileOps 初始化
+        # 依赖：FileManager
+        # 职责：异步文件操作门面（应用层接口，供 UI 和 LangGraph 节点使用）
+        # --------------------------------------------------------
+        from infrastructure.persistence.async_file_ops import AsyncFileOps
+        from shared.service_names import SVC_ASYNC_FILE_OPS
+        async_file_ops = AsyncFileOps(file_manager)
+        ServiceLocator.register(SVC_ASYNC_FILE_OPS, async_file_ops)
+        if _logger:
+            _logger.info("Phase 3.2.0.1 AsyncFileOps 初始化完成")
 
         # --------------------------------------------------------
         # 3.2.1 FileSearchService 初始化

@@ -63,6 +63,12 @@ from domain.services.snapshot_service import (
     list_snapshots,
     delete_snapshot,
     cleanup_old_snapshots,
+    # 异步方法（应用层接口）
+    create_snapshot_async,
+    restore_snapshot_async,
+    list_snapshots_async,
+    delete_snapshot_async,
+    cleanup_old_snapshots_async,
 )
 
 from domain.services.orphaned_data_cleaner import (
@@ -97,13 +103,19 @@ __all__ = [
     "get_iteration_history",
     "get_iteration_detail",
     "get_latest_iteration",
-    # Snapshot Service
+    # Snapshot Service (同步方法 - 底层接口)
     "SnapshotInfo",
     "create_snapshot",
     "restore_snapshot",
     "list_snapshots",
     "delete_snapshot",
     "cleanup_old_snapshots",
+    # Snapshot Service (异步方法 - 应用层接口)
+    "create_snapshot_async",
+    "restore_snapshot_async",
+    "list_snapshots_async",
+    "delete_snapshot_async",
+    "cleanup_old_snapshots_async",
     # Orphaned Data Cleaner
     "CleanupResult",
     "cleanup_orphaned_data",

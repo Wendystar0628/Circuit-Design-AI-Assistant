@@ -11,6 +11,12 @@
 - 无状态设计，不持有内存数据
 - 简单的保留策略：只保留最近 N 个快照（默认 10 个）
 
+⚠️ 接口层级说明：
+- 同步方法（create_snapshot, restore_snapshot 等）是底层接口
+- 异步方法（create_snapshot_async, restore_snapshot_async 等）是应用层接口
+- LangGraph 节点和 UI 层必须使用异步方法，避免阻塞事件循环
+- 异步方法通过 asyncio.to_thread() 将 shutil 操作卸载到线程池
+
 存储路径：
 - 快照目录：{project_root}/.circuit_ai/snapshots/{snapshot_id}/
 - 每个快照是项目文件的完整副本
@@ -23,29 +29,17 @@
 - simulation_results/ - 仿真结果（可重新生成）
 
 被调用方：
-- user_checkpoint_node: 用户确认时创建快照
-- undo_node: 撤回时恢复快照
+- user_checkpoint_node: 用户确认时创建快照（使用 create_snapshot_async）
+- undo_node: 撤回时恢复快照（使用 restore_snapshot_async）
 
 使用示例：
     from domain.services import snapshot_service
     
-    # 创建快照
-    path = snapshot_service.create_snapshot(
-        project_root="/path/to/project",
-        snapshot_id="iter_001"
-    )
+    # ❌ 错误：在异步上下文中使用同步方法
+    path = snapshot_service.create_snapshot(project_root, snapshot_id)  # 阻塞
     
-    # 恢复快照
-    snapshot_service.restore_snapshot(
-        project_root="/path/to/project",
-        snapshot_id="iter_001"
-    )
-    
-    # 清理旧快照
-    deleted = snapshot_service.cleanup_old_snapshots(
-        project_root="/path/to/project",
-        keep_count=10
-    )
+    # ✅ 正确：使用异步方法
+    path = await snapshot_service.create_snapshot_async(project_root, snapshot_id)
 """
 
 import os
@@ -586,6 +580,117 @@ __all__ = [
     "get_snapshot_info",
     "snapshot_exists",
     "get_snapshots_dir",
+    # 异步方法
+    "create_snapshot_async",
+    "restore_snapshot_async",
+    "list_snapshots_async",
+    "delete_snapshot_async",
+    "cleanup_old_snapshots_async",
+    # 常量
     "SNAPSHOTS_DIR",
     "DEFAULT_KEEP_COUNT",
 ]
+
+
+# ============================================================
+# 异步包装方法（应用层接口）
+# ============================================================
+
+import asyncio
+
+
+async def create_snapshot_async(
+    project_root: str,
+    snapshot_id: str,
+    *,
+    ignore_patterns: Optional[List[str]] = None,
+) -> str:
+    """
+    异步创建项目文件的全量快照
+    
+    通过 asyncio.to_thread() 将 shutil.copytree 卸载到线程池，
+    确保主线程（事件循环）不被阻塞，UI 保持响应。
+    
+    Args:
+        project_root: 项目根目录路径
+        snapshot_id: 快照标识
+        ignore_patterns: 额外的忽略模式列表
+        
+    Returns:
+        str: 快照目录的相对路径
+    """
+    return await asyncio.to_thread(
+        create_snapshot,
+        project_root,
+        snapshot_id,
+        ignore_patterns=ignore_patterns
+    )
+
+
+async def restore_snapshot_async(
+    project_root: str,
+    snapshot_id: str,
+    *,
+    backup_current: bool = True,
+) -> None:
+    """
+    异步从快照恢复项目文件
+    
+    通过 asyncio.to_thread() 将文件恢复操作卸载到线程池。
+    
+    Args:
+        project_root: 项目根目录路径
+        snapshot_id: 快照标识
+        backup_current: 是否在恢复前备份当前状态
+    """
+    return await asyncio.to_thread(
+        restore_snapshot,
+        project_root,
+        snapshot_id,
+        backup_current=backup_current
+    )
+
+
+async def list_snapshots_async(project_root: str) -> List[SnapshotInfo]:
+    """
+    异步列出所有快照
+    
+    Args:
+        project_root: 项目根目录路径
+        
+    Returns:
+        List[SnapshotInfo]: 快照信息列表
+    """
+    return await asyncio.to_thread(list_snapshots, project_root)
+
+
+async def delete_snapshot_async(project_root: str, snapshot_id: str) -> None:
+    """
+    异步删除指定快照
+    
+    Args:
+        project_root: 项目根目录路径
+        snapshot_id: 快照标识
+    """
+    return await asyncio.to_thread(delete_snapshot, project_root, snapshot_id)
+
+
+async def cleanup_old_snapshots_async(
+    project_root: str,
+    keep_count: int = DEFAULT_KEEP_COUNT,
+) -> int:
+    """
+    异步清理旧快照
+    
+    Args:
+        project_root: 项目根目录路径
+        keep_count: 保留的快照数量
+        
+    Returns:
+        int: 删除的快照数量
+    """
+    return await asyncio.to_thread(
+        cleanup_old_snapshots,
+        project_root,
+        keep_count
+    )

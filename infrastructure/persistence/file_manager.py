@@ -1,11 +1,17 @@
 # File Manager - Unified File Operations
 """
-统一文件操作管理器
+统一文件操作管理器（同步底层接口）
 
 职责：
 - 提供统一、安全的文件系统操作接口
 - 所有文件操作必须通过此模块进行
 - 实现原子性写入、文件锁定、安全校验
+
+⚠️ 接口层级说明：
+- 本模块是同步底层接口，所有方法都是阻塞的
+- 禁止 UI 线程直接调用本模块的任何方法
+- 应用层（UI、LangGraph 节点）必须通过 AsyncFileOps 访问文件
+- 仅供 AsyncFileOps 内部调用，或在已确认非 UI 线程的场景使用
 
 初始化顺序：
 - Phase 3.2（延迟初始化），依赖 Logger、EventBus
@@ -16,22 +22,13 @@
 - 文件变更自动触发 EVENT_FILE_CHANGED 事件
 
 使用示例：
-    from shared.service_locator import ServiceLocator
-    from shared.service_names import SVC_FILE_MANAGER
+    # ❌ 错误：UI 线程直接调用同步方法
+    content = file_manager.read_file("main.cir")  # 会阻塞 UI
     
-    file_manager = ServiceLocator.get(SVC_FILE_MANAGER)
-    
-    # 读取文件
-    content = file_manager.read_file("main.cir")
-    
-    # 创建新文件（幂等性检查）
-    file_manager.create_file("new_file.cir", content)
-    
-    # 定位修改文件
-    file_manager.patch_file("main.cir", "old_value", "new_value")
-    
-    # 整体替换文件
-    file_manager.update_file("main.cir", new_content)
+    # ✅ 正确：通过 AsyncFileOps 异步调用
+    from infrastructure.persistence.async_file_ops import AsyncFileOps
+    async_ops = AsyncFileOps()
+    content = await async_ops.read_file_async("main.cir")  # 不阻塞 UI
 """
 
 import hashlib

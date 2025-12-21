@@ -90,6 +90,9 @@ class SnapshotInfo:
     path: str
     """快照路径"""
 
+    iteration_count: int = 0
+    """对应的迭代次数（从快照 ID 解析）"""
+
     def to_dict(self) -> dict:
         """转换为字典"""
         return {
@@ -98,6 +101,7 @@ class SnapshotInfo:
             "size_bytes": self.size_bytes,
             "file_count": self.file_count,
             "path": self.path,
+            "iteration_count": self.iteration_count,
         }
 
 
@@ -376,6 +380,98 @@ def get_snapshots_dir(project_root: str) -> str:
     return str(Path(project_root).resolve() / SNAPSHOTS_DIR)
 
 
+def get_previous_snapshot(project_root: str) -> Optional[SnapshotInfo]:
+    """
+    获取上一个快照（用于线性撤回）
+    
+    返回按时间排序的第二新的快照（最新的是当前迭代，上一个是撤回目标）
+    
+    Args:
+        project_root: 项目根目录路径
+        
+    Returns:
+        Optional[SnapshotInfo]: 上一个快照信息，若不存在返回 None
+    """
+    snapshots = list_snapshots(project_root)
+    
+    # 过滤掉临时快照（以 _ 开头）
+    regular_snapshots = [s for s in snapshots if not s.snapshot_id.startswith("_")]
+    
+    # 需要至少 2 个快照才能撤回
+    if len(regular_snapshots) < 2:
+        return None
+    
+    # 返回第二新的快照（索引 1，因为已按时间倒序排列）
+    return regular_snapshots[1]
+
+
+def pop_snapshot(project_root: str) -> Optional[str]:
+    """
+    弹出并删除最新快照（撤回后清理）
+    
+    用于撤回操作完成后，删除当前迭代的快照。
+    
+    Args:
+        project_root: 项目根目录路径
+        
+    Returns:
+        Optional[str]: 被删除的快照 ID，若无快照返回 None
+    """
+    snapshots = list_snapshots(project_root)
+    
+    # 过滤掉临时快照
+    regular_snapshots = [s for s in snapshots if not s.snapshot_id.startswith("_")]
+    
+    if not regular_snapshots:
+        return None
+    
+    # 删除最新的快照（索引 0）
+    latest = regular_snapshots[0]
+    try:
+        delete_snapshot(project_root, latest.snapshot_id)
+        return latest.snapshot_id
+    except Exception:
+        return None
+
+
+def generate_snapshot_id(iteration_count: int) -> str:
+    """
+    生成快照 ID
+    
+    格式：iter_{iteration_count:03d}_{timestamp}
+    示例：iter_001_20241220_143022
+    
+    Args:
+        iteration_count: 迭代次数
+        
+    Returns:
+        str: 快照 ID
+    """
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return f"iter_{iteration_count:03d}_{timestamp}"
+
+
+def parse_iteration_from_snapshot_id(snapshot_id: str) -> int:
+    """
+    从快照 ID 解析迭代次数
+    
+    Args:
+        snapshot_id: 快照 ID
+        
+    Returns:
+        int: 迭代次数，解析失败返回 0
+    """
+    try:
+        # 格式：iter_001_20241220_143022
+        if snapshot_id.startswith("iter_"):
+            parts = snapshot_id.split("_")
+            if len(parts) >= 2:
+                return int(parts[1])
+    except (ValueError, IndexError):
+        pass
+    return 0
+
+
 # ============================================================
 # 内部辅助函数
 # ============================================================
@@ -522,12 +618,16 @@ def _get_snapshot_info(snapshot_dir: Path) -> Optional[SnapshotInfo]:
     except Exception:
         pass
 
+    # 解析迭代次数
+    iteration_count = parse_iteration_from_snapshot_id(snapshot_id)
+
     return SnapshotInfo(
         snapshot_id=snapshot_id,
         timestamp=timestamp,
         size_bytes=size_bytes,
         file_count=file_count,
         path=str(snapshot_dir),
+        iteration_count=iteration_count,
     )
 
 
@@ -580,6 +680,11 @@ __all__ = [
     "get_snapshot_info",
     "snapshot_exists",
     "get_snapshots_dir",
+    # 线性撤回支持
+    "get_previous_snapshot",
+    "pop_snapshot",
+    "generate_snapshot_id",
+    "parse_iteration_from_snapshot_id",
     # 异步方法
     "create_snapshot_async",
     "restore_snapshot_async",

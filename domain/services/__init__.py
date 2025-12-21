@@ -14,8 +14,8 @@
 - context_service: 对话历史读写服务（阶段三实现）
 - rag_service: RAG 语义检索服务（阶段五实现）
 - iteration_history_service: 迭代历史视图服务（从 SqliteSaver 查询）
-- snapshot_service: 全量快照服务（项目文件备份与恢复）
-- orphaned_data_cleaner: 孤儿数据清理服务（撤回后清理无引用文件）
+- snapshot_service: 全量快照服务（项目文件备份与恢复，线性快照栈）
+- recovery_log_service: WAL 恢复日志服务（崩溃恢复）
 
 搜索系统架构：
 - UnifiedSearchService: 统一搜索门面（domain/search/）
@@ -63,6 +63,10 @@ from domain.services.snapshot_service import (
     list_snapshots,
     delete_snapshot,
     cleanup_old_snapshots,
+    get_previous_snapshot,
+    pop_snapshot,
+    generate_snapshot_id,
+    parse_iteration_from_snapshot_id,
     # 异步方法（应用层接口）
     create_snapshot_async,
     restore_snapshot_async,
@@ -71,11 +75,14 @@ from domain.services.snapshot_service import (
     cleanup_old_snapshots_async,
 )
 
-from domain.services.orphaned_data_cleaner import (
-    CleanupResult,
-    cleanup as cleanup_orphaned_data,
-    collect_referenced_paths,
-    scan_orphaned_files,
+from domain.services.recovery_log_service import (
+    RecoveryLog,
+    write_log as write_recovery_log,
+    read_log as read_recovery_log,
+    delete_log as delete_recovery_log,
+    has_pending_recovery,
+    update_phase as update_recovery_phase,
+    create_undo_log,
 )
 
 
@@ -110,15 +117,22 @@ __all__ = [
     "list_snapshots",
     "delete_snapshot",
     "cleanup_old_snapshots",
+    "get_previous_snapshot",
+    "pop_snapshot",
+    "generate_snapshot_id",
+    "parse_iteration_from_snapshot_id",
     # Snapshot Service (异步方法 - 应用层接口)
     "create_snapshot_async",
     "restore_snapshot_async",
     "list_snapshots_async",
     "delete_snapshot_async",
     "cleanup_old_snapshots_async",
-    # Orphaned Data Cleaner
-    "CleanupResult",
-    "cleanup_orphaned_data",
-    "collect_referenced_paths",
-    "scan_orphaned_files",
+    # Recovery Log Service
+    "RecoveryLog",
+    "write_recovery_log",
+    "read_recovery_log",
+    "delete_recovery_log",
+    "has_pending_recovery",
+    "update_recovery_phase",
+    "create_undo_log",
 ]

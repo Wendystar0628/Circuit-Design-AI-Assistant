@@ -6,11 +6,13 @@
 - 管理追踪上下文的创建、传递、恢复
 - 使用 contextvars 实现协程安全的上下文传递
 - 解决 LangGraph 节点边界的上下文穿透问题
+- 支持 interrupt/resume 场景的追踪链路连续性
 
 设计说明：
 - contextvars 在同一协程链中自动传递
 - LangGraph 节点是独立协程，需要通过 config["configurable"] 手动传递
 - PyQt 信号在同线程内不会丢失 contextvars
+- interrupt/resume 场景通过 GraphState 持久化追踪上下文
 
 使用示例：
     # 开始追踪链路
@@ -26,8 +28,19 @@
         TracingContext.restore_from_langgraph(config)
         async with TracingContext.span("my_node", "graph") as span:
             ...
+    
+    # interrupt/resume 场景：从 GraphState 恢复
+    async def action_node(state, config):
+        restored = TracingContext.restore_from_graph_state(state)
+        if not restored:
+            TracingContext.restore_from_langgraph(config)
+        async with TracingContext.span("action_node", "graph") as span:
+            if restored:
+                span.add_metadata("resumed_from_checkpoint", True)
+            ...
 """
 
+import traceback
 import uuid
 from contextvars import ContextVar, copy_context
 from contextlib import asynccontextmanager
@@ -244,8 +257,10 @@ class TracingContext:
             if not span_ctx._finished:
                 span_ctx.finish(TraceStatus.SUCCESS)
         except Exception as e:
-            # 异常时标记错误
+            # 异常时标记错误，记录完整堆栈
             if not span_ctx._finished:
+                error_tb = traceback.format_exc()
+                span_ctx.record.error_traceback = error_tb
                 span_ctx.finish(TraceStatus.ERROR, error_message=str(e))
             raise
         finally:
@@ -329,8 +344,10 @@ class TracingContext:
             if not span_ctx._finished:
                 span_ctx.finish(TraceStatus.SUCCESS)
         except Exception as e:
-            # 异常时标记错误
+            # 异常时标记错误，记录完整堆栈
             if not span_ctx._finished:
+                error_tb = traceback.format_exc()
+                span_ctx.record.error_traceback = error_tb
                 span_ctx.finish(TraceStatus.ERROR, error_message=str(e))
             raise
         finally:
@@ -395,6 +412,164 @@ class TracingContext:
             _current_span_id.set(parent_span_id)
             # 重建栈（仅包含父 span）
             _span_stack.set([parent_span_id])
+    
+    # --------------------------------------------------------
+    # GraphState 持久化（支持 interrupt/resume）
+    # --------------------------------------------------------
+    
+    @classmethod
+    def get_context_for_graph_state(cls) -> Dict[str, Any]:
+        """
+        导出上下文到 GraphState（用于 interrupt 前保存）
+        
+        在 user_checkpoint_node 暂停前调用，将追踪上下文保存到 GraphState。
+        
+        Returns:
+            dict: 包含 _trace_id 和 _last_span_id 的字典
+            
+        Example:
+            async def user_checkpoint_node(state, config):
+                # 保存追踪上下文到 GraphState
+                trace_context = TracingContext.get_context_for_graph_state()
+                return {
+                    **state,
+                    **trace_context,
+                }
+        """
+        return {
+            "_trace_id": _current_trace_id.get(),
+            "_last_span_id": _current_span_id.get(),
+        }
+    
+    @classmethod
+    def restore_from_graph_state(cls, state: Dict[str, Any]) -> bool:
+        """
+        从 GraphState 恢复上下文（用于 resume 后恢复）
+        
+        在 action_node 入口处调用，从 GraphState 恢复追踪上下文。
+        优先于 restore_from_langgraph 调用。
+        
+        Args:
+            state: GraphState 字典
+            
+        Returns:
+            bool: 是否成功恢复（True 表示从 checkpoint 恢复）
+            
+        Example:
+            async def action_node(state, config):
+                # 优先从 GraphState 恢复（处理 resume 场景）
+                restored = TracingContext.restore_from_graph_state(state)
+                if not restored:
+                    # 正常流程从 config 恢复
+                    TracingContext.restore_from_langgraph(config)
+                
+                async with TracingContext.span("action_node", "graph") as span:
+                    if restored:
+                        span.add_metadata("resumed_from_checkpoint", True)
+                    ...
+        """
+        trace_id = state.get("_trace_id")
+        last_span_id = state.get("_last_span_id")
+        
+        if trace_id:
+            _current_trace_id.set(trace_id)
+            if last_span_id:
+                _current_span_id.set(last_span_id)
+                _span_stack.set([last_span_id])
+            return True
+        return False
+    
+    # --------------------------------------------------------
+    # 显式父 Span 传递（用于并行执行）
+    # --------------------------------------------------------
+    
+    @classmethod
+    @asynccontextmanager
+    async def span_with_parent(
+        cls,
+        operation_name: str,
+        service_name: str,
+        parent_span_id: str,
+        trace_id: Optional[str] = None,
+        inputs: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ):
+        """
+        创建子 Span（显式指定父 Span）
+        
+        用于并行执行场景，避免 contextvars 在 asyncio.gather 中的潜在问题。
+        
+        Args:
+            operation_name: 操作名称
+            service_name: 服务名称
+            parent_span_id: 显式指定的父 Span ID
+            trace_id: 追踪 ID（可选，默认使用当前上下文）
+            inputs: 输入参数
+            metadata: 元数据
+            
+        Yields:
+            SpanContext: Span 上下文对象
+            
+        Example:
+            # 并行执行工具时显式传递父 span
+            async def execute_tools_parallel(tool_calls, parent_span_id):
+                async def execute_with_context(tc):
+                    async with TracingContext.span_with_parent(
+                        f"tool_{tc['name']}", 
+                        "tool_executor",
+                        parent_span_id=parent_span_id
+                    ) as span:
+                        return await execute_tool(tc)
+                
+                return await asyncio.gather(*[
+                    execute_with_context(tc) for tc in tool_calls
+                ])
+        """
+        # 使用显式 trace_id 或当前上下文
+        actual_trace_id = trace_id or _current_trace_id.get()
+        
+        if actual_trace_id is None:
+            # 无追踪上下文，创建新的
+            async with cls.trace(operation_name, service_name, inputs, metadata) as ctx:
+                yield ctx
+            return
+        
+        # 生成新的 span_id
+        span_id = _generate_span_id()
+        
+        # 创建 Span 记录（使用显式父 span）
+        record = SpanRecord(
+            trace_id=actual_trace_id,
+            span_id=span_id,
+            parent_span_id=parent_span_id,  # 显式指定
+            operation_name=operation_name,
+            service_name=service_name,
+            inputs=inputs,
+            metadata=metadata,
+        )
+        
+        # 更新上下文
+        span_token = _current_span_id.set(span_id)
+        stack = _span_stack.get().copy()
+        stack.append(span_id)
+        stack_token = _span_stack.set(stack)
+        
+        span_ctx = SpanContext(record=record)
+        
+        try:
+            yield span_ctx
+            if not span_ctx._finished:
+                span_ctx.finish(TraceStatus.SUCCESS)
+        except Exception as e:
+            if not span_ctx._finished:
+                error_tb = traceback.format_exc()
+                span_ctx.record.error_traceback = error_tb
+                span_ctx.finish(TraceStatus.ERROR, error_message=str(e))
+            raise
+        finally:
+            _current_span_id.reset(span_token)
+            _span_stack.reset(stack_token)
+            cls._notify_span_finished(span_ctx.record)
     
     # --------------------------------------------------------
     # 跨线程上下文传递（用于 QMetaObject.invokeMethod）

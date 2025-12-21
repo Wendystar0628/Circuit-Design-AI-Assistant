@@ -452,6 +452,9 @@ class DevToolsPanel(QWidget):
             if span.error_message:
                 detail["error"] = span.error_message
             
+            if span.error_traceback:
+                detail["error_traceback"] = span.error_traceback
+            
             if span.inputs:
                 detail["inputs"] = span.inputs
             
@@ -560,10 +563,150 @@ class DevToolsPanel(QWidget):
             trace_id = data.get("trace_id")
             if trace_id:
                 asyncio.create_task(self._show_trace_detail(trace_id))
+                # 展开加载子 Spans
+                asyncio.create_task(self._load_trace_spans(item, trace_id))
         elif item_type == "span":
             span_id = data.get("span_id")
             if span_id:
                 asyncio.create_task(self._show_span_detail(span_id))
+                # 展开加载子 Spans
+                asyncio.create_task(self._load_child_spans(item, span_id))
+    
+    async def _load_trace_spans(self, parent_item: QTreeWidgetItem, trace_id: str):
+        """加载追踪的所有 Spans 并构建树"""
+        # 避免重复加载
+        if parent_item.childCount() > 0:
+            return
+        
+        store = self._get_tracing_store()
+        if not store:
+            return
+        
+        try:
+            spans = await store.get_trace(trace_id)
+            if not spans:
+                return
+            
+            # 构建 span_id -> span 映射
+            span_map = {span.span_id: span for span in spans}
+            
+            # 构建 parent_span_id -> children 映射
+            children_map: Dict[str, List] = {}
+            root_spans = []
+            
+            for span in spans:
+                if span.parent_span_id:
+                    if span.parent_span_id not in children_map:
+                        children_map[span.parent_span_id] = []
+                    children_map[span.parent_span_id].append(span)
+                else:
+                    root_spans.append(span)
+            
+            # 递归构建树
+            def build_span_tree(parent: QTreeWidgetItem, span):
+                span_item = self._create_span_item(span)
+                parent.addChild(span_item)
+                
+                # 添加子 Spans
+                if span.span_id in children_map:
+                    for child_span in children_map[span.span_id]:
+                        build_span_tree(span_item, child_span)
+            
+            # 添加根 Spans
+            for root_span in root_spans:
+                build_span_tree(parent_item, root_span)
+            
+            # 展开第一层
+            parent_item.setExpanded(True)
+            
+        except Exception as e:
+            self._log_error(f"加载追踪 Spans 失败: {e}")
+    
+    async def _load_child_spans(self, parent_item: QTreeWidgetItem, span_id: str):
+        """加载指定 Span 的子 Spans"""
+        # 避免重复加载
+        if parent_item.childCount() > 0:
+            return
+        
+        store = self._get_tracing_store()
+        if not store:
+            return
+        
+        try:
+            children = await store.get_child_spans(span_id, include_data=False)
+            if not children:
+                return
+            
+            for child_span in children:
+                span_item = self._create_span_item(child_span)
+                parent_item.addChild(span_item)
+                
+                # 检查是否有孙子节点（用于显示展开箭头）
+                grandchildren = await store.get_child_spans(
+                    child_span.span_id, include_data=False
+                )
+                if grandchildren:
+                    # 添加占位符，点击时再加载
+                    placeholder = QTreeWidgetItem(["..."])
+                    span_item.addChild(placeholder)
+            
+            parent_item.setExpanded(True)
+            
+        except Exception as e:
+            self._log_error(f"加载子 Spans 失败: {e}")
+    
+    def _create_span_item(self, span) -> QTreeWidgetItem:
+        """创建 Span 树节点"""
+        # 格式化耗时
+        duration = span.duration_ms()
+        duration_str = f"{duration:.0f}ms" if duration else "running"
+        
+        # 状态图标
+        status_icon = STATUS_ICONS.get(span.status, "")
+        
+        # 服务名称标记
+        service_tag = f"[{span.service_name}]" if span.service_name else ""
+        
+        # 检查是否从 checkpoint 恢复
+        resumed_tag = ""
+        if span.metadata and span.metadata.get("resumed_from_checkpoint"):
+            resumed_tag = " ⟲"  # 恢复标记
+        
+        # 创建节点
+        item = QTreeWidgetItem([
+            f"{service_tag} {span.operation_name}{resumed_tag}",
+            duration_str,
+            status_icon,
+        ])
+        
+        # 存储数据
+        item.setData(0, Qt.ItemDataRole.UserRole, {
+            "type": "span",
+            "span_id": span.span_id,
+            "trace_id": span.trace_id,
+        })
+        
+        # 设置颜色
+        color = STATUS_COLORS.get(span.status)
+        if color:
+            item.setForeground(2, QBrush(color))
+        
+        # 错误背景
+        if span.status == TraceStatus.ERROR:
+            for col in range(3):
+                item.setBackground(col, QBrush(ERROR_BG_COLOR))
+        
+        # 工具提示
+        tooltip_lines = [
+            f"Span ID: {span.span_id}",
+            f"Service: {span.service_name}",
+            f"Status: {span.status.value}",
+        ]
+        if span.error_message:
+            tooltip_lines.append(f"Error: {span.error_message}")
+        item.setToolTip(0, "\n".join(tooltip_lines))
+        
+        return item
     
     def _on_spans_flushed(self, event_data: Dict[str, Any]):
         """Spans 刷新完成事件"""

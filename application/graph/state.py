@@ -200,6 +200,16 @@ class GraphState:
     """连续修复尝试次数（用于错误修复熔断机制）"""
     
     # ============================================================
+    # 追踪上下文（支持 interrupt/resume 链路连续性）
+    # ============================================================
+    
+    _trace_id: str = ""
+    """追踪链路 ID（跨 interrupt/resume 保持）"""
+    
+    _last_span_id: str = ""
+    """最后一个 Span ID（用于 resume 后恢复父子关系）"""
+    
+    # ============================================================
     # 消息聚合（LangGraph 内部使用）
     # ============================================================
     
@@ -240,6 +250,9 @@ class GraphState:
             "checkpoint_count": self.checkpoint_count,
             "stagnation_count": self.stagnation_count,
             "consecutive_fix_attempts": self.consecutive_fix_attempts,
+            # 追踪上下文
+            "_trace_id": self._trace_id,
+            "_last_span_id": self._last_span_id,
             # 消息数量（不序列化完整消息）
             "message_count": len(self.messages) if self.messages else 0,
         }
@@ -267,6 +280,8 @@ class GraphState:
             checkpoint_count=data.get("checkpoint_count", 0),
             stagnation_count=data.get("stagnation_count", 0),
             consecutive_fix_attempts=data.get("consecutive_fix_attempts", 0),
+            _trace_id=data.get("_trace_id", ""),
+            _last_span_id=data.get("_last_span_id", ""),
             messages=data.get("messages", []),
         )
     

@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS spans (
     end_time REAL,
     status TEXT NOT NULL,
     error_message TEXT,
+    error_traceback TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 )
 """
@@ -60,13 +61,14 @@ _SQL_CREATE_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_spans_start_time ON spans(start_time)",
     "CREATE INDEX IF NOT EXISTS idx_spans_status ON spans(status)",
     "CREATE INDEX IF NOT EXISTS idx_spans_service ON spans(service_name)",
+    "CREATE INDEX IF NOT EXISTS idx_spans_parent ON spans(parent_span_id)",
 ]
 
 _SQL_INSERT_SPAN = """
 INSERT OR REPLACE INTO spans 
     (trace_id, span_id, parent_span_id, operation_name, 
-     service_name, start_time, end_time, status, error_message)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+     service_name, start_time, end_time, status, error_message, error_traceback)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 """
 
 _SQL_INSERT_SPAN_DATA = """
@@ -75,13 +77,13 @@ VALUES (?, ?, ?, ?)
 """
 
 _SQL_UPDATE_SPAN = """
-UPDATE spans SET end_time = ?, status = ?, error_message = ?
+UPDATE spans SET end_time = ?, status = ?, error_message = ?, error_traceback = ?
 WHERE span_id = ?
 """
 
 _SQL_GET_TRACE = """
 SELECT id, trace_id, span_id, parent_span_id, operation_name,
-       service_name, start_time, end_time, status, error_message, created_at
+       service_name, start_time, end_time, status, error_message, error_traceback, created_at
 FROM spans
 WHERE trace_id = ?
 ORDER BY start_time ASC
@@ -103,15 +105,23 @@ LIMIT ? OFFSET ?
 
 _SQL_GET_SPANS_BY_TRACE = """
 SELECT id, trace_id, span_id, parent_span_id, operation_name,
-       service_name, start_time, end_time, status, error_message, created_at
+       service_name, start_time, end_time, status, error_message, error_traceback, created_at
 FROM spans
 WHERE trace_id = ?
 ORDER BY start_time ASC
 """
 
+_SQL_GET_CHILD_SPANS = """
+SELECT id, trace_id, span_id, parent_span_id, operation_name,
+       service_name, start_time, end_time, status, error_message, error_traceback, created_at
+FROM spans
+WHERE parent_span_id = ?
+ORDER BY start_time ASC
+"""
+
 _SQL_GET_SPANS_BY_STATUS = """
 SELECT id, trace_id, span_id, parent_span_id, operation_name,
-       service_name, start_time, end_time, status, error_message, created_at
+       service_name, start_time, end_time, status, error_message, error_traceback, created_at
 FROM spans
 WHERE status = ?
 ORDER BY start_time DESC
@@ -261,6 +271,7 @@ class TracingStore:
         end_time: Optional[float] = None,
         status: Optional[TraceStatus] = None,
         error_message: Optional[str] = None,
+        error_traceback: Optional[str] = None,
     ) -> bool:
         """
         更新 Span 状态
@@ -270,6 +281,7 @@ class TracingStore:
             end_time: 结束时间
             status: 状态
             error_message: 错误信息
+            error_traceback: 错误堆栈
             
         Returns:
             bool: 是否成功
@@ -282,6 +294,7 @@ class TracingStore:
                         end_time,
                         status.value if status else None,
                         error_message,
+                        error_traceback,
                         span_id,
                     )
                 )
@@ -351,7 +364,8 @@ class TracingStore:
                 # 获取主表数据
                 cursor = await db.execute(
                     """SELECT id, trace_id, span_id, parent_span_id, operation_name,
-                              service_name, start_time, end_time, status, error_message, created_at
+                              service_name, start_time, end_time, status, error_message, 
+                              error_traceback, created_at
                        FROM spans WHERE span_id = ?""",
                     (span_id,)
                 )
@@ -476,6 +490,99 @@ class TracingStore:
         except Exception as e:
             self._log_error(f"按状态查询 Span 失败: {e}")
             return []
+    
+    async def get_child_spans(
+        self,
+        parent_span_id: str,
+        include_data: bool = False,
+    ) -> List[SpanRecord]:
+        """
+        获取指定 Span 的所有直接子 Span
+        
+        用于 DevToolsPanel 展开查看 Sub-Spans 树。
+        
+        Args:
+            parent_span_id: 父 Span ID
+            include_data: 是否包含输入输出数据
+            
+        Returns:
+            list: 子 Span 记录列表（按开始时间排序）
+        """
+        try:
+            async with aiosqlite.connect(self._db_path) as db:
+                db.row_factory = aiosqlite.Row
+                
+                cursor = await db.execute(_SQL_GET_CHILD_SPANS, (parent_span_id,))
+                rows = await cursor.fetchall()
+                
+                if not rows:
+                    return []
+                
+                if include_data:
+                    # 批量获取数据
+                    span_ids = [row["span_id"] for row in rows]
+                    data_map = await self._get_span_data_batch(db, span_ids)
+                    
+                    return [
+                        SpanRecord.from_db_row(
+                            tuple(row),
+                            data_map.get(row["span_id"])
+                        )
+                        for row in rows
+                    ]
+                else:
+                    return [
+                        SpanRecord.from_db_row(tuple(row), None)
+                        for row in rows
+                    ]
+                
+        except Exception as e:
+            self._log_error(f"获取子 Span 失败: {e}")
+            return []
+    
+    async def get_span_tree(
+        self,
+        root_span_id: str,
+        max_depth: int = 10,
+    ) -> Dict[str, Any]:
+        """
+        获取以指定 Span 为根的完整子树
+        
+        递归获取所有后代 Span，构建树形结构。
+        
+        Args:
+            root_span_id: 根 Span ID
+            max_depth: 最大递归深度
+            
+        Returns:
+            dict: 树形结构，包含 span 和 children 字段
+        """
+        try:
+            root_span = await self.get_span_with_data(root_span_id)
+            if not root_span:
+                return {}
+            
+            async def build_tree(span_id: str, depth: int) -> Dict[str, Any]:
+                if depth >= max_depth:
+                    return {"span_id": span_id, "children": [], "truncated": True}
+                
+                children = await self.get_child_spans(span_id, include_data=False)
+                child_trees = []
+                
+                for child in children:
+                    child_tree = await build_tree(child.span_id, depth + 1)
+                    child_tree["span"] = child
+                    child_trees.append(child_tree)
+                
+                return {"children": child_trees}
+            
+            tree = await build_tree(root_span_id, 0)
+            tree["span"] = root_span
+            return tree
+            
+        except Exception as e:
+            self._log_error(f"获取 Span 树失败: {e}")
+            return {}
     
     async def get_stats(self, hours: int = 24) -> Dict[str, Any]:
         """

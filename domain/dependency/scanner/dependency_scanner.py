@@ -77,10 +77,25 @@ class DependencyScanner:
     def _collect_circuit_files(self, project_root: Path) -> List[Path]:
         """收集项目中所有电路文件"""
         circuit_files = []
+        # 缓存已检测的虚拟环境目录，避免重复检测
+        venv_dirs: Set[Path] = set()
         
         for item in project_root.rglob("*"):
             # 跳过黑名单目录
             if any(part in self.config.blacklist_dirs for part in item.parts):
+                continue
+            
+            # 跳过虚拟环境目录（通过特征文件检测）
+            skip = False
+            for parent in item.parents:
+                if parent in venv_dirs:
+                    skip = True
+                    break
+                if parent not in venv_dirs and self.config.is_venv_directory(parent):
+                    venv_dirs.add(parent)
+                    skip = True
+                    break
+            if skip:
                 continue
             
             # 检查是否为电路文件

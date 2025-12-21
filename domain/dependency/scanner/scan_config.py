@@ -8,6 +8,7 @@
 """
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import List, Set
 
 
@@ -21,16 +22,19 @@ class ScanConfig:
     # 最大递归深度（防止循环引用导致无限递归）
     max_recursion_depth: int = 10
     
-    # 目录黑名单（不扫描这些目录）
+    # 目录名黑名单（不扫描这些目录）
     blacklist_dirs: Set[str] = field(default_factory=lambda: {
         ".git",
         ".circuit_ai",
         "__pycache__",
-        ".venv",
-        "venv",
         "node_modules",
         ".idea",
         ".vscode",
+    })
+    
+    # Python 虚拟环境特征文件（用于检测任意命名的虚拟环境）
+    venv_marker_files: Set[str] = field(default_factory=lambda: {
+        "pyvenv.cfg",  # Python 3.3+ venv 标志文件
     })
     
     # 支持的电路文件扩展名
@@ -60,6 +64,20 @@ class ScanConfig:
     def is_blacklisted(self, dir_name: str) -> bool:
         """检查目录是否在黑名单中"""
         return dir_name in self.blacklist_dirs
+    
+    def is_venv_directory(self, dir_path: Path) -> bool:
+        """
+        检测目录是否为 Python 虚拟环境
+        
+        通过特征文件检测，而非目录名，可识别任意命名的虚拟环境
+        """
+        for marker in self.venv_marker_files:
+            if (dir_path / marker).exists():
+                return True
+        # 备选检测：检查是否存在典型的虚拟环境结构
+        if (dir_path / "bin" / "python").exists() or (dir_path / "Scripts" / "python.exe").exists():
+            return True
+        return False
     
     def is_circuit_file(self, filename: str) -> bool:
         """检查是否为电路文件"""

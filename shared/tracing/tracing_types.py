@@ -43,6 +43,11 @@ class SpanType:
     LLM_STREAM = "llm_stream"          # LLM 流式输出
     CONTEXT_BUILD = "context_build"    # 上下文构建
     
+    # Agentic Loop 相关（解决黑盒问题）
+    AGENTIC_LOOP = "agentic_loop"           # Agentic Loop 循环整体
+    AGENTIC_LLM_ITER = "agentic_llm_iter"   # Agentic Loop 内的 LLM 迭代
+    AGENTIC_TOOL = "agentic_tool"           # Agentic Loop 内的工具执行
+    
     # 工具执行
     TOOL_EXECUTE = "tool_execute"      # 工具执行
     TOOL_VALIDATE = "tool_validate"    # 工具参数验证
@@ -94,6 +99,7 @@ class SpanRecord:
         inputs: 输入参数（JSON 序列化存储）
         outputs: 输出结果（JSON 序列化存储）
         error_message: 错误信息（仅 ERROR 状态时有值）
+        error_traceback: 完整错误堆栈（异常时记录，用于调试）
         metadata: 额外元数据（如 model_name, token_count 等）
     """
     trace_id: str
@@ -107,6 +113,7 @@ class SpanRecord:
     inputs: Optional[Dict[str, Any]] = None
     outputs: Optional[Dict[str, Any]] = None
     error_message: Optional[str] = None
+    error_traceback: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
 
     def duration_ms(self) -> Optional[float]:
@@ -138,6 +145,7 @@ class SpanRecord:
         status: TraceStatus = TraceStatus.SUCCESS,
         outputs: Optional[Dict[str, Any]] = None,
         error_message: Optional[str] = None,
+        error_traceback: Optional[str] = None,
     ) -> 'SpanRecord':
         """
         结束 Span 执行
@@ -146,6 +154,7 @@ class SpanRecord:
             status: 最终状态
             outputs: 输出结果
             error_message: 错误信息（仅 ERROR 状态时设置）
+            error_traceback: 完整错误堆栈（异常时记录）
             
         Returns:
             self: 返回自身，支持链式调用
@@ -156,6 +165,8 @@ class SpanRecord:
             self.outputs = outputs
         if error_message is not None:
             self.error_message = error_message
+        if error_traceback is not None:
+            self.error_traceback = error_traceback
         return self
 
     def set_input(self, inputs: Dict[str, Any]) -> 'SpanRecord':
@@ -187,7 +198,7 @@ class SpanRecord:
         
         对应字段：
         (trace_id, span_id, parent_span_id, operation_name, 
-         service_name, start_time, end_time, status, error_message)
+         service_name, start_time, end_time, status, error_message, error_traceback)
         """
         return (
             self.trace_id,
@@ -199,6 +210,7 @@ class SpanRecord:
             self.end_time,
             self.status.value,
             self.error_message,
+            self.error_traceback,
         )
 
     def to_data_tuple(self) -> tuple:
@@ -243,7 +255,8 @@ class SpanRecord:
         Args:
             main_row: spans 主表行
                 (id, trace_id, span_id, parent_span_id, operation_name,
-                 service_name, start_time, end_time, status, error_message, created_at)
+                 service_name, start_time, end_time, status, error_message, 
+                 error_traceback, created_at)
             data_row: span_data 表行（可选）
                 (span_id, inputs, outputs, metadata)
                 
@@ -252,7 +265,8 @@ class SpanRecord:
         """
         # 解析主表数据（跳过 id 和 created_at）
         (_, trace_id, span_id, parent_span_id, operation_name,
-         service_name, start_time, end_time, status_str, error_message, _) = main_row
+         service_name, start_time, end_time, status_str, error_message, 
+         error_traceback, _) = main_row
         
         # 解析数据表
         inputs = None
@@ -276,6 +290,7 @@ class SpanRecord:
             inputs=inputs,
             outputs=outputs,
             error_message=error_message,
+            error_traceback=error_traceback,
             metadata=metadata,
         )
 

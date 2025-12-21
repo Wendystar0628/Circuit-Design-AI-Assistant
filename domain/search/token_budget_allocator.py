@@ -10,14 +10,16 @@ Token 预算分配器
 设计原则：
 - 精确搜索优先（精确匹配通常更有价值）
 - 保留开头和结尾，中间省略（截断策略）
-- Token 估算委托给 token_counter 模块（单一信息源原则）
+- O(1) 截断性能：使用字符数快速估算，避免调用 tokenizer 的 O(N) 开销
 
 依赖模块：
-- domain/llm/token_counter.py - Token 计算的唯一服务
+- shared/constants/file_limits.py - 获取 CHARS_PER_TOKEN_ESTIMATE 常量
+- domain/llm/token_counter.py - 仅用于截断后的精确计数
 """
 
 from typing import List, Tuple
 
+from shared.constants.file_limits import CHARS_PER_TOKEN_ESTIMATE
 from domain.search.models.unified_search_result import (
     TokenBudgetConfig,
     ExactMatchResult,
@@ -25,11 +27,30 @@ from domain.search.models.unified_search_result import (
 )
 
 
-def _estimate_tokens(text: str) -> int:
+def _estimate_tokens_fast(text: str) -> int:
     """
-    估算文本的 Token 数量
+    快速估算文本的 Token 数量（O(1) 性能）
     
-    委托给 token_counter 模块，若不可用则回退到简单估算。
+    使用字符数快速估算，不调用 tokenizer。
+    用于截断判断阶段，避免对大文本的 O(N) 开销。
+    
+    Args:
+        text: 输入文本
+        
+    Returns:
+        int: 估算的 Token 数
+    """
+    if not text:
+        return 0
+    return max(1, len(text) // CHARS_PER_TOKEN_ESTIMATE)
+
+
+def _estimate_tokens_precise(text: str) -> int:
+    """
+    精确估算文本的 Token 数量
+    
+    委托给 token_counter 模块，若不可用则回退到快速估算。
+    仅用于截断后的结果，此时文本已经很短。
     
     Args:
         text: 输入文本
@@ -44,8 +65,8 @@ def _estimate_tokens(text: str) -> int:
         from domain.llm.token_counter import estimate_tokens
         return estimate_tokens(text)
     except ImportError:
-        # 回退到简单估算（4 字符 ≈ 1 token）
-        return max(1, len(text) // 4)
+        # 回退到快速估算
+        return _estimate_tokens_fast(text)
 
 
 class TokenBudgetAllocator:
@@ -55,7 +76,10 @@ class TokenBudgetAllocator:
     负责根据 Token 预算截断搜索结果，
     确保返回给 LLM 的上下文不会超出限制。
     
-    Token 估算委托给 token_counter 模块，遵循单一信息源原则。
+    性能优化：
+    - 截断判断阶段使用字符数快速估算（O(1)）
+    - 仅对截断后的结果调用精确 tokenizer
+    - 无论输入文本多大，截断操作始终是 O(1) 的
     """
     
     def __init__(self, config: TokenBudgetConfig = None):
@@ -74,7 +98,9 @@ class TokenBudgetAllocator:
         preserve_ends: bool = True
     ) -> Tuple[str, bool]:
         """
-        截断文本以符合 Token 预算
+        截断文本以符合 Token 预算（O(1) 性能）
+        
+        使用字符数快速估算进行截断判断，避免对大文本调用 tokenizer。
         
         Args:
             text: 输入文本
@@ -87,17 +113,18 @@ class TokenBudgetAllocator:
         if not text:
             return "", False
         
-        current_tokens = _estimate_tokens(text)
-        if current_tokens <= max_tokens:
+        # 使用字符数快速估算（O(1)），不调用 tokenizer
+        estimated_tokens = _estimate_tokens_fast(text)
+        if estimated_tokens <= max_tokens:
             return text, False
         
-        # 计算目标字符数（估算：4 字符 ≈ 1 token）
-        target_chars = max_tokens * 4
+        # 需要截断，按字符数计算目标长度
+        target_chars = max_tokens * CHARS_PER_TOKEN_ESTIMATE
         
         if preserve_ends and target_chars > 100:
-            # 保留开头和结尾，中间省略
-            head_chars = target_chars // 2 - 10
-            tail_chars = target_chars // 2 - 10
+            # 保留开头（60%）和结尾（30%），中间省略（10%用于省略标记）
+            head_chars = int(target_chars * 0.6)
+            tail_chars = int(target_chars * 0.3)
             truncated = (
                 text[:head_chars] +
                 "\n... [truncated] ...\n" +
@@ -130,9 +157,9 @@ class TokenBudgetAllocator:
         tokens_used = 0
         
         for result in results:
-            # 估算单条结果的 Token 数
+            # 使用快速估算判断是否需要截断
             result_text = self._format_exact_result(result)
-            result_tokens = _estimate_tokens(result_text)
+            result_tokens = _estimate_tokens_fast(result_text)
             
             # 检查是否超出单条结果限制
             if result_tokens > self.config.max_result_tokens:
@@ -149,9 +176,10 @@ class TokenBudgetAllocator:
             if tokens_used + result_tokens > budget:
                 break
             
-            result.token_count = result_tokens
+            # 对截断后的结果使用精确计数
+            result.token_count = _estimate_tokens_precise(self._format_exact_result(result))
             allocated.append(result)
-            tokens_used += result_tokens
+            tokens_used += result.token_count
         
         return allocated, tokens_used
     
@@ -176,8 +204,8 @@ class TokenBudgetAllocator:
         tokens_used = 0
         
         for result in results:
-            # 估算单条结果的 Token 数
-            result_tokens = _estimate_tokens(result.content)
+            # 使用快速估算判断是否需要截断
+            result_tokens = _estimate_tokens_fast(result.content)
             
             # 检查是否超出单条结果限制
             if result_tokens > self.config.max_result_tokens:
@@ -193,9 +221,10 @@ class TokenBudgetAllocator:
             if tokens_used + result_tokens > budget:
                 break
             
-            result.token_count = result_tokens
+            # 对截断后的结果使用精确计数
+            result.token_count = _estimate_tokens_precise(result.content)
             allocated.append(result)
-            tokens_used += result_tokens
+            tokens_used += result.token_count
         
         return allocated, tokens_used
     

@@ -100,11 +100,13 @@ class FileStructure:
         symbols: 顶层符号列表
         includes: 引用的文件列表（SPICE .include）
         imports: 导入列表（Python import）
+        error: 错误信息（大文件保护等场景）
     """
     file_path: str
     symbols: List[SymbolInfo] = field(default_factory=list)
     includes: List[str] = field(default_factory=list)
     imports: List[str] = field(default_factory=list)
+    error: Optional[str] = None
     
     @property
     def symbol_count(self) -> int:
@@ -153,12 +155,15 @@ class FileStructure:
     
     def to_dict(self) -> dict:
         """转换为字典"""
-        return {
+        result = {
             "file_path": self.file_path,
             "symbols": [s.to_dict() for s in self.symbols],
             "includes": self.includes,
             "imports": self.imports,
         }
+        if self.error:
+            result["error"] = self.error
+        return result
 
 
 __all__ = [

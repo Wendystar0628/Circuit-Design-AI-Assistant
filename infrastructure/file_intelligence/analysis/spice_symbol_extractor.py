@@ -5,6 +5,7 @@ SPICE 符号提取器
 职责：
 - 从 SPICE 文件中提取符号信息（轻量级，用于 IDE 功能）
 - 支持跳转定义、查找引用、结构大纲
+- 大文件保护：超过阈值时拒绝分析
 
 提取的符号类型：
 - subcircuit: 子电路定义 (.subckt ... .ends)
@@ -20,6 +21,7 @@ import re
 from pathlib import Path
 from typing import List, Optional, Tuple
 
+from shared.constants.file_limits import ANALYZE_FILE_MAX_BYTES
 from infrastructure.file_intelligence.analysis.symbol_types import (
     SymbolType,
     SymbolInfo,
@@ -72,17 +74,33 @@ class SpiceSymbolExtractor:
         """
         提取文件中的所有符号
         
+        包含大文件保护：超过 ANALYZE_FILE_MAX_BYTES 时拒绝分析。
+        
         Args:
             file_path: 文件路径
             
         Returns:
-            FileStructure: 文件结构信息
+            FileStructure: 文件结构信息，大文件时 error 字段包含错误信息
         """
-        file_path = str(file_path)
-        structure = FileStructure(file_path=file_path)
+        file_path_obj = Path(file_path)
+        structure = FileStructure(file_path=str(file_path))
+        
+        # 大文件保护检查
+        try:
+            file_size = file_path_obj.stat().st_size
+            if file_size > ANALYZE_FILE_MAX_BYTES:
+                size_mb = file_size / (1024 * 1024)
+                structure.error = (
+                    f"文件过大（{size_mb:.1f}MB），无法分析。"
+                    f"建议使用 read_file(start_line, end_line) 分段读取"
+                )
+                return structure
+        except OSError:
+            # 文件不存在或无法访问，让后续逻辑处理
+            pass
         
         try:
-            content = Path(file_path).read_text(encoding="utf-8", errors="replace")
+            content = file_path_obj.read_text(encoding="utf-8", errors="replace")
         except Exception:
             return structure
         

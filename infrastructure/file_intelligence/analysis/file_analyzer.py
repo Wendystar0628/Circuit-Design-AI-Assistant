@@ -6,6 +6,7 @@
 - 提供统一的文件分析入口
 - 根据文件类型选择合适的符号提取器
 - 支持跳转定义、查找引用、结构大纲
+- 大文件保护：超过阈值时拒绝分析
 
 文件类型路由：
 - .cir/.sp/.spice/.net/.ckt → SpiceSymbolExtractor
@@ -14,12 +15,14 @@
 
 被调用方：
 - FileSearchService.search_symbols()
-- 未来的 LocationService
+- LocationService
+- tool_dispatcher.py（阶段六 analyze_file 工具）
 """
 
 from pathlib import Path
 from typing import List, Optional, Tuple
 
+from shared.constants.file_limits import ANALYZE_FILE_MAX_BYTES
 from infrastructure.file_intelligence.analysis.symbol_types import (
     SymbolType,
     SymbolInfo,
@@ -69,12 +72,31 @@ class FileAnalyzer:
         """
         获取文件结构大纲（用于 UI 显示）
         
+        包含大文件保护：超过 ANALYZE_FILE_MAX_BYTES 时拒绝分析。
+        
         Args:
             file_path: 文件路径
             
         Returns:
-            FileStructure: 文件结构信息
+            FileStructure: 文件结构信息，大文件时 error 字段包含错误信息
         """
+        file_path_obj = Path(file_path)
+        
+        # 大文件保护检查
+        try:
+            file_size = file_path_obj.stat().st_size
+            if file_size > ANALYZE_FILE_MAX_BYTES:
+                size_mb = file_size / (1024 * 1024)
+                structure = FileStructure(file_path=str(file_path))
+                structure.error = (
+                    f"文件过大（{size_mb:.1f}MB），无法分析。"
+                    f"建议使用 read_file(start_line, end_line) 分段读取"
+                )
+                return structure
+        except OSError:
+            # 文件不存在或无法访问，让后续逻辑处理
+            pass
+        
         extractor = self._get_extractor(file_path)
         
         if extractor is None:

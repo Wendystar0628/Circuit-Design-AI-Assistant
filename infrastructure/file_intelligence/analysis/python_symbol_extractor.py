@@ -5,6 +5,7 @@ Python 符号提取器
 职责：
 - 使用 Python AST 模块提取符号信息
 - 支持跳转定义、查找引用、结构大纲
+- 大文件保护：超过阈值时拒绝分析
 
 提取的符号类型：
 - class: 类定义
@@ -17,6 +18,7 @@ import ast
 from pathlib import Path
 from typing import List, Optional
 
+from shared.constants.file_limits import ANALYZE_FILE_MAX_BYTES
 from infrastructure.file_intelligence.analysis.symbol_types import (
     SymbolType,
     SymbolInfo,
@@ -29,6 +31,7 @@ class PythonSymbolExtractor:
     Python 符号提取器
     
     使用 AST 解析，提取类、函数、变量等符号信息。
+    包含大文件保护，超过阈值时拒绝分析。
     """
     
     # 支持的文件扩展名
@@ -43,18 +46,35 @@ class PythonSymbolExtractor:
         """
         提取文件中的所有符号
         
+        包含大文件保护：超过 ANALYZE_FILE_MAX_BYTES 时拒绝分析。
+        Python AST 解析对大文件内存占用较高，必须有此保护。
+        
         Args:
             file_path: 文件路径
             
         Returns:
-            FileStructure: 文件结构信息
+            FileStructure: 文件结构信息，大文件时 error 字段包含错误信息
         """
-        file_path = str(file_path)
-        structure = FileStructure(file_path=file_path)
+        file_path_obj = Path(file_path)
+        structure = FileStructure(file_path=str(file_path))
+        
+        # 大文件保护检查
+        try:
+            file_size = file_path_obj.stat().st_size
+            if file_size > ANALYZE_FILE_MAX_BYTES:
+                size_mb = file_size / (1024 * 1024)
+                structure.error = (
+                    f"文件过大（{size_mb:.1f}MB），无法分析。"
+                    f"建议使用 read_file(start_line, end_line) 分段读取"
+                )
+                return structure
+        except OSError:
+            # 文件不存在或无法访问，让后续逻辑处理
+            pass
         
         try:
-            content = Path(file_path).read_text(encoding="utf-8", errors="replace")
-            tree = ast.parse(content, filename=file_path)
+            content = file_path_obj.read_text(encoding="utf-8", errors="replace")
+            tree = ast.parse(content, filename=str(file_path))
         except SyntaxError:
             # 语法错误时返回空结构
             return structure

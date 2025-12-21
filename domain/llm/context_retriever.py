@@ -562,13 +562,18 @@ class ContextRetriever:
         """
         估算文本的 Token 数
         
-        简单估算：英文约 4 字符/token，中文约 2 字符/token
+        委托给 token_counter 模块，若不可用则回退到简单估算。
+        遵循单一信息源原则，所有 Token 计算由 token_counter 模块负责。
         """
         if not text:
             return 0
         
-        # 简单估算
-        return len(text) // 4
+        try:
+            from domain.llm.token_counter import estimate_tokens
+            return estimate_tokens(text)
+        except ImportError:
+            # 回退到简单估算（4 字符 ≈ 1 token）
+            return len(text) // 4
 
     # ============================================================
     # 隐式上下文收集（3.2.3.1）

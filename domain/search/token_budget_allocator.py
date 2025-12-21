@@ -5,12 +5,15 @@ Token 预算分配器
 职责：
 - 管理搜索结果的 Token 预算
 - 根据预算截断搜索结果
-- 估算文本的 Token 数量
+- 分配精确搜索和语义搜索的 Token 预算
 
 设计原则：
 - 精确搜索优先（精确匹配通常更有价值）
 - 保留开头和结尾，中间省略（截断策略）
-- 简单的 Token 估算（4 字符 ≈ 1 token）
+- Token 估算委托给 token_counter 模块（单一信息源原则）
+
+依赖模块：
+- domain/llm/token_counter.py - Token 计算的唯一服务
 """
 
 from typing import List, Tuple
@@ -22,16 +25,38 @@ from domain.search.models.unified_search_result import (
 )
 
 
+def _estimate_tokens(text: str) -> int:
+    """
+    估算文本的 Token 数量
+    
+    委托给 token_counter 模块，若不可用则回退到简单估算。
+    
+    Args:
+        text: 输入文本
+        
+    Returns:
+        int: 估算的 Token 数
+    """
+    if not text:
+        return 0
+    
+    try:
+        from domain.llm.token_counter import estimate_tokens
+        return estimate_tokens(text)
+    except ImportError:
+        # 回退到简单估算（4 字符 ≈ 1 token）
+        return max(1, len(text) // 4)
+
+
 class TokenBudgetAllocator:
     """
     Token 预算分配器
     
     负责根据 Token 预算截断搜索结果，
     确保返回给 LLM 的上下文不会超出限制。
-    """
     
-    # Token 估算系数（平均 4 字符 ≈ 1 token）
-    CHARS_PER_TOKEN = 4
+    Token 估算委托给 token_counter 模块，遵循单一信息源原则。
+    """
     
     def __init__(self, config: TokenBudgetConfig = None):
         """
@@ -41,22 +66,6 @@ class TokenBudgetAllocator:
             config: Token 预算配置，默认使用 TokenBudgetConfig 默认值
         """
         self.config = config or TokenBudgetConfig()
-    
-    def estimate_tokens(self, text: str) -> int:
-        """
-        估算文本的 Token 数量
-        
-        使用简单的字符数估算，适用于大多数场景。
-        
-        Args:
-            text: 输入文本
-            
-        Returns:
-            int: 估算的 Token 数
-        """
-        if not text:
-            return 0
-        return max(1, len(text) // self.CHARS_PER_TOKEN)
     
     def truncate_text(
         self,
@@ -78,12 +87,12 @@ class TokenBudgetAllocator:
         if not text:
             return "", False
         
-        current_tokens = self.estimate_tokens(text)
+        current_tokens = _estimate_tokens(text)
         if current_tokens <= max_tokens:
             return text, False
         
-        # 计算目标字符数
-        target_chars = max_tokens * self.CHARS_PER_TOKEN
+        # 计算目标字符数（估算：4 字符 ≈ 1 token）
+        target_chars = max_tokens * 4
         
         if preserve_ends and target_chars > 100:
             # 保留开头和结尾，中间省略
@@ -123,7 +132,7 @@ class TokenBudgetAllocator:
         for result in results:
             # 估算单条结果的 Token 数
             result_text = self._format_exact_result(result)
-            result_tokens = self.estimate_tokens(result_text)
+            result_tokens = _estimate_tokens(result_text)
             
             # 检查是否超出单条结果限制
             if result_tokens > self.config.max_result_tokens:
@@ -168,7 +177,7 @@ class TokenBudgetAllocator:
         
         for result in results:
             # 估算单条结果的 Token 数
-            result_tokens = self.estimate_tokens(result.content)
+            result_tokens = _estimate_tokens(result.content)
             
             # 检查是否超出单条结果限制
             if result_tokens > self.config.max_result_tokens:

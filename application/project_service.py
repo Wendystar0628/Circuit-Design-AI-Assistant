@@ -146,7 +146,6 @@ class ProjectService:
         self._event_bus = None
         self._worker_manager = None
         self._logger = None
-        self._json_repo = None
     
     # ============================================================
     # 延迟获取服务（避免循环依赖）
@@ -222,17 +221,6 @@ class ProjectService:
             except Exception:
                 pass
         return self._logger
-    
-    @property
-    def json_repo(self):
-        """延迟获取 JSON 仓库"""
-        if self._json_repo is None:
-            try:
-                from infrastructure.persistence.json_repository import JsonRepository
-                self._json_repo = JsonRepository()
-            except Exception:
-                pass
-        return self._json_repo
 
 
     # ============================================================
@@ -403,11 +391,8 @@ class ProjectService:
         try:
             # 检查设计目标是否非空
             if design_goals_file.exists():
-                if self.json_repo:
-                    goals = self.json_repo.load_json(design_goals_file, default={})
-                else:
-                    import json
-                    goals = json.loads(design_goals_file.read_text())
+                from infrastructure.utils.json_utils import safe_json_load_file
+                goals = safe_json_load_file(design_goals_file, default={})
                 if goals:
                     return True
             
@@ -714,17 +699,15 @@ class ProjectService:
     
     def _init_json_files(self, project_path: Path) -> None:
         """初始化 JSON 文件"""
+        from infrastructure.utils.json_utils import safe_json_dump_file
+        
         hidden_dir = project_path / WORK_FOLDER_HIDDEN_DIR
         
         for filename, default_content in INIT_JSON_FILES.items():
             file_path = hidden_dir / filename
             if not file_path.exists():
                 try:
-                    if self.json_repo:
-                        self.json_repo.save_json(file_path, default_content)
-                    else:
-                        import json
-                        file_path.write_text(json.dumps(default_content, indent=2))
+                    safe_json_dump_file(default_content, file_path)
                 except Exception as e:
                     if self.logger:
                         self.logger.warning(f"初始化 JSON 文件失败: {filename} - {e}")
@@ -817,6 +800,8 @@ class ProjectService:
         Args:
             folder_path: 项目路径
         """
+        from infrastructure.utils.json_utils import safe_json_load_file, safe_json_dump_file
+        
         try:
             recent_file = GLOBAL_CONFIG_DIR / RECENT_PROJECTS_FILE
             
@@ -824,12 +809,7 @@ class ProjectService:
             GLOBAL_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
             
             # 加载现有列表
-            recent_list = []
-            if self.json_repo:
-                recent_list = self.json_repo.load_json(recent_file, default=[])
-            elif recent_file.exists():
-                import json
-                recent_list = json.loads(recent_file.read_text())
+            recent_list = safe_json_load_file(recent_file, default=[])
             
             # 规范化路径
             normalized_path = str(Path(folder_path).resolve())
@@ -844,11 +824,7 @@ class ProjectService:
             recent_list = recent_list[:MAX_RECENT_PROJECTS]
             
             # 保存
-            if self.json_repo:
-                self.json_repo.save_json(recent_file, recent_list)
-            else:
-                import json
-                recent_file.write_text(json.dumps(recent_list, indent=2))
+            safe_json_dump_file(recent_list, recent_file)
             
         except Exception as e:
             if self.logger:
@@ -864,16 +840,13 @@ class ProjectService:
         Returns:
             List[Dict]: 项目列表，每项包含 path, name, exists
         """
+        from infrastructure.utils.json_utils import safe_json_load_file
+        
         try:
             recent_file = GLOBAL_CONFIG_DIR / RECENT_PROJECTS_FILE
             
             # 加载列表
-            recent_list = []
-            if self.json_repo:
-                recent_list = self.json_repo.load_json(recent_file, default=[])
-            elif recent_file.exists():
-                import json
-                recent_list = json.loads(recent_file.read_text())
+            recent_list = safe_json_load_file(recent_file, default=[])
             
             result = []
             for path_str in recent_list:
@@ -903,15 +876,11 @@ class ProjectService:
         Returns:
             bool: 是否成功
         """
+        from infrastructure.utils.json_utils import safe_json_dump_file
+        
         try:
             recent_file = GLOBAL_CONFIG_DIR / RECENT_PROJECTS_FILE
-            
-            if self.json_repo:
-                self.json_repo.save_json(recent_file, [])
-            else:
-                import json
-                recent_file.write_text(json.dumps([], indent=2))
-            
+            safe_json_dump_file([], recent_file)
             return True
             
         except Exception as e:
@@ -929,16 +898,13 @@ class ProjectService:
         Returns:
             bool: 是否成功
         """
+        from infrastructure.utils.json_utils import safe_json_load_file, safe_json_dump_file
+        
         try:
             recent_file = GLOBAL_CONFIG_DIR / RECENT_PROJECTS_FILE
             
             # 加载列表
-            recent_list = []
-            if self.json_repo:
-                recent_list = self.json_repo.load_json(recent_file, default=[])
-            elif recent_file.exists():
-                import json
-                recent_list = json.loads(recent_file.read_text())
+            recent_list = safe_json_load_file(recent_file, default=[])
             
             # 规范化路径
             normalized_path = str(Path(folder_path).resolve())
@@ -947,11 +913,7 @@ class ProjectService:
             recent_list = [p for p in recent_list if p != normalized_path]
             
             # 保存
-            if self.json_repo:
-                self.json_repo.save_json(recent_file, recent_list)
-            else:
-                import json
-                recent_file.write_text(json.dumps(recent_list, indent=2))
+            safe_json_dump_file(recent_list, recent_file)
             
             return True
             

@@ -54,7 +54,6 @@ class DependencyHealthService:
         # 延迟获取的服务
         self._event_bus = None
         self._logger = None
-        self._json_repo = None
     
     @property
     def event_bus(self):
@@ -78,17 +77,6 @@ class DependencyHealthService:
             except Exception:
                 pass
         return self._logger
-    
-    @property
-    def json_repo(self):
-        """延迟获取 JSON 仓库"""
-        if self._json_repo is None:
-            try:
-                from infrastructure.persistence.json_repository import JsonRepository
-                self._json_repo = JsonRepository()
-            except Exception:
-                pass
-        return self._json_repo
     
     def start_scan(self, project_path: str) -> None:
         """

@@ -393,6 +393,84 @@ class AsyncFileOps:
             self.file_manager.get_file_info,
             path
         )
+    
+    # ============================================================
+    # 异步 JSON 操作（基于 json_utils 封装）
+    # ============================================================
+    
+    async def load_json_async(
+        self,
+        path: Union[str, Path],
+        default: Any = None,
+        encoding: str = 'utf-8'
+    ) -> Any:
+        """
+        异步加载 JSON 文件
+        
+        Args:
+            path: JSON 文件路径
+            default: 解析失败或文件不存在时返回的默认值
+            encoding: 文件编码
+            
+        Returns:
+            解析后的数据，失败时返回默认值
+        """
+        from infrastructure.utils.json_utils import safe_json_loads
+        
+        try:
+            # 检查文件是否存在
+            exists = await self.file_exists_async(path)
+            if not exists:
+                return default
+            
+            # 读取文件内容
+            content = await self.read_file_async(path, encoding=encoding)
+            
+            # 解析 JSON
+            return safe_json_loads(content, default=default)
+            
+        except Exception:
+            return default
+    
+    async def save_json_async(
+        self,
+        path: Union[str, Path],
+        data: Any,
+        indent: int = 2,
+        ensure_ascii: bool = False,
+        encoding: str = 'utf-8'
+    ) -> bool:
+        """
+        异步保存数据为 JSON 文件
+        
+        Args:
+            path: JSON 文件路径
+            data: 要保存的数据
+            indent: 缩进空格数
+            ensure_ascii: 是否转义非 ASCII 字符
+            encoding: 文件编码
+            
+        Returns:
+            bool: 是否成功
+        """
+        from infrastructure.utils.json_utils import safe_json_dumps
+        
+        try:
+            # 序列化为 JSON 字符串
+            content = safe_json_dumps(
+                data,
+                indent=indent,
+                ensure_ascii=ensure_ascii
+            )
+            
+            if not content:
+                return False
+            
+            # 写入文件
+            return await self.write_file_async(path, content, encoding=encoding)
+            
+        except Exception:
+            return False
 
 
 # ============================================================

@@ -5,6 +5,7 @@
 职责：
 - 集中定义所有错误分类和类型常量
 - 定义恢复策略映射
+- 定义错误恢复熔断阈值
 - 作为 ErrorHandler 错误分类的基础
 
 设计原则：
@@ -15,6 +16,23 @@
 
 from enum import Enum, auto
 from typing import Dict, Any
+
+
+# ============================================================
+# 错误恢复熔断阈值
+# ============================================================
+
+MAX_CONSECUTIVE_FIX_ATTEMPTS = 3
+"""
+连续修复尝试最大次数
+
+当连续修复失败次数达到此阈值时，触发熔断机制：
+- 禁用"修复错误"按钮
+- 高亮"修改目标"按钮
+- 提示用户重新评估设计目标或停止设计
+
+可通过配置文件覆盖此值
+"""
 
 
 class ErrorCategory(Enum):
@@ -277,6 +295,9 @@ RECOVERY_STRATEGIES: Dict[ErrorType, RecoveryStrategy] = {
 # ============================================================
 
 __all__ = [
+    # 熔断阈值
+    "MAX_CONSECUTIVE_FIX_ATTEMPTS",
+    # 枚举和类
     "ErrorCategory",
     "ErrorType",
     "RecoveryStrategy",

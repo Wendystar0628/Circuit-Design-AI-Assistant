@@ -329,7 +329,12 @@ class ProjectService:
             if self.file_manager:
                 self.file_manager.set_work_dir(path)
             
-            # 9. 通过 GraphStateProjector 更新 SessionState
+            # 9. 启动依赖健康检查（异步，不阻塞项目打开）
+            # 扫描任务通过 AsyncTaskRegistry 提交，主流程不等待其完成
+            # 扫描完成后发布 EVENT_DEPENDENCY_SCAN_COMPLETE 事件
+            self._start_dependency_health_check(path)
+            
+            # 10. 通过 GraphStateProjector 更新 SessionState
             # 项目状态将通过 GraphState 变更自动投影到 SessionState
             if self.graph_state_projector:
                 self.graph_state_projector.update_project_state(
@@ -350,7 +355,7 @@ class ProjectService:
             else:
                 self._status = ProjectStatus.READY
             
-            # 10. 发布项目打开事件（携带完整的项目状态信息）
+            # 11. 发布项目打开事件（携带完整的项目状态信息）
             if self.event_bus:
                 from shared.event_types import EVENT_STATE_PROJECT_OPENED
                 self.event_bus.publish(EVENT_STATE_PROJECT_OPENED, {
@@ -414,6 +419,37 @@ class ProjectService:
             
         except Exception:
             return False
+    
+    def _start_dependency_health_check(self, project_path: Path) -> None:
+        """
+        启动依赖健康检查（异步执行）
+        
+        依赖健康检查流程：
+        1. 通过 AsyncTaskRegistry 提交扫描任务到后台线程
+        2. 扫描项目内所有电路文件的 .include 和 .lib 引用
+        3. 检查每个引用的文件是否存在于本地
+        4. 生成依赖健康报告并缓存
+        5. 发布 EVENT_DEPENDENCY_SCAN_COMPLETE 事件
+        
+        设计原则：
+        - 异步执行：不阻塞项目打开主流程
+        - 保守策略：仅做本地扫描，外部源查询需用户主动触发
+        - 离线友好：不依赖网络连接
+        
+        Args:
+            project_path: 项目根目录路径
+        """
+        try:
+            # TODO: 阶段二实现 - 调用 DependencyHealthService.start_scan()
+            # 扫描任务通过 AsyncTaskRegistry 提交
+            # 扫描完成后发布 EVENT_DEPENDENCY_SCAN_COMPLETE 事件
+            # 若检测到缺失依赖，状态栏显示警告图标
+            if self.logger:
+                self.logger.debug(f"启动依赖健康检查: {project_path}")
+        except Exception as e:
+            # 依赖健康检查失败不阻塞项目打开
+            if self.logger:
+                self.logger.warning(f"启动依赖健康检查失败: {e}")
     
     def close_project(self) -> Tuple[bool, str]:
         """

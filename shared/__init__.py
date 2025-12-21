@@ -186,18 +186,8 @@ from shared.model_registry import ModelRegistry
 # 嵌入模型注册表
 from shared.embedding_model_registry import EmbeddingModelRegistry
 
-# 全局常量
-from shared.constants import (
-    MAX_CONSECUTIVE_FIX_ATTEMPTS,
-    LOOP_MAX_ITERATIONS,
-    LOOP_SOFT_WARNING_AT,
-    LOOP_MAX_TOOL_CALLS_PER_TURN,
-    LOOP_TIMEOUT_SECONDS,
-    MAX_DESIGN_ITERATIONS,
-    MAX_STAGNATION_COUNT,
-    MAX_SNAPSHOTS_TO_KEEP,
-    SNAPSHOT_CLEANUP_THRESHOLD,
-)
+# 错误恢复熔断阈值（从 error_types 导出）
+from shared.error_types import MAX_CONSECUTIVE_FIX_ATTEMPTS
 
 __all__ = [
     # 服务名常量
@@ -307,14 +297,6 @@ __all__ = [
     "ModelRegistry",
     # 嵌入模型注册表
     "EmbeddingModelRegistry",
-    # 全局常量
+    # 错误恢复熔断阈值
     "MAX_CONSECUTIVE_FIX_ATTEMPTS",
-    "LOOP_MAX_ITERATIONS",
-    "LOOP_SOFT_WARNING_AT",
-    "LOOP_MAX_TOOL_CALLS_PER_TURN",
-    "LOOP_TIMEOUT_SECONDS",
-    "MAX_DESIGN_ITERATIONS",
-    "MAX_STAGNATION_COUNT",
-    "MAX_SNAPSHOTS_TO_KEEP",
-    "SNAPSHOT_CLEANUP_THRESHOLD",
 ]

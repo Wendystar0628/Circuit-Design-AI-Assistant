@@ -407,6 +407,45 @@ EVENT_FILE_LOCKED = "file_locked"
 EVENT_FILE_UNLOCKED = "file_unlocked"
 
 # ============================================================
+# 依赖健康检查事件
+# ============================================================
+
+# 依赖扫描开始
+# 携带数据：
+#   - project_path: str - 项目路径
+EVENT_DEPENDENCY_SCAN_STARTED = "dependency.scan_started"
+
+# 依赖扫描完成
+# 携带数据：
+#   - project_path: str - 项目路径
+#   - total_dependencies: int - 总依赖数
+#   - missing_count: int - 缺失依赖数
+#   - resolved_count: int - 已解析依赖数
+#   - has_issues: bool - 是否存在问题
+EVENT_DEPENDENCY_SCAN_COMPLETE = "dependency.scan_complete"
+
+# 依赖健康报告更新
+# 携带数据：
+#   - report_path: str - 报告文件路径
+#   - missing_dependencies: list - 缺失依赖列表
+#   - resolution_suggestions: list - 解析建议列表
+EVENT_DEPENDENCY_REPORT_UPDATED = "dependency.report_updated"
+
+# 依赖解析请求（用户请求尝试解析缺失依赖）
+# 携带数据：
+#   - dependency_id: str - 依赖项 ID
+#   - source: str - 解析来源（"local", "global_lib", "marketplace"）
+EVENT_DEPENDENCY_RESOLUTION_REQUESTED = "dependency.resolution_requested"
+
+# 依赖解析完成
+# 携带数据：
+#   - dependency_id: str - 依赖项 ID
+#   - success: bool - 是否成功
+#   - resolved_path: str - 解析后的路径（若成功）
+#   - error_message: str - 错误信息（若失败）
+EVENT_DEPENDENCY_RESOLUTION_COMPLETE = "dependency.resolution_complete"
+
+# ============================================================
 # 智能文件操作事件（File Intelligence）
 # ============================================================
 
@@ -681,6 +720,12 @@ __all__ = [
     "EVENT_FILE_CHANGED",
     "EVENT_FILE_LOCKED",
     "EVENT_FILE_UNLOCKED",
+    # 依赖健康检查事件
+    "EVENT_DEPENDENCY_SCAN_STARTED",
+    "EVENT_DEPENDENCY_SCAN_COMPLETE",
+    "EVENT_DEPENDENCY_REPORT_UPDATED",
+    "EVENT_DEPENDENCY_RESOLUTION_REQUESTED",
+    "EVENT_DEPENDENCY_RESOLUTION_COMPLETE",
     # 智能文件操作事件
     "EVENT_FILE_SEARCH_INDEX_UPDATED",
     "EVENT_SYMBOL_LOCATED",

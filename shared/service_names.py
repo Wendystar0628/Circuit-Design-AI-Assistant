@@ -158,6 +158,9 @@ SVC_EXECUTOR_REGISTRY = "executor_registry"
 # 波形数据服务 - 大数据波形降采样和流式渲染
 SVC_WAVEFORM_DATA_SERVICE = "waveform_data_service"
 
+# 依赖健康服务 - 依赖完整性检查和解析
+SVC_DEPENDENCY_HEALTH_SERVICE = "dependency_health_service"
+
 
 # ============================================================
 # 模块导出
@@ -204,4 +207,5 @@ __all__ = [
     "SVC_SIMULATION_SERVICE",
     "SVC_EXECUTOR_REGISTRY",
     "SVC_WAVEFORM_DATA_SERVICE",
+    "SVC_DEPENDENCY_HEALTH_SERVICE",
 ]

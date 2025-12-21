@@ -15,6 +15,7 @@
 - rag_service: RAG 检索服务（阶段五实现）
 - iteration_history_service: 迭代历史视图服务（从 SqliteSaver 查询）
 - snapshot_service: 全量快照服务（项目文件备份与恢复）
+- orphaned_data_cleaner: 孤儿数据清理服务（撤回后清理无引用文件）
 """
 
 from domain.services.design_service import (
@@ -59,6 +60,13 @@ from domain.services.snapshot_service import (
     cleanup_old_snapshots,
 )
 
+from domain.services.orphaned_data_cleaner import (
+    CleanupResult,
+    cleanup as cleanup_orphaned_data,
+    collect_referenced_paths,
+    scan_orphaned_files,
+)
+
 
 __all__ = [
     # Design Service
@@ -91,4 +99,9 @@ __all__ = [
     "list_snapshots",
     "delete_snapshot",
     "cleanup_old_snapshots",
+    # Orphaned Data Cleaner
+    "CleanupResult",
+    "cleanup_orphaned_data",
+    "collect_referenced_paths",
+    "scan_orphaned_files",
 ]

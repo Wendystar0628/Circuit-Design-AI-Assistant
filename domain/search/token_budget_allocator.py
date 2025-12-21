@@ -19,7 +19,7 @@ Token 预算分配器
 
 from typing import List, Tuple
 
-from shared.constants.file_limits import CHARS_PER_TOKEN_ESTIMATE
+from infrastructure.config.settings import CHARS_PER_TOKEN_ESTIMATE
 from domain.search.models.unified_search_result import (
     TokenBudgetConfig,
     ExactMatchResult,

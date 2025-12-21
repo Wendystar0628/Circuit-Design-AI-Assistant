@@ -1,17 +1,15 @@
-# Unified Search Service - Search System Facade
+# Unified Search Service - Project-Level Search Facade
 """
-统一搜索服务 - 搜索系统门面
+统一搜索服务 - 项目级搜索门面
 
 架构定位：
-- 作为搜索系统的统一入口
+- 作为项目级搜索系统的统一入口
 - 对 LLM 工具层只暴露一个 search_project 接口
 - 协调 FileSearchService（精确搜索）和 RAGService（语义搜索）
 
-职责：
-- 接收搜索请求，根据 scope 参数决定搜索策略
-- 并行调用精确搜索和语义搜索引擎
-- 融合搜索结果，管理 Token 预算
-- 返回结构化的统一搜索结果
+职责边界：
+- 项目级搜索：跨文件搜索内容、符号、文档
+- 不负责单文件搜索（由 InFileSearchService 负责）
 
 被调用方：
 - search_project 工具（阶段6）
@@ -55,10 +53,12 @@ from domain.search.token_budget_allocator import TokenBudgetAllocator
 
 class UnifiedSearchService:
     """
-    统一搜索服务
+    项目级统一搜索服务
     
-    作为搜索系统的门面，协调精确搜索和语义搜索，
+    作为项目级搜索系统的门面，协调精确搜索和语义搜索，
     提供统一的搜索接口给 LLM 工具层。
+    
+    注意：单文件搜索由 InFileSearchService 负责。
     """
     
     def __init__(

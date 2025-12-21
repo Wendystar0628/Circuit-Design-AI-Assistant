@@ -22,7 +22,7 @@
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-from shared.constants.file_limits import ANALYZE_FILE_MAX_BYTES
+from infrastructure.config.settings import ANALYZE_FILE_MAX_BYTES
 from infrastructure.file_intelligence.analysis.symbol_types import (
     SymbolType,
     SymbolInfo,

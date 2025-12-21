@@ -69,8 +69,11 @@ SVC_ASYNC_FILE_OPS = "async_file_ops"
 # 文件搜索服务 - 精确文件搜索（正则、模糊、符号）
 SVC_FILE_SEARCH_SERVICE = "file_search_service"
 
-# 统一搜索服务 - 搜索系统门面（协调精确搜索和语义搜索）
+# 统一搜索服务 - 项目级搜索门面（协调精确搜索和语义搜索）
 SVC_UNIFIED_SEARCH_SERVICE = "unified_search_service"
+
+# 单文件搜索服务 - 单文件搜索（分层降级策略）
+SVC_IN_FILE_SEARCH_SERVICE = "in_file_search_service"
 
 # ============================================================
 # 应用层服务 - 三层状态分离架构
@@ -183,6 +186,7 @@ __all__ = [
     "SVC_ASYNC_FILE_OPS",
     "SVC_FILE_SEARCH_SERVICE",
     "SVC_UNIFIED_SEARCH_SERVICE",
+    "SVC_IN_FILE_SEARCH_SERVICE",
     "SVC_LLM_CLIENT",
     "SVC_OLLAMA_SERVICE",
     "SVC_TRACING_STORE",

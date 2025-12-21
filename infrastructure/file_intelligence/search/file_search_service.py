@@ -521,6 +521,34 @@ class FileSearchService:
         
         return results
 
+    def search_in_file(
+        self,
+        file_path: Union[str, Path],
+        query: str,
+        options: ContentSearchOptions = None
+    ) -> List[SearchMatch]:
+        """
+        在单个文件内搜索
+        
+        委托给 ContentSearcher 执行，跳过索引构建，直接读取文件。
+        用于 UnifiedSearchService.search_in_file() 的精确搜索部分。
+        
+        Args:
+            file_path: 文件路径（相对或绝对）
+            query: 搜索查询
+            options: 搜索选项
+            
+        Returns:
+            List[SearchMatch]: 匹配列表
+        """
+        # 解析路径
+        if self.file_manager is not None:
+            absolute_path = self.file_manager.resolve_path(str(file_path))
+        else:
+            absolute_path = str(file_path)
+        
+        return self.content_searcher.search_in_file(absolute_path, query, options)
+
     
     # ============================================================
     # 按内容搜索

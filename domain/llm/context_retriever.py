@@ -114,7 +114,7 @@ class ContextRetriever:
     def __init__(self):
         # 延迟获取的服务
         self._vector_store = None
-        self._app_state = None
+        self._session_state = None
         self._logger = None
 
     # ============================================================
@@ -134,16 +134,16 @@ class ContextRetriever:
         return self._vector_store
 
     @property
-    def app_state(self):
-        """延迟获取应用状态"""
-        if self._app_state is None:
+    def session_state(self):
+        """延迟获取会话状态（只读）"""
+        if self._session_state is None:
             try:
                 from shared.service_locator import ServiceLocator
-                from shared.service_names import SVC_APP_STATE
-                self._app_state = ServiceLocator.get_optional(SVC_APP_STATE)
+                from shared.service_names import SVC_SESSION_STATE
+                self._session_state = ServiceLocator.get_optional(SVC_SESSION_STATE)
             except Exception:
                 pass
-        return self._app_state
+        return self._session_state
 
     @property
     def logger(self):
@@ -222,10 +222,8 @@ class ContextRetriever:
         if self.vector_store is None:
             return False
         
-        # 检查 RAG 开关
-        if self.app_state:
-            return getattr(self.app_state, "rag_enabled", False)
-        
+        # TODO: 检查 RAG 开关（从配置或 SessionState 获取）
+        # 目前默认返回 False，待 RAG 功能完善后启用
         return False
 
 
@@ -634,9 +632,9 @@ class ContextRetriever:
     
     def _get_current_circuit_file(self, project_dir: Path) -> Optional[Path]:
         """获取当前打开的电路文件"""
-        # 尝试从 AppState 获取当前打开的文件
-        if self.app_state:
-            current_file = getattr(self.app_state, "current_circuit_file", None)
+        # 尝试从 SessionState 获取当前打开的文件
+        if self.session_state:
+            current_file = self.session_state.active_circuit_file
             if current_file:
                 return Path(current_file)
         
@@ -697,9 +695,9 @@ class ContextRetriever:
         circuit_ai_dir: Path
     ) -> Optional[str]:
         """获取仿真错误信息（如有）"""
-        # 尝试从 AppState 获取
-        if self.app_state:
-            error = getattr(self.app_state, "last_simulation_error", None)
+        # 尝试从 SessionState 获取
+        if self.session_state:
+            error = self.session_state.error_context
             if error:
                 return error
         
@@ -801,9 +799,9 @@ class ContextRetriever:
         """获取仿真错误信息"""
         errors = []
         
-        # 从 AppState 获取最近的仿真错误
-        if self.app_state:
-            last_error = getattr(self.app_state, "last_simulation_error", None)
+        # 从 SessionState 获取最近的仿真错误
+        if self.session_state:
+            last_error = self.session_state.error_context
             if last_error:
                 errors.append({
                     "type": "simulation",
@@ -814,18 +812,9 @@ class ContextRetriever:
     
     def _get_warning_messages(self, project_dir: Path) -> List[Dict[str, Any]]:
         """获取警告信息"""
-        warnings = []
-        
-        # 从 AppState 获取警告
-        if self.app_state:
-            app_warnings = getattr(self.app_state, "warnings", [])
-            for w in app_warnings:
-                warnings.append({
-                    "type": "warning",
-                    "message": w,
-                })
-        
-        return warnings
+        # TODO: 警告信息收集待实现
+        # 目前返回空列表，待后续从 GraphState 或日志中收集
+        return []
     
     def _get_error_history(self, circuit_file: str) -> List[Dict[str, Any]]:
         """
@@ -834,15 +823,9 @@ class ContextRetriever:
         维护 error_history 字典，记录最近 3 次仿真失败的错误类型和简要描述。
         当同一电路再次讨论时，注入历史错误摘要。
         """
-        history = []
-        
-        # 从 AppState 获取错误历史
-        if self.app_state:
-            error_history = getattr(self.app_state, "error_history", {})
-            file_errors = error_history.get(circuit_file, [])
-            history = file_errors[-3:]  # 最近 3 次
-        
-        return history
+        # TODO: 错误历史收集待实现
+        # 目前返回空列表，待后续从 GraphState 或日志中收集
+        return []
 
 
 # ============================================================

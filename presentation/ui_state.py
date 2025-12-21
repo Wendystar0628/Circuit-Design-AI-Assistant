@@ -1,45 +1,46 @@
-# App State - Central State Container
+# UI State - Pure UI State Container
 """
-应用状态容器 - 中央状态管理
+纯 UI 状态容器
 
 职责：
-- 作为应用运行时状态的"单一事实来源"
+- 管理纯 UI 状态（窗口布局、面板可见性、编辑器状态）
+- 不影响业务逻辑
 - 状态变更自动发布事件
-- 支持细粒度状态订阅
 
 初始化顺序：
-- Phase 1.4，依赖 EventBus（状态变更发布事件）
+- Phase 2.2，在 MainWindow 创建时初始化
 
 设计原则：
-- 延迟获取 EventBus，避免初始化顺序问题
-- 事件级联防护，防止 handler 修改状态导致无限循环
-- Application 层写入，Presentation 层读取和订阅
+- 仅存储 UI 相关状态，不存储业务状态
+- 业务状态（如当前项目、工作模式）由 SessionState 管理
+- UI 组件可直接读写此状态
+
+三层状态分离架构：
+- Layer 1: UIState (Presentation) - 纯 UI 状态，本模块
+- Layer 2: SessionState (Application) - GraphState 的只读投影
+- Layer 3: GraphState (Domain) - LangGraph 工作流的唯一真理来源
 
 使用示例：
-    from shared.app_state import AppState
+    from presentation.ui_state import UIState
     
-    app_state = AppState()
+    ui_state = UIState()
     
     # 读取状态
-    project_path = app_state.get("project_path")
+    current_tab = ui_state.get("current_tab")
     
-    # 设置状态（自动发布事件）
-    app_state.set("project_path", "/path/to/project")
+    # 设置状态
+    ui_state.set("current_tab", "conversation")
     
     # 订阅状态变更
-    app_state.subscribe_change("project_path", on_project_changed)
+    ui_state.subscribe_change("current_tab", on_tab_changed)
 """
 
 import threading
 from typing import Any, Callable, Dict, List, Optional
 
 from shared.event_types import (
-    EVENT_STATE_PROJECT_OPENED,
-    EVENT_STATE_PROJECT_CLOSED,
-    EVENT_STATE_CONFIG_CHANGED,
-    EVENT_STATE_ITERATION_UPDATED,
-    EVENT_WORKFLOW_LOCKED,
-    EVENT_WORKFLOW_UNLOCKED,
+    EVENT_PANEL_VISIBILITY_CHANGED,
+    EVENT_TAB_CHANGED,
 )
 
 
@@ -47,58 +48,55 @@ from shared.event_types import (
 # 状态字段常量
 # ============================================================
 
-# 项目状态
-STATE_PROJECT_PATH = "project_path"
-STATE_PROJECT_INITIALIZED = "project_initialized"
+# 窗口状态
+UI_WINDOW_GEOMETRY = "window_geometry"
+UI_WINDOW_STATE = "window_state"
 
-# UI 状态
-STATE_CURRENT_FILE = "current_file"
+# 面板可见性
+UI_PANEL_VISIBILITY = "panel_visibility"
 
-# 工作流状态
-STATE_WORKFLOW_RUNNING = "workflow_running"
-STATE_CURRENT_NODE = "current_node"
-STATE_CHECKPOINT_COUNT = "checkpoint_count"
-STATE_WORKFLOW_LOCKED = "workflow_locked"
+# 标签页状态
+UI_CURRENT_TAB = "current_tab"
+UI_PREVIOUS_TAB = "previous_tab"
 
-# 配置状态
-STATE_LLM_CONFIGURED = "llm_configured"
-STATE_RAG_ENABLED = "rag_enabled"
+# 编辑器状态
+UI_EDITOR_CURSOR_POSITIONS = "editor_cursor_positions"
+UI_EDITOR_SCROLL_POSITIONS = "editor_scroll_positions"
+UI_EDITOR_OPEN_FILES = "editor_open_files"
+UI_EDITOR_ACTIVE_FILE = "editor_active_file"
 
-# 初始化状态
-STATE_INIT_PHASE = "init_phase"
-STATE_INIT_COMPLETE = "init_complete"
+# 对话面板状态
+UI_INPUT_DRAFT = "input_draft"
+UI_IS_GENERATING = "is_generating"
+
+# 文件浏览器状态
+UI_FILE_BROWSER_EXPANDED = "file_browser_expanded"
+
+# 调试面板状态
+UI_DEVTOOLS_VISIBLE = "devtools_visible"
 
 
 # 状态字段到事件的映射
-STATE_EVENT_MAP = {
-    STATE_PROJECT_PATH: EVENT_STATE_PROJECT_OPENED,
-    STATE_PROJECT_INITIALIZED: EVENT_STATE_PROJECT_OPENED,
-    STATE_WORKFLOW_LOCKED: None,  # 特殊处理
-    STATE_CHECKPOINT_COUNT: EVENT_STATE_ITERATION_UPDATED,
-    STATE_CURRENT_NODE: EVENT_STATE_ITERATION_UPDATED,
-    STATE_LLM_CONFIGURED: EVENT_STATE_CONFIG_CHANGED,
-    STATE_RAG_ENABLED: EVENT_STATE_CONFIG_CHANGED,
+UI_STATE_EVENT_MAP = {
+    UI_PANEL_VISIBILITY: EVENT_PANEL_VISIBILITY_CHANGED,
+    UI_CURRENT_TAB: EVENT_TAB_CHANGED,
 }
 
 
 # 状态变更处理器类型
-StateChangeHandler = Callable[[str, Any, Any], None]  # (key, old_value, new_value)
+UIStateChangeHandler = Callable[[str, Any, Any], None]  # (key, old_value, new_value)
 
 
 # ============================================================
-# 应用状态容器
+# UI 状态容器
 # ============================================================
 
-class AppState:
+class UIState:
     """
-    应用状态容器
+    纯 UI 状态容器
     
-    中央状态管理，作为应用运行时状态的"单一事实来源"。
-    
-    事件级联防护：
-    - 维护 _is_dispatching 标志位
-    - 事件分发期间的状态变更记录到 _pending_changes
-    - 当前事件分发完成后批量处理
+    管理窗口布局、面板可见性、编辑器状态等纯 UI 状态。
+    不影响业务逻辑，业务状态由 SessionState 管理。
     """
 
     def __init__(self):
@@ -106,14 +104,14 @@ class AppState:
         self._state: Dict[str, Any] = self._get_default_state()
         
         # 状态变更订阅者：{key: [handler1, handler2, ...]}
-        self._subscribers: Dict[str, List[StateChangeHandler]] = {}
+        self._subscribers: Dict[str, List[UIStateChangeHandler]] = {}
         
         # 线程锁
         self._lock = threading.Lock()
         
         # 事件级联防护
         self._is_dispatching = False
-        self._pending_changes: List[tuple] = []  # [(key, old_value, new_value), ...]
+        self._pending_changes: List[tuple] = []
         
         # 延迟获取的服务
         self._event_bus = None
@@ -122,22 +120,31 @@ class AppState:
     def _get_default_state(self) -> Dict[str, Any]:
         """获取默认状态"""
         return {
-            # 项目状态
-            STATE_PROJECT_PATH: None,
-            STATE_PROJECT_INITIALIZED: False,
-            # UI 状态
-            STATE_CURRENT_FILE: None,
-            # 工作流状态
-            STATE_WORKFLOW_RUNNING: False,
-            STATE_CURRENT_NODE: None,
-            STATE_CHECKPOINT_COUNT: 0,
-            STATE_WORKFLOW_LOCKED: False,
-            # 配置状态
-            STATE_LLM_CONFIGURED: False,
-            STATE_RAG_ENABLED: False,
-            # 初始化状态
-            STATE_INIT_PHASE: 0,
-            STATE_INIT_COMPLETE: False,
+            # 窗口状态
+            UI_WINDOW_GEOMETRY: None,
+            UI_WINDOW_STATE: None,
+            # 面板可见性
+            UI_PANEL_VISIBILITY: {
+                "file_browser": True,
+                "code_editor": True,
+                "conversation": True,
+                "simulation_results": True,
+            },
+            # 标签页状态
+            UI_CURRENT_TAB: "conversation",
+            UI_PREVIOUS_TAB: None,
+            # 编辑器状态
+            UI_EDITOR_CURSOR_POSITIONS: {},  # {file_path: cursor_position}
+            UI_EDITOR_SCROLL_POSITIONS: {},  # {file_path: scroll_position}
+            UI_EDITOR_OPEN_FILES: [],  # [file_path, ...]
+            UI_EDITOR_ACTIVE_FILE: None,
+            # 对话面板状态
+            UI_INPUT_DRAFT: "",
+            UI_IS_GENERATING: False,
+            # 文件浏览器状态
+            UI_FILE_BROWSER_EXPANDED: {},  # {folder_path: is_expanded}
+            # 调试面板状态
+            UI_DEVTOOLS_VISIBLE: False,
         }
 
     # ============================================================
@@ -162,11 +169,10 @@ class AppState:
         if self._logger is None:
             try:
                 from infrastructure.utils.logger import get_logger
-                self._logger = get_logger("app_state")
+                self._logger = get_logger("ui_state")
             except Exception:
                 pass
         return self._logger
-
 
     # ============================================================
     # 状态读取
@@ -215,7 +221,7 @@ class AppState:
             self._state[key] = value
             
             if self.logger:
-                self.logger.debug(f"State '{key}' changed: {old_value} -> {value}")
+                self.logger.debug(f"UIState '{key}' changed: {old_value} -> {value}")
         
         # 触发变更通知（锁外执行，避免死锁）
         self._notify_change(key, old_value, value)
@@ -223,8 +229,6 @@ class AppState:
     def update(self, updates: Dict[str, Any]) -> None:
         """
         批量更新状态
-        
-        所有变更合并为单次事件通知。
         
         Args:
             updates: 状态更新字典
@@ -237,9 +241,6 @@ class AppState:
                 if old_value != value:
                     self._state[key] = value
                     changes.append((key, old_value, value))
-                    
-                    if self.logger:
-                        self.logger.debug(f"State '{key}' changed: {old_value} -> {value}")
         
         # 批量触发变更通知
         for key, old_value, new_value in changes:
@@ -251,13 +252,13 @@ class AppState:
             self._state = self._get_default_state()
             
             if self.logger:
-                self.logger.info("State reset to defaults")
+                self.logger.info("UIState reset to defaults")
 
     # ============================================================
     # 状态订阅
     # ============================================================
 
-    def subscribe_change(self, key: str, handler: StateChangeHandler) -> None:
+    def subscribe_change(self, key: str, handler: UIStateChangeHandler) -> None:
         """
         订阅特定状态变更
         
@@ -275,7 +276,7 @@ class AppState:
             if handler not in self._subscribers[key]:
                 self._subscribers[key].append(handler)
 
-    def unsubscribe_change(self, key: str, handler: StateChangeHandler) -> bool:
+    def unsubscribe_change(self, key: str, handler: UIStateChangeHandler) -> bool:
         """
         取消订阅状态变更
         
@@ -295,7 +296,6 @@ class AppState:
                     pass
         return False
 
-
     # ============================================================
     # 变更通知
     # ============================================================
@@ -308,7 +308,6 @@ class AppState:
         """
         # 事件级联防护
         if self._is_dispatching:
-            # 记录到待处理队列
             self._pending_changes.append((key, old_value, new_value))
             return
         
@@ -344,7 +343,7 @@ class AppState:
                 if self.logger:
                     handler_name = getattr(handler, '__name__', str(handler))
                     self.logger.error(
-                        f"State change handler '{handler_name}' failed for '{key}': {e}"
+                        f"UIState change handler '{handler_name}' failed for '{key}': {e}"
                     )
 
     def _publish_state_event(self, key: str, old_value: Any, new_value: Any) -> None:
@@ -352,78 +351,94 @@ class AppState:
         if self.event_bus is None:
             return
         
-        # 特殊处理：工作流锁定
-        if key == STATE_WORKFLOW_LOCKED:
-            event_type = EVENT_WORKFLOW_LOCKED if new_value else EVENT_WORKFLOW_UNLOCKED
-            try:
-                self.event_bus.publish_critical(
-                    event_type,
-                    {"locked": new_value},
-                    source="app_state"
-                )
-            except Exception as e:
-                if self.logger:
-                    self.logger.warning(f"Failed to publish workflow lock event: {e}")
-            return
-        
-        # 特殊处理：项目关闭
-        if key == STATE_PROJECT_PATH and new_value is None and old_value is not None:
-            try:
-                self.event_bus.publish(
-                    EVENT_STATE_PROJECT_CLOSED,
-                    {"old_path": old_value},
-                    source="app_state"
-                )
-            except Exception:
-                pass
-            return
-        
-        # 通用事件发布
-        event_type = STATE_EVENT_MAP.get(key)
+        event_type = UI_STATE_EVENT_MAP.get(key)
         if event_type:
             try:
                 self.event_bus.publish(
                     event_type,
                     {"key": key, "old_value": old_value, "new_value": new_value},
-                    source="app_state"
+                    source="ui_state"
                 )
             except Exception as e:
                 if self.logger:
-                    self.logger.warning(f"Failed to publish state event: {e}")
+                    self.logger.warning(f"Failed to publish UI state event: {e}")
 
     # ============================================================
     # 便捷属性
     # ============================================================
 
     @property
-    def project_path(self) -> Optional[str]:
-        """当前项目路径"""
-        return self.get(STATE_PROJECT_PATH)
+    def current_tab(self) -> str:
+        """当前标签页"""
+        return self.get(UI_CURRENT_TAB, "conversation")
+
+    @current_tab.setter
+    def current_tab(self, value: str) -> None:
+        """设置当前标签页"""
+        old_tab = self.get(UI_CURRENT_TAB)
+        self.set(UI_PREVIOUS_TAB, old_tab)
+        self.set(UI_CURRENT_TAB, value)
 
     @property
-    def is_project_open(self) -> bool:
-        """是否有项目打开"""
-        return self.get(STATE_PROJECT_PATH) is not None
+    def is_generating(self) -> bool:
+        """是否正在生成"""
+        return self.get(UI_IS_GENERATING, False)
+
+    @is_generating.setter
+    def is_generating(self, value: bool) -> None:
+        """设置生成状态"""
+        self.set(UI_IS_GENERATING, value)
 
     @property
-    def is_workflow_running(self) -> bool:
-        """工作流是否正在运行"""
-        return self.get(STATE_WORKFLOW_RUNNING, False)
+    def active_editor_file(self) -> Optional[str]:
+        """当前编辑器打开的文件"""
+        return self.get(UI_EDITOR_ACTIVE_FILE)
 
-    @property
-    def is_workflow_locked(self) -> bool:
-        """工作流是否锁定"""
-        return self.get(STATE_WORKFLOW_LOCKED, False)
+    @active_editor_file.setter
+    def active_editor_file(self, value: Optional[str]) -> None:
+        """设置当前编辑器打开的文件"""
+        self.set(UI_EDITOR_ACTIVE_FILE, value)
 
-    @property
-    def checkpoint_count(self) -> int:
-        """当前检查点次数"""
-        return self.get(STATE_CHECKPOINT_COUNT, 0)
+    # ============================================================
+    # 编辑器状态管理
+    # ============================================================
 
-    @property
-    def is_init_complete(self) -> bool:
-        """初始化是否完成"""
-        return self.get(STATE_INIT_COMPLETE, False)
+    def save_editor_cursor(self, file_path: str, position: int) -> None:
+        """保存编辑器光标位置"""
+        positions = self.get(UI_EDITOR_CURSOR_POSITIONS, {}).copy()
+        positions[file_path] = position
+        self.set(UI_EDITOR_CURSOR_POSITIONS, positions)
+
+    def get_editor_cursor(self, file_path: str) -> int:
+        """获取编辑器光标位置"""
+        positions = self.get(UI_EDITOR_CURSOR_POSITIONS, {})
+        return positions.get(file_path, 0)
+
+    def save_editor_scroll(self, file_path: str, position: int) -> None:
+        """保存编辑器滚动位置"""
+        positions = self.get(UI_EDITOR_SCROLL_POSITIONS, {}).copy()
+        positions[file_path] = position
+        self.set(UI_EDITOR_SCROLL_POSITIONS, positions)
+
+    def get_editor_scroll(self, file_path: str) -> int:
+        """获取编辑器滚动位置"""
+        positions = self.get(UI_EDITOR_SCROLL_POSITIONS, {})
+        return positions.get(file_path, 0)
+
+    # ============================================================
+    # 面板可见性管理
+    # ============================================================
+
+    def set_panel_visible(self, panel_id: str, visible: bool) -> None:
+        """设置面板可见性"""
+        visibility = self.get(UI_PANEL_VISIBILITY, {}).copy()
+        visibility[panel_id] = visible
+        self.set(UI_PANEL_VISIBILITY, visibility)
+
+    def is_panel_visible(self, panel_id: str) -> bool:
+        """获取面板可见性"""
+        visibility = self.get(UI_PANEL_VISIBILITY, {})
+        return visibility.get(panel_id, True)
 
 
 # ============================================================
@@ -431,18 +446,20 @@ class AppState:
 # ============================================================
 
 __all__ = [
-    "AppState",
-    "StateChangeHandler",
+    "UIState",
+    "UIStateChangeHandler",
     # 状态字段常量
-    "STATE_PROJECT_PATH",
-    "STATE_PROJECT_INITIALIZED",
-    "STATE_CURRENT_FILE",
-    "STATE_WORKFLOW_RUNNING",
-    "STATE_CURRENT_NODE",
-    "STATE_CHECKPOINT_COUNT",
-    "STATE_WORKFLOW_LOCKED",
-    "STATE_LLM_CONFIGURED",
-    "STATE_RAG_ENABLED",
-    "STATE_INIT_PHASE",
-    "STATE_INIT_COMPLETE",
+    "UI_WINDOW_GEOMETRY",
+    "UI_WINDOW_STATE",
+    "UI_PANEL_VISIBILITY",
+    "UI_CURRENT_TAB",
+    "UI_PREVIOUS_TAB",
+    "UI_EDITOR_CURSOR_POSITIONS",
+    "UI_EDITOR_SCROLL_POSITIONS",
+    "UI_EDITOR_OPEN_FILES",
+    "UI_EDITOR_ACTIVE_FILE",
+    "UI_INPUT_DRAFT",
+    "UI_IS_GENERATING",
+    "UI_FILE_BROWSER_EXPANDED",
+    "UI_DEVTOOLS_VISIBLE",
 ]

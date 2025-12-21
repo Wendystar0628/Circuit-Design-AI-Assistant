@@ -58,7 +58,7 @@ class DiagnosticsCollector:
     _syntax_cache: Dict[str, tuple] = {}
 
     def __init__(self):
-        self._app_state = None
+        self._session_state = None
         self._logger = None
 
     # ============================================================
@@ -66,16 +66,16 @@ class DiagnosticsCollector:
     # ============================================================
 
     @property
-    def app_state(self):
-        """延迟获取应用状态"""
-        if self._app_state is None:
+    def session_state(self):
+        """延迟获取会话状态（只读）"""
+        if self._session_state is None:
             try:
                 from shared.service_locator import ServiceLocator
-                from shared.service_names import SVC_APP_STATE
-                self._app_state = ServiceLocator.get_optional(SVC_APP_STATE)
+                from shared.service_names import SVC_SESSION_STATE
+                self._session_state = ServiceLocator.get_optional(SVC_SESSION_STATE)
             except Exception:
                 pass
-        return self._app_state
+        return self._session_state
 
     @property
     def logger(self):
@@ -245,20 +245,12 @@ class DiagnosticsCollector:
         """
         errors = []
         
-        if self.app_state:
-            last_error = getattr(self.app_state, "last_simulation_error", None)
+        if self.session_state:
+            last_error = self.session_state.error_context
             if last_error:
                 errors.append(DiagnosticItem(
                     type="simulation",
                     message=str(last_error),
-                ))
-            
-            # 获取 ngspice 原始输出
-            ngspice_output = getattr(self.app_state, "ngspice_output", None)
-            if ngspice_output:
-                errors.append(DiagnosticItem(
-                    type="simulation",
-                    message=f"ngspice 输出:\n{ngspice_output}",
                 ))
         
         return errors
@@ -269,17 +261,9 @@ class DiagnosticsCollector:
         
         警告类型：浮空节点、未使用的子电路等非致命问题
         """
-        warnings = []
-        
-        if self.app_state:
-            app_warnings = getattr(self.app_state, "warnings", [])
-            for w in app_warnings:
-                warnings.append(DiagnosticItem(
-                    type="warning",
-                    message=str(w),
-                ))
-        
-        return warnings
+        # TODO: 警告信息收集待实现
+        # 目前返回空列表，待后续从 GraphState 或日志中收集
+        return []
 
     # ============================================================
     # 错误历史管理

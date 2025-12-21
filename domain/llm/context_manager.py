@@ -1003,10 +1003,10 @@ class ContextManager:
         project_path = ""
         try:
             from shared.service_locator import ServiceLocator
-            from shared.service_names import SVC_APP_STATE
-            app_state = ServiceLocator.get_optional(SVC_APP_STATE)
-            if app_state:
-                project_path = app_state.current_project_path or ""
+            from shared.service_names import SVC_SESSION_STATE
+            session_state = ServiceLocator.get_optional(SVC_SESSION_STATE)
+            if session_state:
+                project_path = session_state.project_root or ""
         except Exception:
             pass
         

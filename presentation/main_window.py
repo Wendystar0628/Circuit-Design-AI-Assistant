@@ -104,8 +104,8 @@ class MainWindow(QMainWindow):
             self._splitters, self._panels
         )
         
-        # 延迟恢复会话状态（等待窗口显示后执行）
-        QTimer.singleShot(100, self._restore_session)
+        # 注意：会话状态恢复（项目路径、打开的文件）移到 _on_init_complete 中
+        # 确保在 Phase 3 延迟初始化完成后执行，此时 ProjectService 等服务已可用
 
     # ============================================================
     # 延迟获取服务
@@ -494,7 +494,7 @@ class MainWindow(QMainWindow):
         """
         初始化完成事件处理
         
-        在 Phase 3 延迟初始化完成后调用，此时 ContextManager 已注册。
+        在 Phase 3 延迟初始化完成后调用，此时所有服务已注册。
         用于初始化需要依赖 Phase 3 服务的组件。
         """
         # 初始化对话面板（此时 ContextManager 已可用）
@@ -507,7 +507,11 @@ class MainWindow(QMainWindow):
         if self._panel_manager:
             self._panel_manager.restore_layout_state()
         
-        # 恢复对话会话（延迟执行，确保对话面板已初始化）
+        # 恢复会话状态（项目路径、打开的文件）
+        # 必须在 Phase 3 完成后执行，因为 ProjectService 在 Phase 3.3 初始化
+        self._restore_session()
+        
+        # 恢复对话会话（延迟执行，确保对话面板和项目已初始化）
         QTimer.singleShot(100, self._restore_conversation_session)
 
     def _restore_conversation_session(self):

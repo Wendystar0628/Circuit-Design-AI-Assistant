@@ -382,12 +382,11 @@ class HistoryDialog(QDialog):
         """获取当前项目路径"""
         try:
             from shared.service_locator import ServiceLocator
-            from shared.service_names import SVC_APP_STATE
-            from shared.app_state import STATE_PROJECT_PATH
+            from shared.service_names import SVC_SESSION_STATE
             
-            app_state = ServiceLocator.get_optional(SVC_APP_STATE)
-            if app_state:
-                return app_state.get(STATE_PROJECT_PATH)
+            session_state = ServiceLocator.get_optional(SVC_SESSION_STATE)
+            if session_state:
+                return session_state.project_root
         except Exception:
             pass
         return None

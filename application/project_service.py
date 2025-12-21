@@ -9,8 +9,14 @@
 
 初始化顺序：
 - 阶段二启动时初始化
-- 依赖 FileManager、AppState、EventBus
+- 依赖 FileManager、SessionState、GraphStateProjector、EventBus
 - 注册到 ServiceLocator
+
+三层状态分离架构：
+- 项目状态（project_root）存储在 GraphState 中
+- 通过 GraphStateProjector 自动投影到 SessionState
+- UI 组件从 SessionState 读取项目状态
+- 本服务通过发布事件通知状态变更，由 GraphStateProjector 处理投影
 
 使用示例：
     from shared.service_locator import ServiceLocator
@@ -131,7 +137,8 @@ class ProjectService:
         
         # 延迟获取的服务
         self._file_manager = None
-        self._app_state = None
+        self._session_state = None
+        self._graph_state_projector = None
         self._event_bus = None
         self._worker_manager = None
         self._logger = None
@@ -154,16 +161,28 @@ class ProjectService:
         return self._file_manager
     
     @property
-    def app_state(self):
-        """延迟获取应用状态"""
-        if self._app_state is None:
+    def session_state(self):
+        """延迟获取会话状态（只读）"""
+        if self._session_state is None:
             try:
                 from shared.service_locator import ServiceLocator
-                from shared.service_names import SVC_APP_STATE
-                self._app_state = ServiceLocator.get_optional(SVC_APP_STATE)
+                from shared.service_names import SVC_SESSION_STATE
+                self._session_state = ServiceLocator.get_optional(SVC_SESSION_STATE)
             except Exception:
                 pass
-        return self._app_state
+        return self._session_state
+    
+    @property
+    def graph_state_projector(self):
+        """延迟获取 GraphState 投影器"""
+        if self._graph_state_projector is None:
+            try:
+                from shared.service_locator import ServiceLocator
+                from shared.service_names import SVC_GRAPH_STATE_PROJECTOR
+                self._graph_state_projector = ServiceLocator.get_optional(SVC_GRAPH_STATE_PROJECTOR)
+            except Exception:
+                pass
+        return self._graph_state_projector
     
     @property
     def event_bus(self):
@@ -211,6 +230,7 @@ class ProjectService:
                 pass
         return self._json_repo
 
+
     # ============================================================
     # 核心功能
     # ============================================================
@@ -233,7 +253,7 @@ class ProjectService:
         6. 若不存在 → 创建新的 Checkpointer，使用空白 GraphState（阶段五实现）
         7. 从 GraphState 恢复各组件状态（阶段五实现）
         8. 设置 FileManager 工作目录
-        9. 更新 AppState 项目相关字段
+        9. 通过 GraphStateProjector 更新 SessionState
         10. 发布 EVENT_STATE_PROJECT_OPENED 事件（携带是否为已有项目的标识）
         11. 各 UI 面板订阅事件后刷新显示
         
@@ -305,12 +325,14 @@ class ProjectService:
             if self.file_manager:
                 self.file_manager.set_work_dir(path)
             
-            # 9. 更新 AppState
-            if self.app_state:
-                self.app_state.set("project_path", str(path))
-                self.app_state.set("project_name", path.name)
-                self.app_state.set("project_is_existing", is_existing)
-                self.app_state.set("project_has_history", has_history)
+            # 9. 通过 GraphStateProjector 更新 SessionState
+            # 项目状态将通过 GraphState 变更自动投影到 SessionState
+            if self.graph_state_projector:
+                self.graph_state_projector.update_project_state(
+                    project_root=str(path),
+                    is_existing=is_existing,
+                    has_history=has_history,
+                )
             
             # 更新当前项目路径
             self._current_project_path = path
@@ -400,7 +422,7 @@ class ProjectService:
         执行流程：
         1. 停止所有正在运行的 Worker（通过 worker_manager.stop_all_workers()）
         2. 保存当前 GraphState 到 Checkpointer（确保状态持久化）
-        3. 清空 AppState 中的项目相关字段（project_path、current_file 等）
+        3. 通过 GraphStateProjector 清空 SessionState 中的项目相关字段
         4. 释放 Checkpointer 数据库连接
         5. 清空各面板显示内容（文件浏览器、代码编辑器、对话面板、仿真结果面板）
            - 通过发布 EVENT_STATE_PROJECT_CLOSED 事件，各面板订阅后自行清理
@@ -428,20 +450,9 @@ class ProjectService:
             # 3. TODO: 释放 Checkpointer 数据库连接（阶段五实现）
             # 确保数据库文件可以被其他进程访问
             
-            # 4. 清空 AppState 中的项目相关字段
-            if self.app_state:
-                # 项目基本信息
-                self.app_state.set("project_path", None)
-                self.app_state.set("project_name", None)
-                self.app_state.set("project_is_existing", False)
-                self.app_state.set("project_has_history", False)
-                # UI 状态
-                self.app_state.set("current_file", None)
-                self.app_state.set("selected_iteration", None)
-                # 工作流状态
-                self.app_state.set("workflow_running", False)
-                self.app_state.set("current_node", None)
-                self.app_state.set("iteration_count", 0)
+            # 4. 通过 GraphStateProjector 清空 SessionState 中的项目相关字段
+            if self.graph_state_projector:
+                self.graph_state_projector.clear_project_state()
             
             # 5. 重置 FileManager 工作目录
             if self.file_manager:
@@ -505,6 +516,7 @@ class ProjectService:
             return False, f"切换项目失败: {init_msg}"
         
         return True, f"已切换到项目: {new_folder_path}"
+
 
     # ============================================================
     # 校验与检查
@@ -752,7 +764,8 @@ class ProjectService:
     def is_project_open(self) -> bool:
         """检查是否有打开的项目"""
         return self._status in (ProjectStatus.READY, ProjectStatus.DEGRADED)
-    
+
+
     # ============================================================
     # 最近打开列表
     # ============================================================

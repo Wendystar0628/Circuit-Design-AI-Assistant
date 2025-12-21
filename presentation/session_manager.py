@@ -39,7 +39,7 @@ class SessionManager:
         self._main_window = main_window
         self._panels = panels
         self._config_manager = None
-        self._app_state = None
+        self._session_state = None
         self._project_service = None
         self._context_manager = None
         self._event_bus = None
@@ -60,16 +60,16 @@ class SessionManager:
 
 
     @property
-    def app_state(self):
-        """延迟获取 AppState"""
-        if self._app_state is None:
+    def session_state(self):
+        """延迟获取 SessionState（只读）"""
+        if self._session_state is None:
             try:
                 from shared.service_locator import ServiceLocator
-                from shared.service_names import SVC_APP_STATE
-                self._app_state = ServiceLocator.get_optional(SVC_APP_STATE)
+                from shared.service_names import SVC_SESSION_STATE
+                self._session_state = ServiceLocator.get_optional(SVC_SESSION_STATE)
             except Exception:
                 pass
-        return self._app_state
+        return self._session_state
 
     @property
     def project_service(self):
@@ -137,9 +137,8 @@ class SessionManager:
         
         # 保存当前项目路径
         project_path = None
-        if self.app_state:
-            from shared.app_state import STATE_PROJECT_PATH
-            project_path = self.app_state.get(STATE_PROJECT_PATH)
+        if self.session_state:
+            project_path = self.session_state.project_root
         self.config_manager.set("last_project_path", project_path)
         
         # 保存编辑器中打开的文件列表和当前激活的标签页

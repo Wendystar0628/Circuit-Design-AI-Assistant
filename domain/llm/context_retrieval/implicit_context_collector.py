@@ -45,7 +45,7 @@ class ImplicitContextCollector:
     """
 
     def __init__(self):
-        self._app_state = None
+        self._session_state = None
         self._event_bus = None
         self._logger = None
         self._recent_files: List[str] = []
@@ -57,16 +57,16 @@ class ImplicitContextCollector:
     # ============================================================
 
     @property
-    def app_state(self):
-        """延迟获取应用状态"""
-        if self._app_state is None:
+    def session_state(self):
+        """延迟获取会话状态（只读）"""
+        if self._session_state is None:
             try:
                 from shared.service_locator import ServiceLocator
-                from shared.service_names import SVC_APP_STATE
-                self._app_state = ServiceLocator.get_optional(SVC_APP_STATE)
+                from shared.service_names import SVC_SESSION_STATE
+                self._session_state = ServiceLocator.get_optional(SVC_SESSION_STATE)
             except Exception:
                 pass
-        return self._app_state
+        return self._session_state
 
     @property
     def event_bus(self):
@@ -179,13 +179,13 @@ class ImplicitContextCollector:
         获取当前打开的电路文件
         
         优先级：
-        1. AppState 中记录的当前文件
+        1. SessionState 中记录的当前文件
         2. 最近修改的文件列表中的电路文件
         3. 项目目录下最近修改的 .cir 文件
         """
-        # 从 AppState 获取
-        if self.app_state:
-            current_file = getattr(self.app_state, "current_circuit_file", None)
+        # 从 SessionState 获取
+        if self.session_state:
+            current_file = self.session_state.active_circuit_file
             if current_file:
                 path = Path(current_file)
                 if path.exists():
@@ -206,7 +206,6 @@ class ImplicitContextCollector:
             return max(cir_files, key=lambda f: f.stat().st_mtime)
         
         return None
-
 
     def get_latest_simulation_result(
         self, project_dir: Path
@@ -260,10 +259,10 @@ class ImplicitContextCollector:
         """
         获取仿真错误信息（如有）
         
-        从 AppState.last_simulation_error 获取
+        从 SessionState.error_context 获取
         """
-        if self.app_state:
-            error = getattr(self.app_state, "last_simulation_error", None)
+        if self.session_state:
+            error = self.session_state.error_context
             if error:
                 return str(error)
         return None

@@ -13,7 +13,7 @@
 
 启用条件：
 - vector_store 服务已注册到 ServiceLocator
-- AppState.rag_enabled 为 True
+- RAG 功能已启用（从配置获取）
 - 两个条件同时满足时才执行检索
 
 检索集合：
@@ -58,7 +58,7 @@ class VectorRetriever:
 
     def __init__(self):
         self._vector_store = None
-        self._app_state = None
+        self._session_state = None
         self._logger = None
 
     # ============================================================
@@ -78,16 +78,16 @@ class VectorRetriever:
         return self._vector_store
 
     @property
-    def app_state(self):
-        """延迟获取应用状态"""
-        if self._app_state is None:
+    def session_state(self):
+        """延迟获取会话状态（只读）"""
+        if self._session_state is None:
             try:
                 from shared.service_locator import ServiceLocator
-                from shared.service_names import SVC_APP_STATE
-                self._app_state = ServiceLocator.get_optional(SVC_APP_STATE)
+                from shared.service_names import SVC_SESSION_STATE
+                self._session_state = ServiceLocator.get_optional(SVC_SESSION_STATE)
             except Exception:
                 pass
-        return self._app_state
+        return self._session_state
 
     @property
     def logger(self):
@@ -110,7 +110,7 @@ class VectorRetriever:
         
         启用条件：
         1. vector_store 服务已注册
-        2. AppState.rag_enabled 为 True
+        2. RAG 功能已启用（从配置获取）
         
         Returns:
             bool: 是否启用
@@ -119,10 +119,8 @@ class VectorRetriever:
         if self.vector_store is None:
             return False
         
-        # 检查 RAG 开关
-        if self.app_state:
-            return getattr(self.app_state, "rag_enabled", False)
-        
+        # TODO: 检查 RAG 开关（从配置或 SessionState 获取）
+        # 目前默认返回 False，待 RAG 功能完善后启用
         return False
 
 
@@ -312,10 +310,7 @@ class VectorRetriever:
         return {
             "enabled": self.is_enabled(),
             "vector_store_available": self.vector_store is not None,
-            "rag_enabled": (
-                getattr(self.app_state, "rag_enabled", False)
-                if self.app_state else False
-            ),
+            "rag_enabled": False,  # TODO: 从配置获取
         }
 
 

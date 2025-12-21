@@ -286,11 +286,10 @@ class CodeEditorPanel(QWidget):
     def _check_has_project(self) -> bool:
         try:
             from shared.service_locator import ServiceLocator
-            from shared.service_names import SVC_APP_STATE
-            app_state = ServiceLocator.get_optional(SVC_APP_STATE)
-            if app_state:
-                from shared.app_state import STATE_PROJECT_PATH
-                project_path = app_state.get(STATE_PROJECT_PATH)
+            from shared.service_names import SVC_SESSION_STATE
+            session_state = ServiceLocator.get_optional(SVC_SESSION_STATE)
+            if session_state:
+                project_path = session_state.project_root
                 return project_path is not None and project_path != ""
         except Exception:
             pass

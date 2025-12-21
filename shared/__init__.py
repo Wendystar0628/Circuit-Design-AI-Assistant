@@ -11,11 +11,15 @@
 - error_handler: 统一错误处理器
 - worker_types: Worker 类型常量定义
 - worker_manager: Worker 生命周期管理器
-- app_state: 应用状态容器
 - i18n_manager: 国际化管理器
 - model_types: 模型类型定义
 - model_registry: LLM 模型注册表
 - embedding_model_registry: 嵌入模型注册表
+
+三层状态分离架构（新）：
+- UIState (presentation/ui_state.py): 纯 UI 状态
+- SessionState (application/session_state.py): GraphState 的只读投影
+- GraphState (application/graph/state.py): LangGraph 工作流的唯一真理来源
 
 依赖方向（严格遵守，避免循环依赖）：
 - service_names.py, event_types.py, error_types.py, worker_types.py, model_types.py: 纯常量/类型定义，不依赖任何其他模块
@@ -23,7 +27,6 @@
 - event_bus.py: 依赖 event_types.py，不依赖 error_handler.py
 - error_handler.py: 依赖 event_bus.py、error_types.py，内部错误处理不能再调用自身
 - worker_manager.py: 依赖 event_bus.py、worker_types.py
-- app_state.py: 依赖 event_bus.py、event_types.py
 - model_registry.py: 依赖 model_types.py
 - embedding_model_registry.py: 依赖 model_types.py
 - 其他模块可依赖以上所有，但不能被以上模块反向依赖
@@ -32,7 +35,9 @@
 # 服务名常量
 from shared.service_names import (
     SVC_EVENT_BUS,
-    SVC_APP_STATE,
+    SVC_UI_STATE,
+    SVC_SESSION_STATE,
+    SVC_GRAPH_STATE_PROJECTOR,
     SVC_ERROR_HANDLER,
     SVC_WORKER_MANAGER,
     SVC_I18N_MANAGER,
@@ -69,6 +74,9 @@ from shared.event_types import (
     EVENT_STATE_PROJECT_CLOSED,
     EVENT_STATE_CONFIG_CHANGED,
     EVENT_STATE_ITERATION_UPDATED,
+    # 三层状态分离架构事件
+    EVENT_WORK_MODE_CHANGED,
+    EVENT_ACTIVE_FILE_CHANGED,
     # Worker 事件
     EVENT_WORKER_STARTED,
     EVENT_WORKER_PROGRESS,
@@ -154,23 +162,6 @@ from shared.worker_manager import (
     WorkerInfo,
 )
 
-# 应用状态容器
-from shared.app_state import (
-    AppState,
-    StateChangeHandler,
-    STATE_PROJECT_PATH,
-    STATE_PROJECT_INITIALIZED,
-    STATE_CURRENT_FILE,
-    STATE_WORKFLOW_RUNNING,
-    STATE_CURRENT_NODE,
-    STATE_CHECKPOINT_COUNT,
-    STATE_WORKFLOW_LOCKED,
-    STATE_LLM_CONFIGURED,
-    STATE_RAG_ENABLED,
-    STATE_INIT_PHASE,
-    STATE_INIT_COMPLETE,
-)
-
 # 国际化管理器
 from shared.i18n_manager import (
     I18nManager,
@@ -198,7 +189,9 @@ from shared.embedding_model_registry import EmbeddingModelRegistry
 __all__ = [
     # 服务名常量
     "SVC_EVENT_BUS",
-    "SVC_APP_STATE",
+    "SVC_UI_STATE",
+    "SVC_SESSION_STATE",
+    "SVC_GRAPH_STATE_PROJECTOR",
     "SVC_ERROR_HANDLER",
     "SVC_WORKER_MANAGER",
     "SVC_I18N_MANAGER",
@@ -226,6 +219,8 @@ __all__ = [
     "EVENT_STATE_PROJECT_CLOSED",
     "EVENT_STATE_CONFIG_CHANGED",
     "EVENT_STATE_ITERATION_UPDATED",
+    "EVENT_WORK_MODE_CHANGED",
+    "EVENT_ACTIVE_FILE_CHANGED",
     "EVENT_WORKER_STARTED",
     "EVENT_WORKER_PROGRESS",
     "EVENT_WORKER_COMPLETE",
@@ -283,20 +278,6 @@ __all__ = [
     "WorkerManager",
     "Task",
     "WorkerInfo",
-    # 应用状态容器
-    "AppState",
-    "StateChangeHandler",
-    "STATE_PROJECT_PATH",
-    "STATE_PROJECT_INITIALIZED",
-    "STATE_CURRENT_FILE",
-    "STATE_WORKFLOW_RUNNING",
-    "STATE_CURRENT_NODE",
-    "STATE_CHECKPOINT_COUNT",
-    "STATE_WORKFLOW_LOCKED",
-    "STATE_LLM_CONFIGURED",
-    "STATE_RAG_ENABLED",
-    "STATE_INIT_PHASE",
-    "STATE_INIT_COMPLETE",
     # 国际化管理器
     "I18nManager",
     "LANG_EN_US",

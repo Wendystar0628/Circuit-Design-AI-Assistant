@@ -100,7 +100,7 @@ class ContextRetriever:
         self._implicit_collector = ImplicitContextCollector()
         self._diagnostics_collector = DiagnosticsCollector()
         self._vector_store = None
-        self._app_state = None
+        self._session_state = None
         self._logger = None
 
     # ============================================================
@@ -119,15 +119,16 @@ class ContextRetriever:
         return self._vector_store
 
     @property
-    def app_state(self):
-        if self._app_state is None:
+    def session_state(self):
+        """延迟获取会话状态（只读）"""
+        if self._session_state is None:
             try:
                 from shared.service_locator import ServiceLocator
-                from shared.service_names import SVC_APP_STATE
-                self._app_state = ServiceLocator.get_optional(SVC_APP_STATE)
+                from shared.service_names import SVC_SESSION_STATE
+                self._session_state = ServiceLocator.get_optional(SVC_SESSION_STATE)
             except Exception:
                 pass
-        return self._app_state
+        return self._session_state
 
     @property
     def logger(self):
@@ -218,8 +219,8 @@ class ContextRetriever:
         """检查向量检索是否启用"""
         if self.vector_store is None:
             return False
-        if self.app_state:
-            return getattr(self.app_state, "rag_enabled", False)
+        # TODO: 检查 RAG 开关（从配置或 SessionState 获取）
+        # 目前默认返回 False，待 RAG 功能完善后启用
         return False
 
 

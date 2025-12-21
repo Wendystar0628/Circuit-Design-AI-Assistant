@@ -7,6 +7,11 @@
 - 协调各组件的启动顺序
 - 处理初始化失败和降级策略
 
+三层状态分离架构：
+- Layer 1: UIState (Presentation) - 纯 UI 状态，Phase 2.2 在 MainWindow 中初始化
+- Layer 2: SessionState (Application) - GraphState 的只读投影，Phase 3.5.1 初始化
+- Layer 3: GraphState (Domain) - LangGraph 工作流的唯一真理来源
+
 初始化顺序（严格按此顺序执行）：
 - Phase -1: ngspice 和 AI 模型路径配置（必须在所有其他导入之前）
 - Phase 0: 基础设施初始化（同步，阻塞式）
@@ -19,13 +24,12 @@
   - 1.1 ConfigManager 初始化
   - 1.2 ErrorHandler 初始化
   - 1.3 I18nManager 初始化
-  - 1.4 AppState 初始化
-  - 1.5 ModelRegistry 初始化
-  - 1.6 TracingStore 初始化（可观测性基础设施）
+  - 1.4 ModelRegistry 初始化
+  - 1.5 TracingStore 初始化（可观测性基础设施）
 - Phase 2: GUI 框架初始化（同步，阻塞式）
   - 2.0.1 预导入 WebEngine
   - 2.1 创建 QApplication 实例
-  - 2.2 创建 MainWindow 实例
+  - 2.2 创建 MainWindow 实例（内部初始化 UIState）
   - 2.3 显示主窗口
   - 2.4 触发延迟初始化
 - Phase 3: 延迟初始化（异步，在事件循环中执行）
@@ -34,6 +38,8 @@
   - 3.3 ProjectService 初始化
   - 3.4 ContextManager 初始化
   - 3.5 SessionStateManager 初始化
+  - 3.5.1 SessionState 初始化（GraphState 的只读投影）
+  - 3.5.2 GraphStateProjector 初始化（自动投影 GraphState 到 SessionState）
   - 3.5.5 TracingLogger 初始化（可观测性基础设施）
   - 3.6 LLM 客户端初始化
   - 3.7 发布 EVENT_INIT_COMPLETE 事件
@@ -222,7 +228,8 @@ def _init_phase_1() -> bool:
     1.1 ConfigManager 初始化（依赖 Logger、CredentialManager）
     1.2 ErrorHandler 初始化（依赖 Logger、EventBus、ConfigManager）
     1.3 I18nManager 初始化（依赖 ConfigManager）
-    1.4 AppState 初始化（依赖 EventBus）
+    1.4 ModelRegistry 初始化（依赖 Logger）
+    1.5 TracingStore 初始化（依赖 Logger）
     
     Returns:
         bool: 初始化是否成功
@@ -281,29 +288,17 @@ def _init_phase_1() -> bool:
             _logger.info(f"Phase 1.3 I18nManager 初始化完成，当前语言: {i18n_manager.get_current_language()}")
 
         # --------------------------------------------------------
-        # 1.4 AppState 初始化
-        # 依赖：EventBus（状态变更发布事件）
-        # 职责：初始化所有状态字段为默认值
-        # --------------------------------------------------------
-        from shared.app_state import AppState
-        from shared.service_names import SVC_APP_STATE
-        app_state = AppState()
-        ServiceLocator.register(SVC_APP_STATE, app_state)
-        if _logger:
-            _logger.info("Phase 1.4 AppState 初始化完成")
-
-        # --------------------------------------------------------
-        # 1.5 ModelRegistry 初始化
+        # 1.4 ModelRegistry 初始化
         # 依赖：Logger
         # 职责：注册所有内置模型配置，作为模型信息的单一信息源
         # --------------------------------------------------------
         from shared.model_registry import ModelRegistry
         ModelRegistry.initialize()
         if _logger:
-            _logger.info("Phase 1.5 ModelRegistry 初始化完成")
+            _logger.info("Phase 1.4 ModelRegistry 初始化完成")
 
         # --------------------------------------------------------
-        # 1.6 TracingStore 初始化
+        # 1.5 TracingStore 初始化
         # 依赖：Logger
         # 职责：初始化追踪数据存储（SQLite）
         # --------------------------------------------------------
@@ -322,7 +317,7 @@ def _init_phase_1() -> bool:
 
 def _init_tracing_store():
     """
-    初始化追踪存储（Phase 1.6）
+    初始化追踪存储（Phase 1.5）
     
     同步初始化 TracingStore，因为需要在 Phase 3 之前准备好。
     使用 asyncio.run() 执行异步初始化。
@@ -347,13 +342,13 @@ def _init_tracing_store():
         ServiceLocator.register(SVC_TRACING_STORE, tracing_store)
         
         if _logger:
-            _logger.info(f"Phase 1.6 TracingStore 初始化完成: {tracing_store.db_path}")
+            _logger.info(f"Phase 1.5 TracingStore 初始化完成: {tracing_store.db_path}")
             
     except Exception as e:
         if _logger:
-            _logger.warning(f"Phase 1.6 TracingStore 初始化失败（非致命）: {e}")
+            _logger.warning(f"Phase 1.5 TracingStore 初始化失败（非致命）: {e}")
         else:
-            print(f"[Phase 1.6] TracingStore 初始化失败: {e}")
+            print(f"[Phase 1.5] TracingStore 初始化失败: {e}")
 
 
 
@@ -425,8 +420,15 @@ def _delayed_init():
     Phase 3: 延迟初始化（异步，在事件循环中执行）
     
     3.1 WorkerManager 初始化（依赖 EventBus）
-    3.2 FileManager 初始化（阶段二实现，依赖 Logger、EventBus）
-    3.3 发布 EVENT_INIT_COMPLETE 事件
+    3.2 FileManager 初始化（依赖 Logger、EventBus）
+    3.3 ProjectService 初始化（依赖 FileManager、SessionState、EventBus）
+    3.4 ContextManager 初始化（依赖 Logger、EventBus）
+    3.5 SessionStateManager 初始化（依赖 Logger、EventBus、ContextManager）
+    3.5.1 SessionState 初始化（GraphState 的只读投影）
+    3.5.2 GraphStateProjector 初始化（自动投影 GraphState 到 SessionState）
+    3.5.5 TracingLogger 初始化（可观测性基础设施）
+    3.6 LLM 客户端初始化（可选）
+    3.7 发布 EVENT_INIT_COMPLETE 事件
     
     此阶段的耗时操作在事件循环中异步执行，不阻塞 UI 显示
     """
@@ -461,8 +463,32 @@ def _delayed_init():
             _logger.info("Phase 3.2 FileManager 初始化完成")
 
         # --------------------------------------------------------
+        # 3.5.1 SessionState 初始化（先于 ProjectService）
+        # 依赖：EventBus
+        # 职责：GraphState 的只读投影，供 UI 层读取业务状态
+        # --------------------------------------------------------
+        from application.session_state import SessionState
+        from shared.service_names import SVC_SESSION_STATE
+        session_state = SessionState()
+        ServiceLocator.register(SVC_SESSION_STATE, session_state)
+        if _logger:
+            _logger.info("Phase 3.5.1 SessionState 初始化完成")
+
+        # --------------------------------------------------------
+        # 3.5.2 GraphStateProjector 初始化
+        # 依赖：SessionState、EventBus
+        # 职责：监听 GraphState 变更，自动投影到 SessionState
+        # --------------------------------------------------------
+        from application.graph_state_projector import GraphStateProjector
+        from shared.service_names import SVC_GRAPH_STATE_PROJECTOR
+        graph_state_projector = GraphStateProjector(session_state)
+        ServiceLocator.register(SVC_GRAPH_STATE_PROJECTOR, graph_state_projector)
+        if _logger:
+            _logger.info("Phase 3.5.2 GraphStateProjector 初始化完成")
+
+        # --------------------------------------------------------
         # 3.3 ProjectService 初始化
-        # 依赖：FileManager、AppState、EventBus
+        # 依赖：FileManager、SessionState、GraphStateProjector、EventBus
         # 职责：管理工作文件夹的初始化和状态
         # --------------------------------------------------------
         from application.project_service import ProjectService
@@ -486,7 +512,7 @@ def _delayed_init():
 
         # --------------------------------------------------------
         # 3.5 SessionStateManager 初始化
-        # 依赖：Logger、EventBus、ContextManager、AppState
+        # 依赖：Logger、EventBus、ContextManager
         # 职责：会话状态的唯一数据源（Single Source of Truth）
         # --------------------------------------------------------
         from domain.llm.session_state_manager import SessionStateManager
@@ -547,9 +573,9 @@ def _init_tracing_logger():
     依赖 EventBus 和 TracingStore，在 Phase 3 延迟初始化中执行。
     """
     try:
-        from shared.tracing import TracingLogger, TracingContext
+        from shared.tracing import TracingLogger
         from shared.service_locator import ServiceLocator
-        from shared.service_names import SVC_TRACING_LOGGER, SVC_TRACING_STORE
+        from shared.service_names import SVC_TRACING_LOGGER, SVC_TRACING_STORE, SVC_EVENT_BUS
         
         # 获取 TracingStore
         tracing_store = ServiceLocator.get_optional(SVC_TRACING_STORE)
@@ -558,14 +584,17 @@ def _init_tracing_logger():
                 _logger.warning("Phase 3.5.5 TracingLogger 初始化跳过：TracingStore 不可用")
             return
         
-        # 创建 TracingLogger
-        tracing_logger = TracingLogger(store=tracing_store)
+        # 创建 TracingLogger（通过 set_store 注入依赖，而非构造函数参数）
+        tracing_logger = TracingLogger()
+        tracing_logger.set_store(tracing_store)
         
-        # 启动定时刷新
+        # 注入 EventBus（可选）
+        event_bus = ServiceLocator.get_optional(SVC_EVENT_BUS)
+        if event_bus:
+            tracing_logger.set_event_bus(event_bus)
+        
+        # 启动定时刷新（内部会注册 TracingContext 回调）
         tracing_logger.start()
-        
-        # 连接 TracingContext 回调
-        TracingContext.set_span_finished_callback(tracing_logger.record_span)
         
         # 注册到 ServiceLocator
         ServiceLocator.register(SVC_TRACING_LOGGER, tracing_logger)
@@ -603,21 +632,21 @@ def _init_llm_client():
         
         if not config_manager or not credential_manager:
             if _logger:
-                _logger.warning("Phase 3.5 LLM 客户端初始化跳过：ConfigManager 或 CredentialManager 不可用")
+                _logger.warning("Phase 3.6 LLM 客户端初始化跳过：ConfigManager 或 CredentialManager 不可用")
             return
         
         # 获取当前 LLM 厂商
         provider = config_manager.get("llm_provider", "")
         if not provider:
             if _logger:
-                _logger.info("Phase 3.5 LLM 客户端初始化跳过：未配置 LLM 厂商")
+                _logger.info("Phase 3.6 LLM 客户端初始化跳过：未配置 LLM 厂商")
             return
         
         # 获取凭证
         credential = credential_manager.get_credential("llm", provider)
         if not credential or not credential.get("api_key"):
             if _logger:
-                _logger.info(f"Phase 3.5 LLM 客户端初始化跳过：{provider} 的 API Key 未配置")
+                _logger.info(f"Phase 3.6 LLM 客户端初始化跳过：{provider} 的 API Key 未配置")
             return
         
         api_key = credential.get("api_key")
@@ -638,15 +667,16 @@ def _init_llm_client():
             ServiceLocator.register(SVC_LLM_CLIENT, client)
             
             if _logger:
-                _logger.info(f"Phase 3.5 LLM 客户端初始化完成：{provider}, model={model or 'default'}")
+                _logger.info(f"Phase 3.6 LLM 客户端初始化完成：{provider}, model={model or 'default'}")
         else:
             if _logger:
-                _logger.warning(f"Phase 3.5 LLM 客户端初始化跳过：厂商 {provider} 暂未实现")
+                _logger.warning(f"Phase 3.6 LLM 客户端初始化跳过：厂商 {provider} 暂未实现")
                 
     except Exception as e:
         if _logger:
-            _logger.warning(f"Phase 3.5 LLM 客户端初始化失败（非致命）: {e}")
+            _logger.warning(f"Phase 3.6 LLM 客户端初始化失败（非致命）: {e}")
         # LLM 客户端初始化失败不是致命错误，用户可以稍后在设置中配置
+
 
 
 def _show_fatal_error(message: str):

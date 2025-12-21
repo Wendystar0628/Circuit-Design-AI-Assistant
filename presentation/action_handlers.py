@@ -196,16 +196,10 @@ class ActionHandlers:
                 if self.logger:
                     self.logger.warning(f"创建推荐目录失败: {dir_name} - {e}")
         
-        # 更新应用状态
+        # 发布项目打开事件
         try:
             from shared.service_locator import ServiceLocator
-            from shared.service_names import SVC_APP_STATE, SVC_EVENT_BUS
-            
-            app_state = ServiceLocator.get_optional(SVC_APP_STATE)
-            if app_state:
-                from shared.app_state import STATE_PROJECT_PATH, STATE_PROJECT_INITIALIZED
-                app_state.set(STATE_PROJECT_PATH, folder_path)
-                app_state.set(STATE_PROJECT_INITIALIZED, True)
+            from shared.service_names import SVC_EVENT_BUS
             
             event_bus = ServiceLocator.get_optional(SVC_EVENT_BUS)
             if event_bus:
@@ -219,7 +213,7 @@ class ActionHandlers:
                 })
         except Exception as e:
             if self.logger:
-                self.logger.warning(f"更新应用状态失败: {e}")
+                self.logger.warning(f"发布项目打开事件失败: {e}")
 
     def on_close_workspace(self):
         """关闭工作文件夹"""
@@ -237,13 +231,7 @@ class ActionHandlers:
         else:
             try:
                 from shared.service_locator import ServiceLocator
-                from shared.service_names import SVC_APP_STATE, SVC_EVENT_BUS
-                
-                app_state = ServiceLocator.get_optional(SVC_APP_STATE)
-                if app_state:
-                    from shared.app_state import STATE_PROJECT_PATH, STATE_PROJECT_INITIALIZED
-                    app_state.set(STATE_PROJECT_PATH, None)
-                    app_state.set(STATE_PROJECT_INITIALIZED, False)
+                from shared.service_names import SVC_EVENT_BUS
                 
                 event_bus = ServiceLocator.get_optional(SVC_EVENT_BUS)
                 if event_bus:
@@ -348,11 +336,10 @@ class ActionHandlers:
         # 检查是否已打开项目
         try:
             from shared.service_locator import ServiceLocator
-            from shared.service_names import SVC_APP_STATE
-            from shared.app_state import STATE_PROJECT_INITIALIZED
+            from shared.service_names import SVC_SESSION_STATE
             
-            app_state = ServiceLocator.get_optional(SVC_APP_STATE)
-            if app_state and not app_state.get(STATE_PROJECT_INITIALIZED, False):
+            session_state = ServiceLocator.get_optional(SVC_SESSION_STATE)
+            if session_state and not session_state.project_root:
                 QMessageBox.warning(
                     self._main_window,
                     self._get_text("dialog.warning.title", "Warning"),

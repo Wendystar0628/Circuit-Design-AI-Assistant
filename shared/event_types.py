@@ -447,6 +447,18 @@ EVENT_WORKFLOW_LOCKED = "workflow_locked"
 # 工作流解锁
 EVENT_WORKFLOW_UNLOCKED = "workflow_unlocked"
 
+# 工作模式变更
+# 携带数据：
+#   - old_mode: str - 旧模式（"workflow" | "free_chat"）
+#   - new_mode: str - 新模式
+EVENT_WORK_MODE_CHANGED = "work_mode_changed"
+
+# 当前激活文件变更
+# 携带数据：
+#   - old_path: str - 旧文件路径
+#   - new_path: str - 新文件路径
+EVENT_ACTIVE_FILE_CHANGED = "active_file_changed"
+
 # ============================================================
 # 停止控制事件
 # ============================================================
@@ -612,6 +624,8 @@ __all__ = [
     # 工作流锁定事件
     "EVENT_WORKFLOW_LOCKED",
     "EVENT_WORKFLOW_UNLOCKED",
+    "EVENT_WORK_MODE_CHANGED",
+    "EVENT_ACTIVE_FILE_CHANGED",
     # 停止控制事件
     "EVENT_STOP_REQUESTED",
     "EVENT_STOP_COMPLETED",

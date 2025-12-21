@@ -52,7 +52,7 @@ class SessionStateManager:
         
         # 延迟获取的服务
         self._context_manager = None
-        self._app_state = None
+        self._session_state = None
         self._event_bus = None
         self._logger = None
         self._message_store = None
@@ -97,16 +97,16 @@ class SessionStateManager:
         return self._context_manager
     
     @property
-    def app_state(self):
-        """延迟获取应用状态"""
-        if self._app_state is None:
+    def session_state(self):
+        """延迟获取会话状态（只读）"""
+        if self._session_state is None:
             try:
                 from shared.service_locator import ServiceLocator
-                from shared.service_names import SVC_APP_STATE
-                self._app_state = ServiceLocator.get_optional(SVC_APP_STATE)
+                from shared.service_names import SVC_SESSION_STATE
+                self._session_state = ServiceLocator.get_optional(SVC_SESSION_STATE)
             except Exception:
                 pass
-        return self._app_state
+        return self._session_state
     
     @property
     def message_store(self):
@@ -150,10 +150,9 @@ class SessionStateManager:
         Returns:
             str: 项目路径，若无则返回 None
         """
-        if self.app_state:
+        if self.session_state:
             try:
-                from shared.app_state import STATE_PROJECT_PATH
-                return self.app_state.get(STATE_PROJECT_PATH)
+                return self.session_state.project_root
             except Exception:
                 pass
         return None

@@ -7,6 +7,11 @@
 - 避免字符串硬编码
 - 作为 ServiceLocator 注册和获取服务的键
 
+三层状态分离架构：
+- SVC_UI_STATE: 纯 UI 状态（窗口布局、面板可见性、编辑器状态）
+- SVC_SESSION_STATE: GraphState 的只读投影，供 UI 层读取业务状态
+- SVC_GRAPH_STATE_PROJECTOR: 监听 GraphState 变更，自动投影到 SessionState
+
 设计原则：
 - 纯常量定义，不依赖任何其他模块
 - 所有服务名使用 SVC_ 前缀
@@ -23,9 +28,6 @@
 
 # 事件总线 - 跨组件通信
 SVC_EVENT_BUS = "event_bus"
-
-# 应用状态容器 - 中央状态管理
-SVC_APP_STATE = "app_state"
 
 # 错误处理器 - 统一错误处理
 SVC_ERROR_HANDLER = "error_handler"
@@ -65,7 +67,23 @@ SVC_FILE_MANAGER = "file_manager"
 SVC_FILE_SEARCH_SERVICE = "file_search_service"
 
 # ============================================================
-# 应用层服务
+# 应用层服务 - 三层状态分离架构
+# ============================================================
+
+# UI 状态容器 - 纯 UI 状态（窗口布局、面板可见性、编辑器状态）
+# Layer 1: Presentation 层
+SVC_UI_STATE = "ui_state"
+
+# 会话状态 - GraphState 的只读投影，供 UI 层读取业务状态
+# Layer 2: Application 层
+SVC_SESSION_STATE = "session_state"
+
+# GraphState 投影器 - 监听 GraphState 变更，自动投影到 SessionState
+# 连接 Layer 2 和 Layer 3
+SVC_GRAPH_STATE_PROJECTOR = "graph_state_projector"
+
+# ============================================================
+# 应用层服务 - 其他
 # ============================================================
 
 # 项目服务 - 工作文件夹管理
@@ -136,7 +154,6 @@ SVC_EXECUTOR_REGISTRY = "executor_registry"
 __all__ = [
     # 共享内核层
     "SVC_EVENT_BUS",
-    "SVC_APP_STATE",
     "SVC_ERROR_HANDLER",
     "SVC_WORKER_MANAGER",
     "SVC_ASYNC_TASK_REGISTRY",
@@ -153,7 +170,11 @@ __all__ = [
     "SVC_OLLAMA_SERVICE",
     "SVC_TRACING_STORE",
     "SVC_TRACING_LOGGER",
-    # 应用层
+    # 应用层 - 三层状态分离架构
+    "SVC_UI_STATE",
+    "SVC_SESSION_STATE",
+    "SVC_GRAPH_STATE_PROJECTOR",
+    # 应用层 - 其他
     "SVC_PROJECT_SERVICE",
     "SVC_DESIGN_WORKFLOW",
     "SVC_TOOL_EXECUTOR",

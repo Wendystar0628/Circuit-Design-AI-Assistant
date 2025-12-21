@@ -117,6 +117,28 @@ class FileOperationError(FileManagerError):
         super().__init__(f"文件操作失败 [{operation}]: {path} - {reason}")
 
 
+class FileModifiedExternallyError(FileManagerError):
+    """
+    文件在读取后被外部修改（TOCTOU 竞态条件检测）
+    
+    当 LLM 工具调用检测到文件在读取后被用户或其他进程修改时抛出此异常。
+    这是一种保护机制，防止 LLM 基于旧内容生成的修改覆盖用户的工作。
+    
+    处理建议：
+    - 返回结构化错误信息给 LLM
+    - LLM 应重新读取文件内容，基于最新内容调整修改方案
+    """
+    
+    def __init__(self, file_path: str, recorded_hash: str, current_hash: str):
+        self.file_path = file_path
+        self.recorded_hash = recorded_hash
+        self.current_hash = current_hash
+        super().__init__(
+            f"文件 '{file_path}' 在读取后被外部修改，"
+            f"请重新读取文件内容后再进行修改"
+        )
+
+
 # ============================================================
 # 模块导出
 # ============================================================
@@ -131,4 +153,5 @@ __all__ = [
     "LineRangeError",
     "FileLockTimeoutError",
     "FileOperationError",
+    "FileModifiedExternallyError",
 ]

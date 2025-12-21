@@ -406,6 +406,12 @@ EVENT_FILE_LOCKED = "file_locked"
 # 文件解锁
 EVENT_FILE_UNLOCKED = "file_unlocked"
 
+# 文件外部修改冲突检测（TOCTOU 竞态条件）
+# 携带数据：
+#   - file_path: str - 冲突的文件路径
+#   - action: str - 后续动作（"retry" 表示 LLM 将重新读取）
+EVENT_FILE_CONFLICT_DETECTED = "file_conflict_detected"
+
 # ============================================================
 # 依赖健康检查事件
 # ============================================================
@@ -730,6 +736,7 @@ __all__ = [
     "EVENT_FILE_CHANGED",
     "EVENT_FILE_LOCKED",
     "EVENT_FILE_UNLOCKED",
+    "EVENT_FILE_CONFLICT_DETECTED",
     # 依赖健康检查事件
     "EVENT_DEPENDENCY_SCAN_STARTED",
     "EVENT_DEPENDENCY_SCAN_COMPLETE",

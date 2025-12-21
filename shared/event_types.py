@@ -282,6 +282,30 @@ EVENT_EXECUTOR_REGISTERED = "executor_registered"
 #   - name: str - 执行器名称
 EVENT_EXECUTOR_UNREGISTERED = "executor_unregistered"
 
+# 波形数据请求
+# 携带数据：
+#   - signal_name: str - 信号名称
+#   - x_min: float - X 轴最小值
+#   - x_max: float - X 轴最大值
+#   - viewport_width: int - 视口宽度（像素）
+EVENT_WAVEFORM_DATA_REQUESTED = "waveform_data_requested"
+
+# 波形数据就绪
+# 携带数据：
+#   - signal_name: str - 信号名称
+#   - point_count: int - 数据点数量
+#   - resolution_level: int - 分辨率层级
+#   - is_full_resolution: bool - 是否为原始分辨率
+EVENT_WAVEFORM_DATA_READY = "waveform_data_ready"
+
+# 分辨率金字塔构建完成
+# 携带数据：
+#   - signal_name: str - 信号名称
+#   - original_points: int - 原始数据点数
+#   - levels: list - 生成的分辨率层级列表
+#   - build_time_ms: float - 构建耗时（毫秒）
+EVENT_PYRAMID_BUILD_COMPLETE = "pyramid_build_complete"
+
 # ============================================================
 # RAG 事件
 # ============================================================
@@ -630,6 +654,9 @@ __all__ = [
     "EVENT_MAIN_CIRCUIT_DETECTED",
     "EVENT_EXECUTOR_REGISTERED",
     "EVENT_EXECUTOR_UNREGISTERED",
+    "EVENT_WAVEFORM_DATA_REQUESTED",
+    "EVENT_WAVEFORM_DATA_READY",
+    "EVENT_PYRAMID_BUILD_COMPLETE",
     # RAG 事件
     "EVENT_RAG_INDEX_STARTED",
     "EVENT_RAG_INDEX_PROGRESS",

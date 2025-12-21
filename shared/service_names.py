@@ -155,6 +155,9 @@ SVC_SIMULATION_SERVICE = "simulation_service"
 # 执行器注册表 - 仿真执行器管理
 SVC_EXECUTOR_REGISTRY = "executor_registry"
 
+# 波形数据服务 - 大数据波形降采样和流式渲染
+SVC_WAVEFORM_DATA_SERVICE = "waveform_data_service"
+
 
 # ============================================================
 # 模块导出
@@ -200,4 +203,5 @@ __all__ = [
     "SVC_CODE_INDEXER",
     "SVC_SIMULATION_SERVICE",
     "SVC_EXECUTOR_REGISTRY",
+    "SVC_WAVEFORM_DATA_SERVICE",
 ]

@@ -759,6 +759,8 @@ def _install_qt_message_filter():
     # 需要过滤的警告消息模式
     _filtered_warnings = [
         "QFont::setPointSize: Point size <= 0",  # Qt 字体初始化时的无害警告
+        "DirectWrite: CreateFontFaceFromHDC() failed",  # DirectWrite 字体加载警告（Fixedsys等旧字体）
+        "Fixedsys",  # 过滤 Fixedsys 相关警告
     ]
     
     def qt_message_handler(msg_type: QtMsgType, context, message: str):
@@ -901,14 +903,29 @@ def run() -> int:
     app.setOrganizationName("Circuit AI")
     
     # 设置应用程序默认字体（使用现代字体）
+    # 明确设置字体，避免 Qt 回退到 Fixedsys 等旧字体
     app_font = QFont()
+    app_font.setStyleHint(QFont.StyleHint.SansSerif, QFont.StyleStrategy.PreferAntialias)
+    
     # 尝试按优先级设置系统字体
+    font_found = False
     for font_name in ["Segoe UI", "SF Pro Display", "Roboto", "Microsoft YaHei UI", "Arial"]:
         app_font.setFamily(font_name)
         if app_font.exactMatch():
+            font_found = True
             break
+    
+    if not font_found:
+        # 如果所有字体都不可用，使用通用 sans-serif
+        app_font.setFamily("sans-serif")
+    
     app_font.setPointSize(9)  # 设置合理的默认字体大小
     app.setFont(app_font)
+    
+    if _logger:
+        _logger.info(f"Phase 2.1 应用程序字体设置完成: {app_font.family()}")
+    else:
+        print(f"[Phase 2.1] 应用程序字体设置完成: {app_font.family()}")
 
     # ============================================================
     # 2.1.2 初始化 qasync 融合事件循环

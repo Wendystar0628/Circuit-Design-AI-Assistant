@@ -79,13 +79,22 @@ class CodeEditor(QPlainTextEdit):
     def _setup_font(self):
         """设置编程字体"""
         font = QFont()
+        # 设置字体提示为等宽字体，但不使用 setFixedPitch 避免回退到 Fixedsys
+        font.setStyleHint(QFont.StyleHint.Monospace, QFont.StyleStrategy.PreferAntialias)
+        
         # 尝试使用现代编程字体，按优先级排序
+        font_found = False
         for font_name in ["JetBrains Mono", "Cascadia Code", "Fira Code", "SF Mono", "Consolas", "Courier New"]:
             font.setFamily(font_name)
             if font.exactMatch():
+                font_found = True
                 break
+        
+        # 如果没有找到任何字体，使用系统默认等宽字体
+        if not font_found:
+            font.setFamily("monospace")
+        
         font.setPointSize(11)
-        font.setFixedPitch(True)
         self.setFont(font)
         
         # 设置 Tab 宽度为 4 个空格

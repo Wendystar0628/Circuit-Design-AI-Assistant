@@ -185,10 +185,18 @@ class DevToolsPanel(QWidget):
         detail.setReadOnly(True)
         # 使用现代等宽字体
         font = QFont()
+        font.setStyleHint(QFont.StyleHint.Monospace, QFont.StyleStrategy.PreferAntialias)
+        
+        font_found = False
         for font_name in ["JetBrains Mono", "Cascadia Code", "SF Mono", "Consolas"]:
             font.setFamily(font_name)
             if font.exactMatch():
+                font_found = True
                 break
+        
+        if not font_found:
+            font.setFamily("monospace")
+        
         font.setPointSize(10)
         detail.setFont(font)
         detail.setStyleSheet("""

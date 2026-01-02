@@ -62,10 +62,10 @@ COLOR_DISABLED = "#bdbdbd"        # 禁用色（灰色）
 # ============================================================
 
 # 界面字体（按优先级排列）
-FONT_FAMILY_UI = "Segoe UI, SF Pro Display, Noto Sans, sans-serif"
+FONT_FAMILY_UI = "Segoe UI, SF Pro Display, Roboto, Microsoft YaHei UI, sans-serif"
 
 # 代码字体（按优先级排列）
-FONT_FAMILY_CODE = "Consolas, JetBrains Mono, Fira Code, monospace"
+FONT_FAMILY_CODE = "JetBrains Mono, Cascadia Code, Fira Code, SF Mono, Consolas, monospace"
 
 # 字号
 FONT_SIZE_SMALL = 11              # 小字号

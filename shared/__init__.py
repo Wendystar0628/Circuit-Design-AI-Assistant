@@ -15,11 +15,20 @@
 - model_types: 模型类型定义
 - model_registry: LLM 模型注册表
 - embedding_model_registry: 嵌入模型注册表
+- async_runtime: qasync 异步运行时（Qt + asyncio 融合事件循环）
+- stream_throttler: 流式数据节流聚合器（LLM 流式输出优化）
 
 三层状态分离架构（新）：
 - UIState (presentation/ui_state.py): 纯 UI 状态
 - SessionState (application/session_state.py): GraphState 的只读投影
 - GraphState (application/graph/state.py): LangGraph 工作流的唯一真理来源
+
+并发模型架构（qasync 融合事件循环）：
+- 使用 qasync 将 asyncio 事件循环挂载到 Qt 事件循环上
+- 所有 I/O 密集型任务在主线程协程中执行（通过 @asyncSlot 装饰器）
+- CPU 密集型任务通过 CpuTaskExecutor 提交到 QThreadPool
+- 外部进程使用 ProcessManager 管理
+- 消除"双循环同步"问题，避免死锁和竞态条件
 
 依赖方向（严格遵守，避免循环依赖）：
 - service_names.py, event_types.py, error_types.py, worker_types.py, model_types.py: 纯常量/类型定义，不依赖任何其他模块
@@ -29,6 +38,8 @@
 - worker_manager.py: 依赖 event_bus.py、worker_types.py
 - model_registry.py: 依赖 model_types.py
 - embedding_model_registry.py: 依赖 model_types.py
+- async_runtime.py: 依赖 qasync、PyQt6，不依赖其他 shared 模块
+- stream_throttler.py: 依赖 asyncio、PyQt6，不依赖其他 shared 模块
 - 其他模块可依赖以上所有，但不能被以上模块反向依赖
 """
 
@@ -186,6 +197,21 @@ from shared.model_registry import ModelRegistry
 # 嵌入模型注册表
 from shared.embedding_model_registry import EmbeddingModelRegistry
 
+# 异步运行时（qasync 融合事件循环）
+from shared.async_runtime import (
+    init_async_runtime,
+    get_event_loop,
+    is_initialized as is_async_runtime_initialized,
+    shutdown as shutdown_async_runtime,
+    run_coroutine_threadsafe,
+)
+
+# 流式数据节流聚合器
+from shared.stream_throttler import (
+    StreamThrottler,
+    StreamState,
+)
+
 # 错误恢复熔断阈值（从 error_types 导出）
 from shared.error_types import MAX_CONSECUTIVE_FIX_ATTEMPTS
 
@@ -297,6 +323,15 @@ __all__ = [
     "ModelRegistry",
     # 嵌入模型注册表
     "EmbeddingModelRegistry",
+    # 异步运行时
+    "init_async_runtime",
+    "get_event_loop",
+    "is_async_runtime_initialized",
+    "shutdown_async_runtime",
+    "run_coroutine_threadsafe",
+    # 流式数据节流聚合器
+    "StreamThrottler",
+    "StreamState",
     # 错误恢复熔断阈值
     "MAX_CONSECUTIVE_FIX_ATTEMPTS",
 ]

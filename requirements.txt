@@ -31,6 +31,9 @@ tiktoken>=0.5.0
 # HTTP Client (LLM API calls)
 httpx>=0.25.0
 
+# Async Qt Integration (qasync event loop fusion)
+qasync>=0.27.1
+
 # Encryption (API key storage)
 cryptography>=41.0.0
 

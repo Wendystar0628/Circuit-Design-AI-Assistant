@@ -12,6 +12,13 @@
 - Layer 2: SessionState (Application) - GraphState 的只读投影，Phase 3.5.1 初始化
 - Layer 3: GraphState (Domain) - LangGraph 工作流的唯一真理来源
 
+并发模型架构（qasync 融合事件循环）：
+- 使用 qasync 将 asyncio 事件循环挂载到 Qt 事件循环上
+- 所有 I/O 密集型任务在主线程协程中执行（通过 @asyncSlot 装饰器）
+- CPU 密集型任务通过 CpuTaskExecutor 提交到 QThreadPool
+- 外部进程使用 ProcessManager 管理
+- 消除"双循环同步"问题，避免死锁和竞态条件
+
 初始化顺序（严格按此顺序执行）：
 - Phase -1: ngspice 和 AI 模型路径配置（必须在所有其他导入之前）
 - Phase 0: 基础设施初始化（同步，阻塞式）
@@ -29,10 +36,11 @@
 - Phase 2: GUI 框架初始化（同步，阻塞式）
   - 2.0.1 预导入 WebEngine
   - 2.1 创建 QApplication 实例
+  - 2.1.2 初始化 qasync 融合事件循环
   - 2.2 创建 MainWindow 实例（内部初始化 UIState）
   - 2.3 显示主窗口
   - 2.4 触发延迟初始化
-- Phase 3: 延迟初始化（异步，在事件循环中执行）
+- Phase 3: 延迟初始化（异步，在融合事件循环中执行）
   - 3.1 WorkerManager 初始化
   - 3.2 FileManager 初始化
   - 3.2.1 FileSearchService 初始化（精确搜索引擎）
@@ -46,6 +54,7 @@
   - 3.6 LLM 客户端初始化
   - 3.7 发布 EVENT_INIT_COMPLETE 事件
 - 应用关闭时：
+  - 异步运行时关闭（取消待处理任务）
   - TracingLogger 关闭（最后一次刷新）
   - TracingStore 关闭
 
@@ -56,7 +65,11 @@ import sys
 import time
 import traceback
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
+
+# 类型检查时导入（避免运行时循环导入）
+if TYPE_CHECKING:
+    from PyQt6.QtWidgets import QMainWindow
 
 # ============================================================
 # Phase -1.1: ngspice 路径配置（必须在所有其他导入之前）
@@ -809,7 +822,12 @@ def run() -> int:
     """
     应用程序主启动函数
     
-    执行完整的初始化流程并启动事件循环
+    执行完整的初始化流程并启动 qasync 融合事件循环。
+    
+    qasync 融合事件循环架构：
+    - 将 asyncio 事件循环挂载到 Qt 事件循环上
+    - 所有异步操作在主线程协作式执行
+    - 消除跨线程同步风险（死锁、信号丢失、竞态条件）
     
     Returns:
         int: 退出码，0 表示正常退出
@@ -881,6 +899,32 @@ def run() -> int:
     app.setApplicationVersion("0.1.0")
     app.setOrganizationName("Circuit AI")
 
+    # ============================================================
+    # 2.1.2 初始化 qasync 融合事件循环
+    # 必须在 QApplication 创建后、进入事件循环前调用
+    # ============================================================
+    from shared.async_runtime import init_async_runtime, shutdown as shutdown_async_runtime
+    try:
+        loop = init_async_runtime(app)
+        if _logger:
+            _logger.info("Phase 2.1.2 qasync 融合事件循环初始化成功")
+        else:
+            print("[Phase 2.1.2] qasync 融合事件循环初始化成功")
+    except ImportError as e:
+        if _logger:
+            _logger.critical(f"Phase 2.1.2 qasync 初始化失败: {e}")
+        else:
+            print(f"[Phase 2.1.2] qasync 初始化失败: {e}")
+        _show_fatal_error(f"qasync 库未安装，请运行: pip install qasync>=0.27.1\n\n{e}")
+        return 1
+    except Exception as e:
+        if _logger:
+            _logger.critical(f"Phase 2.1.2 qasync 初始化失败: {e}")
+        else:
+            print(f"[Phase 2.1.2] qasync 初始化失败: {e}")
+        _show_fatal_error(f"异步运行时初始化失败: {e}")
+        return 1
+
     # 2.1.1 加载 QSS 样式表
     from resources.resource_loader import load_stylesheet
     if load_stylesheet(app):
@@ -917,15 +961,26 @@ def run() -> int:
     # Phase 3 在事件循环中异步执行（已通过 QTimer.singleShot 调度）
 
     # ============================================================
-    # 进入事件循环
+    # 进入 qasync 融合事件循环
+    # 使用 with 上下文管理器确保正确清理
     # ============================================================
-    print("\n进入事件循环...")
+    print("\n进入 qasync 融合事件循环...")
     if _logger:
-        _logger.info("进入 Qt 事件循环")
+        _logger.info("进入 qasync 融合事件循环 (Qt + asyncio)")
 
-    exit_code = app.exec()
-
+    exit_code = 0
+    try:
+        with loop:
+            loop.run_forever()
+    except Exception as e:
+        if _logger:
+            _logger.error(f"事件循环异常退出: {e}")
+        else:
+            print(f"[ERROR] 事件循环异常退出: {e}")
+        exit_code = 1
+    finally:
     # 清理工作
+        shutdown_async_runtime()
     _shutdown_tracing()
     
     if _logger:
@@ -939,27 +994,43 @@ def _shutdown_tracing():
     关闭追踪系统
     
     在应用退出时调用，确保所有追踪数据被刷新到存储。
+    
+    注意：此函数在 qasync 融合事件循环关闭后调用，
+    因此使用 asyncio.run() 创建临时事件循环执行异步清理。
     """
     import asyncio
     
-    try:
+    async def _async_shutdown():
+        """异步关闭追踪系统"""
         from shared.service_locator import ServiceLocator
         from shared.service_names import SVC_TRACING_LOGGER, SVC_TRACING_STORE
         
         # 停止 TracingLogger（最后一次刷新）
         tracing_logger = ServiceLocator.get_optional(SVC_TRACING_LOGGER)
         if tracing_logger:
-            asyncio.run(tracing_logger.shutdown())
+            try:
+                await tracing_logger.shutdown()
             if _logger:
                 _logger.info("TracingLogger 已关闭")
+            except Exception as e:
+                if _logger:
+                    _logger.warning(f"TracingLogger 关闭时出错: {e}")
         
         # 关闭 TracingStore
         tracing_store = ServiceLocator.get_optional(SVC_TRACING_STORE)
         if tracing_store:
-            asyncio.run(tracing_store.close())
+            try:
+                await tracing_store.close()
             if _logger:
                 _logger.info("TracingStore 已关闭")
+            except Exception as e:
+                if _logger:
+                    _logger.warning(f"TracingStore 关闭时出错: {e}")
                 
+    try:
+        # 创建临时事件循环执行异步清理
+        # 因为 qasync 融合循环此时已关闭
+        asyncio.run(_async_shutdown())
     except Exception as e:
         if _logger:
             _logger.warning(f"追踪系统关闭时出错: {e}")

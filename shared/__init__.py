@@ -212,6 +212,21 @@ from shared.stream_throttler import (
     StreamState,
 )
 
+# 异步任务注册表
+from shared.async_task_registry import (
+    AsyncTaskRegistry,
+    TaskState,
+    TaskPriority as AsyncTaskPriority,
+    TaskInfo,
+    TASK_LLM,
+    TASK_RAG_INDEX,
+    TASK_RAG_SEARCH,
+    TASK_FILE_WATCH,
+    TASK_SIMULATION,
+    TASK_SCHEMATIC,
+    TASK_CODE_INDEX,
+)
+
 # 错误恢复熔断阈值（从 error_types 导出）
 from shared.error_types import MAX_CONSECUTIVE_FIX_ATTEMPTS
 
@@ -332,6 +347,18 @@ __all__ = [
     # 流式数据节流聚合器
     "StreamThrottler",
     "StreamState",
+    # 异步任务注册表
+    "AsyncTaskRegistry",
+    "TaskState",
+    "AsyncTaskPriority",
+    "TaskInfo",
+    "TASK_LLM",
+    "TASK_RAG_INDEX",
+    "TASK_RAG_SEARCH",
+    "TASK_FILE_WATCH",
+    "TASK_SIMULATION",
+    "TASK_SCHEMATIC",
+    "TASK_CODE_INDEX",
     # 错误恢复熔断阈值
     "MAX_CONSECUTIVE_FIX_ATTEMPTS",
 ]

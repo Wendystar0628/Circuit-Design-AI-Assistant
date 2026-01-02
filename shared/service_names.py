@@ -50,6 +50,12 @@ SVC_I18N_MANAGER = "i18n_manager"
 # 停止控制器 - 全局停止状态管理
 SVC_STOP_CONTROLLER = "stop_controller"
 
+# 流式节流器 - 流式数据节流聚合
+SVC_STREAM_THROTTLER = "stream_throttler"
+
+# LLM 执行器 - LLM 调用执行引擎
+SVC_LLM_EXECUTOR = "llm_executor"
+
 # ============================================================
 # 基础设施层服务
 # ============================================================
@@ -179,6 +185,8 @@ __all__ = [
     "SVC_PROCESS_MANAGER",
     "SVC_I18N_MANAGER",
     "SVC_STOP_CONTROLLER",
+    "SVC_STREAM_THROTTLER",
+    "SVC_LLM_EXECUTOR",
     # 基础设施层
     "SVC_CREDENTIAL_MANAGER",
     "SVC_CONFIG_MANAGER",

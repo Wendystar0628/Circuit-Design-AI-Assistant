@@ -174,6 +174,9 @@ from domain.llm.external_service_manager import (
     ALL_SERVICE_TYPES,
 )
 
+# LLM 执行器
+from domain.llm.llm_executor import LLMExecutor
+
 __all__ = [
     # 消息类型
     "Message",
@@ -283,4 +286,6 @@ __all__ = [
     "SERVICE_SEARCH_GOOGLE",
     "SERVICE_SEARCH_BING",
     "ALL_SERVICE_TYPES",
+    # LLM 执行器
+    "LLMExecutor",
 ]

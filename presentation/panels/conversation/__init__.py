@@ -38,6 +38,7 @@ from presentation.panels.conversation.suggestion_message import (
 
 from presentation.panels.conversation.input_area import (
     InputArea,
+    ButtonMode,
     MAX_IMAGE_SIZE_MB,
     ALLOWED_IMAGE_EXTENSIONS,
 )
@@ -94,6 +95,7 @@ __all__ = [
     "STATE_EXPIRED",
     # InputArea
     "InputArea",
+    "ButtonMode",
     "MAX_IMAGE_SIZE_MB",
     "ALLOWED_IMAGE_EXTENSIONS",
     # StreamDisplayHandler

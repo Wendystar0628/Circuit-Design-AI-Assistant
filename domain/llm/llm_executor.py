@@ -372,17 +372,40 @@ class LLMExecutor(QObject):
                 )
                 
         except asyncio.CancelledError:
-            # 任务被取消，刷新节流器后重新抛出
+            # 任务被取消，刷新节流器并发送部分结果
             if self.throttler:
                 await self.throttler.flush_all(task_id)
             
-            # 构建部分结果
+            # 确定停止原因
+            stop_reason = "user_cancelled"
+            if self.stop_controller:
+                stop_reason_enum = self.stop_controller.get_stop_reason()
+                if stop_reason_enum:
+                    stop_reason = stop_reason_enum.value
+            
+            # 提取已生成的 token 数
+            tokens_generated = 0
+            if usage and isinstance(usage, dict):
+                # 尝试从不同字段提取 token 数
+                tokens_generated = (
+                    usage.get("completion_tokens") or 
+                    usage.get("output_tokens") or 
+                    usage.get("generated_tokens") or 
+                    0
+                )
+            
+            # 构建完整的部分结果结构
             partial_result = {
                 "content": content,
                 "reasoning_content": reasoning_content if reasoning_content else None,
                 "usage": usage,
-                "is_partial": True  # 标记为部分结果
+                "is_partial": True,  # 标记为部分结果
+                "stop_reason": stop_reason,  # 停止原因
+                "tokens_generated": tokens_generated  # 已生成的 token 数
             }
+            
+            # 发送 generation_complete 信号（即使是部分结果）
+            self.generation_complete.emit(task_id, partial_result)
             
             # 通知 StopController
             if self.stop_controller:
@@ -396,7 +419,9 @@ class LLMExecutor(QObject):
             if self.logger:
                 self.logger.info(
                     f"LLM generation cancelled with partial result: task_id={task_id}, "
-                    f"partial_content_length={len(content)}"
+                    f"partial_content_length={len(content)}, "
+                    f"tokens_generated={tokens_generated}, "
+                    f"stop_reason={stop_reason}"
                 )
             
             raise

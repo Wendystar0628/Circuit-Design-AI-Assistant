@@ -39,6 +39,7 @@ from presentation.panels.conversation import (
     MessageArea,
     InputArea,
     AttachmentManager,
+    ButtonMode,
     SUGGESTION_STATE_ACTIVE,
     SUGGESTION_STATE_SELECTED,
     SUGGESTION_STATE_EXPIRED,
@@ -228,6 +229,7 @@ class ConversationPanel(QWidget):
         # 输入区域信号
         if self._input_area:
             self._input_area.send_clicked.connect(self._on_send_clicked)
+            self._input_area.stop_clicked.connect(self._on_stop_clicked)
             self._input_area.upload_image_clicked.connect(
                 self._on_upload_image_clicked
             )
@@ -261,6 +263,8 @@ class ConversationPanel(QWidget):
         self._view_model.new_conversation_suggested.connect(
             self._on_new_conversation_suggested
         )
+        self._view_model.stop_requested.connect(self._on_stop_requested)
+        self._view_model.stop_completed.connect(self._on_stop_completed)
 
     # ============================================================
     # 初始化和清理
@@ -517,7 +521,32 @@ class ConversationPanel(QWidget):
     def _on_can_send_changed(self, can_send: bool) -> None:
         """处理可发送状态变化"""
         if self._input_area:
+            if can_send:
+                # 恢复发送模式
+                self._input_area.set_button_mode(ButtonMode.SEND)
             self._input_area.set_send_enabled(can_send)
+    
+    @pyqtSlot()
+    def _on_stop_requested(self) -> None:
+        """处理停止请求信号（来自 ViewModel）"""
+        # InputArea 已在点击时切换到 STOPPING 模式
+        # 这里可以更新状态栏等其他 UI
+        if self.logger:
+            self.logger.debug("Stop requested, UI updated")
+    
+    @pyqtSlot(dict)
+    def _on_stop_completed(self, result: dict) -> None:
+        """处理停止完成信号（来自 ViewModel）"""
+        # 恢复发送按钮
+        if self._input_area:
+            self._input_area.set_button_mode(ButtonMode.SEND)
+        
+        # 刷新显示
+        self.refresh_display()
+        
+        if self.logger:
+            saved = result.get("saved", False)
+            self.logger.info(f"Stop completed, partial saved: {saved}")
     
     @pyqtSlot(str)
     def _on_suggestion_added(self, message_id: str) -> None:
@@ -583,6 +612,17 @@ class ConversationPanel(QWidget):
     def _on_send_clicked(self) -> None:
         """处理发送按钮点击"""
         self._send_message()
+    
+    def _on_stop_clicked(self) -> None:
+        """处理停止按钮点击"""
+        if self.view_model:
+            success = self.view_model.request_stop()
+            if not success:
+                # 停止请求失败，恢复按钮状态
+                if self._input_area:
+                    self._input_area.set_button_mode(ButtonMode.SEND)
+                if self.logger:
+                    self.logger.warning("Stop request failed")
     
     def _on_upload_image_clicked(self) -> None:
         """处理上传图片按钮点击"""
@@ -697,6 +737,8 @@ class ConversationPanel(QWidget):
         if self.view_model:
             success = self.view_model.send_message(text, attachments)
             if success:
+                # 切换按钮为停止模式
+                self._input_area.set_button_mode(ButtonMode.STOP)
                 self.message_sent.emit(text, attachments)
     
     def clear_display(self) -> None:

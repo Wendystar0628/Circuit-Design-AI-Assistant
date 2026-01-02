@@ -116,6 +116,8 @@ class ConversationViewModel(QObject):
     compress_suggested = pyqtSignal()            # 建议压缩上下文
     new_conversation_suggested = pyqtSignal()    # 建议开启新对话
     session_name_updated = pyqtSignal(str)       # 会话名称更新 (name)
+    stop_requested = pyqtSignal()                # 停止请求已发出
+    stop_completed = pyqtSignal(dict)            # 停止完成 (result)
     
     def __init__(self, parent: Optional[QObject] = None):
         """初始化 ViewModel"""
@@ -133,6 +135,9 @@ class ConversationViewModel(QObject):
         # 会话名称相关
         self._current_session_id: Optional[str] = None
         self._current_session_name: str = ""
+        
+        # 停止控制相关
+        self._stop_controller = None
         
         # 延迟获取的服务
         self._context_manager = None
@@ -277,6 +282,18 @@ class ConversationViewModel(QObject):
                 pass
         return self._session_state_manager
     
+    @property
+    def stop_controller(self):
+        """延迟获取停止控制器"""
+        if self._stop_controller is None:
+            try:
+                from shared.service_locator import ServiceLocator
+                from shared.service_names import SVC_STOP_CONTROLLER
+                self._stop_controller = ServiceLocator.get_optional(SVC_STOP_CONTROLLER)
+            except Exception:
+                pass
+        return self._stop_controller
+    
     def _get_markdown_converter(self):
         """获取 Markdown 转换器"""
         if self._markdown_converter is None:
@@ -316,6 +333,8 @@ class ConversationViewModel(QObject):
                 EVENT_WORKFLOW_UNLOCKED,
                 EVENT_CONTEXT_COMPRESS_COMPLETE,
                 EVENT_SESSION_CHANGED,
+                EVENT_STOP_REQUESTED,
+                EVENT_STOP_COMPLETED,
             )
             
             self.event_bus.subscribe(EVENT_LLM_CHUNK, self._on_llm_chunk)
@@ -331,6 +350,8 @@ class ConversationViewModel(QObject):
                 self._on_compress_complete
             )
             self.event_bus.subscribe(EVENT_SESSION_CHANGED, self._on_session_changed)
+            self.event_bus.subscribe(EVENT_STOP_REQUESTED, self._on_stop_requested_event)
+            self.event_bus.subscribe(EVENT_STOP_COMPLETED, self._on_stop_completed_event)
             
         except ImportError:
             if self.logger:
@@ -350,6 +371,8 @@ class ConversationViewModel(QObject):
                 EVENT_WORKFLOW_UNLOCKED,
                 EVENT_CONTEXT_COMPRESS_COMPLETE,
                 EVENT_SESSION_CHANGED,
+                EVENT_STOP_REQUESTED,
+                EVENT_STOP_COMPLETED,
             )
             
             self.event_bus.unsubscribe(EVENT_LLM_CHUNK, self._on_llm_chunk)
@@ -365,6 +388,8 @@ class ConversationViewModel(QObject):
                 self._on_compress_complete
             )
             self.event_bus.unsubscribe(EVENT_SESSION_CHANGED, self._on_session_changed)
+            self.event_bus.unsubscribe(EVENT_STOP_REQUESTED, self._on_stop_requested_event)
+            self.event_bus.unsubscribe(EVENT_STOP_COMPLETED, self._on_stop_completed_event)
             
         except ImportError:
             pass
@@ -1098,6 +1123,177 @@ class ConversationViewModel(QObject):
         
         # 更新使用率
         self._update_usage_ratio()
+    
+    # ============================================================
+    # 停止控制
+    # ============================================================
+    
+    def request_stop(self) -> bool:
+        """
+        请求停止当前生成
+        
+        通过 StopController 发起停止请求。
+        
+        Returns:
+            bool: 是否成功发起停止请求
+        """
+        if not self._is_loading:
+            if self.logger:
+                self.logger.debug("No active generation to stop")
+            return False
+        
+        if self.stop_controller:
+            try:
+                from shared.stop_controller import StopReason
+                success = self.stop_controller.request_stop(StopReason.USER_REQUESTED)
+                if success:
+                    if self.logger:
+                        self.logger.info("Stop requested by user")
+                    self.stop_requested.emit()
+                return success
+            except Exception as e:
+                if self.logger:
+                    self.logger.error(f"Failed to request stop: {e}")
+                return False
+        
+        if self.logger:
+            self.logger.warning("StopController not available")
+        return False
+    
+    def _on_stop_requested_event(self, event_data: Dict[str, Any]) -> None:
+        """
+        处理停止请求事件（由 StopController 发布）
+        
+        更新 UI 状态，显示"正在停止"。
+        """
+        data = event_data.get("data", event_data)
+        task_id = data.get("task_id", "")
+        reason = data.get("reason", "")
+        
+        if self.logger:
+            self.logger.debug(f"Stop requested event: task_id={task_id}, reason={reason}")
+        
+        # 发出信号通知 UI 更新按钮状态
+        self.stop_requested.emit()
+    
+    def _on_stop_completed_event(self, event_data: Dict[str, Any]) -> None:
+        """
+        处理停止完成事件（由 StopController 发布）
+        
+        处理部分响应，更新消息列表，恢复 UI 状态。
+        """
+        data = event_data.get("data", event_data)
+        task_id = data.get("task_id", "")
+        reason = data.get("reason", "")
+        is_partial = data.get("is_partial", True)
+        partial_content = data.get("partial_content", "")
+        
+        if self.logger:
+            self.logger.info(
+                f"Stop completed: task_id={task_id}, reason={reason}, "
+                f"is_partial={is_partial}, content_len={len(partial_content)}"
+            )
+        
+        # 处理部分响应
+        if is_partial and self._current_stream_content:
+            # 使用已累积的流式内容
+            partial_content = self._current_stream_content
+        
+        # 根据内容长度决定是否保存
+        MIN_PARTIAL_LENGTH = 50
+        if partial_content and len(partial_content) >= MIN_PARTIAL_LENGTH:
+            # 保存部分响应，标记为已中断
+            self._save_partial_response(partial_content, reason)
+        else:
+            if self.logger:
+                self.logger.debug(
+                    f"Partial content too short ({len(partial_content)} chars), discarding"
+                )
+        
+        # 清空流式状态
+        self._current_stream_content = ""
+        self._current_reasoning_content = ""
+        self._is_loading = False
+        
+        # 发出信号
+        result = {
+            "task_id": task_id,
+            "reason": reason,
+            "is_partial": is_partial,
+            "saved": len(partial_content) >= MIN_PARTIAL_LENGTH if partial_content else False,
+        }
+        self.stop_completed.emit(result)
+        self.can_send_changed.emit(True)
+        self.stream_finished.emit()
+    
+    def _save_partial_response(self, content: str, reason: str) -> None:
+        """
+        保存部分响应为消息
+        
+        Args:
+            content: 部分响应内容
+            reason: 停止原因
+        """
+        # 添加中断标记
+        interrupted_marker = f"\n\n*[已中断 - {self._get_stop_reason_text(reason)}]*"
+        marked_content = content + interrupted_marker
+        
+        # 转换为 HTML
+        content_html = self._markdown_to_html(marked_content)
+        reasoning_html = ""
+        if self._current_reasoning_content:
+            reasoning_html = self._markdown_to_html(self._current_reasoning_content)
+        
+        # 创建消息
+        msg = DisplayMessage(
+            id=str(uuid.uuid4()),
+            role=ROLE_ASSISTANT,
+            content_html=content_html,
+            content=marked_content,
+            reasoning_html=reasoning_html,
+            timestamp_display=self._format_timestamp(datetime.now().isoformat()),
+            is_streaming=False,
+        )
+        
+        # 添加到消息列表
+        self._messages.append(msg)
+        
+        # 同步到 ContextManager（标记为部分响应）
+        if self.context_manager:
+            try:
+                self.context_manager.add_assistant_message(
+                    content,
+                    reasoning_content=self._current_reasoning_content,
+                    metadata={"is_partial": True, "stop_reason": reason}
+                )
+            except Exception as e:
+                if self.logger:
+                    self.logger.warning(f"Failed to save partial response to context: {e}")
+        
+        # 发出消息变更信号
+        self.messages_changed.emit()
+        
+        if self.logger:
+            self.logger.info(f"Saved partial response: {len(content)} chars")
+    
+    def _get_stop_reason_text(self, reason: str) -> str:
+        """
+        获取停止原因的显示文本
+        
+        Args:
+            reason: 停止原因代码
+            
+        Returns:
+            str: 显示文本
+        """
+        reason_texts = {
+            "user_requested": "用户停止",
+            "timeout": "超时",
+            "error": "错误",
+            "session_switch": "会话切换",
+            "app_shutdown": "应用关闭",
+        }
+        return reason_texts.get(reason, "已停止")
 
 
 # ============================================================

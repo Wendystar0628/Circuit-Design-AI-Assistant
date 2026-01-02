@@ -7,17 +7,20 @@
 - 处理文本输入、附件上传、发送操作
 - 支持拖放上传和键盘快捷键
 - 显示当前模型卡片，点击打开模型设置
+- 发送/停止按钮状态切换（生成时显示停止按钮）
 
 使用示例：
     from presentation.panels.conversation.input_area import InputArea
     
     input_area = InputArea()
     input_area.send_clicked.connect(on_send)
+    input_area.stop_clicked.connect(on_stop)
     input_area.model_card_clicked.connect(on_model_settings)
     text = input_area.get_text()
 """
 
 import os
+from enum import Enum
 from typing import Any, Dict, List, Optional
 
 from PyQt6.QtCore import Qt, pyqtSignal, QSize
@@ -42,6 +45,8 @@ from PyQt6.QtWidgets import (
 # ============================================================
 
 PRIMARY_COLOR = "#4a9eff"
+STOP_COLOR = "#f44336"
+STOPPING_COLOR = "#ff9800"
 BORDER_COLOR = "#e0e0e0"
 BACKGROUND_COLOR = "#f5f5f5"
 INPUT_BORDER_RADIUS = 8
@@ -59,6 +64,17 @@ COLOR_CRITICAL = "#f44336"
 
 
 # ============================================================
+# 按钮状态枚举
+# ============================================================
+
+class ButtonMode(Enum):
+    """发送/停止按钮模式"""
+    SEND = "send"           # 发送模式（默认）
+    STOP = "stop"           # 停止模式（生成中）
+    STOPPING = "stopping"   # 正在停止（点击停止后）
+
+
+# ============================================================
 # InputArea 类
 # ============================================================
 
@@ -67,10 +83,12 @@ class InputArea(QWidget):
     输入区域组件
     
     专注于用户输入和附件管理。
+    支持发送/停止按钮状态切换。
     """
     
     # 信号定义
     send_clicked = pyqtSignal()                    # 发送按钮点击
+    stop_clicked = pyqtSignal()                    # 停止按钮点击
     text_changed = pyqtSignal(str)                 # 文本变化
     attachment_added = pyqtSignal(dict)            # 附件添加
     attachment_removed = pyqtSignal(int)           # 附件移除
@@ -85,6 +103,7 @@ class InputArea(QWidget):
         # 内部状态
         self._attachments: List[Dict[str, Any]] = []
         self._enabled = True
+        self._button_mode: ButtonMode = ButtonMode.SEND
         
         # UI 组件引用
         self._input_text: Optional[QTextEdit] = None
@@ -257,31 +276,12 @@ class InputArea(QWidget):
         self._update_model_card_display()  # 初始化显示
         bottom_btn_layout.addWidget(self._model_card_btn)
         
-        # 发送按钮（位于输入框内部右下角）
+        # 发送按钮（位于输入框内部右下角，支持发送/停止切换）
         self._send_button = QPushButton()
         self._send_button.setText(self._get_text("btn.send", "Send"))
         self._send_button.setFixedSize(56, 24)
-        self._send_button.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {PRIMARY_COLOR};
-                color: white;
-                border: none;
-                border-radius: 4px;
-                font-size: 12px;
-                font-weight: bold;
-                padding: 0px 4px;
-            }}
-            QPushButton:hover {{
-                background-color: #3d8be8;
-            }}
-            QPushButton:pressed {{
-                background-color: #2d7bd8;
-            }}
-            QPushButton:disabled {{
-                background-color: #cccccc;
-            }}
-        """)
-        self._send_button.clicked.connect(self._on_send_clicked)
+        self._update_button_style()
+        self._send_button.clicked.connect(self._on_action_button_clicked)
         bottom_btn_layout.addWidget(self._send_button)
         
         main_layout.addWidget(input_container)
@@ -437,6 +437,99 @@ class InputArea(QWidget):
     def is_enabled(self) -> bool:
         """检查是否启用"""
         return self._enabled
+    
+    def set_button_mode(self, mode: ButtonMode) -> None:
+        """
+        设置按钮模式（发送/停止/正在停止）
+        
+        Args:
+            mode: 按钮模式
+        """
+        if self._button_mode == mode:
+            return
+        
+        self._button_mode = mode
+        self._update_button_style()
+        self._update_button_text()
+    
+    def get_button_mode(self) -> ButtonMode:
+        """获取当前按钮模式"""
+        return self._button_mode
+    
+    def _update_button_style(self) -> None:
+        """根据当前模式更新按钮样式"""
+        if self._send_button is None:
+            return
+        
+        if self._button_mode == ButtonMode.SEND:
+            # 发送模式：蓝色
+            self._send_button.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {PRIMARY_COLOR};
+                    color: white;
+                    border: none;
+                    border-radius: 4px;
+                    font-size: 12px;
+                    font-weight: bold;
+                    padding: 0px 4px;
+                }}
+                QPushButton:hover {{
+                    background-color: #3d8be8;
+                }}
+                QPushButton:pressed {{
+                    background-color: #2d7bd8;
+                }}
+                QPushButton:disabled {{
+                    background-color: #cccccc;
+                }}
+            """)
+            self._send_button.setEnabled(self._enabled)
+        elif self._button_mode == ButtonMode.STOP:
+            # 停止模式：红色
+            self._send_button.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {STOP_COLOR};
+                    color: white;
+                    border: none;
+                    border-radius: 4px;
+                    font-size: 12px;
+                    font-weight: bold;
+                    padding: 0px 4px;
+                }}
+                QPushButton:hover {{
+                    background-color: #d32f2f;
+                }}
+                QPushButton:pressed {{
+                    background-color: #c62828;
+                }}
+            """)
+            self._send_button.setEnabled(True)
+        elif self._button_mode == ButtonMode.STOPPING:
+            # 正在停止：橙色，禁用
+            self._send_button.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {STOPPING_COLOR};
+                    color: white;
+                    border: none;
+                    border-radius: 4px;
+                    font-size: 12px;
+                    font-weight: bold;
+                    padding: 0px 4px;
+                }}
+            """)
+            self._send_button.setEnabled(False)
+    
+    def _update_button_text(self) -> None:
+        """根据当前模式更新按钮文本"""
+        if self._send_button is None:
+            return
+        
+        if self._button_mode == ButtonMode.SEND:
+            self._send_button.setText(self._get_text("btn.send", "Send"))
+        elif self._button_mode == ButtonMode.STOP:
+            self._send_button.setText(self._get_text("btn.stop", "Stop"))
+        elif self._button_mode == ButtonMode.STOPPING:
+            self._send_button.setText(self._get_text("btn.stopping", "..."))
     
     def clear_text(self) -> None:
         """清空输入文本"""
@@ -610,10 +703,16 @@ class InputArea(QWidget):
         if self._input_text:
             self.text_changed.emit(self._input_text.toPlainText())
     
-    def _on_send_clicked(self) -> None:
-        """处理发送按钮点击"""
-        if self._enabled:
-            self.send_clicked.emit()
+    def _on_action_button_clicked(self) -> None:
+        """处理发送/停止按钮点击（根据当前模式）"""
+        if self._button_mode == ButtonMode.SEND:
+            if self._enabled:
+                self.send_clicked.emit()
+        elif self._button_mode == ButtonMode.STOP:
+            # 切换到正在停止状态，防止重复点击
+            self.set_button_mode(ButtonMode.STOPPING)
+            self.stop_clicked.emit()
+        # STOPPING 模式下按钮已禁用，不会触发
     
     def _on_upload_image_clicked(self) -> None:
         """处理上传图片按钮点击"""
@@ -711,12 +810,18 @@ class InputArea(QWidget):
         """事件过滤器，处理输入框的键盘事件"""
         if obj == self._input_text and event.type() == event.Type.KeyPress:
             key_event = event
+            # Enter 发送消息（仅在发送模式下）
             if (key_event.key() == Qt.Key.Key_Return and
                 not key_event.modifiers() & Qt.KeyboardModifier.ShiftModifier):
-                # Enter 发送消息
-                if self._enabled:
+                if self._button_mode == ButtonMode.SEND and self._enabled:
                     self.send_clicked.emit()
                 return True
+            # Escape 停止生成（仅在停止模式下）
+            elif key_event.key() == Qt.Key.Key_Escape:
+                if self._button_mode == ButtonMode.STOP:
+                    self.set_button_mode(ButtonMode.STOPPING)
+                    self.stop_clicked.emit()
+                    return True
         return super().eventFilter(obj, event)
     
     # ============================================================
@@ -778,6 +883,7 @@ class InputArea(QWidget):
 
 __all__ = [
     "InputArea",
+    "ButtonMode",
     "MAX_IMAGE_SIZE_MB",
     "ALLOWED_IMAGE_EXTENSIONS",
 ]

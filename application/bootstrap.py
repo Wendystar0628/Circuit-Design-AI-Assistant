@@ -574,6 +574,18 @@ def _delayed_init():
             _logger.info("Phase 3.5 SessionStateManager 初始化完成")
 
         # --------------------------------------------------------
+        # 3.5.3 StopController 初始化
+        # 依赖：Logger、EventBus
+        # 职责：全局停止状态管理，协调多组件停止操作
+        # --------------------------------------------------------
+        from shared.stop_controller import StopController
+        from shared.service_names import SVC_STOP_CONTROLLER
+        stop_controller = StopController()
+        ServiceLocator.register(SVC_STOP_CONTROLLER, stop_controller)
+        if _logger:
+            _logger.info("Phase 3.5.3 StopController 初始化完成")
+
+        # --------------------------------------------------------
         # 3.5.5 TracingLogger 初始化
         # 依赖：EventBus、TracingStore
         # 职责：内存缓冲 + 定时刷新追踪日志

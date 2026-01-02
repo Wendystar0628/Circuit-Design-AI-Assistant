@@ -227,6 +227,13 @@ from shared.async_task_registry import (
     TASK_CODE_INDEX,
 )
 
+# 停止控制器
+from shared.stop_controller import (
+    StopController,
+    StopReason,
+    StopState,
+)
+
 # 错误恢复熔断阈值（从 error_types 导出）
 from shared.error_types import MAX_CONSECUTIVE_FIX_ATTEMPTS
 
@@ -359,6 +366,10 @@ __all__ = [
     "TASK_SIMULATION",
     "TASK_SCHEMATIC",
     "TASK_CODE_INDEX",
+    # 停止控制器
+    "StopController",
+    "StopReason",
+    "StopState",
     # 错误恢复熔断阈值
     "MAX_CONSECUTIVE_FIX_ATTEMPTS",
 ]

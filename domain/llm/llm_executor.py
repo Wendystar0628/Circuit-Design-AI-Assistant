@@ -85,9 +85,13 @@ class LLMExecutor(QObject):
         self._throttler = None
         self._external_service = None
         self._logger = None
+        self._stop_controller = None
         
         # 当前运行的任务
         self._running_tasks: Dict[str, asyncio.Task] = {}
+        
+        # 订阅停止事件
+        self._subscribe_stop_events()
     
     # ============================================================
     # 延迟获取服务
@@ -139,6 +143,38 @@ class LLMExecutor(QObject):
             except Exception:
                 pass
         return self._logger
+    
+    @property
+    def stop_controller(self):
+        """延迟获取 StopController"""
+        if self._stop_controller is None:
+            try:
+                from shared.service_locator import ServiceLocator
+                from shared.service_names import SVC_STOP_CONTROLLER
+                self._stop_controller = ServiceLocator.get_optional(SVC_STOP_CONTROLLER)
+            except Exception:
+                pass
+        return self._stop_controller
+    
+    def _subscribe_stop_events(self) -> None:
+        """订阅停止事件"""
+        # 延迟订阅，避免初始化顺序问题
+        try:
+            if self.external_service and hasattr(self.external_service, 'event_bus'):
+                event_bus = self.external_service.event_bus
+                if event_bus:
+                    event_bus.subscribe("EVENT_STOP_REQUESTED", self._on_stop_requested)
+        except Exception:
+            pass
+    
+    def _on_stop_requested(self, event_data: Dict[str, Any]) -> None:
+        """处理停止请求事件"""
+        # 取消所有运行中的任务
+        for task_id in list(self._running_tasks.keys()):
+            self.cancel(task_id)
+        
+        if self.logger:
+            self.logger.info("Stop requested, cancelled all LLM tasks")
     
     # ============================================================
     # 核心方法
@@ -201,6 +237,14 @@ class LLMExecutor(QObject):
             # 确保刷新节流器
             if self.throttler:
                 await self.throttler.flush_all(task_id)
+            
+            # 通知 StopController
+            if self.stop_controller:
+                self.stop_controller.mark_stopping()
+                self.stop_controller.mark_stopped({
+                    "is_partial": True,
+                    "cleanup_success": True,
+                })
             
             raise
             
@@ -319,6 +363,19 @@ class LLMExecutor(QObject):
             # 任务被取消，刷新节流器后重新抛出
             if self.throttler:
                 await self.throttler.flush_all(task_id)
+            
+            # 通知 StopController
+            if self.stop_controller:
+                self.stop_controller.mark_stopping()
+                self.stop_controller.mark_stopped({
+                    "is_partial": True,
+                    "cleanup_success": True,
+                    "partial_result": {
+                        "content": content,
+                        "reasoning_content": reasoning_content if reasoning_content else None,
+                    }
+                })
+            
             raise
             
         except Exception as e:

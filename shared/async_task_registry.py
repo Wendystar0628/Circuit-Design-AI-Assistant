@@ -156,6 +156,10 @@ class AsyncTaskRegistry(QObject):
         # 延迟获取的服务
         self._event_bus = None
         self._logger = None
+        self._stop_controller = None
+        
+        # 订阅停止事件
+        self._subscribe_stop_events()
     
     # ============================================================
     # 延迟获取服务
@@ -183,6 +187,35 @@ class AsyncTaskRegistry(QObject):
             except Exception:
                 pass
         return self._logger
+    
+    @property
+    def stop_controller(self):
+        """延迟获取 StopController"""
+        if self._stop_controller is None:
+            try:
+                from shared.service_locator import ServiceLocator
+                from shared.service_names import SVC_STOP_CONTROLLER
+                self._stop_controller = ServiceLocator.get_optional(SVC_STOP_CONTROLLER)
+            except Exception:
+                pass
+        return self._stop_controller
+    
+    def _subscribe_stop_events(self) -> None:
+        """订阅停止事件"""
+        # 延迟订阅，避免初始化顺序问题
+        try:
+            if self.event_bus:
+                self.event_bus.subscribe("EVENT_STOP_REQUESTED", self._on_stop_requested)
+        except Exception:
+            pass
+    
+    def _on_stop_requested(self, event_data: Dict[str, Any]) -> None:
+        """处理停止请求事件"""
+        # 取消所有运行中的任务
+        cancelled_count = self.cancel_all()
+        
+        if self.logger:
+            self.logger.info(f"Stop requested, cancelled {cancelled_count} tasks")
     
     # ============================================================
     # 任务提交

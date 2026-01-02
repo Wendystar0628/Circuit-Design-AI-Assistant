@@ -286,6 +286,12 @@ class LLMExecutor(QObject):
         usage = None
         
         try:
+            # 停止检查点：在开始长时间操作前检查
+            if self._check_stop_requested():
+                if self.logger:
+                    self.logger.info(f"Stop requested before LLM call: task_id={task_id}")
+                raise asyncio.CancelledError()
+            
             # 调用客户端的流式生成方法
             async for chunk in client.chat_stream(
                 messages=messages,
@@ -294,6 +300,12 @@ class LLMExecutor(QObject):
                 thinking=thinking,
                 **kwargs
             ):
+                # 停止检查点：每个 chunk 后检查是否请求停止
+                if self._check_stop_requested():
+                    if self.logger:
+                        self.logger.info(f"Stop requested during streaming: task_id={task_id}")
+                    break
+                
                 # 检查是否被取消
                 if asyncio.current_task().cancelled():
                     break
@@ -364,17 +376,28 @@ class LLMExecutor(QObject):
             if self.throttler:
                 await self.throttler.flush_all(task_id)
             
+            # 构建部分结果
+            partial_result = {
+                "content": content,
+                "reasoning_content": reasoning_content if reasoning_content else None,
+                "usage": usage,
+                "is_partial": True  # 标记为部分结果
+            }
+            
             # 通知 StopController
             if self.stop_controller:
                 self.stop_controller.mark_stopping()
                 self.stop_controller.mark_stopped({
                     "is_partial": True,
                     "cleanup_success": True,
-                    "partial_result": {
-                        "content": content,
-                        "reasoning_content": reasoning_content if reasoning_content else None,
-                    }
+                    "partial_result": partial_result
                 })
+            
+            if self.logger:
+                self.logger.info(
+                    f"LLM generation cancelled with partial result: task_id={task_id}, "
+                    f"partial_content_length={len(content)}"
+                )
             
             raise
             
@@ -410,6 +433,12 @@ class LLMExecutor(QObject):
             dict: 生成结果
         """
         try:
+            # 停止检查点：在开始长时间操作前检查
+            if self._check_stop_requested():
+                if self.logger:
+                    self.logger.info(f"Stop requested before LLM call: task_id={task_id}")
+                raise asyncio.CancelledError()
+            
             # 调用客户端的非流式生成方法
             response = client.chat(
                 messages=messages,
@@ -479,6 +508,17 @@ class LLMExecutor(QObject):
     # ============================================================
     # 辅助方法
     # ============================================================
+    
+    def _check_stop_requested(self) -> bool:
+        """
+        检查是否请求停止
+        
+        Returns:
+            bool: True 表示已请求停止
+        """
+        if self.stop_controller:
+            return self.stop_controller.is_stop_requested()
+        return False
     
     def _get_llm_client(self, model: str) -> Optional[BaseLLMClient]:
         """

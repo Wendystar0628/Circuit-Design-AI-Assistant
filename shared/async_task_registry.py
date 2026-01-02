@@ -363,20 +363,30 @@ class AsyncTaskRegistry(QObject):
             return result
             
         except asyncio.CancelledError:
-            # 任务被取消
+            # 任务被取消 - 执行清理逻辑
+            if self.logger:
+                self.logger.info(f"Task '{task_id}' ({task_type}) received cancellation signal")
+            
+            # 执行清理逻辑
+            partial_result = await self._cleanup_cancelled_task(task_id, task_type)
+            
+            # 更新任务状态
             if task_id in self._tasks:
                 task_info = self._tasks[task_id]
                 task_info.state = TaskState.CANCELLED
                 task_info.completed_at = datetime.now()
+                task_info.result = partial_result  # 保存部分结果
                 
                 # 发送取消信号
                 self.task_cancelled.emit(task_id, task_type)
                 
-                # 发布事件
-                self._publish_event("EVENT_TASK_CANCELLED", task_id, task_type)
+                # 发布事件（包含部分结果）
+                event_data = {"partial_result": partial_result} if partial_result else {}
+                self._publish_event("EVENT_TASK_CANCELLED", task_id, task_type, event_data)
                 
                 if self.logger:
-                    self.logger.info(f"Task '{task_id}' ({task_type}) cancelled")
+                    has_partial = "with partial result" if partial_result else "without result"
+                    self.logger.info(f"Task '{task_id}' ({task_type}) cancelled {has_partial}")
             
             raise
             
@@ -422,6 +432,51 @@ class AsyncTaskRegistry(QObject):
         
         # 执行任务
         await self._execute_task(next_task)
+    
+    async def _cleanup_cancelled_task(self, task_id: str, task_type: str) -> Optional[Any]:
+        """
+        清理被取消的任务
+        
+        执行必要的清理逻辑，如刷新缓冲区、关闭连接等。
+        
+        Args:
+            task_id: 任务标识
+            task_type: 任务类型
+            
+        Returns:
+            Any: 部分结果（如果有）
+        """
+        partial_result = None
+        
+        try:
+            # 针对不同任务类型执行特定清理
+            if task_type == TASK_LLM:
+                # LLM 任务：刷新流式输出缓冲区
+                from shared.service_locator import ServiceLocator
+                from shared.service_names import SVC_STREAM_THROTTLER
+                
+                throttler = ServiceLocator.get_optional(SVC_STREAM_THROTTLER)
+                if throttler:
+                    # 立即刷新缓冲区，保存已接收的内容
+                    await throttler.flush_all(task_id)
+                    
+                    if self.logger:
+                        self.logger.debug(f"Flushed stream buffer for task '{task_id}'")
+            
+            elif task_type in (TASK_RAG_INDEX, TASK_CODE_INDEX):
+                # 索引任务：保存已索引的进度
+                if self.logger:
+                    self.logger.debug(f"Saving partial index progress for task '{task_id}'")
+            
+            # 通知 StopController 清理完成
+            if self.stop_controller:
+                self.stop_controller.mark_stopping()
+            
+        except Exception as e:
+            if self.logger:
+                self.logger.warning(f"Error during task cleanup for '{task_id}': {e}")
+        
+        return partial_result
     
     # ============================================================
     # 任务取消

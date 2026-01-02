@@ -105,6 +105,10 @@ class StreamThrottler(QObject):
         
         # 锁，保护并发访问
         self._lock = asyncio.Lock()
+        
+        # 延迟获取的服务
+        self._stop_controller = None
+        self._logger = None
     
     @property
     def interval_ms(self) -> int:
@@ -153,6 +157,12 @@ class StreamThrottler(QObject):
             chunk: 数据块内容
         """
         if not chunk:
+            return
+        
+        # 停止检查点：在推送数据前检查是否请求停止
+        if await self._check_stop_requested(task_id):
+            if self._logger:
+                self._logger.debug(f"Stop requested, skipping push for task '{task_id}'")
             return
         
         async with self._lock:
@@ -346,6 +356,47 @@ class StreamThrottler(QObject):
             task_id for task_id, state in self._states.items()
             if state in (StreamState.STREAMING, StreamState.PAUSED)
         ]
+    
+    # ============================================================
+    # 停止控制集成
+    # ============================================================
+    
+    @property
+    def stop_controller(self):
+        """延迟获取 StopController"""
+        if self._stop_controller is None:
+            try:
+                from shared.service_locator import ServiceLocator
+                from shared.service_names import SVC_STOP_CONTROLLER
+                self._stop_controller = ServiceLocator.get_optional(SVC_STOP_CONTROLLER)
+            except Exception:
+                pass
+        return self._stop_controller
+    
+    @property
+    def logger(self):
+        """延迟获取 Logger"""
+        if self._logger is None:
+            try:
+                from infrastructure.utils.logger import get_logger
+                self._logger = get_logger("stream_throttler")
+            except Exception:
+                pass
+        return self._logger
+    
+    async def _check_stop_requested(self, task_id: str) -> bool:
+        """
+        检查是否请求停止
+        
+        Args:
+            task_id: 任务标识
+            
+        Returns:
+            bool: True 表示已请求停止
+        """
+        if self.stop_controller:
+            return self.stop_controller.is_stop_requested()
+        return False
 
 
 # ============================================================

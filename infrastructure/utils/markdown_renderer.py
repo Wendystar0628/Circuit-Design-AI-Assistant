@@ -437,7 +437,7 @@ class MarkdownRenderer:
         }
         
         body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Microsoft YaHei UI", sans-serif;
             font-size: 14px;
             line-height: 1.6;
             color: #333333;
@@ -486,7 +486,7 @@ class MarkdownRenderer:
         }
         
         code {
-            font-family: "SF Mono", Monaco, "Cascadia Code", "Roboto Mono", Consolas, monospace;
+            font-family: "JetBrains Mono", "Cascadia Code", "SF Mono", "Roboto Mono", "Consolas", monospace;
             font-size: 13px;
         }
         

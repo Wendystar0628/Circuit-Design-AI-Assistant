@@ -44,7 +44,7 @@ class DocumentViewer(QTextEdit):
                 color: #333333;
                 border: none;
                 padding: 20px;
-                font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+                font-family: "Segoe UI", "SF Pro Display", "Roboto", "Microsoft YaHei UI", sans-serif;
                 font-size: 14px;
                 line-height: 1.6;
             }
@@ -160,10 +160,10 @@ class DocumentViewer(QTextEdit):
         <html>
         <head>
         <style>
-            body {{ font-family: "Segoe UI", "Microsoft YaHei", sans-serif; line-height: 1.6; }}
+            body {{ font-family: "Segoe UI", "SF Pro Display", "Roboto", "Microsoft YaHei UI", sans-serif; line-height: 1.6; }}
             h1, h2, h3 {{ color: #333; }}
-            code {{ background-color: #f5f5f5; padding: 2px 5px; border-radius: 3px; }}
-            pre {{ background-color: #f5f5f5; padding: 10px; border-radius: 5px; overflow-x: auto; }}
+            code {{ background-color: #f5f5f5; padding: 2px 5px; border-radius: 3px; font-family: "JetBrains Mono", "Cascadia Code", "SF Mono", monospace; }}
+            pre {{ background-color: #f5f5f5; padding: 10px; border-radius: 5px; overflow-x: auto; font-family: "JetBrains Mono", "Cascadia Code", "SF Mono", monospace; }}
             table {{ border-collapse: collapse; width: 100%; }}
             th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
             th {{ background-color: #f5f5f5; }}

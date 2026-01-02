@@ -202,7 +202,7 @@ class WebMessageView(QWidget):
     def _get_styles(self) -> str:
         return '''
 * { margin: 0; padding: 0; box-sizing: border-box; }
-body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, "Microsoft YaHei UI", sans-serif;
        font-size: 14px; line-height: 1.6; color: #333; background: #fff; padding: 12px; }
 #msgs { display: flex; flex-direction: column; gap: 12px; }
 .msg { max-width: 85%; padding: 12px 16px; border-radius: 12px; word-wrap: break-word; }
@@ -220,7 +220,7 @@ h1 { font-size: 1.5em; } h2 { font-size: 1.3em; } h3 { font-size: 1.1em; }
 p { margin-bottom: 8px; }
 ul,ol { margin-left: 20px; margin-bottom: 8px; }
 pre { background: #f5f5f5; border-radius: 6px; padding: 12px; overflow-x: auto; margin: 8px 0; }
-code { font-family: "SF Mono", Monaco, Consolas, monospace; font-size: 13px; }
+code { font-family: "JetBrains Mono", "Cascadia Code", "SF Mono", "Consolas", monospace; font-size: 13px; }
 :not(pre)>code { background: #e8e8e8; padding: 2px 6px; border-radius: 4px; }
 table { border-collapse: collapse; width: 100%; margin: 8px 0; }
 th,td { border: 1px solid #e0e0e0; padding: 8px 12px; text-align: left; }

@@ -892,12 +892,23 @@ def run() -> int:
 
     # 2.1 创建 QApplication 实例
     from PyQt6.QtWidgets import QApplication
+    from PyQt6.QtGui import QFont
     app = QApplication(sys.argv)
 
     # 设置应用程序信息
     app.setApplicationName("Circuit Design AI")
     app.setApplicationVersion("0.1.0")
     app.setOrganizationName("Circuit AI")
+    
+    # 设置应用程序默认字体（使用现代字体）
+    app_font = QFont()
+    # 尝试按优先级设置系统字体
+    for font_name in ["Segoe UI", "SF Pro Display", "Roboto", "Microsoft YaHei UI", "Arial"]:
+        app_font.setFamily(font_name)
+        if app_font.exactMatch():
+            break
+    app_font.setPointSize(9)  # 设置合理的默认字体大小
+    app.setFont(app_font)
 
     # ============================================================
     # 2.1.2 初始化 qasync 融合事件循环
@@ -979,9 +990,9 @@ def run() -> int:
             print(f"[ERROR] 事件循环异常退出: {e}")
         exit_code = 1
     finally:
-    # 清理工作
+        # 清理工作
         shutdown_async_runtime()
-    _shutdown_tracing()
+        _shutdown_tracing()
     
     if _logger:
         _logger.info(f"应用退出，退出码: {exit_code}")
@@ -1010,8 +1021,8 @@ def _shutdown_tracing():
         if tracing_logger:
             try:
                 await tracing_logger.shutdown()
-            if _logger:
-                _logger.info("TracingLogger 已关闭")
+                if _logger:
+                    _logger.info("TracingLogger 已关闭")
             except Exception as e:
                 if _logger:
                     _logger.warning(f"TracingLogger 关闭时出错: {e}")
@@ -1021,12 +1032,12 @@ def _shutdown_tracing():
         if tracing_store:
             try:
                 await tracing_store.close()
-            if _logger:
-                _logger.info("TracingStore 已关闭")
+                if _logger:
+                    _logger.info("TracingStore 已关闭")
             except Exception as e:
                 if _logger:
                     _logger.warning(f"TracingStore 关闭时出错: {e}")
-                
+    
     try:
         # 创建临时事件循环执行异步清理
         # 因为 qasync 融合循环此时已关闭

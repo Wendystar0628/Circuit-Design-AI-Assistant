@@ -241,7 +241,7 @@ class HistoryDialog(QDialog):
                 border: 1px solid #e0e0e0;
                 border-radius: 4px;
                 padding: 8px;
-                font-family: 'Consolas', 'Monaco', monospace;
+                font-family: "JetBrains Mono", "Cascadia Code", "SF Mono", "Consolas", monospace;
                 font-size: 13px;
             }
         """)

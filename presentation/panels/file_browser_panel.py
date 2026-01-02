@@ -329,7 +329,7 @@ class FileBrowserPanel(QWidget):
             #file_browser_tree {
                 background-color: #f8f9fa;
                 border: none;
-                font-family: Consolas, "JetBrains Mono", monospace;
+                font-family: "JetBrains Mono", "Cascadia Code", "SF Mono", "Consolas", monospace;
                 font-size: 13px;
             }
             

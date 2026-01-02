@@ -79,8 +79,8 @@ class CodeEditor(QPlainTextEdit):
     def _setup_font(self):
         """设置编程字体"""
         font = QFont()
-        # 尝试使用常见的编程字体
-        for font_name in ["JetBrains Mono", "Consolas", "Fira Code", "Monaco", "Courier New"]:
+        # 尝试使用现代编程字体，按优先级排序
+        for font_name in ["JetBrains Mono", "Cascadia Code", "Fira Code", "SF Mono", "Consolas", "Courier New"]:
             font.setFamily(font_name)
             if font.exactMatch():
                 break

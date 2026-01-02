@@ -183,7 +183,14 @@ class DevToolsPanel(QWidget):
         """创建详情面板"""
         detail = QTextEdit()
         detail.setReadOnly(True)
-        detail.setFont(QFont("Consolas", 10))
+        # 使用现代等宽字体
+        font = QFont()
+        for font_name in ["JetBrains Mono", "Cascadia Code", "SF Mono", "Consolas"]:
+            font.setFamily(font_name)
+            if font.exactMatch():
+                break
+        font.setPointSize(10)
+        detail.setFont(font)
         detail.setStyleSheet("""
             QTextEdit {
                 background-color: #FAFAFA;

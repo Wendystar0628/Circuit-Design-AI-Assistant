@@ -588,3 +588,224 @@ QMessageBox {
 QMessageBox QLabel {
     color: #333333;
 }
+
+
+/* ============================================================
+ * 对话消息格式化样式
+ * ============================================================ */
+
+/* 消息主内容容器 */
+.message-content {
+    line-height: 1.6;
+    word-wrap: break-word;
+}
+
+/* 思考内容折叠容器 */
+.reasoning-container {
+    background-color: #f5f5f5;
+    border-radius: 8px;
+    padding: 12px;
+    margin-bottom: 12px;
+    font-size: 12px;
+}
+
+/* 思考内容标题（可点击展开/折叠） */
+.reasoning-header {
+    cursor: pointer;
+    font-weight: 500;
+    color: #666666;
+    display: flex;
+    align-items: center;
+}
+
+.reasoning-icon {
+    margin-right: 6px;
+}
+
+.reasoning-title {
+    color: #666666;
+}
+
+/* 思考内容正文 */
+.reasoning-content {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid #e0e0e0;
+    color: #555555;
+    line-height: 1.6;
+}
+
+/* 操作摘要卡片 */
+.operations-card {
+    background-color: #e3f2fd;
+    border-radius: 8px;
+    padding: 12px;
+    margin-top: 12px;
+}
+
+.operations-header {
+    font-weight: 500;
+    color: #1976d2;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+}
+
+.operations-icon {
+    margin-right: 6px;
+}
+
+.operations-title {
+    color: #1976d2;
+}
+
+.operations-list {
+    margin: 0;
+    padding-left: 20px;
+    color: #333333;
+}
+
+.operation-item {
+    margin: 4px 0;
+}
+
+/* 联网搜索结果卡片 */
+.web-search-card {
+    background-color: #fff3e0;
+    border-radius: 8px;
+    padding: 12px;
+    margin-top: 12px;
+}
+
+.web-search-header {
+    font-weight: 500;
+    color: #e65100;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+}
+
+.web-search-icon {
+    margin-right: 6px;
+}
+
+.web-search-title {
+    color: #e65100;
+}
+
+.web-search-list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.web-search-item {
+    margin: 8px 0;
+    padding: 8px;
+    background-color: #ffffff;
+    border-radius: 4px;
+}
+
+.web-search-item-title {
+    color: #1976d2;
+    font-weight: 500;
+    text-decoration: none;
+}
+
+.web-search-item-title:hover {
+    text-decoration: underline;
+}
+
+.web-search-item-snippet {
+    color: #666666;
+    font-size: 12px;
+    margin-top: 4px;
+}
+
+.web-search-item-url {
+    color: #4caf50;
+    font-size: 11px;
+    margin-top: 2px;
+}
+
+/* 部分响应中断标记 */
+.partial-indicator {
+    color: #9e9e9e;
+    font-style: italic;
+    font-size: 12px;
+    margin-top: 8px;
+    padding: 4px 8px;
+    background-color: #fafafa;
+    border-radius: 4px;
+    display: inline-flex;
+    align-items: center;
+}
+
+.partial-icon {
+    margin-right: 4px;
+}
+
+/* 行内代码 */
+.inline-code {
+    background-color: #f5f5f5;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-family: "JetBrains Mono", "Cascadia Code", "Fira Code", "SF Mono", "Consolas", monospace;
+    font-size: 12px;
+    color: #d32f2f;
+}
+
+/* 代码块容器 */
+.code-block {
+    background-color: #1e1e1e;
+    border-radius: 6px;
+    padding: 12px;
+    margin: 8px 0;
+    overflow-x: auto;
+}
+
+.code-block code {
+    font-family: "JetBrains Mono", "Cascadia Code", "Fira Code", "SF Mono", "Consolas", monospace;
+    font-size: 13px;
+    color: #d4d4d4;
+    line-height: 1.5;
+}
+
+.code-block-header {
+    color: #808080;
+    font-size: 11px;
+    margin-bottom: 8px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid #333333;
+}
+
+/* 附件样式 */
+.attachments {
+    margin-top: 8px;
+}
+
+.attachment-image {
+    margin: 4px 0;
+}
+
+.attachment-image img {
+    max-width: 300px;
+    max-height: 200px;
+    border-radius: 4px;
+    border: 1px solid #e0e0e0;
+}
+
+.attachment-file {
+    display: inline-flex;
+    align-items: center;
+    padding: 6px 12px;
+    background-color: #f5f5f5;
+    border-radius: 4px;
+    margin: 4px 4px 4px 0;
+    font-size: 12px;
+    color: #666666;
+}
+
+.attachment-file:hover {
+    background-color: #e3f2fd;
+}

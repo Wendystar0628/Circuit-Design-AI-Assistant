@@ -84,7 +84,9 @@ from domain.llm.conversation import (
     format_message_for_display,
     format_reasoning_content,
     split_content_and_reasoning,
+    format_partial_indicator,
     render_operations_summary,
+    render_web_search_results,
     format_messages_for_export,
     StreamingContentBuffer,
 )
@@ -262,7 +264,9 @@ __all__ = [
     "format_message_for_display",
     "format_reasoning_content",
     "split_content_and_reasoning",
+    "format_partial_indicator",
     "render_operations_summary",
+    "render_web_search_results",
     "format_messages_for_export",
     "StreamingContentBuffer",
     # 上下文检索

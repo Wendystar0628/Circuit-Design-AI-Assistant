@@ -12,10 +12,12 @@
 - 状态不可变：消息操作返回更新后的 state 副本
 - 线程安全：内部使用 RLock 保护共享状态
 
-压缩与清理：
-- compress() 方法执行上下文压缩，含增强清理策略
-- 增强清理策略：清理 reasoning_content、合并 operations、截断旧消息、替换摘要
-- 配置项定义在 settings.py（KEEP_REASONING_RECENT_COUNT 等）
+职责边界：
+- 消息管理：委托给 MessageStore
+- Token 监控：委托给 TokenMonitor
+- 上下文压缩：委托给 ContextCompressor
+- 缓存统计：委托给 CacheStatsTracker
+- 会话管理：由 SessionStateManager 负责（不在本类职责范围内）
 
 使用示例：
     from domain.llm.context_manager import ContextManager
@@ -53,6 +55,9 @@ class ContextManager:
     
     协调 MessageStore、TokenMonitor、ContextCompressor、CacheStatsTracker
     提供统一的对外接口。
+    
+    注意：会话管理（保存、加载、切换会话）由 SessionStateManager 负责，
+    不在本类职责范围内。
     """
     
     def __init__(self, compress_threshold: float = 0.8):
@@ -248,246 +253,7 @@ class ContextManager:
             更新后的状态副本
         """
         return self._message_store.reset_messages(state, keep_system)
-    
-    # ============================================================
-    # 会话归档（委托给 MessageStore）
-    # ============================================================
-    
-    def archive_current_session(
-        self,
-        state: Dict[str, Any],
-        project_path: str
-    ) -> Tuple[bool, str]:
-        """
-        归档当前对话
-        
-        Args:
-            state: 当前状态
-            project_path: 项目路径
-            
-        Returns:
-            (是否成功, 消息或会话ID)
-        """
-        return self._message_store.archive_current_session(state, project_path)
-    
-    def get_archived_sessions(self, project_path: str) -> List[Dict[str, Any]]:
-        """
-        获取已归档的对话列表
-        
-        Args:
-            project_path: 项目路径
-            
-        Returns:
-            归档会话列表
-        """
-        return self._message_store.get_archived_sessions(project_path)
-    
-    def restore_session(
-        self,
-        session_id: str,
-        project_path: str,
-        state: Dict[str, Any]
-    ) -> Tuple[Dict[str, Any], bool, str]:
-        """
-        从归档恢复对话
-        
-        Args:
-            session_id: 会话 ID
-            project_path: 项目路径
-            state: 当前状态
-            
-        Returns:
-            (更新后的状态, 是否成功, 消息)
-        """
-        return self._message_store.restore_session(session_id, project_path, state)
-    
-    def export_session(
-        self,
-        state: Dict[str, Any],
-        path: str,
-        format: str = "json"
-    ) -> Tuple[bool, str]:
-        """
-        导出会话
-        
-        Args:
-            state: 当前状态
-            path: 导出路径
-            format: 导出格式
-            
-        Returns:
-            (是否成功, 消息)
-        """
-        return self._message_store.export_session(state, path, format)
-    
-    def import_session(
-        self,
-        path: str,
-        state: Dict[str, Any]
-    ) -> Tuple[Dict[str, Any], bool, str]:
-        """
-        导入历史会话
-        
-        Args:
-            path: 导入路径
-            state: 当前状态
-            
-        Returns:
-            (更新后的状态, 是否成功, 消息)
-        """
-        return self._message_store.import_session(path, state)
-    
-    def save_session(
-        self,
-        state: Dict[str, Any],
-        project_path: str,
-        session_name: str
-    ) -> Tuple[bool, str]:
-        """
-        保存会话到文件
-        
-        Args:
-            state: 当前状态
-            project_path: 项目路径
-            session_name: 会话名称
-            
-        Returns:
-            (是否成功, 消息)
-        """
-        return self._message_store.save_session(state, project_path, session_name)
-    
-    def load_session(
-        self,
-        project_path: str,
-        session_name: str,
-        state: Dict[str, Any]
-    ) -> Tuple[Dict[str, Any], bool, str, Optional[Dict[str, Any]]]:
-        """
-        加载指定会话
-        
-        Args:
-            project_path: 项目路径
-            session_name: 会话名称
-            state: 当前状态
-            
-        Returns:
-            (更新后的状态, 是否成功, 消息, 会话元数据)
-        """
-        return self._message_store.load_session(project_path, session_name, state)
-    
-    def load_current_session(
-        self,
-        project_path: str,
-        state: Dict[str, Any]
-    ) -> Tuple[Dict[str, Any], bool, str, Optional[Dict[str, Any]]]:
-        """
-        加载当前会话
-        
-        Args:
-            project_path: 项目路径
-            state: 当前状态
-            
-        Returns:
-            (更新后的状态, 是否成功, 消息, 会话元数据)
-        """
-        return self._message_store.load_current_session(project_path, state)
-    
-    def create_new_session(
-        self,
-        state: Dict[str, Any],
-        project_path: str,
-        session_name: str,
-        save_current: bool = True,
-        current_session_name: str = ""
-    ) -> Tuple[Dict[str, Any], bool, str]:
-        """
-        创建新会话
-        
-        Args:
-            state: 当前状态
-            project_path: 项目路径
-            session_name: 新会话名称
-            save_current: 是否保存当前会话
-            current_session_name: 当前会话名称
-            
-        Returns:
-            (更新后的状态, 是否成功, 消息)
-        """
-        return self._message_store.create_new_session(
-            state, project_path, session_name, save_current, current_session_name
-        )
-    
-    def delete_session(
-        self,
-        project_path: str,
-        session_name: str
-    ) -> Tuple[bool, str]:
-        """
-        删除会话
-        
-        Args:
-            project_path: 项目路径
-            session_name: 会话名称
-            
-        Returns:
-            (是否成功, 消息)
-        """
-        return self._message_store.delete_session(project_path, session_name)
-    
-    def rename_session(
-        self,
-        project_path: str,
-        old_name: str,
-        new_name: str
-    ) -> Tuple[bool, str]:
-        """
-        重命名会话
-        
-        Args:
-            project_path: 项目路径
-            old_name: 旧会话名称
-            new_name: 新会话名称
-            
-        Returns:
-            (是否成功, 消息)
-        """
-        return self._message_store.rename_session(project_path, old_name, new_name)
-    
-    def get_all_sessions(self, project_path: str) -> List[Dict[str, Any]]:
-        """
-        获取所有会话列表
-        
-        Args:
-            project_path: 项目路径
-            
-        Returns:
-            会话列表
-        """
-        return self._message_store.get_all_sessions(project_path)
-    
-    def get_current_session_name(self, project_path: str) -> str:
-        """
-        获取当前会话名称
-        
-        Args:
-            project_path: 项目路径
-            
-        Returns:
-            str: 当前会话名称
-        """
-        return self._message_store.get_current_session_name(project_path)
-    
-    def generate_session_name(self) -> str:
-        """
-        生成会话名称
-        
-        格式：Chat YYYY-MM-DD HH:mm（精确到分钟）
-        
-        Returns:
-            str: 会话名称
-        """
-        return self._message_store.generate_session_name()
-    
+
     # ============================================================
     # Token 监控（委托给 TokenMonitor）
     # ============================================================
@@ -814,18 +580,14 @@ class ContextManager:
         # 构建最终内容
         if content_parts:
             # 有图片，使用多模态格式
-            # 根据 GLM-4.6V API 文档，图片应该在文本之前
-            # 参考: https://docs.bigmodel.cn/cn/guide/models/vlm/glm-4.6v
             text_content = msg.content
             if file_contents:
                 text_content += "\n\n" + "\n\n".join(file_contents)
             
-            # 图片在前，文本在后（符合官方示例）
-            # 注意：GLM-4.6V API 要求必须有 text 部分，即使为空也要提供默认文本
+            # 图片在前，文本在后
             if text_content.strip():
                 content_parts.append({"type": "text", "text": text_content})
             else:
-                # 如果没有文本，添加默认提示
                 content_parts.append({"type": "text", "text": "请描述这张图片"})
             
             return {
@@ -846,15 +608,6 @@ class ContextManager:
     def _convert_image_to_base64(self, image_path: str) -> Optional[Dict[str, Any]]:
         """
         将图片转换为 base64 编码的多模态内容
-        
-        根据 GLM-4.6V API 文档，支持以下图片格式：
-        - HTTP/HTTPS URL
-        - Base64 编码（格式：data:{mime_type};base64,{base64_data}）
-        
-        注意：GLM-4.6V 对 base64 图片有以下限制：
-        - 单张图片最大 10MB
-        - 支持 PNG、JPEG、WebP、GIF 格式
-        - base64 字符串不能包含换行符
         
         Args:
             image_path: 图片文件路径
@@ -882,21 +635,18 @@ class ContextManager:
             }
             mime_type = mime_types.get(ext, "image/png")
             
-            # 检查文件大小（GLM-4.6V 限制单张图片最大 10MB）
+            # 检查文件大小（限制单张图片最大 10MB）
             file_size = os.path.getsize(image_path)
-            if file_size > 10 * 1024 * 1024:  # 10MB
+            if file_size > 10 * 1024 * 1024:
                 if self.logger:
                     self.logger.warning(f"Image file too large: {file_size} bytes (max 10MB)")
                 return None
             
-            # 读取并编码（确保不包含换行符）
+            # 读取并编码
             with open(image_path, "rb") as f:
                 image_bytes = f.read()
             
-            # 使用标准 base64 编码（不添加换行符）
             image_data = base64.b64encode(image_bytes).decode("ascii")
-            
-            # 构建 data URL
             data_url = f"data:{mime_type};base64,{image_data}"
             
             return {
@@ -929,18 +679,16 @@ class ContextManager:
             return None
         
         try:
-            # 尝试读取文本文件
             with open(file_path, "r", encoding="utf-8") as f:
                 content = f.read()
             
-            # 限制文件大小（避免过长）
-            max_chars = 50000  # 约 50KB 文本
+            # 限制文件大小
+            max_chars = 50000
             if len(content) > max_chars:
                 content = content[:max_chars] + "\n... (file truncated)"
             
             return f"--- File: {file_name} ---\n{content}\n--- End of {file_name} ---"
         except UnicodeDecodeError:
-            # 二进制文件，只显示文件名
             return f"[Binary file attached: {file_name}]"
         except Exception as e:
             if self.logger:
@@ -973,9 +721,6 @@ class ContextManager:
     def request_compress(self) -> None:
         """
         请求压缩上下文（发布事件，由 UI 层处理）
-        
-        此方法发布 EVENT_CONTEXT_COMPRESS_REQUESTED 事件，
-        由 MainWindow 或其他组件监听并打开压缩对话框。
         """
         if self.event_bus:
             try:
@@ -989,42 +734,6 @@ class ContextManager:
         
         if self.logger:
             self.logger.info("Context compress requested")
-    
-    def archive_and_reset(self) -> bool:
-        """
-        归档当前对话并重置（有状态版本）
-        
-        Returns:
-            是否成功
-        """
-        state = self._get_internal_state()
-        
-        # 获取项目路径
-        project_path = ""
-        try:
-            from shared.service_locator import ServiceLocator
-            from shared.service_names import SVC_SESSION_STATE
-            session_state = ServiceLocator.get_optional(SVC_SESSION_STATE)
-            if session_state:
-                project_path = session_state.project_root or ""
-        except Exception:
-            pass
-        
-        # 归档
-        if project_path:
-            success, msg = self.archive_current_session(state, project_path)
-            if not success:
-                if self.logger:
-                    self.logger.warning(f"Archive failed: {msg}")
-        
-        # 重置
-        new_state = self.reset_messages(state, keep_system=True)
-        self._set_internal_state(new_state)
-        
-        if self.logger:
-            self.logger.info("Conversation archived and reset")
-        
-        return True
     
     def refresh_display(self) -> None:
         """

@@ -871,8 +871,8 @@ class ConversationViewModel(QObject):
             if current_name:
                 existing_names.add(current_name)
         
-        # 从归档中获取历史会话名称
-        if self.context_manager:
+        # 从 SessionStateManager 获取所有会话名称
+        if self.session_state_manager:
             try:
                 # 获取项目路径
                 from shared.service_locator import ServiceLocator
@@ -882,14 +882,13 @@ class ConversationViewModel(QObject):
                 if session_state:
                     project_path = session_state.project_root
                     if project_path:
-                        archived = self.context_manager.get_archived_sessions(project_path)
-                        for session in archived:
-                            name = session.get("name") or session.get("session_id", "")
-                            if name:
-                                existing_names.add(name)
+                        sessions = self.session_state_manager.get_all_sessions(project_path)
+                        for session in sessions:
+                            if session.name:
+                                existing_names.add(session.name)
             except Exception as e:
                 if self.logger:
-                    self.logger.debug(f"获取归档会话名称失败: {e}")
+                    self.logger.debug(f"获取会话名称失败: {e}")
         
         return existing_names
     

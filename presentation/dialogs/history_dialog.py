@@ -327,7 +327,7 @@ class HistoryDialog(QDialog):
             self.logger.info(f"Loaded {len(self._sessions)} sessions")
 
     def _get_sessions_from_checkpointer(self) -> List[SessionInfo]:
-        """从 MessageStore 获取会话列表"""
+        """从 SessionStateManager 获取会话列表"""
         sessions = []
         
         try:
@@ -338,16 +338,16 @@ class HistoryDialog(QDialog):
                     self.logger.debug("No project path, cannot load sessions")
                 return sessions
             
-            # 从 MessageStore 获取所有会话
-            from domain.llm.message_store import MessageStore
-            message_store = MessageStore()
+            # 从 SessionStateManager 获取所有会话
+            from domain.llm.session_state_manager import SessionStateManager
+            session_manager = SessionStateManager()
             
-            session_list = message_store.get_all_sessions(project_path)
+            session_list = session_manager.get_all_sessions(project_path)
             
-            for session_data in session_list:
+            for session_info in session_list:
                 # 解析时间
-                created_str = session_data.get("created_at", "")
-                updated_str = session_data.get("updated_at", "")
+                created_str = session_info.created_at
+                updated_str = session_info.updated_at
                 
                 try:
                     created_at = datetime.fromisoformat(created_str) if created_str else datetime.now()
@@ -359,18 +359,18 @@ class HistoryDialog(QDialog):
                 except ValueError:
                     updated_at = datetime.now()
                 
-                # 创建 SessionInfo
-                session_info = SessionInfo(
-                    session_id=session_data.get("name", ""),
+                # 创建本地 SessionInfo（与 session_state_manager 的 SessionInfo 不同）
+                local_session_info = SessionInfo(
+                    session_id=session_info.session_id,
                     created_at=created_at,
                     updated_at=updated_at,
-                    message_count=session_data.get("message_count", 0),
-                    preview=session_data.get("preview", ""),
+                    message_count=session_info.message_count,
+                    preview=session_info.preview,
                 )
-                sessions.append(session_info)
+                sessions.append(local_session_info)
             
             if self.logger:
-                self.logger.info(f"Loaded {len(sessions)} sessions from MessageStore")
+                self.logger.info(f"Loaded {len(sessions)} sessions from SessionStateManager")
                 
         except Exception as e:
             if self.logger:
@@ -425,35 +425,18 @@ class HistoryDialog(QDialog):
             if not project_path:
                 return messages
             
-            # 从 MessageStore 加载会话
-            from domain.llm.message_store import MessageStore
-            message_store = MessageStore()
+            # 从 context_service 加载会话消息
+            from domain.services import context_service
             
-            # session_id 实际上是会话名称
-            session_name = session_id
+            messages_data = context_service.load_messages(project_path, session_id)
             
-            # 创建空状态用于加载
-            empty_state = {"messages": []}
-            
-            new_state, success, msg, metadata = message_store.load_session(
-                project_path, session_name, empty_state
-            )
-            
-            if success:
-                # 从状态中提取消息
-                from domain.llm.message_adapter import MessageAdapter
-                adapter = MessageAdapter()
-                internal_messages = adapter.extract_messages_from_state(new_state)
-                
-                # 转换为字典格式
-                for m in internal_messages:
-                    messages.append(m.to_dict())
-                    
+            if messages_data:
+                messages = messages_data
                 if self.logger:
-                    self.logger.debug(f"Loaded {len(messages)} messages for session: {session_name}")
+                    self.logger.debug(f"Loaded {len(messages)} messages for session: {session_id}")
             else:
                 if self.logger:
-                    self.logger.warning(f"Failed to load session messages: {msg}")
+                    self.logger.warning(f"No messages found for session: {session_id}")
                     
         except Exception as e:
             if self.logger:
@@ -627,22 +610,26 @@ class HistoryDialog(QDialog):
             return False
         
         try:
-            session_name = session_id
-            
-            if not self.session_state_manager:
+            # 获取项目路径
+            project_path = self._get_project_path()
+            if not project_path:
                 if self.logger:
-                    self.logger.error("SessionStateManager not available")
+                    self.logger.error("No project path available")
                 return False
             
-            success, msg = self.session_state_manager.delete_session(session_name)
+            # 使用 SessionStateManager 删除会话
+            from domain.llm.session_state_manager import SessionStateManager
+            session_manager = SessionStateManager()
+            
+            success = session_manager.delete_session(project_path, session_id)
             
             if success:
                 if self.logger:
-                    self.logger.info(f"Session deleted: {session_name}")
+                    self.logger.info(f"Session deleted: {session_id}")
                 return True
             else:
                 if self.logger:
-                    self.logger.warning(f"Failed to delete session: {msg}")
+                    self.logger.warning(f"Failed to delete session: {session_id}")
                 return False
                 
         except Exception as e:

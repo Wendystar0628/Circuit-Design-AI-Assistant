@@ -811,23 +811,23 @@ class ConversationPanel(QWidget):
                 self.logger.debug("No project path, skip save")
             return
         
-        # 通过 ContextManager 保存
+        # 通过 SessionStateManager 保存
         try:
             from shared.service_locator import ServiceLocator
-            from shared.service_names import SVC_CONTEXT_MANAGER
+            from shared.service_names import SVC_SESSION_STATE_MANAGER, SVC_CONTEXT_MANAGER
             
+            session_manager = ServiceLocator.get_optional(SVC_SESSION_STATE_MANAGER)
             context_manager = ServiceLocator.get_optional(SVC_CONTEXT_MANAGER)
-            if context_manager:
+            
+            if session_manager and context_manager:
                 state = context_manager._get_internal_state()
-                success, msg = context_manager.save_session(
-                    state, project_path, session_name
-                )
+                success = session_manager.save_current_session(state, project_path)
                 if success:
                     if self.logger:
                         self.logger.info(f"对话已保存: {session_name}")
                 else:
                     if self.logger:
-                        self.logger.warning(f"保存失败: {msg}")
+                        self.logger.warning("保存失败")
         except Exception as e:
             if self.logger:
                 self.logger.error(f"保存对话时出错: {e}")
@@ -850,15 +850,14 @@ class ConversationPanel(QWidget):
         if not project_path:
             return
         
-        # 通过 ContextManager 创建新会话
+        # 通过 SessionStateManager 创建新会话
         try:
             from shared.service_locator import ServiceLocator
-            from shared.service_names import SVC_CONTEXT_MANAGER
+            from shared.service_names import SVC_SESSION_STATE_MANAGER
             
-            context_manager = ServiceLocator.get_optional(SVC_CONTEXT_MANAGER)
-            if context_manager:
-                state = context_manager._get_internal_state()
-                context_manager.save_session(state, project_path, session_name)
+            session_manager = ServiceLocator.get_optional(SVC_SESSION_STATE_MANAGER)
+            if session_manager:
+                session_manager.create_session(project_path)
         except Exception as e:
             if self.logger:
                 self.logger.warning(f"创建新会话文件失败: {e}")

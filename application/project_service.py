@@ -145,6 +145,7 @@ class ProjectService:
         self._graph_state_projector = None
         self._event_bus = None
         self._worker_manager = None
+        self._file_watcher = None
         self._logger = None
     
     # ============================================================
@@ -198,6 +199,18 @@ class ProjectService:
             except Exception:
                 pass
         return self._event_bus
+    
+    @property
+    def file_watcher(self):
+        """延迟获取文件监听服务"""
+        if self._file_watcher is None:
+            try:
+                from shared.service_locator import ServiceLocator
+                from shared.service_names import SVC_FILE_WATCHER
+                self._file_watcher = ServiceLocator.get_optional(SVC_FILE_WATCHER)
+            except Exception:
+                pass
+        return self._file_watcher
     
     @property
     def worker_manager(self):
@@ -316,6 +329,10 @@ class ProjectService:
             # 8. 设置 FileManager 工作目录
             if self.file_manager:
                 self.file_manager.set_work_dir(path)
+            
+            # 8.1 启动文件监听
+            if self.file_watcher:
+                self.file_watcher.start_watching(str(path))
             
             # 9. 启动依赖健康检查（异步，不阻塞项目打开）
             # 扫描任务通过 AsyncTaskRegistry 提交，主流程不等待其完成
@@ -507,6 +524,12 @@ class ProjectService:
                 self.worker_manager.stop_all_workers()
                 if self.logger:
                     self.logger.debug("已停止所有 Worker")
+            
+            # 1.1 停止文件监听
+            if self.file_watcher:
+                self.file_watcher.stop_watching()
+                if self.logger:
+                    self.logger.debug("已停止文件监听")
             
             # 2. TODO: 保存 GraphState 到 Checkpointer（阶段五实现）
             # 确保当前状态持久化到 checkpoints.sqlite3

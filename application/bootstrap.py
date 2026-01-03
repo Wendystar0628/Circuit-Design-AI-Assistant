@@ -550,6 +550,18 @@ def _delayed_init():
             _logger.info("Phase 3.3 ProjectService 初始化完成")
 
         # --------------------------------------------------------
+        # 3.3.1 FileWatchTask 初始化
+        # 依赖：EventBus
+        # 职责：监测工作文件夹的文件变化，通知应用层
+        # --------------------------------------------------------
+        from application.tasks import FileWatchTask
+        from shared.service_names import SVC_FILE_WATCHER
+        file_watcher = FileWatchTask()
+        ServiceLocator.register(SVC_FILE_WATCHER, file_watcher)
+        if _logger:
+            _logger.info("Phase 3.3.1 FileWatchTask 初始化完成")
+
+        # --------------------------------------------------------
         # 3.4 ContextManager 初始化
         # 依赖：Logger、EventBus
         # 职责：管理对话消息、Token 监控、上下文压缩
@@ -1020,6 +1032,7 @@ def run() -> int:
         exit_code = 1
     finally:
         # 清理工作
+        _shutdown_services()
         shutdown_async_runtime()
         _shutdown_tracing()
     
@@ -1027,6 +1040,38 @@ def run() -> int:
         _logger.info(f"应用退出，退出码: {exit_code}")
 
     return exit_code
+
+
+def _shutdown_services():
+    """
+    关闭应用服务
+    
+    在应用退出时调用，确保所有服务正确关闭。
+    """
+    from shared.service_locator import ServiceLocator
+    from shared.service_names import SVC_FILE_WATCHER, SVC_PROJECT_SERVICE
+    
+    # 停止文件监听
+    file_watcher = ServiceLocator.get_optional(SVC_FILE_WATCHER)
+    if file_watcher:
+        try:
+            file_watcher.stop_watching()
+            if _logger:
+                _logger.info("FileWatcher 已停止")
+        except Exception as e:
+            if _logger:
+                _logger.warning(f"FileWatcher 停止时出错: {e}")
+    
+    # 关闭项目（会触发相关清理）
+    project_service = ServiceLocator.get_optional(SVC_PROJECT_SERVICE)
+    if project_service and project_service.is_project_open():
+        try:
+            project_service.close_project()
+            if _logger:
+                _logger.info("ProjectService 项目已关闭")
+        except Exception as e:
+            if _logger:
+                _logger.warning(f"ProjectService 关闭项目时出错: {e}")
 
 
 def _shutdown_tracing():

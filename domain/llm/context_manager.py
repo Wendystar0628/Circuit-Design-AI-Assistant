@@ -152,7 +152,7 @@ class ContextManager:
         self,
         state: Dict[str, Any],
         limit: Optional[int] = None
-    ) -> List[Message]:
+    ) -> List[BaseMessage]:
         """
         获取消息历史
         
@@ -161,7 +161,7 @@ class ContextManager:
             limit: 返回数量限制
             
         Returns:
-            消息列表（内部格式）
+            消息列表（LangChain BaseMessage 格式）
         """
         return self._message_store.get_messages(state, limit)
     
@@ -169,7 +169,7 @@ class ContextManager:
         self,
         state: Dict[str, Any],
         n: int = 10
-    ) -> List[Message]:
+    ) -> List[BaseMessage]:
         """
         获取最近 N 条消息
         
@@ -202,7 +202,7 @@ class ContextManager:
     def classify_messages(
         self,
         state: Dict[str, Any]
-    ) -> Dict[str, List[Message]]:
+    ) -> Dict[str, List[BaseMessage]]:
         """
         对消息进行重要性分级
         
@@ -545,43 +545,53 @@ class ContextManager:
         
         return result
     
-    def _convert_message_for_llm(self, msg) -> Dict[str, Any]:
+    def _convert_message_for_llm(self, msg: BaseMessage) -> Dict[str, Any]:
         """
-        将内部消息转换为 LLM API 格式
+        将 LangChain 消息转换为 LLM API 格式
         
         Args:
-            msg: 内部消息对象
+            msg: LangChain BaseMessage 对象
             
         Returns:
             LLM API 格式的消息字典
         """
+        from domain.llm.message_helpers import get_role, get_attachments
+        
+        role = get_role(msg)
+        content = msg.content if isinstance(msg.content, str) else ""
+        attachments = get_attachments(msg)
+        
         # 如果没有附件，直接返回简单格式
-        if not msg.attachments:
+        if not attachments:
             return {
-                "role": msg.role,
-                "content": msg.content,
+                "role": role,
+                "content": content,
             }
         
         # 有附件时，构建多模态内容
         content_parts = []
         file_contents = []
         
-        for att in msg.attachments:
-            if att.type == "image":
+        for att in attachments:
+            att_type = att.get("type", "")
+            att_path = att.get("path", "")
+            att_name = att.get("name", "")
+            
+            if att_type == "image":
                 # 图片转换为 base64
-                image_content = self._convert_image_to_base64(att.path)
+                image_content = self._convert_image_to_base64(att_path)
                 if image_content:
                     content_parts.append(image_content)
-            elif att.type == "file":
+            elif att_type == "file":
                 # 文件读取内容
-                file_text = self._read_file_content(att.path, att.name)
+                file_text = self._read_file_content(att_path, att_name)
                 if file_text:
                     file_contents.append(file_text)
         
         # 构建最终内容
         if content_parts:
             # 有图片，使用多模态格式
-            text_content = msg.content
+            text_content = content
             if file_contents:
                 text_content += "\n\n" + "\n\n".join(file_contents)
             
@@ -592,17 +602,17 @@ class ContextManager:
                 content_parts.append({"type": "text", "text": "请描述这张图片"})
             
             return {
-                "role": msg.role,
+                "role": role,
                 "content": content_parts,
             }
         else:
             # 只有文件，添加到文本内容
-            text_content = msg.content
+            text_content = content
             if file_contents:
                 text_content += "\n\n" + "\n\n".join(file_contents)
             
             return {
-                "role": msg.role,
+                "role": role,
                 "content": text_content,
             }
     
@@ -696,12 +706,12 @@ class ContextManager:
                 self.logger.error(f"Failed to read file: {e}")
             return None
     
-    def get_display_messages(self) -> List[Message]:
+    def get_display_messages(self) -> List[BaseMessage]:
         """
         获取用于显示的消息列表（有状态版本）
         
         Returns:
-            消息列表（内部 Message 格式）
+            消息列表（LangChain BaseMessage 格式）
         """
         state = self._get_internal_state()
         return self.get_messages(state)

@@ -30,6 +30,8 @@
 import copy
 from typing import Any, Dict, List, Optional, Tuple
 
+from langchain_core.messages import BaseMessage
+
 from domain.llm.message_helpers import (
     ROLE_SYSTEM,
     ROLE_USER,
@@ -162,8 +164,8 @@ class CompressPreview:
     
     def __init__(
         self,
-        messages_to_remove: List[Message],
-        messages_to_keep: List[Message],
+        messages_to_remove: List[BaseMessage],
+        messages_to_keep: List[BaseMessage],
         estimated_tokens_saved: int,
         summary_preview: str = "",
     ):
@@ -191,14 +193,13 @@ class ContextCompressor:
     上下文压缩器
     
     负责压缩对话历史，生成摘要。
-    通过 MessageAdapter 与 GraphState 交互，保持解耦。
+    直接操作 LangChain 消息类型。
     """
     
     def __init__(self):
         """初始化压缩器"""
         self._logger = None
         self._event_bus = None
-        self._message_adapter = MessageAdapter()
     
     @property
     def logger(self):
@@ -249,7 +250,8 @@ class ContextCompressor:
         
         # 估算节省的 tokens
         tokens_saved = sum(
-            count_tokens(msg.content, model) for msg in to_remove
+            count_tokens(msg.content if isinstance(msg.content, str) else "", model) 
+            for msg in to_remove
         )
         
         # 生成摘要预览（简化版，不调用 LLM）
@@ -394,8 +396,10 @@ class ContextCompressor:
         existing_summary = state.get("conversation_summary", "")
         summary = await self._generate_summary(to_remove, llm_worker)
         
-        # 通过 MessageAdapter 更新状态
-        new_state = self._message_adapter.update_state_messages(state, to_keep)
+        # 通过直接更新 state 更新消息
+        import copy
+        new_state = copy.deepcopy(state)
+        new_state["messages"] = to_keep
         
         # 更新摘要（使用替换策略）
         new_state["conversation_summary"] = self._replace_summary(
@@ -426,6 +430,12 @@ class ContextCompressor:
         Returns:
             更新后的状态
         """
+        from domain.llm.message_helpers import (
+            create_ai_message,
+            create_human_message,
+            is_human_message,
+        )
+        
         try:
             from infrastructure.config.settings import (
                 COMPRESS_SECONDARY_KEEP_RECENT,
@@ -453,13 +463,29 @@ class ContextCompressor:
                 messages, keep_recent
             )
             
-            # 更激进的截断
+            # 更激进的截断 - 创建新消息
+            truncated_msgs = []
             for msg in to_keep:
-                if not msg.is_system() and len(msg.content) > truncate_len:
-                    msg.content = msg.content[:truncate_len] + "\n[...已截断...]"
-                msg.reasoning_content = ""  # 清空所有 reasoning
+                content = msg.content if isinstance(msg.content, str) else ""
+                if not is_system_message(msg) and len(content) > truncate_len:
+                    content = content[:truncate_len] + "\n[...已截断...]"
+                
+                if is_system_message(msg):
+                    truncated_msgs.append(msg)
+                elif is_human_message(msg):
+                    truncated_msgs.append(create_human_message(content=content))
+                elif is_ai_message(msg):
+                    truncated_msgs.append(create_ai_message(
+                        content=content,
+                        reasoning_content="",  # 清空所有 reasoning
+                        operations=list(get_operations(msg)),
+                    ))
+                else:
+                    truncated_msgs.append(msg)
             
-            new_state = self._message_adapter.update_state_messages(state, to_keep)
+            import copy
+            new_state = copy.deepcopy(state)
+            new_state["messages"] = truncated_msgs
             new_state["conversation_summary"] = state.get("conversation_summary", "")
             
         else:
@@ -469,20 +495,33 @@ class ContextCompressor:
             
             if COMPRESS_EXTREME_SUMMARY_ONLY:
                 # 仅保留系统消息和摘要
-                system_msgs = [m for m in messages if m.is_system()]
-                non_system = [m for m in messages if not m.is_system()]
+                system_msgs = [m for m in messages if is_system_message(m)]
+                non_system = [m for m in messages if not is_system_message(m)]
                 
                 # 保留最近 1 条
-                to_keep = system_msgs + non_system[-COMPRESS_EXTREME_KEEP_RECENT:]
+                recent_msgs = non_system[-COMPRESS_EXTREME_KEEP_RECENT:]
                 
-                # 清空所有内容，仅保留摘要
-                for msg in to_keep:
-                    if not msg.is_system():
-                        msg.content = msg.content[:100] + "..." if len(msg.content) > 100 else msg.content
-                    msg.reasoning_content = ""
-                    msg.operations = []
+                # 创建极简消息（LangChain 消息不可变，需创建新消息）
+                extreme_msgs = list(system_msgs)  # 系统消息保持不变
+                for msg in recent_msgs:
+                    content = msg.content if isinstance(msg.content, str) else ""
+                    if len(content) > 100:
+                        content = content[:100] + "..."
+                    
+                    if is_human_message(msg):
+                        extreme_msgs.append(create_human_message(content=content))
+                    elif is_ai_message(msg):
+                        extreme_msgs.append(create_ai_message(
+                            content=content,
+                            reasoning_content="",
+                            operations=[],
+                        ))
+                    else:
+                        extreme_msgs.append(msg)
                 
-                new_state = self._message_adapter.update_state_messages(state, to_keep)
+                import copy
+                new_state = copy.deepcopy(state)
+                new_state["messages"] = extreme_msgs
                 
                 # 确保摘要存在
                 summary = state.get("conversation_summary", "")
@@ -504,9 +543,11 @@ class ContextCompressor:
         total = 0
         
         for msg in messages:
-            total += count_tokens(msg.content, model)
-            if msg.reasoning_content:
-                total += count_tokens(msg.reasoning_content, model)
+            content = msg.content if isinstance(msg.content, str) else ""
+            total += count_tokens(content, model)
+            reasoning = get_reasoning_content(msg)
+            if reasoning:
+                total += count_tokens(reasoning, model)
         
         # 加上摘要
         summary = state.get("conversation_summary", "")
@@ -515,15 +556,15 @@ class ContextCompressor:
         
         return total
     
-    def _get_messages(self, state: Dict[str, Any]) -> List[Message]:
-        """获取消息列表（内部格式）"""
-        return self._message_adapter.extract_messages_from_state(state)
+    def _get_messages(self, state: Dict[str, Any]) -> List[BaseMessage]:
+        """获取消息列表"""
+        return state.get("messages", [])
     
     def _select_messages_to_keep(
         self,
-        messages: List[Message],
+        messages: List[BaseMessage],
         keep_recent: int
-    ) -> Tuple[List[Message], List[Message]]:
+    ) -> Tuple[List[BaseMessage], List[BaseMessage]]:
         """
         选择保留的消息
         
@@ -543,8 +584,8 @@ class ContextCompressor:
         to_remove = []
         
         # 分离系统消息
-        system_msgs = [m for m in messages if m.is_system()]
-        non_system_msgs = [m for m in messages if not m.is_system()]
+        system_msgs = [m for m in messages if is_system_message(m)]
+        non_system_msgs = [m for m in messages if not is_system_message(m)]
         
         # 系统消息始终保留
         to_keep.extend(system_msgs)
@@ -570,21 +611,22 @@ class ContextCompressor:
         
         return to_keep, to_remove
     
-    def _is_important_message(self, msg: Message) -> bool:
+    def _is_important_message(self, msg: BaseMessage) -> bool:
         """判断消息是否重要"""
         # 包含操作的助手消息
-        if msg.is_assistant() and msg.operations:
+        if is_ai_message(msg) and get_operations(msg):
             return True
         
         # 包含代码块的消息
-        if "```" in msg.content:
+        content = msg.content if isinstance(msg.content, str) else ""
+        if "```" in content:
             return True
         
         return False
     
     async def _generate_summary(
         self,
-        messages: List[Message],
+        messages: List[BaseMessage],
         llm_worker: Any
     ) -> str:
         """
@@ -620,51 +662,56 @@ class ContextCompressor:
             # 回退到简单摘要
             return self._generate_simple_summary(messages)
     
-    def _format_messages_for_summary(self, messages: List[Message]) -> str:
+    def _format_messages_for_summary(self, messages: List[BaseMessage]) -> str:
         """格式化消息用于摘要生成"""
         lines = []
         
         for msg in messages:
+            role = get_role(msg)
             role_name = {
                 ROLE_USER: "用户",
                 ROLE_ASSISTANT: "助手",
                 ROLE_SYSTEM: "系统",
-            }.get(msg.role, msg.role)
+            }.get(role, role)
             
             # 截断过长的内容
-            content = msg.content
+            content = msg.content if isinstance(msg.content, str) else ""
             if len(content) > 500:
                 content = content[:500] + "..."
             
             lines.append(f"[{role_name}]: {content}")
             
             # 添加操作摘要
-            if msg.operations:
-                ops = ", ".join(msg.operations[:3])
-                if len(msg.operations) > 3:
-                    ops += f" 等 {len(msg.operations)} 项操作"
+            operations = get_operations(msg)
+            if operations:
+                ops = ", ".join(operations[:3])
+                if len(operations) > 3:
+                    ops += f" 等 {len(operations)} 项操作"
                 lines.append(f"  → 执行操作: {ops}")
         
         return "\n\n".join(lines)
     
-    def _generate_simple_summary(self, messages: List[Message]) -> str:
+    def _generate_simple_summary(self, messages: List[BaseMessage]) -> str:
         """生成简单摘要（不调用 LLM）"""
         if not messages:
             return ""
         
+        from domain.llm.message_helpers import is_human_message
+        
         lines = [f"对话摘要（{len(messages)} 条消息）："]
         
         # 提取用户问题
-        user_msgs = [m for m in messages if m.is_user()]
+        user_msgs = [m for m in messages if is_human_message(m)]
         if user_msgs:
-            first_question = user_msgs[0].content[:100]
+            content = user_msgs[0].content if isinstance(user_msgs[0].content, str) else ""
+            first_question = content[:100]
             lines.append(f"- 初始问题: {first_question}...")
         
         # 提取执行的操作
         all_operations = []
         for msg in messages:
-            if msg.is_assistant() and msg.operations:
-                all_operations.extend(msg.operations)
+            if is_ai_message(msg):
+                all_operations.extend(get_operations(msg))
         
         if all_operations:
             ops_summary = ", ".join(all_operations[:5])
@@ -676,7 +723,7 @@ class ContextCompressor:
     
     async def _generate_structured_summary(
         self,
-        messages: List[Message],
+        messages: List[BaseMessage],
         llm_worker: Any
     ) -> StructuredSummary:
         """
@@ -720,7 +767,7 @@ class ContextCompressor:
     
     def _extract_key_decisions(
         self,
-        messages: List[Message]
+        messages: List[BaseMessage]
     ) -> StructuredSummary:
         """
         从消息中提取关键决策（不调用 LLM 的回退方案）
@@ -731,17 +778,20 @@ class ContextCompressor:
         Returns:
             StructuredSummary: 基于规则提取的结构化摘要
         """
+        from domain.llm.message_helpers import is_human_message
+        
         summary = StructuredSummary()
         
         # 提取设计目标（第一条用户消息）
-        user_msgs = [m for m in messages if m.is_user()]
+        user_msgs = [m for m in messages if is_human_message(m)]
         if user_msgs:
-            summary.design_goal = user_msgs[0].content[:200]
+            content = user_msgs[0].content if isinstance(user_msgs[0].content, str) else ""
+            summary.design_goal = content[:200]
         
         # 提取电路修改（从操作记录）
         for msg in messages:
-            if msg.is_assistant() and msg.operations:
-                for op in msg.operations:
+            if is_ai_message(msg):
+                for op in get_operations(msg):
                     if any(kw in op.lower() for kw in 
                            ["修改", "添加", "删除", "调整", "modify", "add", "remove"]):
                         summary.circuit_modifications.append(op)
@@ -757,15 +807,17 @@ class ContextCompressor:
     
     def _clean_reasoning_content(
         self,
-        messages: List[Message],
+        messages: List[BaseMessage],
         keep_recent: int
-    ) -> List[Message]:
+    ) -> List[BaseMessage]:
         """
         清理深度思考内容
         
         策略：
         - 最近 KEEP_REASONING_RECENT_COUNT 条消息保留完整 reasoning_content
         - 其余消息的 reasoning_content 截断或清空
+        
+        注意：由于 LangChain 消息是不可变的，此方法返回新的消息列表
         
         Args:
             messages: 消息列表
@@ -774,6 +826,13 @@ class ContextCompressor:
         Returns:
             清理后的消息列表
         """
+        from domain.llm.message_helpers import (
+            create_ai_message,
+            create_human_message,
+            create_system_message,
+            is_human_message,
+        )
+        
         try:
             from infrastructure.config.settings import (
                 KEEP_REASONING_RECENT_COUNT,
@@ -787,35 +846,43 @@ class ContextCompressor:
             return messages
         
         # 分离系统消息和非系统消息
-        system_msgs = [m for m in messages if m.is_system()]
-        non_system_msgs = [m for m in messages if not m.is_system()]
+        system_msgs = [m for m in messages if is_system_message(m)]
+        non_system_msgs = [m for m in messages if not is_system_message(m)]
         
         # 处理非系统消息
+        result = []
         total = len(non_system_msgs)
         for i, msg in enumerate(non_system_msgs):
-            if not msg.is_assistant() or not msg.reasoning_content:
+            reasoning = get_reasoning_content(msg)
+            if not is_ai_message(msg) or not reasoning:
+                result.append(msg)
                 continue
             
             # 最近 N 条保留完整
             if i >= total - KEEP_REASONING_RECENT_COUNT:
+                result.append(msg)
                 continue
             
-            # 其余消息清理 reasoning_content
-            if REASONING_TRUNCATE_LENGTH == 0:
-                msg.reasoning_content = ""
-            elif len(msg.reasoning_content) > REASONING_TRUNCATE_LENGTH:
-                msg.reasoning_content = (
-                    msg.reasoning_content[:REASONING_TRUNCATE_LENGTH] + 
-                    "\n[...思考内容已截断...]"
-                )
+            # 其余消息清理 reasoning_content - 创建新消息
+            content = msg.content if isinstance(msg.content, str) else ""
+            new_reasoning = ""
+            if REASONING_TRUNCATE_LENGTH > 0 and len(reasoning) > REASONING_TRUNCATE_LENGTH:
+                new_reasoning = reasoning[:REASONING_TRUNCATE_LENGTH] + "\n[...思考内容已截断...]"
+            
+            new_msg = create_ai_message(
+                content=content,
+                reasoning_content=new_reasoning,
+                operations=list(get_operations(msg)),
+            )
+            result.append(new_msg)
         
-        return system_msgs + non_system_msgs
+        return system_msgs + result
     
     def _merge_operations(
         self,
-        messages_to_remove: List[Message],
-        messages_to_keep: List[Message]
-    ) -> List[Message]:
+        messages_to_remove: List[BaseMessage],
+        messages_to_keep: List[BaseMessage]
+    ) -> List[BaseMessage]:
         """
         合并操作记录
         
@@ -848,8 +915,8 @@ class ContextCompressor:
         # 收集被移除消息的操作
         removed_operations = []
         for msg in messages_to_remove:
-            if msg.is_assistant() and msg.operations:
-                removed_operations.extend(msg.operations)
+            if is_ai_message(msg):
+                removed_operations.extend(get_operations(msg))
         
         if not removed_operations:
             return messages_to_keep
@@ -861,19 +928,15 @@ class ContextCompressor:
                 seen[op] = op  # 后出现的覆盖先出现的
             removed_operations = list(seen.values())
         
-        # 限制每条消息的操作数
-        for msg in messages_to_keep:
-            if msg.is_assistant() and msg.operations:
-                if len(msg.operations) > OPERATIONS_MAX_PER_MESSAGE:
-                    msg.operations = msg.operations[-OPERATIONS_MAX_PER_MESSAGE:]
-        
+        # 注意：由于 LangChain 消息是不可变的，这里只返回原消息
+        # 操作限制在创建新消息时处理
         return messages_to_keep
     
     def _truncate_old_messages(
         self,
-        messages: List[Message],
+        messages: List[BaseMessage],
         keep_recent: int
-    ) -> List[Message]:
+    ) -> List[BaseMessage]:
         """
         截断旧消息内容（激进策略）
         
@@ -889,6 +952,12 @@ class ContextCompressor:
         Returns:
             截断后的消息列表
         """
+        from domain.llm.message_helpers import (
+            create_ai_message,
+            create_human_message,
+            is_human_message,
+        )
+        
         try:
             from infrastructure.config.settings import (
                 OLD_MESSAGE_TRUNCATE_LENGTH,
@@ -902,20 +971,23 @@ class ContextCompressor:
             return messages
         
         # 分离系统消息和非系统消息
-        system_msgs = [m for m in messages if m.is_system()]
-        non_system_msgs = [m for m in messages if not m.is_system()]
+        system_msgs = [m for m in messages if is_system_message(m)]
+        non_system_msgs = [m for m in messages if not is_system_message(m)]
         
+        result = []
         total = len(non_system_msgs)
         for i, msg in enumerate(non_system_msgs):
             # 最近 N 条不截断
             if i >= total - keep_recent:
+                result.append(msg)
                 continue
             
             # 系统消息不截断
-            if msg.is_system():
+            if is_system_message(msg):
+                result.append(msg)
                 continue
             
-            content = msg.content
+            content = msg.content if isinstance(msg.content, str) else ""
             
             # 先处理代码块：截断到指定行数
             content = self._truncate_code_blocks(content, CODE_BLOCK_MAX_LINES)
@@ -925,9 +997,22 @@ class ContextCompressor:
                 # 激进截断：只保留开头部分
                 content = content[:OLD_MESSAGE_TRUNCATE_LENGTH] + "\n[...已截断...]"
             
-            msg.content = content
+            # 创建新消息
+            if is_human_message(msg):
+                new_msg = create_human_message(content=content)
+            elif is_ai_message(msg):
+                new_msg = create_ai_message(
+                    content=content,
+                    reasoning_content="",  # 清空 reasoning
+                    operations=list(get_operations(msg)),
+                )
+            else:
+                result.append(msg)
+                continue
+            
+            result.append(new_msg)
         
-        return system_msgs + non_system_msgs
+        return system_msgs + result
     
     def _truncate_code_blocks(self, content: str, max_lines: int) -> str:
         """

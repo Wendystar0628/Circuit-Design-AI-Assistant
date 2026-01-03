@@ -252,7 +252,7 @@ class ContextFormatter:
         格式化对话历史
         
         Args:
-            messages: 消息列表
+            messages: 消息列表（LangChain BaseMessage 或字典）
             
         Returns:
             格式化后的文本
@@ -260,14 +260,18 @@ class ContextFormatter:
         if not messages:
             return ""
         
+        from langchain_core.messages import BaseMessage
+        from domain.llm.message_helpers import get_role
+        
         parts = ["## Conversation History"]
         
         for msg in messages:
-            if hasattr(msg, 'role'):
-                role = msg.role.upper()
-                content = msg.content if hasattr(msg, 'content') else str(msg)
+            if isinstance(msg, BaseMessage):
+                # LangChain 消息类型
+                role = get_role(msg).upper()
+                content = msg.content if isinstance(msg.content, str) else ""
             elif isinstance(msg, dict):
-                role = msg.get("role", "unknown").upper()
+                role = msg.get("role", msg.get("type", "unknown")).upper()
                 content = msg.get("content", "")
             else:
                 continue

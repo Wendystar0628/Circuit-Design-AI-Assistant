@@ -509,10 +509,8 @@ class MainWindow(QMainWindow):
         
         # 恢复会话状态（项目路径、打开的文件）
         # 必须在 Phase 3 完成后执行，因为 ProjectService 在 Phase 3.3 初始化
+        # 注意：对话会话恢复在 _on_project_opened 中触发，确保项目已打开
         self._restore_session()
-        
-        # 恢复对话会话（延迟执行，确保对话面板和项目已初始化）
-        QTimer.singleShot(100, self._restore_conversation_session)
 
     def _restore_conversation_session(self):
         """恢复对话会话"""
@@ -551,6 +549,10 @@ class MainWindow(QMainWindow):
         
         # 更新最近打开菜单
         self._update_recent_menu()
+        
+        # 恢复对话会话（项目打开后立即恢复）
+        # 延迟 100ms 确保 SessionState.project_root 已更新
+        QTimer.singleShot(100, self._restore_conversation_session)
         
         if self.logger:
             self.logger.info(f"Project opened event received: {project_path}")

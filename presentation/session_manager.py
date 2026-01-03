@@ -316,12 +316,12 @@ class SessionManager:
         """
         完整的会话恢复流程（委托给 SessionStateManager）
         
-        在 EVENT_INIT_COMPLETE 后调用，SessionStateManager 执行以下步骤：
-        1. 读取 sessions.json 获取 current_session_name
+        在 EVENT_STATE_PROJECT_OPENED 后调用，SessionStateManager 执行以下步骤：
+        1. 读取 sessions.json 获取 current_session_id
         2. 若存在当前会话，加载会话消息
-        3. 若不存在当前会话，生成新会话名称并创建
-        4. 发布 EVENT_SESSION_CHANGED 事件
-        5. UI 组件订阅事件后自动刷新
+        3. 若不存在当前会话，创建新会话
+        4. 同步状态到 ContextManager
+        5. 手动刷新对话面板（因为 EVENT_SESSION_CHANGED 在状态同步前发布）
         """
         if not self.session_state_manager:
             if self.logger:
@@ -351,6 +351,11 @@ class SessionManager:
                 except Exception as e:
                     if self.logger:
                         self.logger.warning(f"Failed to sync state to ContextManager: {e}")
+            
+            # 手动刷新对话面板
+            # 因为 EVENT_SESSION_CHANGED 在 switch_session 中发布，
+            # 但此时 ContextManager._internal_state 还未设置
+            self._refresh_chat_panel()
             
             session_id = self.session_state_manager.get_current_session_id()
             if session_id:
@@ -390,8 +395,17 @@ class SessionManager:
                     self.logger.warning("No project root available for saving conversation")
                 return
             
-            # 获取当前状态（使用空字典作为默认）
+            # 从 ContextManager 获取当前状态
             current_state = {}
+            if self.context_manager:
+                try:
+                    current_state = self.context_manager._get_internal_state()
+                except Exception as e:
+                    if self.logger:
+                        self.logger.warning(f"Failed to get state from ContextManager: {e}")
+            
+            # 强制标记为脏，确保保存
+            self.session_state_manager.mark_dirty()
             
             # 调用 on_app_shutdown 保存会话
             self.session_state_manager.on_app_shutdown(current_state, project_root)

@@ -52,7 +52,8 @@
   - 3.5.2 GraphStateProjector 初始化（自动投影 GraphState 到 SessionState）
   - 3.5.5 TracingLogger 初始化（可观测性基础设施）
   - 3.6 LLM 客户端初始化
-  - 3.7 发布 EVENT_INIT_COMPLETE 事件
+  - 3.7 PromptTemplateManager 初始化
+  - 3.8 发布 EVENT_INIT_COMPLETE 事件
 - 应用关闭时：
   - 异步运行时关闭（取消待处理任务）
   - TracingLogger 关闭（最后一次刷新）
@@ -612,7 +613,19 @@ def _delayed_init():
         _init_llm_client()
 
         # --------------------------------------------------------
-        # 3.7 发布 EVENT_INIT_COMPLETE 事件
+        # 3.7 PromptTemplateManager 初始化
+        # 依赖：Logger
+        # 职责：加载和管理 Prompt 模板
+        # --------------------------------------------------------
+        from domain.llm.prompt_template_manager import PromptTemplateManager
+        from shared.service_names import SVC_PROMPT_TEMPLATE_MANAGER
+        prompt_template_manager = PromptTemplateManager()
+        ServiceLocator.register(SVC_PROMPT_TEMPLATE_MANAGER, prompt_template_manager)
+        if _logger:
+            _logger.info("Phase 3.7 PromptTemplateManager 初始化完成")
+
+        # --------------------------------------------------------
+        # 3.8 发布 EVENT_INIT_COMPLETE 事件
         # 通知所有订阅者初始化完成
         # --------------------------------------------------------
         from shared.service_locator import ServiceLocator
@@ -621,7 +634,7 @@ def _delayed_init():
         event_bus = ServiceLocator.get(SVC_EVENT_BUS)
         event_bus.publish(EVENT_INIT_COMPLETE, {"timestamp": time.time()})
         if _logger:
-            _logger.info("Phase 3.7 EVENT_INIT_COMPLETE 已发布")
+            _logger.info("Phase 3.8 EVENT_INIT_COMPLETE 已发布")
 
         print("=" * 50)
         print("初始化完成！应用已就绪。")

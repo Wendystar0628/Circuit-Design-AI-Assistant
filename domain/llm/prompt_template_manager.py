@@ -11,6 +11,7 @@ Prompt 模板管理器 - 统一管理所有 Prompt 模板
 - 内置模板直接从 resources/prompts/ 加载，不复制到用户目录
 - 用户自定义模板存储在 ~/.circuit_design_ai/prompts/custom/
 - 无版本管理，始终使用当前内置模板
+- 文件写入使用原子操作（临时文件 + 重命名）
 
 使用示例：
     from domain.llm.prompt_template_manager import PromptTemplateManager
@@ -25,7 +26,9 @@ Prompt 模板管理器 - 统一管理所有 Prompt 模板
 
 import json
 import logging
+import os
 import re
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -119,6 +122,10 @@ class PromptTemplateManager:
     1. 用户自定义模板（~/.circuit_design_ai/prompts/custom/user_prompts.json）
     2. 内置模板（resources/prompts/task_prompts.json）
     3. 硬编码最小模板（回退保护）
+    
+    文件写入策略：
+    - 使用原子写入（临时文件 + 重命名）
+    - 写入失败时保留原文件
     """
     
     def __init__(self):
@@ -135,7 +142,7 @@ class PromptTemplateManager:
         try:
             CUSTOM_PROMPTS_DIR.mkdir(parents=True, exist_ok=True)
         except Exception as e:
-            self._logger.warning(f"Failed to create custom prompts directory: {e}")
+            self._logger.warning(f"无法创建自定义模板目录: {e}")
     
     # ============================================================
     # 模板加载
@@ -156,7 +163,8 @@ class PromptTemplateManager:
         self._load_fallback_templates()
         
         self._logger.info(
-            f"Templates loaded: {len(self._task_templates)} task, {len(self._format_templates)} format"
+            f"模板加载完成: {len(self._task_templates)} 个任务模板, "
+            f"{len(self._format_templates)} 个格式模板"
         )
     
     def _load_builtin_templates(self) -> None:
@@ -165,7 +173,7 @@ class PromptTemplateManager:
         if task_file.exists():
             self._load_from_file(task_file, self._task_templates, "builtin")
         else:
-            self._logger.warning(f"Builtin task prompts not found: {task_file}")
+            self._logger.warning(f"内置任务模板文件不存在: {task_file}")
         
         format_file = BUILTIN_PROMPTS_DIR / OUTPUT_FORMAT_PROMPTS_FILE
         if format_file.exists():
@@ -189,16 +197,18 @@ class PromptTemplateManager:
                     self._task_templates[key] = self._create_template(key, merged, "custom")
                 else:
                     self._task_templates[key] = self._create_template(key, data, "custom")
-                self._logger.debug(f"Custom template loaded: {key}")
+                self._logger.debug(f"已加载自定义模板: {key}")
+        except json.JSONDecodeError as e:
+            self._logger.error(f"自定义模板 JSON 解析失败: {e}")
         except Exception as e:
-            self._logger.warning(f"Failed to load custom templates: {e}")
+            self._logger.warning(f"加载自定义模板失败: {e}")
     
     def _load_fallback_templates(self) -> None:
         """加载硬编码回退模板（填补缺失）"""
         for key, data in FALLBACK_TEMPLATES.items():
             if key not in self._task_templates:
                 self._task_templates[key] = self._create_template(key, data, "fallback")
-                self._logger.warning(f"Using fallback template: {key}")
+                self._logger.warning(f"使用回退模板: {key}")
     
     def _load_from_file(self, path: Path, target: Dict[str, Template], source: str) -> None:
         """从 JSON 文件加载模板"""
@@ -208,9 +218,9 @@ class PromptTemplateManager:
             for key, template_data in data.items():
                 target[key] = self._create_template(key, template_data, source)
         except json.JSONDecodeError as e:
-            self._logger.error(f"JSON parse error in {path}: {e}")
+            self._logger.error(f"JSON 解析错误 {path}: {e}")
         except Exception as e:
-            self._logger.error(f"Failed to load templates from {path}: {e}")
+            self._logger.error(f"加载模板文件失败 {path}: {e}")
     
     def _create_template(self, key: str, data: Dict[str, Any], source: str) -> Template:
         """创建模板对象"""
@@ -232,7 +242,6 @@ class PromptTemplateManager:
             "content": custom_data.get("content", base.content),
         }
 
-    
     # ============================================================
     # 模板获取和变量填充
     # ============================================================
@@ -261,12 +270,12 @@ class PromptTemplateManager:
         
         template = self._task_templates.get(template_name)
         if not template:
-            raise ValueError(f"Template not found: {template_name}")
+            raise ValueError(f"模板不存在: {template_name}")
         
         # 校验必需变量
         missing = set(template.metadata.required_variables) - set(variables.keys())
         if missing:
-            raise ValueError(f"Missing required variables: {list(missing)}")
+            raise ValueError(f"缺少必需变量: {list(missing)}")
         
         # 填充变量
         content = self._fill_variables(template.content, variables)
@@ -280,9 +289,29 @@ class PromptTemplateManager:
         return content
     
     def get_template_raw(self, template_name: str) -> Optional[str]:
-        """获取原始模板内容（不填充变量）"""
+        """
+        获取原始模板内容（不填充变量）
+        
+        Args:
+            template_name: 模板名称
+            
+        Returns:
+            原始模板内容，模板不存在时返回 None
+        """
         template = self._task_templates.get(template_name)
         return template.content if template else None
+    
+    def has_template(self, template_name: str) -> bool:
+        """
+        检查模板是否存在
+        
+        Args:
+            template_name: 模板名称
+            
+        Returns:
+            模板是否存在
+        """
+        return template_name in self._task_templates
     
     def _fill_variables(self, content: str, variables: Dict[str, Any]) -> str:
         """填充模板变量，支持嵌套访问"""
@@ -322,7 +351,6 @@ class PromptTemplateManager:
         format_template = self._format_templates.get(format_name)
         return format_template.content if format_template else None
 
-    
     # ============================================================
     # 模板查询
     # ============================================================
@@ -345,11 +373,29 @@ class PromptTemplateManager:
         template = self._task_templates.get(template_name)
         return template.source if template else None
     
+    def get_all_templates(self) -> Dict[str, Template]:
+        """
+        获取所有模板的完整信息（供编辑器使用）
+        
+        Returns:
+            模板名称到 Template 对象的映射
+        """
+        return dict(self._task_templates)
+    
     def validate_template(self, template_name: str, variables: Dict[str, Any]) -> Dict[str, Any]:
-        """校验模板变量完整性"""
+        """
+        校验模板变量完整性
+        
+        Args:
+            template_name: 模板名称
+            variables: 待校验的变量字典
+            
+        Returns:
+            校验结果字典，包含 valid、missing_required、missing_optional、extra_variables
+        """
         template = self._task_templates.get(template_name)
         if not template:
-            return {"valid": False, "error": f"Template not found: {template_name}"}
+            return {"valid": False, "error": f"模板不存在: {template_name}"}
         
         provided = set(variables.keys())
         required = set(template.metadata.required_variables)
@@ -372,7 +418,17 @@ class PromptTemplateManager:
         content: str,
         metadata: Optional[Dict[str, Any]] = None
     ) -> bool:
-        """注册用户自定义模板"""
+        """
+        注册用户自定义模板
+        
+        Args:
+            name: 模板名称
+            content: 模板内容
+            metadata: 可选的元数据（name, description, variables, required_variables）
+            
+        Returns:
+            是否注册成功
+        """
         try:
             template_data = metadata.copy() if metadata else {}
             template_data["content"] = content
@@ -384,14 +440,22 @@ class PromptTemplateManager:
             
             self._task_templates[name] = self._create_template(name, template_data, "custom")
             self._save_custom_templates()
-            self._logger.info(f"Custom template registered: {name}")
+            self._logger.info(f"已注册自定义模板: {name}")
             return True
         except Exception as e:
-            self._logger.error(f"Failed to register custom template {name}: {e}")
+            self._logger.error(f"注册自定义模板失败 {name}: {e}")
             return False
     
     def reset_to_default(self, template_name: str) -> bool:
-        """重置模板为内置默认"""
+        """
+        重置模板为内置默认
+        
+        Args:
+            template_name: 模板名称
+            
+        Returns:
+            是否重置成功
+        """
         try:
             # 从内置模板重新加载
             task_file = BUILTIN_PROMPTS_DIR / TASK_PROMPTS_FILE
@@ -403,7 +467,7 @@ class PromptTemplateManager:
                         template_name, builtin_data[template_name], "builtin"
                     )
                     self._remove_from_custom_file(template_name)
-                    self._logger.info(f"Template reset to default: {template_name}")
+                    self._logger.info(f"已重置模板为默认: {template_name}")
                     return True
             
             # 回退到硬编码模板
@@ -416,11 +480,15 @@ class PromptTemplateManager:
             
             return False
         except Exception as e:
-            self._logger.error(f"Failed to reset template {template_name}: {e}")
+            self._logger.error(f"重置模板失败 {template_name}: {e}")
             return False
     
     def _save_custom_templates(self) -> None:
-        """保存用户自定义模板到文件"""
+        """
+        保存用户自定义模板到文件
+        
+        使用原子写入策略：先写入临时文件，成功后重命名
+        """
         custom_file = CUSTOM_PROMPTS_DIR / USER_PROMPTS_FILE
         custom_data = {}
         
@@ -435,10 +503,29 @@ class PromptTemplateManager:
                 }
         
         try:
-            with open(custom_file, "w", encoding="utf-8") as f:
-                json.dump(custom_data, f, ensure_ascii=False, indent=2)
+            # 原子写入：先写临时文件，再重命名
+            fd, temp_path = tempfile.mkstemp(
+                suffix=".json",
+                prefix="user_prompts_",
+                dir=CUSTOM_PROMPTS_DIR
+            )
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    json.dump(custom_data, f, ensure_ascii=False, indent=2)
+                
+                # 在 Windows 上需要先删除目标文件
+                if custom_file.exists():
+                    custom_file.unlink()
+                
+                Path(temp_path).rename(custom_file)
+                self._logger.debug(f"自定义模板已保存: {custom_file}")
+            except Exception:
+                # 清理临时文件
+                if Path(temp_path).exists():
+                    Path(temp_path).unlink()
+                raise
         except Exception as e:
-            self._logger.error(f"Failed to save custom templates: {e}")
+            self._logger.error(f"保存自定义模板失败: {e}")
     
     def _remove_from_custom_file(self, template_name: str) -> None:
         """从用户自定义文件中移除模板"""
@@ -449,16 +536,34 @@ class PromptTemplateManager:
         try:
             with open(custom_file, "r", encoding="utf-8") as f:
                 custom_data = json.load(f)
+            
             if template_name in custom_data:
                 del custom_data[template_name]
-                with open(custom_file, "w", encoding="utf-8") as f:
-                    json.dump(custom_data, f, ensure_ascii=False, indent=2)
+                
+                # 使用原子写入
+                fd, temp_path = tempfile.mkstemp(
+                    suffix=".json",
+                    prefix="user_prompts_",
+                    dir=CUSTOM_PROMPTS_DIR
+                )
+                try:
+                    with os.fdopen(fd, "w", encoding="utf-8") as f:
+                        json.dump(custom_data, f, ensure_ascii=False, indent=2)
+                    
+                    if custom_file.exists():
+                        custom_file.unlink()
+                    
+                    Path(temp_path).rename(custom_file)
+                except Exception:
+                    if Path(temp_path).exists():
+                        Path(temp_path).unlink()
+                    raise
         except Exception as e:
-            self._logger.warning(f"Failed to remove from custom file: {e}")
+            self._logger.warning(f"从自定义文件移除模板失败: {e}")
     
     def reload_templates(self) -> None:
         """重新加载所有模板（支持热更新）"""
-        self._logger.info("Reloading templates...")
+        self._logger.info("正在重新加载模板...")
         self.load_templates()
 
 

@@ -115,6 +115,7 @@ from domain.llm.cache_stats_tracker import (
 from domain.llm.token_monitor import (
     TokenMonitor,
     DEFAULT_COMPRESS_THRESHOLD,
+    TARGET_USAGE_AFTER_COMPRESS,
 )
 
 # 消息存储
@@ -279,6 +280,7 @@ __all__ = [
     # Token 监控
     "TokenMonitor",
     "DEFAULT_COMPRESS_THRESHOLD",
+    "TARGET_USAGE_AFTER_COMPRESS",
     # 消息存储
     "MessageStore",
     "IMPORTANCE_HIGH",

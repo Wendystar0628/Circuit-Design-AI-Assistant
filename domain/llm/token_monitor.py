@@ -6,6 +6,7 @@ Token 监控 - 监控 Token 使用量
 - 计算当前 Token 占用
 - 获取占用比例
 - 判断是否需要压缩上下文
+- 获取模型上下文限制
 
 使用示例：
     from domain.llm.token_monitor import TokenMonitor
@@ -15,9 +16,13 @@ Token 监控 - 监控 Token 使用量
     if monitor.should_compress(state, model):
         # 执行压缩
         pass
+
+依赖：
+    - token_counter.py（Token 计数）
 """
 
-from typing import Any, Dict, List, Optional
+import logging
+from typing import Any, Dict, Optional
 
 from domain.llm.token_counter import (
     count_tokens,
@@ -37,6 +42,8 @@ DEFAULT_COMPRESS_THRESHOLD = 0.8
 # 压缩后目标占用比例
 TARGET_USAGE_AFTER_COMPRESS = 0.5
 
+_logger = logging.getLogger(__name__)
+
 
 # ============================================================
 # Token 监控器
@@ -47,6 +54,7 @@ class TokenMonitor:
     Token 使用监控器
     
     监控上下文 Token 使用情况，判断是否需要压缩。
+    专注于 Token 使用量的计算和监控，不涉及压缩逻辑。
     """
     
     def __init__(self, compress_threshold: float = DEFAULT_COMPRESS_THRESHOLD):
@@ -57,18 +65,6 @@ class TokenMonitor:
             compress_threshold: 触发压缩的阈值（0.0 - 1.0）
         """
         self._compress_threshold = compress_threshold
-        self._logger = None
-    
-    @property
-    def logger(self):
-        """延迟获取日志器"""
-        if self._logger is None:
-            try:
-                from infrastructure.utils.logger import get_logger
-                self._logger = get_logger("token_monitor")
-            except Exception:
-                pass
-        return self._logger
     
     def calculate_usage(
         self,
@@ -79,7 +75,7 @@ class TokenMonitor:
         计算当前 Token 占用
         
         Args:
-            state: GraphState 状态
+            state: GraphState 状态，包含 messages 和可选的 conversation_summary
             model: 模型名称
             
         Returns:
@@ -92,15 +88,8 @@ class TokenMonitor:
         """
         messages = state.get("messages", [])
         
-        # 计算消息 tokens
-        if messages:
-            # 检查是否为 LangChain 消息
-            if hasattr(messages[0], "content"):
-                total_tokens = self._count_langchain_messages(messages, model)
-            else:
-                total_tokens = count_message_tokens(messages, model)
-        else:
-            total_tokens = 0
+        # 计算消息 tokens（统一使用 token_counter 的函数）
+        total_tokens = self._count_messages(messages, model)
         
         # 添加摘要 tokens（如果有）
         summary = state.get("conversation_summary", "")
@@ -124,16 +113,49 @@ class TokenMonitor:
             "usage_ratio": min(1.0, usage_ratio),
         }
     
-    def _count_langchain_messages(
-        self,
-        messages: List[Any],
-        model: str
-    ) -> int:
-        """计算 LangChain 消息的 token 数"""
+    def _count_messages(self, messages: list, model: str) -> int:
+        """
+        计算消息列表的 token 数
+        
+        支持两种消息格式：
+        - LangChain 消息对象（有 content 属性）
+        - 字典格式消息
+        
+        Args:
+            messages: 消息列表
+            model: 模型名称
+            
+        Returns:
+            Token 数量
+        """
+        if not messages:
+            return 0
+        
+        # 检查消息格式
+        first_msg = messages[0]
+        
+        if hasattr(first_msg, "content"):
+            # LangChain 消息对象
+            return self._count_langchain_messages(messages, model)
+        else:
+            # 字典格式，使用 token_counter 的函数
+            return count_message_tokens(messages, model)
+    
+    def _count_langchain_messages(self, messages: list, model: str) -> int:
+        """
+        计算 LangChain 消息的 token 数
+        
+        Args:
+            messages: LangChain 消息列表
+            model: 模型名称
+            
+        Returns:
+            Token 数量
+        """
         total = 0
         
         for msg in messages:
-            # 角色开销
+            # 角色开销（约 4 tokens）
             total += 4
             
             # 内容
@@ -141,17 +163,19 @@ class TokenMonitor:
             if isinstance(content, str):
                 total += count_tokens(content, model)
             elif isinstance(content, list):
+                # 多模态内容
                 for item in content:
                     if isinstance(item, dict) and "text" in item:
                         total += count_tokens(item["text"], model)
             
-            # 扩展字段
+            # 扩展字段中的 reasoning_content
             kwargs = getattr(msg, "additional_kwargs", {}) or {}
             reasoning = kwargs.get("reasoning_content", "")
             if reasoning:
                 total += count_tokens(reasoning, model)
         
-        total += 3  # 格式开销
+        # 消息格式开销（约 3 tokens）
+        total += 3
         return total
     
     def get_usage_ratio(
@@ -184,7 +208,7 @@ class TokenMonitor:
         Args:
             state: GraphState 状态
             model: 模型名称
-            threshold: 自定义阈值（可选）
+            threshold: 自定义阈值（可选，默认使用初始化时的阈值）
             
         Returns:
             是否需要压缩
@@ -194,8 +218,8 @@ class TokenMonitor:
         
         should = ratio >= threshold
         
-        if should and self.logger:
-            self.logger.info(
+        if should:
+            _logger.info(
                 f"上下文需要压缩: 占用比例 {ratio:.1%} >= 阈值 {threshold:.1%}"
             )
         
@@ -222,10 +246,12 @@ class TokenMonitor:
         """
         估算需要移除的 token 数量
         
+        用于压缩前评估需要清理多少内容。
+        
         Args:
             state: GraphState 状态
             model: 模型名称
-            target_ratio: 目标占用比例
+            target_ratio: 目标占用比例（默认 0.5）
             
         Returns:
             需要移除的 token 数量

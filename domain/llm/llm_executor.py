@@ -189,24 +189,46 @@ class LLMExecutor(QObject):
         return self._resource_cleanup
     
     def _subscribe_stop_events(self) -> None:
-        """订阅停止事件"""
+        """
+        订阅停止事件
+        
+        通过 EventBus 订阅停止请求事件，实现中断机制。
+        延迟订阅以避免初始化顺序问题。
+        """
         # 延迟订阅，避免初始化顺序问题
         try:
-            if self.external_service and hasattr(self.external_service, 'event_bus'):
-                event_bus = self.external_service.event_bus
-                if event_bus:
-                    event_bus.subscribe("EVENT_STOP_REQUESTED", self._on_stop_requested)
-        except Exception:
-            pass
+            from shared.service_locator import ServiceLocator
+            from shared.service_names import SVC_EVENT_BUS
+            
+            event_bus = ServiceLocator.get_optional(SVC_EVENT_BUS)
+            if event_bus:
+                event_bus.subscribe("EVENT_STOP_REQUESTED", self._on_stop_requested)
+                if self.logger:
+                    self.logger.debug("Subscribed to EVENT_STOP_REQUESTED")
+        except Exception as e:
+            if self.logger:
+                self.logger.warning(f"Failed to subscribe stop events: {e}")
     
     def _on_stop_requested(self, event_data: Dict[str, Any]) -> None:
-        """处理停止请求事件"""
+        """
+        处理停止请求事件
+        
+        取消所有运行中的 LLM 任务，并通知 StopController。
+        
+        Args:
+            event_data: 事件数据，包含 task_id 和 reason
+        """
         # 取消所有运行中的任务
+        cancelled_count = 0
         for task_id in list(self._running_tasks.keys()):
-            self.cancel(task_id)
+            if self.cancel(task_id):
+                cancelled_count += 1
         
         if self.logger:
-            self.logger.info("Stop requested, cancelled all LLM tasks")
+            self.logger.info(
+                f"Stop requested, cancelled {cancelled_count} LLM tasks, "
+                f"reason={event_data.get('reason', 'unknown')}"
+            )
     
     # ============================================================
     # 核心方法

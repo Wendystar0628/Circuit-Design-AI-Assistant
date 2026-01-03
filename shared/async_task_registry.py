@@ -210,12 +210,26 @@ class AsyncTaskRegistry(QObject):
             pass
     
     def _on_stop_requested(self, event_data: Dict[str, Any]) -> None:
-        """处理停止请求事件"""
+        """
+        处理停止请求事件
+        
+        取消所有运行中的任务，并通知 StopController 开始清理。
+        
+        Args:
+            event_data: 事件数据，包含 task_id 和 reason
+        """
         # 取消所有运行中的任务
         cancelled_count = self.cancel_all()
         
+        # 通知 StopController 开始清理
+        if self.stop_controller and cancelled_count > 0:
+            self.stop_controller.mark_stopping()
+        
         if self.logger:
-            self.logger.info(f"Stop requested, cancelled {cancelled_count} tasks")
+            self.logger.info(
+                f"Stop requested, cancelled {cancelled_count} tasks, "
+                f"reason={event_data.get('reason', 'unknown')}"
+            )
     
     # ============================================================
     # 任务提交

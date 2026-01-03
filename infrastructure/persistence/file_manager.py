@@ -123,16 +123,21 @@ class FileManager:
     # 工作目录管理
     # ============================================================
     
-    def set_work_dir(self, path: Union[str, Path]) -> None:
+    def set_work_dir(self, path: Union[str, Path, None]) -> None:
         """
         设置工作目录
         
         Args:
-            path: 工作目录路径
+            path: 工作目录路径，传入 None 时清空工作目录
         """
-        self._work_dir = Path(path).resolve()
-        if self.logger:
-            self.logger.info(f"工作目录设置为: {self._work_dir}")
+        if path is None:
+            self._work_dir = None
+            if self.logger:
+                self.logger.info("工作目录已清空")
+        else:
+            self._work_dir = Path(path).resolve()
+            if self.logger:
+                self.logger.info(f"工作目录设置为: {self._work_dir}")
     
     def get_work_dir(self) -> Optional[Path]:
         """

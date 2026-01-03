@@ -6,7 +6,7 @@
 - 自动收集工作区中的隐式上下文信息
 - 收集电路文件的诊断信息
 - 多路检索相关代码（关键词匹配、向量语义、依赖分析）
-- 融合排序并控制 Token 预算
+- 组装排序并控制 Token 预算
 
 模块结构：
 - context_retriever.py              - 门面类，协调各子模块（异步接口）
@@ -18,11 +18,12 @@
 - diagnostics_collector.py          - 诊断信息收集
 - keyword_extractor.py              - 关键词提取
 - dependency_analyzer.py            - 电路依赖图分析
-- retrieval_merger.py               - 多路检索结果融合
+- context_assembler.py              - 上下文组装器（组装搜索结果与隐式上下文）
 
 调用关系：
 - context_retriever.py 通过 ImplicitContextAggregator 收集隐式上下文
 - context_retriever.py 通过 UnifiedSearchService 执行统一搜索
+- context_retriever.py 通过 ContextAssembler 组装最终上下文
 """
 
 from domain.llm.context_retrieval.context_retriever import (
@@ -71,10 +72,12 @@ from domain.llm.context_retrieval.keyword_extractor import (
     ExtractedKeywords,
 )
 
-# 结果融合
-from domain.llm.context_retrieval.retrieval_merger import (
-    RetrievalMerger,
-    RetrievalItem,
+# 上下文组装
+from domain.llm.context_retrieval.context_assembler import (
+    ContextAssembler,
+    ContextItem,
+    AssembledContext,
+    BudgetAllocation,
 )
 
 # 依赖分析
@@ -129,9 +132,11 @@ __all__ = [
     # 向量检索
     "VectorRetriever",
     "VectorMatch",
-    # 结果融合
-    "RetrievalMerger",
-    "RetrievalItem",
+    # 上下文组装
+    "ContextAssembler",
+    "ContextItem",
+    "AssembledContext",
+    "BudgetAllocation",
     # 依赖分析
     "DependencyAnalyzer",
     "DependencyGraph",

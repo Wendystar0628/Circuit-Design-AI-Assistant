@@ -17,9 +17,9 @@
 2. 调用 ImplicitContextAggregator.collect_async() 收集隐式上下文
 3. 调用 DiagnosticsCollector.collect_async() 收集诊断信息
 4. 调用 KeywordExtractor.extract() 提取关键词（纯计算，无 I/O）
-5. 通过 UnifiedSearchService.search() 执行统一搜索
+5. 通过 UnifiedSearchService.search() 执行统一搜索（结果已融合去重）
 6. 通过 DependencyAnalyzer.get_dependency_content_async() 获取依赖文件
-7. 调用 RetrievalMerger.merge() 融合所有结果并截断到 Token 预算
+7. 调用 ContextAssembler.assemble() 组装搜索结果与隐式上下文，按优先级截断到 Token 预算
 
 依赖的服务和子模块：
 - AsyncFileOps（阶段二 2.1.4）- 异步文件操作
@@ -28,7 +28,7 @@
 - DiagnosticsCollector - 诊断信息收集
 - KeywordExtractor - 关键词提取
 - DependencyAnalyzer - 依赖图分析
-- RetrievalMerger - 多路检索结果融合
+- ContextAssembler - 上下文组装器
 
 被调用方：prompt_builder.py
 """
@@ -54,9 +54,10 @@ from domain.llm.context_retrieval.keyword_extractor import (
     ExtractedKeywords,
 )
 from domain.llm.context_retrieval.dependency_analyzer import DependencyAnalyzer
-from domain.llm.context_retrieval.retrieval_merger import (
-    RetrievalMerger,
-    RetrievalItem,
+from domain.llm.context_retrieval.context_assembler import (
+    ContextAssembler,
+    ContextItem,
+    AssembledContext,
 )
 
 
@@ -131,7 +132,7 @@ class ContextRetriever:
         self._implicit_aggregator = ImplicitContextAggregator()
         self._keyword_extractor = KeywordExtractor()
         self._dependency_analyzer = DependencyAnalyzer()
-        self._retrieval_merger = RetrievalMerger()
+        self._context_assembler = ContextAssembler()
         
         # 保留对 DiagnosticsCollector 的引用，用于 record_error/clear_error_history
         self._diagnostics_collector: Optional[DiagnosticsCollector] = None
@@ -234,15 +235,26 @@ class ContextRetriever:
             token_budget=token_budget,
         )
 
-        # Step 5: 融合所有结果
-        all_results = self._convert_implicit_to_retrieval(context.implicit_results)
-        all_results.extend(search_results)
-
-        context.retrieval_results = self._merge_and_truncate(
-            all_results, token_budget
+        # Step 5: 使用 ContextAssembler 组装所有结果
+        assembled = self._assemble_context(
+            search_results=search_results,
+            implicit_contexts=context.implicit_results,
+            token_budget=token_budget,
         )
 
-        context.total_tokens = sum(r.token_count for r in context.retrieval_results)
+        # 转换为 RetrievalResult 格式（保持向后兼容）
+        context.retrieval_results = [
+            RetrievalResult(
+                path=item.metadata.get("file_path", item.source),
+                content=item.content,
+                relevance=1.0 - (item.priority.value / 100),
+                source=item.source,
+                token_count=item.token_count,
+            )
+            for item in assembled.items
+        ]
+
+        context.total_tokens = assembled.total_tokens
 
         if self.logger:
             self.logger.info(
@@ -259,23 +271,6 @@ class ContextRetriever:
     ) -> CollectionContext:
         """从状态上下文构建 CollectionContext"""
         return build_collection_context(project_path, state_context)
-
-    def _convert_implicit_to_retrieval(
-        self,
-        implicit_results: List[ContextResult],
-    ) -> List[RetrievalResult]:
-        """将隐式上下文结果转换为检索结果"""
-        results = []
-        for r in implicit_results:
-            if not r.is_empty:
-                results.append(RetrievalResult(
-                    path=r.metadata.get("file_path", r.source_name),
-                    content=r.content,
-                    relevance=1.0 - (r.priority.value / 100),
-                    source=r.source_name,
-                    token_count=r.token_count,
-                ))
-        return results
 
     # ============================================================
     # 内部协调方法（异步）
@@ -496,43 +491,31 @@ class ContextRetriever:
         return results
 
     # ============================================================
-    # 结果融合
+    # 上下文组装
     # ============================================================
 
-    def _merge_and_truncate(
+    def _assemble_context(
         self,
-        results: List[RetrievalResult],
+        search_results: List[RetrievalResult],
+        implicit_contexts: List[ContextResult],
         token_budget: int,
-    ) -> List[RetrievalResult]:
-        """按优先级融合并截断结果"""
-        if not results:
-            return []
-
-        results_dict: Dict[str, List[RetrievalItem]] = {}
-        for r in results:
-            source = r.source
-            if source not in results_dict:
-                results_dict[source] = []
-            results_dict[source].append(RetrievalItem(
-                path=r.path,
-                content=r.content,
-                relevance=r.relevance,
-                source=r.source,
-                token_count=r.token_count,
-            ))
-
-        merged_items = self._retrieval_merger.merge(results_dict, token_budget)
-
-        return [
-            RetrievalResult(
-                path=item.path,
-                content=item.content,
-                relevance=item.relevance,
-                source=item.source,
-                token_count=item.token_count,
-            )
-            for item in merged_items
-        ]
+    ) -> AssembledContext:
+        """
+        调用 ContextAssembler 组装最终上下文
+        
+        Args:
+            search_results: 搜索结果列表
+            implicit_contexts: 隐式上下文列表
+            token_budget: Token 预算
+            
+        Returns:
+            AssembledContext: 组装后的上下文
+        """
+        return self._context_assembler.assemble(
+            search_results=search_results,
+            implicit_contexts=implicit_contexts,
+            token_budget=token_budget,
+        )
 
     # ============================================================
     # 辅助方法

@@ -7,12 +7,14 @@
 - 停止信号广播机制
 - 停止原因记录
 - 协调多个组件的停止操作
+- 停止超时保护（3.0.10）
 
 设计原则：
 - 线程安全：所有状态访问通过锁保护
 - 单例模式：通过 ServiceLocator 注册和获取
 - 即时响应：停止请求应在 500ms 内开始中断
 - 优雅降级：停止时保存已生成的部分内容
+- 超时保护：停止请求后最多等待 5 秒，超时后强制终止
 
 初始化顺序：
 - Phase 3.3.1，依赖 Logger、EventBus，注册到 ServiceLocator
@@ -33,12 +35,24 @@
         controller.mark_stopped({"partial_result": data})
 """
 
+import asyncio
 import threading
 import time
 from enum import Enum
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from PyQt6.QtCore import QObject, QMetaObject, Qt, Q_ARG, pyqtSignal
+
+
+# ============================================================
+# 常量定义
+# ============================================================
+
+# 停止超时时间（秒）
+STOP_TIMEOUT_SECONDS = 5.0
+
+# 强制终止前的警告阈值（秒）
+FORCE_STOP_WARNING_THRESHOLD = 4.0
 
 
 # ============================================================
@@ -77,15 +91,20 @@ class StopController(QObject):
         stop_requested(str, str): 停止请求 (task_id, reason)
         stop_completed(str, dict): 停止完成 (task_id, result)
         state_changed(str): 状态变更 (new_state)
+        stop_timeout(str): 停止超时 (task_id)
     
     Thread Safety:
         所有状态访问通过 _lock 保护，信号发送确保在主线程执行。
+    
+    超时保护（3.0.10）：
+        停止请求后最多等待 5 秒，超时后强制终止并记录警告日志。
     """
     
     # 信号定义
     stop_requested = pyqtSignal(str, str)  # (task_id, reason)
     stop_completed = pyqtSignal(str, dict)  # (task_id, result)
     state_changed = pyqtSignal(str)  # (new_state)
+    stop_timeout = pyqtSignal(str)  # (task_id) - 停止超时信号
     
     def __init__(self, parent: Optional[QObject] = None):
         """初始化停止控制器"""
@@ -102,6 +121,13 @@ class StopController(QObject):
         
         # 停止请求时间戳
         self._stop_requested_at: Optional[float] = None
+        
+        # 超时保护（3.0.10）
+        self._timeout_timer: Optional[threading.Timer] = None
+        self._force_stopped: bool = False
+        
+        # 资源清理回调（3.0.10）
+        self._cleanup_callbacks: List[Callable[[], None]] = []
         
         # 延迟获取的服务
         self._event_bus = None
@@ -147,6 +173,9 @@ class StopController(QObject):
             
         Returns:
             bool: 是否成功请求停止（如果已经在停止中，返回 False）
+        
+        Note:
+            请求停止后会启动超时保护定时器（5秒），超时后强制终止。
         """
         with self._lock:
             # 检查当前状态
@@ -168,6 +197,7 @@ class StopController(QObject):
             self._state = StopState.STOP_REQUESTED
             self._stop_reason = reason
             self._stop_requested_at = time.time()
+            self._force_stopped = False
             
             # 设置停止事件
             self._stop_event.set()
@@ -179,6 +209,9 @@ class StopController(QObject):
                     f"Stop requested: task_id={task_id}, reason={reason.value}, "
                     f"old_state={old_state.value}"
                 )
+            
+            # 启动超时保护定时器（3.0.10）
+            self._start_timeout_timer(task_id)
         
         # 在锁外发送信号和事件
         self._emit_state_changed(self._state.value)
@@ -186,6 +219,85 @@ class StopController(QObject):
         self._publish_event("EVENT_STOP_REQUESTED", task_id, reason.value)
         
         return True
+    
+    def _start_timeout_timer(self, task_id: str) -> None:
+        """
+        启动停止超时保护定时器（3.0.10）
+        
+        Args:
+            task_id: 任务标识
+        """
+        # 取消之前的定时器
+        if self._timeout_timer:
+            self._timeout_timer.cancel()
+        
+        def on_timeout():
+            self._handle_stop_timeout(task_id)
+        
+        self._timeout_timer = threading.Timer(STOP_TIMEOUT_SECONDS, on_timeout)
+        self._timeout_timer.daemon = True
+        self._timeout_timer.start()
+        
+        if self.logger:
+            self.logger.debug(f"Stop timeout timer started: {STOP_TIMEOUT_SECONDS}s")
+    
+    def _cancel_timeout_timer(self) -> None:
+        """取消超时保护定时器"""
+        if self._timeout_timer:
+            self._timeout_timer.cancel()
+            self._timeout_timer = None
+    
+    def _handle_stop_timeout(self, task_id: str) -> None:
+        """
+        处理停止超时（3.0.10）
+        
+        超时后强制终止，尽可能保存已有数据。
+        
+        Args:
+            task_id: 任务标识
+        """
+        with self._lock:
+            # 检查是否已经完成停止
+            if self._state == StopState.STOPPED or self._state == StopState.IDLE:
+                return
+            
+            self._force_stopped = True
+            
+            if self.logger:
+                self.logger.warning(
+                    f"Stop timeout after {STOP_TIMEOUT_SECONDS}s, forcing termination: "
+                    f"task_id={task_id}"
+                )
+        
+        # 执行强制清理回调
+        self._execute_cleanup_callbacks()
+        
+        # 发送超时信号
+        self._emit_stop_timeout(task_id)
+        
+        # 强制标记为已停止
+        self.mark_stopped({
+            "is_partial": True,
+            "cleanup_success": False,
+            "force_stopped": True,
+            "timeout": True,
+        })
+    
+    def _emit_stop_timeout(self, task_id: str) -> None:
+        """发送停止超时信号（线程安全）"""
+        if threading.current_thread() is threading.main_thread():
+            self.stop_timeout.emit(task_id)
+        else:
+            QMetaObject.invokeMethod(
+                self,
+                "_emit_stop_timeout_slot",
+                Qt.ConnectionType.QueuedConnection,
+                Q_ARG(str, task_id)
+            )
+    
+    def _emit_stop_timeout_slot(self, task_id: str) -> None:
+        """停止超时信号槽"""
+        self.stop_timeout.emit(task_id)
     
     def is_stop_requested(self) -> bool:
         """
@@ -248,6 +360,9 @@ class StopController(QObject):
             result: 停止结果，包含部分结果、清理状态等
         """
         with self._lock:
+            # 取消超时定时器（3.0.10）
+            self._cancel_timeout_timer()
+            
             if self._state not in (StopState.STOP_REQUESTED, StopState.STOPPING):
                 if self.logger:
                     self.logger.warning(
@@ -269,7 +384,8 @@ class StopController(QObject):
             if self.logger:
                 self.logger.info(
                     f"Stopped: task_id={task_id}, reason={reason}, "
-                    f"duration={duration_ms:.0f}ms, old_state={old_state.value}"
+                    f"duration={duration_ms:.0f}ms, old_state={old_state.value}, "
+                    f"force_stopped={self._force_stopped}"
                 )
         
         # 构建结果
@@ -280,6 +396,7 @@ class StopController(QObject):
             "duration_ms": duration_ms,
             "is_partial": stop_result.get("is_partial", True),
             "cleanup_success": stop_result.get("cleanup_success", True),
+            "force_stopped": self._force_stopped,
         })
         
         # 在锁外发送信号和事件
@@ -294,11 +411,15 @@ class StopController(QObject):
         在任务完成或停止后调用，准备接受新任务。
         """
         with self._lock:
+            # 取消超时定时器（3.0.10）
+            self._cancel_timeout_timer()
+            
             old_state = self._state
             self._state = StopState.IDLE
             self._stop_reason = None
             self._active_task_id = None
             self._stop_requested_at = None
+            self._force_stopped = False
             
             # 清除停止事件
             self._stop_event.clear()
@@ -369,6 +490,66 @@ class StopController(QObject):
         """
         with self._lock:
             return self._active_task_id
+    
+    # ============================================================
+    # 资源清理回调管理（3.0.10）
+    # ============================================================
+    
+    def register_cleanup_callback(self, callback: Callable[[], None]) -> None:
+        """
+        注册资源清理回调
+        
+        当停止超时强制终止时，会调用所有注册的清理回调。
+        
+        Args:
+            callback: 清理回调函数（无参数，无返回值）
+        """
+        with self._lock:
+            if callback not in self._cleanup_callbacks:
+                self._cleanup_callbacks.append(callback)
+                if self.logger:
+                    self.logger.debug(f"Cleanup callback registered: {callback.__name__}")
+    
+    def unregister_cleanup_callback(self, callback: Callable[[], None]) -> None:
+        """
+        注销资源清理回调
+        
+        Args:
+            callback: 要注销的回调函数
+        """
+        with self._lock:
+            if callback in self._cleanup_callbacks:
+                self._cleanup_callbacks.remove(callback)
+                if self.logger:
+                    self.logger.debug(f"Cleanup callback unregistered: {callback.__name__}")
+    
+    def _execute_cleanup_callbacks(self) -> None:
+        """
+        执行所有资源清理回调
+        
+        在停止超时强制终止时调用。
+        """
+        with self._lock:
+            callbacks = list(self._cleanup_callbacks)
+        
+        for callback in callbacks:
+            try:
+                callback()
+                if self.logger:
+                    self.logger.debug(f"Cleanup callback executed: {callback.__name__}")
+            except Exception as e:
+                if self.logger:
+                    self.logger.error(f"Cleanup callback failed: {callback.__name__}, error={e}")
+    
+    def is_force_stopped(self) -> bool:
+        """
+        检查是否为强制停止（超时）
+        
+        Returns:
+            bool: True 表示是超时强制停止
+        """
+        with self._lock:
+            return self._force_stopped
     
     # ============================================================
     # 信号发送（确保在主线程执行）
@@ -464,4 +645,6 @@ __all__ = [
     "StopController",
     "StopReason",
     "StopState",
+    "STOP_TIMEOUT_SECONDS",
+    "FORCE_STOP_WARNING_THRESHOLD",
 ]

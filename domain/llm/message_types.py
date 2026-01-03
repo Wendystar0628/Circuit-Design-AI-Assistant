@@ -123,6 +123,11 @@ class Message:
     - operations: 会被合并去重，每条消息限制数量
     - content: 旧消息过长时会被智能截断
     - metadata/timestamp/usage: 保留，不影响 LLM 上下文
+    
+    数据稳定性字段（3.0.10）：
+    - is_partial: 标记为部分响应（用户中断生成）
+    - stop_reason: 停止原因（仅 is_partial=True 时有效）
+    - tool_calls_pending: 中断时未完成的工具调用
     """
     role: str                                    # "user" | "assistant" | "system"
     content: str                                 # 文本内容（压缩时可能被截断）
@@ -133,6 +138,10 @@ class Message:
     reasoning_content: str = ""                  # 深度思考内容（压缩时清理）
     usage: Optional[TokenUsage] = None           # Token 使用统计（仅助手）
     web_search_results: List[Dict[str, Any]] = field(default_factory=list)  # 联网搜索结果（仅助手）
+    # 数据稳定性字段（3.0.10）
+    is_partial: bool = False                     # 是否为部分响应（用户中断）
+    stop_reason: str = ""                        # 停止原因（user_requested/timeout/error/session_switch/app_shutdown）
+    tool_calls_pending: List[Dict[str, Any]] = field(default_factory=list)  # 中断时未完成的工具调用
     
     def __post_init__(self):
         """初始化后处理"""
@@ -162,6 +171,12 @@ class Message:
                 result["usage"] = self.usage.to_dict()
             if self.web_search_results:
                 result["web_search_results"] = self.web_search_results
+            # 数据稳定性字段（3.0.10）
+            if self.is_partial:
+                result["is_partial"] = self.is_partial
+                result["stop_reason"] = self.stop_reason
+            if self.tool_calls_pending:
+                result["tool_calls_pending"] = self.tool_calls_pending
         
         return result
     
@@ -187,6 +202,10 @@ class Message:
             reasoning_content=data.get("reasoning_content", ""),
             usage=usage,
             web_search_results=data.get("web_search_results", []),
+            # 数据稳定性字段（3.0.10）
+            is_partial=data.get("is_partial", False),
+            stop_reason=data.get("stop_reason", ""),
+            tool_calls_pending=data.get("tool_calls_pending", []),
         )
     
     def is_user(self) -> bool:
@@ -238,6 +257,9 @@ def create_assistant_message(
     usage: Optional[TokenUsage] = None,
     metadata: Optional[Dict[str, Any]] = None,
     web_search_results: Optional[List[Dict[str, Any]]] = None,
+    is_partial: bool = False,
+    stop_reason: str = "",
+    tool_calls_pending: Optional[List[Dict[str, Any]]] = None,
 ) -> Message:
     """
     创建助手消息
@@ -249,6 +271,9 @@ def create_assistant_message(
         usage: Token 使用统计
         metadata: 额外元数据
         web_search_results: 联网搜索结果
+        is_partial: 是否为部分响应（用户中断）
+        stop_reason: 停止原因
+        tool_calls_pending: 中断时未完成的工具调用
         
     Returns:
         Message: 助手消息对象
@@ -261,6 +286,9 @@ def create_assistant_message(
         usage=usage,
         metadata=metadata or {},
         web_search_results=web_search_results or [],
+        is_partial=is_partial,
+        stop_reason=stop_reason,
+        tool_calls_pending=tool_calls_pending or [],
     )
 
 

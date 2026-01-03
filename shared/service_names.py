@@ -56,6 +56,9 @@ SVC_STREAM_THROTTLER = "stream_throttler"
 # LLM 执行器 - LLM 调用执行引擎
 SVC_LLM_EXECUTOR = "llm_executor"
 
+# 资源清理管理器 - 集中式资源清理（3.0.10）
+SVC_RESOURCE_CLEANUP = "resource_cleanup"
+
 # ============================================================
 # 基础设施层服务
 # ============================================================
@@ -187,6 +190,7 @@ __all__ = [
     "SVC_STOP_CONTROLLER",
     "SVC_STREAM_THROTTLER",
     "SVC_LLM_EXECUTOR",
+    "SVC_RESOURCE_CLEANUP",
     # 基础设施层
     "SVC_CREDENTIAL_MANAGER",
     "SVC_CONFIG_MANAGER",

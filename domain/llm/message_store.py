@@ -127,6 +127,9 @@ class MessageStore:
         usage: Optional[Dict[str, int]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         web_search_results: Optional[List[Dict[str, Any]]] = None,
+        is_partial: bool = False,
+        stop_reason: str = "",
+        tool_calls_pending: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """
         添加消息到状态
@@ -143,6 +146,9 @@ class MessageStore:
             usage: Token 使用统计（仅助手消息）
             metadata: 额外元数据
             web_search_results: 联网搜索结果（仅助手消息）
+            is_partial: 是否为部分响应（3.0.10）
+            stop_reason: 停止原因（3.0.10）
+            tool_calls_pending: 中断时未完成的工具调用（3.0.10）
             
         Returns:
             更新后的状态副本
@@ -167,6 +173,9 @@ class MessageStore:
                     usage=token_usage,
                     metadata=metadata,
                     web_search_results=web_search_results,
+                    is_partial=is_partial,
+                    stop_reason=stop_reason,
+                    tool_calls_pending=tool_calls_pending,
                 )
             elif role == ROLE_SYSTEM:
                 msg = create_system_message(
@@ -181,7 +190,8 @@ class MessageStore:
             
             if self.logger:
                 self.logger.debug(
-                    f"添加消息: role={role}, content_len={len(content)}"
+                    f"添加消息: role={role}, content_len={len(content)}, "
+                    f"is_partial={is_partial}"
                 )
             
             return new_state
@@ -324,6 +334,171 @@ class MessageStore:
             return IMPORTANCE_MEDIUM
         
         return IMPORTANCE_LOW
+    
+    # ============================================================
+    # 部分响应处理（3.0.10）
+    # ============================================================
+    
+    def add_partial_response(
+        self,
+        state: Dict[str, Any],
+        content: str,
+        reasoning_content: str = "",
+        stop_reason: str = "user_requested",
+        tool_calls_pending: Optional[List[Dict[str, Any]]] = None,
+        min_length: int = 50,
+    ) -> Tuple[Dict[str, Any], bool]:
+        """
+        添加部分响应消息
+        
+        根据内容长度决定是否保存：
+        - 已生成内容长度 > min_length：保存为部分响应消息
+        - 已生成内容长度 ≤ min_length：丢弃，不保存
+        
+        Args:
+            state: 当前状态
+            content: 部分响应内容
+            reasoning_content: 部分思考内容
+            stop_reason: 停止原因
+            tool_calls_pending: 中断时未完成的工具调用
+            min_length: 最小保存长度（默认 50 字符）
+            
+        Returns:
+            (更新后的状态, 是否保存)
+        """
+        # 检查内容长度
+        if len(content) <= min_length:
+            if self.logger:
+                self.logger.debug(
+                    f"部分响应内容过短 ({len(content)} 字符)，丢弃"
+                )
+            return state, False
+        
+        # 添加部分响应消息
+        new_state = self.add_message(
+            state=state,
+            role=ROLE_ASSISTANT,
+            content=content,
+            reasoning_content=reasoning_content,
+            is_partial=True,
+            stop_reason=stop_reason,
+            tool_calls_pending=tool_calls_pending,
+        )
+        
+        if self.logger:
+            self.logger.info(
+                f"保存部分响应: content_len={len(content)}, "
+                f"reasoning_len={len(reasoning_content)}, "
+                f"stop_reason={stop_reason}"
+            )
+        
+        return new_state, True
+    
+    def get_last_partial_message(
+        self,
+        state: Dict[str, Any]
+    ) -> Optional[Message]:
+        """
+        获取最后一条部分响应消息
+        
+        Args:
+            state: 当前状态
+            
+        Returns:
+            Message: 部分响应消息，不存在返回 None
+        """
+        messages = self.get_messages(state)
+        
+        for msg in reversed(messages):
+            if msg.is_assistant() and msg.is_partial:
+                return msg
+        
+        return None
+    
+    def has_pending_partial_response(
+        self,
+        state: Dict[str, Any]
+    ) -> bool:
+        """
+        检查是否有待处理的部分响应
+        
+        Args:
+            state: 当前状态
+            
+        Returns:
+            bool: 是否有部分响应
+        """
+        return self.get_last_partial_message(state) is not None
+    
+    def mark_partial_as_complete(
+        self,
+        state: Dict[str, Any],
+        additional_content: str = ""
+    ) -> Dict[str, Any]:
+        """
+        将最后一条部分响应标记为完成
+        
+        用于"继续生成"功能完成后。
+        
+        Args:
+            state: 当前状态
+            additional_content: 追加的内容
+            
+        Returns:
+            更新后的状态副本
+        """
+        messages = self._message_adapter.extract_messages_from_state(state)
+        
+        # 找到最后一条部分响应
+        for i in range(len(messages) - 1, -1, -1):
+            msg = messages[i]
+            if msg.is_assistant() and msg.is_partial:
+                # 更新消息
+                msg.is_partial = False
+                msg.stop_reason = ""
+                if additional_content:
+                    msg.content += additional_content
+                break
+        
+        # 更新状态
+        new_state = self._message_adapter.update_state_messages(state, messages)
+        
+        if self.logger:
+            self.logger.info("部分响应已标记为完成")
+        
+        return new_state
+    
+    def remove_last_partial_response(
+        self,
+        state: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        移除最后一条部分响应
+        
+        用于"重新生成"功能。
+        
+        Args:
+            state: 当前状态
+            
+        Returns:
+            更新后的状态副本
+        """
+        messages = self._message_adapter.extract_messages_from_state(state)
+        
+        # 找到并移除最后一条部分响应
+        for i in range(len(messages) - 1, -1, -1):
+            msg = messages[i]
+            if msg.is_assistant() and msg.is_partial:
+                messages.pop(i)
+                break
+        
+        # 更新状态
+        new_state = self._message_adapter.update_state_messages(state, messages)
+        
+        if self.logger:
+            self.logger.info("部分响应已移除")
+        
+        return new_state
     
     # ============================================================
     # 摘要管理
@@ -829,6 +1004,7 @@ class MessageStore:
         保存会话到文件
         
         使用会话名称作为文件名（经过安全处理）。
+        会话文件中记录中断点信息（3.0.10）。
         
         Args:
             state: 当前状态
@@ -849,6 +1025,20 @@ class MessageStore:
                     preview = msg.content[:50]
                     break
             
+            # 检查是否有部分响应（3.0.10）
+            has_partial = False
+            partial_info = None
+            for msg in messages:
+                if msg.is_assistant() and msg.is_partial:
+                    has_partial = True
+                    partial_info = {
+                        "message_index": messages.index(msg),
+                        "stop_reason": msg.stop_reason,
+                        "content_length": len(msg.content),
+                        "has_pending_tools": bool(msg.tool_calls_pending),
+                    }
+                    break
+            
             # 构建会话数据
             session_data = {
                 "name": session_name,
@@ -860,7 +1050,12 @@ class MessageStore:
                 "summary": self.get_summary(state),
                 "ui_state": {
                     "scroll_position": 0,
-                }
+                },
+                # 中断点信息（3.0.10）
+                "interruption_state": {
+                    "has_partial_response": has_partial,
+                    "partial_info": partial_info,
+                } if has_partial else None,
             }
             
             # 确定保存路径
@@ -905,6 +1100,8 @@ class MessageStore:
         """
         加载指定会话
         
+        正确恢复中断状态（3.0.10）。
+        
         Args:
             project_path: 项目路径
             session_name: 会话名称
@@ -929,6 +1126,12 @@ class MessageStore:
             new_state = self._message_adapter.update_state_messages(state, messages)
             new_state["conversation_summary"] = data.get("summary", "")
             
+            # 提取中断状态信息（3.0.10）
+            interruption_state = data.get("interruption_state")
+            has_partial = False
+            if interruption_state:
+                has_partial = interruption_state.get("has_partial_response", False)
+            
             # 提取元数据
             metadata = {
                 "name": data.get("name", session_name),
@@ -937,6 +1140,9 @@ class MessageStore:
                 "updated_at": data.get("updated_at", ""),
                 "message_count": data.get("message_count", 0),
                 "ui_state": data.get("ui_state", {}),
+                # 中断状态（3.0.10）
+                "has_partial_response": has_partial,
+                "interruption_state": interruption_state,
             }
             
             # 更新索引中的当前会话
@@ -944,10 +1150,17 @@ class MessageStore:
             index_data["current_session_name"] = session_name
             self._save_sessions_index(project_path, index_data)
             
-            if self.logger:
-                self.logger.info(f"会话已加载: {session_name}")
+            # 构建加载消息
+            load_msg = f"已加载 {len(messages)} 条消息"
+            if has_partial:
+                load_msg += "（包含未完成的响应）"
             
-            return new_state, True, f"已加载 {len(messages)} 条消息", metadata
+            if self.logger:
+                self.logger.info(
+                    f"会话已加载: {session_name}, has_partial={has_partial}"
+                )
+            
+            return new_state, True, load_msg, metadata
             
         except Exception as e:
             if self.logger:

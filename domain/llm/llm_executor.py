@@ -86,6 +86,7 @@ class LLMExecutor(QObject):
         self._external_service = None
         self._logger = None
         self._stop_controller = None
+        self._resource_cleanup = None
         
         # 当前运行的任务
         self._running_tasks: Dict[str, asyncio.Task] = {}
@@ -155,6 +156,17 @@ class LLMExecutor(QObject):
             except Exception:
                 pass
         return self._stop_controller
+    
+    @property
+    def resource_cleanup(self):
+        """延迟获取 ResourceCleanupManager"""
+        if self._resource_cleanup is None:
+            try:
+                from shared.resource_cleanup import ResourceCleanupManager
+                self._resource_cleanup = ResourceCleanupManager()
+            except Exception:
+                pass
+        return self._resource_cleanup
     
     def _subscribe_stop_events(self) -> None:
         """订阅停止事件"""
@@ -284,6 +296,7 @@ class LLMExecutor(QObject):
         reasoning_content = ""
         content = ""
         usage = None
+        stream_gen = None
         
         try:
             # 停止检查点：在开始长时间操作前检查
@@ -293,13 +306,19 @@ class LLMExecutor(QObject):
                 raise asyncio.CancelledError()
             
             # 调用客户端的流式生成方法
-            async for chunk in client.chat_stream(
+            stream_gen = client.chat_stream(
                 messages=messages,
                 model=model,
                 tools=tools,
                 thinking=thinking,
                 **kwargs
-            ):
+            )
+            
+            # 注册异步生成器到资源清理管理器（3.0.10）
+            if self.resource_cleanup and stream_gen:
+                self.resource_cleanup.register_async_generator(stream_gen, f"llm_stream_{task_id}")
+            
+            async for chunk in stream_gen:
                 # 停止检查点：每个 chunk 后检查是否请求停止
                 if self._check_stop_requested():
                     if self.logger:
@@ -376,6 +395,23 @@ class LLMExecutor(QObject):
             if self.throttler:
                 await self.throttler.flush_all(task_id)
             
+            # 关闭异步生成器（3.0.10）
+            if stream_gen:
+                try:
+                    await stream_gen.aclose()
+                except Exception as e:
+                    if self.logger:
+                        self.logger.warning(f"Failed to close stream generator: {e}")
+            
+            # 清理所有注册的资源（3.0.10）
+            if self.resource_cleanup:
+                cleanup_result = await self.resource_cleanup.cleanup_all()
+                if self.logger:
+                    self.logger.debug(
+                        f"Resource cleanup: success={cleanup_result.success}, "
+                        f"failed={cleanup_result.failed}"
+                    )
+            
             # 确定停止原因
             stop_reason = "user_cancelled"
             if self.stop_controller:
@@ -427,7 +463,16 @@ class LLMExecutor(QObject):
             raise
             
         except Exception as e:
-            # 生成错误
+            # 生成错误，清理资源（3.0.10）
+            if stream_gen:
+                try:
+                    await stream_gen.aclose()
+                except Exception:
+                    pass
+            
+            if self.resource_cleanup:
+                await self.resource_cleanup.cleanup_all()
+            
             error_msg = self._format_error_message(e)
             self.generation_error.emit(task_id, error_msg)
             raise

@@ -2,7 +2,23 @@
 """
 LLM 生成线程 - 在后台线程中异步执行 LLM API 调用
 
-职责：
+⚠️ 废弃警告 (Deprecated)：
+本类已废弃，保留仅用于向后兼容。
+新代码应使用 LLMExecutor + AsyncTaskRegistry 模式：
+
+    from domain.llm.llm_executor import LLMExecutor
+    from shared.async_task_registry import AsyncTaskRegistry, TASK_LLM
+    
+    async def llm_task():
+        executor = LLMExecutor()
+        async for chunk in executor.generate_stream(messages, model):
+            event_bus.publish_throttled(EVENT_LLM_CHUNK, {"chunk": chunk})
+        return executor.get_result()
+    
+    registry = AsyncTaskRegistry()
+    await registry.submit(TASK_LLM, task_id, llm_task())
+
+原职责（已废弃）：
 - 在后台线程中异步执行 LLM API 调用，避免阻塞 GUI
 - 支持流式和非流式输出
 - 支持深度思考模式
@@ -13,7 +29,7 @@ LLM 生成线程 - 在后台线程中异步执行 LLM API 调用
 - 依赖 WorkerManager、ExternalServiceManager
 - 注册到 WorkerManager
 
-使用示例：
+使用示例（已废弃）：
     worker = LLMWorker()
     worker.set_request(
         messages=[{"role": "user", "content": "Hello"}],
@@ -24,6 +40,8 @@ LLM 生成线程 - 在后台线程中异步执行 LLM API 调用
     worker.result.connect(on_result)
     worker.start()
 """
+
+import warnings
 
 import time
 from dataclasses import dataclass, field
@@ -98,6 +116,8 @@ class LLMWorker(BaseWorker):
     """
     LLM 生成线程
     
+    ⚠️ 废弃警告：本类已废弃，请使用 LLMExecutor + AsyncTaskRegistry 模式。
+    
     在后台线程中异步执行 LLM API 调用，支持：
     - 流式和非流式输出
     - 深度思考模式
@@ -124,6 +144,14 @@ class LLMWorker(BaseWorker):
     web_search_complete = pyqtSignal(list)
 
     def __init__(self):
+        # 发出废弃警告
+        warnings.warn(
+            "LLMWorker 已废弃，请使用 LLMExecutor + AsyncTaskRegistry 模式。"
+            "参见 domain/llm/llm_executor.py",
+            DeprecationWarning,
+            stacklevel=2
+        )
+        
         super().__init__(worker_type=WORKER_TYPE_LLM)
         
         # 请求参数

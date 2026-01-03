@@ -7,6 +7,7 @@ LLM 调用执行器
 - 与节流器集成，优化 UI 更新频率
 - 区分深度思考内容和回答内容
 - 处理工具调用和错误
+- 提供异步生成器接口，支持 AsyncTaskRegistry 任务提交模式
 
 初始化顺序：
 - Phase 3.8，依赖 AsyncTaskRegistry、StreamThrottler、ExternalServiceManager
@@ -16,13 +17,13 @@ LLM 调用执行器
 - 协程在主线程的 asyncio 循环中执行
 - 通过 StreamThrottler 节流高频流式数据
 - 通过 ExternalServiceManager 获取 LLM 客户端
+- 提供 generate_stream() 异步生成器，适配 AsyncTaskRegistry 任务提交模式
 
-使用示例：
+使用示例（信号模式）：
     executor = LLMExecutor()
     executor.stream_chunk.connect(on_stream_chunk)
     executor.generation_complete.connect(on_complete)
     
-    # 执行生成
     await executor.generate(
         task_id="task_1",
         messages=[{"role": "user", "content": "Hello"}],
@@ -30,10 +31,20 @@ LLM 调用执行器
         streaming=True,
         thinking=True
     )
+
+使用示例（生成器模式，推荐用于 AsyncTaskRegistry）：
+    executor = LLMExecutor()
+    
+    async def llm_task():
+        async for chunk in executor.generate_stream(messages, model):
+            event_bus.publish_throttled(EVENT_LLM_CHUNK, {"chunk": chunk})
+        return executor.get_result()
+    
+    await registry.submit(TASK_LLM, task_id, llm_task())
 """
 
 import asyncio
-from typing import Any, Dict, List, Optional
+from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from PyQt6.QtCore import QObject, pyqtSignal
 from qasync import asyncSlot
@@ -59,6 +70,12 @@ class LLMExecutor(QObject):
     
     封装 LLM API 调用，处理流式响应，与节流器集成。
     
+    提供两种使用模式：
+    1. 信号模式：通过 generate() 方法，结果通过信号返回
+    2. 生成器模式：通过 generate_stream() 方法，返回异步生成器
+    
+    推荐使用生成器模式配合 AsyncTaskRegistry 进行任务管理。
+    
     Signals:
         stream_chunk(str, dict): 流式数据块
             - task_id: 任务标识
@@ -72,7 +89,7 @@ class LLMExecutor(QObject):
     """
     
     # 信号定义
-    stream_chunk = pyqtSignal(str, dict)  # (task_id, chunk_data)
+    stream_chunk = pyqtSignal(str, str, dict)  # (task_id, chunk_type, chunk_data)
     generation_complete = pyqtSignal(str, dict)  # (task_id, result)
     generation_error = pyqtSignal(str, str)  # (task_id, error_msg)
     
@@ -90,6 +107,9 @@ class LLMExecutor(QObject):
         
         # 当前运行的任务
         self._running_tasks: Dict[str, asyncio.Task] = {}
+        
+        # 最后一次生成的结果（用于 get_result()）
+        self._last_result: Optional[Dict[str, Any]] = None
         
         # 订阅停止事件
         self._subscribe_stop_events()
@@ -341,7 +361,7 @@ class LLMExecutor(QObject):
                         )
                     
                     # 发送流式数据块信号
-                    self.stream_chunk.emit(task_id, {
+                    self.stream_chunk.emit(task_id, "reasoning", {
                         "type": "reasoning",
                         "text": chunk.reasoning_content
                     })
@@ -358,7 +378,7 @@ class LLMExecutor(QObject):
                         )
                     
                     # 发送流式数据块信号
-                    self.stream_chunk.emit(task_id, {
+                    self.stream_chunk.emit(task_id, "content", {
                         "type": "content",
                         "text": chunk.content
                     })
@@ -381,6 +401,10 @@ class LLMExecutor(QObject):
                 "reasoning_content": reasoning_content if reasoning_content else None,
                 "usage": usage
             }
+            
+            # 保存结果供 get_result() 使用
+            self._last_result = result
+            
             self.generation_complete.emit(task_id, result)
             
             if self.logger:
@@ -439,6 +463,9 @@ class LLMExecutor(QObject):
                 "stop_reason": stop_reason,  # 停止原因
                 "tokens_generated": tokens_generated  # 已生成的 token 数
             }
+            
+            # 保存部分结果供 get_result() 使用
+            self._last_result = partial_result
             
             # 发送 generation_complete 信号（即使是部分结果）
             self.generation_complete.emit(task_id, partial_result)
@@ -528,6 +555,9 @@ class LLMExecutor(QObject):
                 "finish_reason": response.finish_reason
             }
             
+            # 保存结果供 get_result() 使用
+            self._last_result = result
+            
             # 发送完成信号
             self.generation_complete.emit(task_id, result)
             
@@ -544,6 +574,203 @@ class LLMExecutor(QObject):
             error_msg = self._format_error_message(e)
             self.generation_error.emit(task_id, error_msg)
             raise
+    
+    # ============================================================
+    # 异步生成器接口（推荐用于 AsyncTaskRegistry）
+    # ============================================================
+    
+    async def generate_stream(
+        self,
+        messages: List[Dict[str, Any]],
+        model: str,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        thinking: bool = False,
+        **kwargs
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """
+        流式生成异步生成器
+        
+        返回异步生成器，逐块产出 chunk 数据。
+        适合与 AsyncTaskRegistry 配合使用。
+        
+        Args:
+            messages: 消息列表
+            model: 模型名称
+            tools: 工具定义列表
+            thinking: 是否启用深度思考
+            **kwargs: 其他参数
+            
+        Yields:
+            dict: chunk 数据，格式为 {"type": "reasoning"|"content", "text": str}
+            
+        Example:
+            async for chunk in executor.generate_stream(messages, model):
+                event_bus.publish_throttled(EVENT_LLM_CHUNK, {"chunk": chunk})
+            result = executor.get_result()
+        """
+        if self.logger:
+            self.logger.info(
+                f"Starting LLM stream generation: model={model}, thinking={thinking}"
+            )
+        
+        # 获取 LLM 客户端
+        client = self._get_llm_client(model)
+        if not client:
+            error_msg = f"LLM client not available for model: {model}"
+            if self.logger:
+                self.logger.error(error_msg)
+            raise RuntimeError(error_msg)
+        
+        # 累积内容
+        reasoning_content = ""
+        content = ""
+        usage = None
+        stream_gen = None
+        
+        try:
+            # 停止检查点
+            if self._check_stop_requested():
+                if self.logger:
+                    self.logger.info("Stop requested before LLM stream call")
+                return
+            
+            # 调用客户端的流式生成方法
+            stream_gen = client.chat_stream(
+                messages=messages,
+                model=model,
+                tools=tools,
+                thinking=thinking,
+                **kwargs
+            )
+            
+            # 注册异步生成器到资源清理管理器
+            if self.resource_cleanup and stream_gen:
+                self.resource_cleanup.register_async_generator(
+                    stream_gen, f"llm_stream_gen"
+                )
+            
+            async for chunk in stream_gen:
+                # 停止检查点
+                if self._check_stop_requested():
+                    if self.logger:
+                        self.logger.info("Stop requested during streaming")
+                    break
+                
+                # 检查是否被取消
+                if asyncio.current_task() and asyncio.current_task().cancelled():
+                    break
+                
+                # 处理思考内容
+                if chunk.reasoning_content:
+                    reasoning_content += chunk.reasoning_content
+                    yield {
+                        "type": "reasoning",
+                        "text": chunk.reasoning_content
+                    }
+                
+                # 处理回答内容
+                if chunk.content:
+                    content += chunk.content
+                    yield {
+                        "type": "content",
+                        "text": chunk.content
+                    }
+                
+                # 保存 usage 信息
+                if chunk.usage:
+                    usage = chunk.usage
+                
+                # 检查是否结束
+                if chunk.is_finished:
+                    break
+            
+            # 构建并保存最终结果
+            self._last_result = {
+                "content": content,
+                "reasoning_content": reasoning_content if reasoning_content else None,
+                "usage": usage,
+                "is_partial": self._check_stop_requested(),
+            }
+            
+            if self.logger:
+                self.logger.info(
+                    f"LLM stream generation completed: "
+                    f"content_length={len(content)}, "
+                    f"reasoning_length={len(reasoning_content)}"
+                )
+                
+        except asyncio.CancelledError:
+            # 任务被取消，保存部分结果
+            self._last_result = {
+                "content": content,
+                "reasoning_content": reasoning_content if reasoning_content else None,
+                "usage": usage,
+                "is_partial": True,
+                "stop_reason": "cancelled",
+            }
+            
+            # 关闭异步生成器
+            if stream_gen:
+                try:
+                    await stream_gen.aclose()
+                except Exception as e:
+                    if self.logger:
+                        self.logger.warning(f"Failed to close stream generator: {e}")
+            
+            if self.logger:
+                self.logger.info(
+                    f"LLM stream generation cancelled: "
+                    f"partial_content_length={len(content)}"
+                )
+            
+            raise
+            
+        except Exception as e:
+            # 生成错误，保存部分结果
+            self._last_result = {
+                "content": content,
+                "reasoning_content": reasoning_content if reasoning_content else None,
+                "usage": usage,
+                "is_partial": True,
+                "error": str(e),
+            }
+            
+            if stream_gen:
+                try:
+                    await stream_gen.aclose()
+                except Exception:
+                    pass
+            
+            if self.logger:
+                self.logger.error(f"LLM stream generation failed: {e}")
+            
+            raise
+    
+    def get_result(self) -> Optional[Dict[str, Any]]:
+        """
+        获取最后一次生成的完整结果
+        
+        在 generate_stream() 完成后调用，获取累积的完整结果。
+        
+        Returns:
+            dict: 生成结果，包含 content, reasoning_content, usage 等
+            None: 如果没有可用结果
+            
+        Example:
+            async for chunk in executor.generate_stream(messages, model):
+                # 处理 chunk...
+                pass
+            result = executor.get_result()
+        """
+        return self._last_result
+    
+    def clear_result(self) -> None:
+        """
+        清除缓存的结果
+        
+        在开始新的生成任务前调用，确保不会返回旧结果。
+        """
+        self._last_result = None
     
     # ============================================================
     # 任务取消

@@ -198,6 +198,12 @@ class MessageAdapter:
             additional_kwargs["reasoning_content"] = msg.reasoning_content
             if msg.usage:
                 additional_kwargs["usage"] = msg.usage.to_dict()
+            # 数据稳定性字段（3.0.10）
+            if msg.is_partial:
+                additional_kwargs["is_partial"] = msg.is_partial
+                additional_kwargs["stop_reason"] = msg.stop_reason
+            if msg.tool_calls_pending:
+                additional_kwargs["tool_calls_pending"] = msg.tool_calls_pending
         
         # 根据角色创建对应的 LangChain 消息
         if msg.role == ROLE_USER:
@@ -277,6 +283,10 @@ class MessageAdapter:
             operations=kwargs.get("operations", []),
             reasoning_content=kwargs.get("reasoning_content", ""),
             usage=usage,
+            # 数据稳定性字段（3.0.10）
+            is_partial=kwargs.get("is_partial", False),
+            stop_reason=kwargs.get("stop_reason", ""),
+            tool_calls_pending=kwargs.get("tool_calls_pending", []),
         )
     
     # ============================================================

@@ -28,11 +28,6 @@
     
     registry = AsyncTaskRegistry()
     await registry.submit(TASK_LLM, task_id, llm_task())
-
-与旧 Worker 模块的关系：
-- application/workers/ 目录下的 Worker 类已标记为废弃
-- 新代码应使用本模块的任务模式
-- 旧 Worker 保留用于向后兼容，但不再维护
 """
 
 # 任务类型常量从 async_task_registry 导入

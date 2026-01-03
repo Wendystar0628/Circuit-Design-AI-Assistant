@@ -7,24 +7,33 @@
 - 提供统一的上下文检索入口
 - 综合检索相关上下文
 
-协调流程：
-1. 调用 ImplicitContextCollector.collect() 收集隐式上下文
-2. 调用 DiagnosticsCollector.collect() 收集诊断信息
-3. 调用 KeywordExtractor.extract() 提取关键词
-4. 并行执行多路检索
-5. 调用 RetrievalMerger.merge() 融合结果并截断
+异步设计原则：
+- 所有公开方法均为 async def，确保不阻塞事件循环
+- 文件读取通过 AsyncFileOps.read_multiple_files_async() 并发执行
+- 禁止在本模块中使用同步文件 I/O
 
-阶段依赖说明：
-- 向量检索功能依赖阶段四的 vector_store
-- 阶段三实现时，向量检索路径返回空结果
-- 仅启用隐式上下文收集、关键词匹配和依赖分析
+协调流程：
+1. 调用 ImplicitContextCollector.collect_async() 收集隐式上下文
+2. 调用 DiagnosticsCollector.collect_async() 收集诊断信息
+3. 调用 KeywordExtractor.extract() 提取关键词（纯计算，无 I/O）
+4. 通过 UnifiedSearchService.search_async() 执行统一搜索
+5. 通过 DependencyAnalyzer.get_dependency_content_async() 获取依赖文件
+6. 调用 RetrievalMerger.merge() 融合所有结果并截断到 Token 预算
+
+依赖的服务和子模块：
+- AsyncFileOps（阶段二 2.1.4）- 异步文件操作
+- UnifiedSearchService（阶段五 5.0.4）- 统一搜索门面
+- ImplicitContextCollector - 隐式上下文收集
+- DiagnosticsCollector - 诊断信息收集
+- KeywordExtractor - 关键词提取
+- DependencyAnalyzer - 依赖图分析
+- RetrievalMerger - 多路检索结果融合
 
 被调用方：prompt_builder.py
 """
 
-import os
-import re
-from dataclasses import dataclass
+import asyncio
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
@@ -34,6 +43,15 @@ from domain.llm.context_retrieval.implicit_context_collector import (
 from domain.llm.context_retrieval.diagnostics_collector import (
     DiagnosticsCollector, Diagnostics
 )
+from domain.llm.context_retrieval.keyword_extractor import (
+    KeywordExtractor, ExtractedKeywords
+)
+from domain.llm.context_retrieval.dependency_analyzer import (
+    DependencyAnalyzer
+)
+from domain.llm.context_retrieval.retrieval_merger import (
+    RetrievalMerger, RetrievalItem
+)
 
 
 # ============================================================
@@ -41,21 +59,14 @@ from domain.llm.context_retrieval.diagnostics_collector import (
 # ============================================================
 
 SPICE_EXTENSIONS = {".cir", ".sp", ".spice", ".lib", ".inc"}
-WATCHED_EXTENSIONS = {".cir", ".sp", ".spice", ".lib", ".inc", ".json", ".txt", ".md"}
-IGNORED_DIRS = {".circuit_ai", "__pycache__", ".git", "node_modules"}
-
 SPICE_METRICS = {
     "gain", "bandwidth", "phase", "margin", "impedance", "resistance",
     "capacitance", "inductance", "frequency", "voltage", "current",
     "power", "noise", "distortion", "slew", "offset", "cmrr", "psrr",
 }
 
-DEVICE_PATTERNS = [
-    r'\b[RCLQMD]\d+\b',
-    r'\bV[a-zA-Z_]\w*\b',
-    r'\b[A-Z][a-zA-Z_]\w*\b',
-]
-
+# 默认 Token 预算
+DEFAULT_TOKEN_BUDGET = 2000
 
 
 @dataclass
@@ -64,7 +75,7 @@ class RetrievalResult:
     path: str
     content: str
     relevance: float
-    source: str  # "keyword" | "vector" | "dependency" | "implicit"
+    source: str  # "keyword" | "vector" | "dependency" | "implicit" | "exact" | "semantic"
     token_count: int
     
     def to_dict(self) -> Dict[str, Any]:
@@ -82,11 +93,14 @@ class RetrievalContext:
     """完整的检索上下文"""
     implicit_context: Optional[ImplicitContext] = None
     diagnostics: Optional[Diagnostics] = None
-    retrieval_results: List[RetrievalResult] = None
+    retrieval_results: List[RetrievalResult] = field(default_factory=list)
+    keywords: Optional[ExtractedKeywords] = None
+    total_tokens: int = 0
     
-    def __post_init__(self):
-        if self.retrieval_results is None:
-            self.retrieval_results = []
+    @property
+    def items(self) -> List[RetrievalResult]:
+        """兼容旧接口的别名"""
+        return self.retrieval_results
 
 
 class ContextRetriever:
@@ -94,44 +108,60 @@ class ContextRetriever:
     上下文检索门面类
     
     协调各子模块，提供统一的上下文检索入口。
+    所有公开方法均为 async def，确保不阻塞事件循环。
     """
 
     def __init__(self):
+        # 子模块实例
         self._implicit_collector = ImplicitContextCollector()
         self._diagnostics_collector = DiagnosticsCollector()
-        self._vector_store = None
-        self._session_state = None
+        self._keyword_extractor = KeywordExtractor()
+        self._dependency_analyzer = DependencyAnalyzer()
+        self._retrieval_merger = RetrievalMerger()
+        
+        # 延迟获取的服务
+        self._unified_search_service = None
+        self._async_file_ops = None
         self._logger = None
 
     # ============================================================
-    # 服务获取
+    # 服务获取（延迟加载）
     # ============================================================
 
     @property
-    def vector_store(self):
-        if self._vector_store is None:
+    def unified_search_service(self):
+        """延迟获取统一搜索服务"""
+        if self._unified_search_service is None:
             try:
                 from shared.service_locator import ServiceLocator
-                from shared.service_names import SVC_VECTOR_STORE
-                self._vector_store = ServiceLocator.get_optional(SVC_VECTOR_STORE)
+                from shared.service_names import SVC_UNIFIED_SEARCH_SERVICE
+                self._unified_search_service = ServiceLocator.get_optional(
+                    SVC_UNIFIED_SEARCH_SERVICE
+                )
             except Exception:
                 pass
-        return self._vector_store
+        return self._unified_search_service
 
     @property
-    def session_state(self):
-        """延迟获取会话状态（只读）"""
-        if self._session_state is None:
+    def async_file_ops(self):
+        """延迟获取异步文件操作服务"""
+        if self._async_file_ops is None:
             try:
                 from shared.service_locator import ServiceLocator
-                from shared.service_names import SVC_SESSION_STATE
-                self._session_state = ServiceLocator.get_optional(SVC_SESSION_STATE)
+                from shared.service_names import SVC_ASYNC_FILE_OPS
+                self._async_file_ops = ServiceLocator.get_optional(SVC_ASYNC_FILE_OPS)
             except Exception:
-                pass
-        return self._session_state
+                # 回退：创建新实例
+                try:
+                    from infrastructure.persistence.async_file_ops import AsyncFileOps
+                    self._async_file_ops = AsyncFileOps()
+                except Exception:
+                    pass
+        return self._async_file_ops
 
     @property
     def logger(self):
+        """延迟获取日志器"""
         if self._logger is None:
             try:
                 from infrastructure.utils.logger import get_logger
@@ -140,20 +170,362 @@ class ContextRetriever:
                 pass
         return self._logger
 
+    # ============================================================
+    # 主入口（异步）
+    # ============================================================
+
+    async def retrieve_async(
+        self,
+        message: str,
+        project_path: str,
+        token_budget: int = DEFAULT_TOKEN_BUDGET,
+        main_file: Optional[str] = None,
+    ) -> RetrievalContext:
+        """
+        综合检索相关上下文（异步主入口）
+        
+        协调流程：
+        1. 收集隐式上下文
+        2. 收集诊断信息
+        3. 提取关键词
+        4. 通过 UnifiedSearchService 执行统一搜索
+        5. 获取依赖文件内容
+        6. 融合所有结果并截断到 Token 预算
+        
+        Args:
+            message: 用户消息
+            project_path: 项目路径
+            token_budget: Token 预算
+            main_file: 当前主文件路径（用于依赖分析）
+            
+        Returns:
+            RetrievalContext: 完整的检索上下文
+        """
+        if self.logger:
+            self.logger.debug(f"Retrieving context for: {message[:50]}...")
+        
+        context = RetrievalContext()
+        
+        # Step 1: 收集隐式上下文
+        context.implicit_context = await self._collect_implicit_context_async(
+            project_path
+        )
+        
+        # 确定当前电路文件
+        circuit_file = main_file
+        if not circuit_file and context.implicit_context:
+            if context.implicit_context.current_circuit:
+                circuit_file = str(
+                    Path(project_path) / context.implicit_context.current_circuit["path"]
+                )
+        
+        # Step 2: 收集诊断信息
+        context.diagnostics = await self._collect_diagnostics_async(
+            project_path, circuit_file
+        )
+        
+        # Step 3: 提取关键词（纯计算，无 I/O）
+        context.keywords = self._keyword_extractor.extract(message)
+        
+        # Step 4-6: 并发执行搜索和依赖分析
+        all_results = await self._collect_all_context_async(
+            message=message,
+            keywords=context.keywords,
+            project_path=project_path,
+            circuit_file=circuit_file,
+            token_budget=token_budget,
+        )
+        
+        # 融合并截断结果
+        context.retrieval_results = self._merge_and_truncate(
+            all_results, token_budget
+        )
+        
+        # 计算总 Token 数
+        context.total_tokens = sum(r.token_count for r in context.retrieval_results)
+        
+        if self.logger:
+            self.logger.info(
+                f"Retrieved {len(context.retrieval_results)} results "
+                f"(tokens: {context.total_tokens}/{token_budget})"
+            )
+        
+        return context
 
     # ============================================================
-    # 主入口
+    # 内部协调方法（异步）
+    # ============================================================
+
+    async def _collect_implicit_context_async(
+        self,
+        project_path: str,
+    ) -> ImplicitContext:
+        """异步收集隐式上下文"""
+        # ImplicitContextCollector.collect() 目前是同步的
+        # 使用 to_thread 包装以避免阻塞
+        return await asyncio.to_thread(
+            self._implicit_collector.collect,
+            project_path
+        )
+
+    async def _collect_diagnostics_async(
+        self,
+        project_path: str,
+        circuit_file: Optional[str],
+    ) -> Diagnostics:
+        """异步收集诊断信息"""
+        return await asyncio.to_thread(
+            self._diagnostics_collector.collect,
+            project_path,
+            circuit_file
+        )
+
+    async def _collect_all_context_async(
+        self,
+        message: str,
+        keywords: ExtractedKeywords,
+        project_path: str,
+        circuit_file: Optional[str],
+        token_budget: int,
+    ) -> List[RetrievalResult]:
+        """
+        协调各收集器获取上下文（并发执行）
+        
+        并发执行：
+        - 关键词搜索（通过 UnifiedSearchService）
+        - 依赖文件加载
+        """
+        all_results: List[RetrievalResult] = []
+        
+        # 创建并发任务
+        tasks = []
+        
+        # Task 1: 通过 UnifiedSearchService 执行关键词搜索
+        search_terms = self._keyword_extractor.get_search_terms(keywords)
+        if search_terms:
+            query = " ".join(search_terms[:10])  # 限制搜索词数量
+            tasks.append(self._search_by_keywords_async(query, token_budget // 2))
+        
+        # Task 2: 获取依赖文件内容
+        if circuit_file:
+            tasks.append(self._get_dependency_content_async(
+                circuit_file, project_path, token_budget // 2
+            ))
+        
+        # 并发执行所有任务
+        if tasks:
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            for result in results:
+                if isinstance(result, Exception):
+                    if self.logger:
+                        self.logger.warning(f"Context collection task failed: {result}")
+                elif isinstance(result, list):
+                    all_results.extend(result)
+        
+        return all_results
+
+    async def _search_by_keywords_async(
+        self,
+        query: str,
+        token_budget: int,
+    ) -> List[RetrievalResult]:
+        """
+        通过 UnifiedSearchService 执行关键词搜索
+        
+        Args:
+            query: 搜索查询
+            token_budget: Token 预算
+            
+        Returns:
+            List[RetrievalResult]: 搜索结果
+        """
+        results: List[RetrievalResult] = []
+        
+        if not self.unified_search_service:
+            if self.logger:
+                self.logger.debug("UnifiedSearchService not available")
+            return results
+        
+        try:
+            # 调用统一搜索服务
+            # UnifiedSearchService.search() 目前是同步的，使用 to_thread 包装
+            search_result = await asyncio.to_thread(
+                self.unified_search_service.search,
+                query,
+                token_budget=token_budget,
+            )
+            
+            # 转换精确匹配结果
+            for match in search_result.exact_matches:
+                results.append(RetrievalResult(
+                    path=match.file_path,
+                    content=match.line_content or "",
+                    relevance=match.score,
+                    source="exact",
+                    token_count=self._estimate_tokens(match.line_content or ""),
+                ))
+            
+            # 转换语义匹配结果
+            for match in search_result.semantic_matches:
+                results.append(RetrievalResult(
+                    path=match.source,
+                    content=match.content,
+                    relevance=match.score,
+                    source="semantic",
+                    token_count=self._estimate_tokens(match.content),
+                ))
+                
+        except Exception as e:
+            if self.logger:
+                self.logger.warning(f"Unified search failed: {e}")
+        
+        return results
+
+    async def _get_dependency_content_async(
+        self,
+        circuit_file: str,
+        project_path: str,
+        token_budget: int,
+    ) -> List[RetrievalResult]:
+        """
+        获取依赖文件内容（异步）
+        
+        使用 AsyncFileOps.read_multiple_files_async() 并发读取依赖文件。
+        
+        Args:
+            circuit_file: 主电路文件路径
+            project_path: 项目路径
+            token_budget: Token 预算
+            
+        Returns:
+            List[RetrievalResult]: 依赖文件内容
+        """
+        results: List[RetrievalResult] = []
+        
+        # 获取依赖文件列表
+        dependencies = await asyncio.to_thread(
+            self._dependency_analyzer.get_dependency_content,
+            circuit_file,
+            max_depth=3,
+            project_path=project_path,
+        )
+        
+        if not dependencies:
+            return results
+        
+        # 转换为 RetrievalResult
+        total_tokens = 0
+        for dep in dependencies:
+            content = dep.get("content", "")
+            token_count = self._estimate_tokens(content)
+            
+            # 检查 Token 预算
+            if total_tokens + token_count > token_budget:
+                break
+            
+            results.append(RetrievalResult(
+                path=dep.get("path", ""),
+                content=content,
+                relevance=0.9 if dep.get("depth", 0) <= 1 else 0.7,
+                source="dependency",
+                token_count=token_count,
+            ))
+            total_tokens += token_count
+        
+        return results
+
+    # ============================================================
+    # 结果融合
+    # ============================================================
+
+    def _merge_and_truncate(
+        self,
+        results: List[RetrievalResult],
+        token_budget: int,
+    ) -> List[RetrievalResult]:
+        """
+        按优先级融合并截断结果
+        
+        使用 RetrievalMerger 执行 RRF 算法融合多路结果。
+        
+        Args:
+            results: 所有检索结果
+            token_budget: Token 预算
+            
+        Returns:
+            List[RetrievalResult]: 融合后的结果
+        """
+        if not results:
+            return []
+        
+        # 按来源分组
+        results_dict: Dict[str, List[RetrievalItem]] = {}
+        for r in results:
+            source = r.source
+            if source not in results_dict:
+                results_dict[source] = []
+            results_dict[source].append(RetrievalItem(
+                path=r.path,
+                content=r.content,
+                relevance=r.relevance,
+                source=r.source,
+                token_count=r.token_count,
+            ))
+        
+        # 使用 RetrievalMerger 融合
+        merged_items = self._retrieval_merger.merge(
+            results_dict, token_budget
+        )
+        
+        # 转换回 RetrievalResult
+        return [
+            RetrievalResult(
+                path=item.path,
+                content=item.content,
+                relevance=item.relevance,
+                source=item.source,
+                token_count=item.token_count,
+            )
+            for item in merged_items
+        ]
+
+    # ============================================================
+    # 辅助方法
+    # ============================================================
+
+    def _estimate_tokens(self, text: str) -> int:
+        """
+        估算文本的 Token 数
+        
+        委托给 token_counter 模块，若不可用则回退到简单估算。
+        """
+        if not text:
+            return 0
+        
+        try:
+            from domain.llm.token_counter import count_tokens
+            return count_tokens(text)
+        except ImportError:
+            # 回退到简单估算（4 字符 ≈ 1 token）
+            return len(text) // 4
+
+    # ============================================================
+    # 同步包装方法（向后兼容）
     # ============================================================
 
     def retrieve(
         self,
         message: str,
         project_path: str,
-        token_budget: int = 2000,
+        token_budget: int = DEFAULT_TOKEN_BUDGET,
         main_file: Optional[str] = None,
     ) -> RetrievalContext:
         """
-        综合检索相关上下文
+        综合检索相关上下文（同步包装方法）
+        
+        这是 retrieve_async() 的同步包装，用于向后兼容。
+        在异步上下文中，请优先使用 retrieve_async()。
         
         Args:
             message: 用户消息
@@ -164,340 +536,25 @@ class ContextRetriever:
         Returns:
             RetrievalContext: 完整的检索上下文
         """
-        if self.logger:
-            self.logger.debug(f"Retrieving context for: {message[:50]}...")
-        
-        context = RetrievalContext()
-        
-        # 1. 收集隐式上下文
-        context.implicit_context = self._implicit_collector.collect(project_path)
-        
-        # 确定当前电路文件
-        circuit_file = main_file
-        if not circuit_file and context.implicit_context.current_circuit:
-            circuit_file = str(
-                Path(project_path) / context.implicit_context.current_circuit["path"]
+        try:
+            # 尝试获取当前事件循环
+            loop = asyncio.get_running_loop()
+            # 如果在事件循环中，使用 run_coroutine_threadsafe
+            import concurrent.futures
+            future = asyncio.run_coroutine_threadsafe(
+                self.retrieve_async(message, project_path, token_budget, main_file),
+                loop
             )
-        
-        # 2. 收集诊断信息
-        context.diagnostics = self._diagnostics_collector.collect(
-            project_path, circuit_file
-        )
-        
-        # 3. 提取关键词
-        keywords = self._extract_keywords(message)
-        
-        # 4. 多路检索
-        all_results: List[RetrievalResult] = []
-        
-        # 关键词检索
-        keyword_results = self._retrieve_by_keywords(keywords, project_path)
-        all_results.extend(keyword_results)
-        
-        # 向量检索（阶段四启用）
-        if self._is_vector_search_enabled():
-            vector_results = self._retrieve_by_vector(message, top_k=10)
-            all_results.extend(vector_results)
-        
-        # 依赖分析
-        if circuit_file:
-            dep_results = self._retrieve_by_dependency(circuit_file, project_path)
-            all_results.extend(dep_results)
-        
-        # 5. 融合结果
-        context.retrieval_results = self._merge_results(all_results, token_budget)
-        
-        if self.logger:
-            self.logger.info(
-                f"Retrieved {len(context.retrieval_results)} results "
-                f"(budget: {token_budget} tokens)"
+            return future.result(timeout=30)
+        except RuntimeError:
+            # 没有运行中的事件循环，创建新的
+            return asyncio.run(
+                self.retrieve_async(message, project_path, token_budget, main_file)
             )
-        
-        return context
-
-    def _is_vector_search_enabled(self) -> bool:
-        """检查向量检索是否启用"""
-        if self.vector_store is None:
-            return False
-        # TODO: 检查 RAG 开关（从配置或 SessionState 获取）
-        # 目前默认返回 False，待 RAG 功能完善后启用
-        return False
-
 
     # ============================================================
-    # 关键词提取
+    # 错误历史管理（委托给 DiagnosticsCollector）
     # ============================================================
-
-    def _extract_keywords(self, message: str) -> Dict[str, Set[str]]:
-        """从用户消息中提取关键词"""
-        keywords = {
-            "devices": set(),
-            "nodes": set(),
-            "files": set(),
-            "subcircuits": set(),
-            "metrics": set(),
-            "identifiers": set(),
-        }
-        
-        for pattern in DEVICE_PATTERNS:
-            matches = re.findall(pattern, message, re.IGNORECASE)
-            keywords["devices"].update(m.upper() for m in matches)
-        
-        file_matches = re.findall(r'\b\w+\.(cir|sp|spice|lib|inc)\b', message, re.IGNORECASE)
-        keywords["files"].update(file_matches)
-        
-        subckt_matches = re.findall(r'\.subckt\s+(\w+)', message, re.IGNORECASE)
-        keywords["subcircuits"].update(subckt_matches)
-        
-        words = set(re.findall(r'\b\w+\b', message.lower()))
-        keywords["metrics"] = words & SPICE_METRICS
-        
-        identifiers = re.findall(r'\b[A-Z][a-zA-Z0-9_]+\b', message)
-        keywords["identifiers"].update(identifiers)
-        
-        return keywords
-
-    # ============================================================
-    # 关键词检索
-    # ============================================================
-
-    def _retrieve_by_keywords(
-        self,
-        keywords: Dict[str, Set[str]],
-        project_path: str,
-    ) -> List[RetrievalResult]:
-        """精确匹配检索"""
-        results = []
-        
-        all_keywords = set()
-        for kw_set in keywords.values():
-            all_keywords.update(kw_set)
-        
-        if not all_keywords:
-            return results
-        
-        project_dir = Path(project_path)
-        if not project_dir.exists():
-            return results
-        
-        for file_path in self._iter_project_files(project_dir):
-            try:
-                content = file_path.read_text(encoding="utf-8", errors="ignore")
-                
-                match_count = 0
-                for kw in all_keywords:
-                    if kw.lower() in content.lower():
-                        match_count += 1
-                
-                if match_count > 0:
-                    relevance = min(match_count / len(all_keywords), 1.0)
-                    rel_path = str(file_path.relative_to(project_dir))
-                    
-                    results.append(RetrievalResult(
-                        path=rel_path,
-                        content=content,
-                        relevance=relevance,
-                        source="keyword",
-                        token_count=self._estimate_tokens(content),
-                    ))
-            except Exception as e:
-                if self.logger:
-                    self.logger.debug(f"Error reading {file_path}: {e}")
-        
-        return results
-
-    def _iter_project_files(self, project_dir: Path):
-        """遍历项目文件"""
-        for root, dirs, files in os.walk(project_dir):
-            dirs[:] = [d for d in dirs if d not in IGNORED_DIRS]
-            for file in files:
-                file_path = Path(root) / file
-                if file_path.suffix.lower() in WATCHED_EXTENSIONS:
-                    yield file_path
-
-
-    # ============================================================
-    # 向量检索（阶段四启用）
-    # ============================================================
-
-    def _retrieve_by_vector(
-        self,
-        query: str,
-        top_k: int = 10,
-    ) -> List[RetrievalResult]:
-        """向量语义检索（阶段四启用）"""
-        if self.vector_store is None:
-            return []
-        
-        try:
-            results = self.vector_store.search(query, top_k=top_k)
-            return [
-                RetrievalResult(
-                    path=r.get("path", ""),
-                    content=r.get("content", ""),
-                    relevance=r.get("score", 0.0),
-                    source="vector",
-                    token_count=self._estimate_tokens(r.get("content", "")),
-                )
-                for r in results
-            ]
-        except Exception as e:
-            if self.logger:
-                self.logger.warning(f"Vector search failed: {e}")
-            return []
-
-    # ============================================================
-    # 依赖分析检索
-    # ============================================================
-
-    def _retrieve_by_dependency(
-        self,
-        main_file: str,
-        project_path: str,
-    ) -> List[RetrievalResult]:
-        """依赖分析检索"""
-        results = []
-        main_path = Path(main_file)
-        
-        if not main_path.exists():
-            return results
-        
-        try:
-            content = main_path.read_text(encoding="utf-8", errors="ignore")
-            
-            include_pattern = r'\.include\s+["\']?([^"\'\s]+)["\']?'
-            includes = re.findall(include_pattern, content, re.IGNORECASE)
-            
-            lib_pattern = r'\.lib\s+["\']?([^"\'\s]+)["\']?'
-            libs = re.findall(lib_pattern, content, re.IGNORECASE)
-            
-            dependencies = set(includes + libs)
-            project_dir = Path(project_path)
-            main_dir = main_path.parent
-            
-            for dep in dependencies:
-                dep_path = main_dir / dep
-                if not dep_path.exists():
-                    dep_path = project_dir / dep
-                
-                if dep_path.exists():
-                    try:
-                        dep_content = dep_path.read_text(encoding="utf-8", errors="ignore")
-                        rel_path = str(dep_path.relative_to(project_dir))
-                        
-                        results.append(RetrievalResult(
-                            path=rel_path,
-                            content=dep_content,
-                            relevance=0.9,
-                            source="dependency",
-                            token_count=self._estimate_tokens(dep_content),
-                        ))
-                    except Exception as e:
-                        if self.logger:
-                            self.logger.debug(f"Error reading dependency {dep_path}: {e}")
-        except Exception as e:
-            if self.logger:
-                self.logger.warning(f"Dependency analysis failed: {e}")
-        
-        return results
-
-
-    # ============================================================
-    # 结果融合
-    # ============================================================
-
-    def _merge_results(
-        self,
-        results: List[RetrievalResult],
-        token_budget: int,
-    ) -> List[RetrievalResult]:
-        """
-        融合多路结果并排序
-        
-        使用 RRF（Reciprocal Rank Fusion）算法融合多路检索结果。
-        """
-        if not results:
-            return []
-        
-        # 按来源分组
-        by_source: Dict[str, List[RetrievalResult]] = {}
-        for r in results:
-            if r.source not in by_source:
-                by_source[r.source] = []
-            by_source[r.source].append(r)
-        
-        # 对每组按相关度排序
-        for source in by_source:
-            by_source[source].sort(key=lambda x: x.relevance, reverse=True)
-        
-        # 计算 RRF 分数
-        k = 60
-        rrf_scores: Dict[str, float] = {}
-        path_to_result: Dict[str, RetrievalResult] = {}
-        
-        for source, source_results in by_source.items():
-            for rank, result in enumerate(source_results, start=1):
-                path = result.path
-                rrf_score = 1.0 / (k + rank)
-                rrf_scores[path] = rrf_scores.get(path, 0) + rrf_score
-                
-                if path not in path_to_result or result.relevance > path_to_result[path].relevance:
-                    path_to_result[path] = result
-        
-        # 按 RRF 分数排序
-        sorted_paths = sorted(rrf_scores.keys(), key=lambda p: rrf_scores[p], reverse=True)
-        
-        # 按 Token 预算截断
-        final_results = []
-        total_tokens = 0
-        
-        for path in sorted_paths:
-            result = path_to_result[path]
-            
-            if total_tokens + result.token_count <= token_budget:
-                max_rrf = max(rrf_scores.values()) if rrf_scores else 1.0
-                result.relevance = rrf_scores[path] / max_rrf
-                final_results.append(result)
-                total_tokens += result.token_count
-            else:
-                break
-        
-        return final_results
-
-    def _estimate_tokens(self, text: str) -> int:
-        """
-        估算文本的 Token 数
-        
-        优先使用 token_counter 模块的精确计算，
-        若不可用则回退到简单估算。
-        """
-        if not text:
-            return 0
-        
-        try:
-            from domain.llm.token_counter import count_tokens
-            return count_tokens(text)
-        except ImportError:
-            # 回退到简单估算
-            return len(text) // 4
-
-    # ============================================================
-    # 便捷方法
-    # ============================================================
-
-    def collect_implicit_context(self, project_path: str) -> Dict[str, Any]:
-        """收集隐式上下文（兼容旧接口）"""
-        context = self._implicit_collector.collect(project_path)
-        return self._implicit_collector.to_dict(context)
-
-    def collect_diagnostics(
-        self,
-        project_path: str,
-        circuit_file: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        """收集诊断信息（兼容旧接口）"""
-        diagnostics = self._diagnostics_collector.collect(project_path, circuit_file)
-        return self._diagnostics_collector.to_dict(diagnostics)
 
     def record_error(self, circuit_file: str, error: str):
         """记录错误到历史"""

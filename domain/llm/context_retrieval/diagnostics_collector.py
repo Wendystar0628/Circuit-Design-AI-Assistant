@@ -41,6 +41,15 @@ class Diagnostics:
     simulation_errors: List[DiagnosticItem] = field(default_factory=list)
     warnings: List[DiagnosticItem] = field(default_factory=list)
     error_history: List[Dict[str, Any]] = field(default_factory=list)
+    
+    def is_empty(self) -> bool:
+        """检查是否没有任何诊断信息"""
+        return (
+            not self.syntax_errors and 
+            not self.simulation_errors and 
+            not self.warnings and 
+            not self.error_history
+        )
 
 
 

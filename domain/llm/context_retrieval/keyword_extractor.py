@@ -39,6 +39,9 @@ DEVICE_PATTERNS = [
     (r'\b[Xx]\d+\b', "subcircuit"),    # X1, X2 (子电路实例)
 ]
 
+# 器件名正则（用于过滤）
+DEVICE_NAME_PATTERN = r'^[RCLQMDVIX]\d+$'
+
 # 节点名正则模式
 NODE_PATTERNS = [
     r'\bV[a-zA-Z_]\w*\b',      # Vcc, Vdd, Vin, Vout
@@ -122,7 +125,6 @@ class ExtractedKeywords:
         }
 
 
-
 class KeywordExtractor:
     """
     关键词提取器
@@ -199,7 +201,7 @@ class KeywordExtractor:
             matches = re.findall(pattern, message)
             # 过滤掉已识别为器件的
             for m in matches:
-                if not re.match(r'^[RCLQMDVIX]\d+$', m, re.IGNORECASE):
+                if not re.match(DEVICE_NAME_PATTERN, m, re.IGNORECASE):
                     nodes.add(m)
         return nodes
 
@@ -233,7 +235,6 @@ class KeywordExtractor:
         
         return subcircuits
 
-
     def extract_metric_keywords(self, message: str) -> Set[str]:
         """
         提取指标词
@@ -254,7 +255,7 @@ class KeywordExtractor:
         
         for m in matches:
             # 排除器件名
-            if re.match(r'^[RCLQMDVIX]\d+$', m, re.IGNORECASE):
+            if re.match(DEVICE_NAME_PATTERN, m, re.IGNORECASE):
                 continue
             # 排除常见节点名
             if m.upper() in {"VCC", "VDD", "VSS", "VEE", "GND"}:

@@ -9,14 +9,23 @@
 - 融合排序并控制 Token 预算
 
 模块结构：
-- context_retriever.py          - 门面类，协调各子模块
+- context_retriever.py          - 门面类，协调各子模块（异步接口）
 - implicit_context_collector.py - 隐式上下文收集
 - diagnostics_collector.py      - 诊断信息收集
 - keyword_extractor.py          - 关键词提取
-- keyword_retriever.py          - 精确匹配检索
+- keyword_retriever.py          - 精确匹配检索（独立使用）
 - vector_retriever.py           - 向量语义检索（阶段四启用）
 - dependency_analyzer.py        - 电路依赖图分析
 - retrieval_merger.py           - 多路检索结果融合
+
+与其他模块的职责划分：
+- 阶段二 FileSearchService：基础设施层的精确文件搜索引擎
+- 阶段三 context_retrieval/：专注于 LLM 对话场景的上下文收集和组装
+- 阶段五 UnifiedSearchService：统一搜索门面，融合精确搜索和语义搜索结果
+
+调用关系：
+- context_retriever.py 通过 UnifiedSearchService 执行统一搜索
+- 所有搜索操作通过 UnifiedSearchService 进行，确保精确搜索和语义搜索的统一融合
 
 阶段依赖说明：
 - 向量检索功能依赖阶段四的 vector_store
@@ -65,23 +74,24 @@ from domain.llm.context_retrieval.vector_retriever import (
 
 
 __all__ = [
-    # 门面类
+    # 门面类（主入口）
     "ContextRetriever",
     "RetrievalResult",
     "RetrievalContext",
-    # 收集器
+    # 隐式上下文收集
     "ImplicitContextCollector",
     "ImplicitContext",
+    # 诊断信息收集
     "DiagnosticsCollector",
     "Diagnostics",
     "DiagnosticItem",
     # 关键词提取
     "KeywordExtractor",
     "ExtractedKeywords",
-    # 关键词检索
+    # 关键词检索（独立使用）
     "KeywordRetriever",
     "KeywordMatch",
-    # 向量检索
+    # 向量检索（阶段四启用）
     "VectorRetriever",
     "VectorMatch",
     # 结果融合

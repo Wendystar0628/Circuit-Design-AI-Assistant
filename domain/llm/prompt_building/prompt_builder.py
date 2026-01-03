@@ -402,7 +402,7 @@ class PromptBuilder:
                 return None
             
             analyzer = DependencyAnalyzer()
-            dependencies = analyzer.get_dependency_content(implicit.current_circuit_file, depth=2)
+            dependencies = analyzer.get_dependency_content(implicit.current_circuit_file, max_depth=2)
             
             if not dependencies:
                 return None

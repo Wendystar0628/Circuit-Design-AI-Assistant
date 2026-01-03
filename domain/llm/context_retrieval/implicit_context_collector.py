@@ -35,6 +35,20 @@ class ImplicitContext:
     simulation_result: Optional[Dict[str, Any]] = None
     design_goals: Optional[Dict[str, Any]] = None
     simulation_error: Optional[str] = None
+    
+    @property
+    def current_circuit_file(self) -> Optional[str]:
+        """获取当前电路文件路径（兼容旧接口）"""
+        if self.current_circuit:
+            return self.current_circuit.get("path")
+        return None
+    
+    @property
+    def current_circuit_content(self) -> Optional[str]:
+        """获取当前电路文件内容（兼容旧接口）"""
+        if self.current_circuit:
+            return self.current_circuit.get("content")
+        return None
 
 
 class ImplicitContextCollector:

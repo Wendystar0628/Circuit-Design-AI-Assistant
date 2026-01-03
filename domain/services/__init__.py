@@ -44,6 +44,16 @@ from domain.services.context_service import (
     load_messages,
     append_message,
     get_recent_messages,
+    get_message_count,
+    list_sessions,
+    delete_session,
+    clear_messages,
+    get_conversation_path,
+    get_current_session_id,
+    set_current_session_id,
+    get_session_metadata,
+    update_session_index,
+    remove_from_session_index,
 )
 
 from domain.services.rag_service import (
@@ -106,6 +116,16 @@ __all__ = [
     "load_messages",
     "append_message",
     "get_recent_messages",
+    "get_message_count",
+    "list_sessions",
+    "delete_session",
+    "clear_messages",
+    "get_conversation_path",
+    "get_current_session_id",
+    "set_current_session_id",
+    "get_session_metadata",
+    "update_session_index",
+    "remove_from_session_index",
     # RAG Service
     "retrieve",
     "get_index_status",

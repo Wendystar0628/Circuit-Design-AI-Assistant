@@ -1,61 +1,93 @@
-# Session State Manager - Single Source of Truth for Session State
+# Session State Manager - Session Lifecycle Coordinator
 """
-会话状态管理器 - 会话状态的唯一数据源（Single Source of Truth）
+会话状态管理器 - 会话生命周期协调器
 
 职责：
-- 持有当前会话名称（_current_session_name）
-- 持有会话元数据（_session_metadata）
-- 协调 ContextManager（消息）和 MessageStore（持久化）
-- 提供原子操作：new_session、switch_session、save_current_session、delete_session
+- 协调会话的完整生命周期（新建、切换、保存、恢复）
+- 是 MessageStore 和 ContextService 的上层协调者
 - 发布 EVENT_SESSION_CHANGED 事件通知所有订阅者
 
 设计原则：
-- 单一数据源：所有会话状态都从 SessionStateManager 获取
-- 原子操作：每个会话操作都是原子的，保证状态一致性
-- 事件驱动：状态变更通过事件通知，UI 组件订阅事件后刷新
-- 延迟获取：不在 __init__ 中调用 ServiceLocator.get()
+- 有状态：持有当前 session_id 和 project_root
+- 协调者：不直接操作文件，通过 context_service 模块进行
+- 不直接操作 GraphState.messages，通过 MessageStore 进行
+
+三层职责分离：
+┌─────────────────────────────────────────────────────────────┐
+│              SessionStateManager (协调层)                    │
+│  职责：会话生命周期协调（新建、切换、保存、恢复）              │
+│  特点：有状态，持有当前 session_id                           │
+└─────────────────────────────────────────────────────────────┘
+                   │                      │
+                   ↓                      ↓
+┌──────────────────────────┐  ┌──────────────────────────────┐
+│   MessageStore (内存层)   │  │   context_service (文件层)   │
+│  职责：                   │  │  职责：                      │
+│  - GraphState.messages   │  │  - 会话文件 CRUD             │
+│  - 消息添加/获取/分类     │  │  - 会话索引管理              │
+│  特点：无状态，纯内存操作  │  │  特点：无状态，纯文件 I/O    │
+└──────────────────────────┘  └──────────────────────────────┘
 
 使用示例：
     from domain.llm.session_state_manager import SessionStateManager
     
     manager = SessionStateManager()
     
-    # 新开对话
-    manager.new_session()
+    # 应用启动时恢复会话
+    state = manager.on_app_startup(project_root, initial_state)
+    
+    # 创建新会话
+    session_id = manager.create_session(project_root, "free_chat")
     
     # 切换会话
-    manager.switch_session("Chat 2024-12-16 14:30")
+    state = manager.switch_session(project_root, session_id, state)
     
     # 保存当前会话
-    manager.save_current_session()
+    manager.save_current_session(state, project_root)
 """
 
 import threading
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from application.graph.state import GraphState
+
+
+@dataclass
+class SessionInfo:
+    """会话信息数据结构"""
+    session_id: str
+    name: str
+    created_at: str
+    updated_at: str
+    message_count: int
+    preview: str = ""
+    has_partial_response: bool = False
 
 
 class SessionStateManager:
     """
-    会话状态管理器
+    会话状态管理器 - 会话生命周期协调器
     
-    作为会话状态的唯一数据源，协调 ContextManager 和 MessageStore。
+    作为 MessageStore 和 context_service 的上层协调者，
+    管理会话的完整生命周期。
     """
     
     def __init__(self):
         """初始化会话状态管理器"""
         self._lock = threading.RLock()
         
-        # 会话状态
-        self._current_session_name: str = ""
-        self._session_metadata: Dict[str, Any] = {}
+        # 状态属性
+        self._current_session_id: str = ""
+        self._project_root: str = ""
+        self._is_dirty: bool = False
         
         # 延迟获取的服务
-        self._context_manager = None
-        self._session_state = None
+        self._message_store = None
         self._event_bus = None
         self._logger = None
-        self._message_store = None
     
     # ============================================================
     # 延迟获取服务
@@ -85,30 +117,6 @@ class SessionStateManager:
         return self._event_bus
     
     @property
-    def context_manager(self):
-        """延迟获取上下文管理器"""
-        if self._context_manager is None:
-            try:
-                from shared.service_locator import ServiceLocator
-                from shared.service_names import SVC_CONTEXT_MANAGER
-                self._context_manager = ServiceLocator.get_optional(SVC_CONTEXT_MANAGER)
-            except Exception:
-                pass
-        return self._context_manager
-    
-    @property
-    def session_state(self):
-        """延迟获取会话状态（只读）"""
-        if self._session_state is None:
-            try:
-                from shared.service_locator import ServiceLocator
-                from shared.service_names import SVC_SESSION_STATE
-                self._session_state = ServiceLocator.get_optional(SVC_SESSION_STATE)
-            except Exception:
-                pass
-        return self._session_state
-    
-    @property
     def message_store(self):
         """延迟获取消息存储"""
         if self._message_store is None:
@@ -120,416 +128,536 @@ class SessionStateManager:
         return self._message_store
     
     # ============================================================
-    # 属性访问
+    # 会话生命周期方法
     # ============================================================
     
-    def get_current_session_name(self) -> str:
+    def create_session(
+        self,
+        project_root: str,
+        work_mode: str = "free_chat"
+    ) -> str:
         """
-        获取当前会话名称
-        
-        Returns:
-            str: 当前会话名称
-        """
-        with self._lock:
-            return self._current_session_name
-    
-    def get_session_metadata(self) -> Dict[str, Any]:
-        """
-        获取当前会话元数据
-        
-        Returns:
-            Dict: 会话元数据
-        """
-        with self._lock:
-            return self._session_metadata.copy()
-    
-    def get_project_path(self) -> Optional[str]:
-        """
-        获取当前项目路径
-        
-        Returns:
-            str: 项目路径，若无则返回 None
-        """
-        if self.session_state:
-            try:
-                return self.session_state.project_root
-            except Exception:
-                pass
-        return None
-
-    # ============================================================
-    # 核心操作方法
-    # ============================================================
-    
-    def new_session(self) -> Tuple[bool, str]:
-        """
-        新开对话（原子操作）
+        创建新会话
         
         执行步骤：
-        1. 保存当前会话消息到会话文件
-        2. 生成新会话名称（精确到分钟）
-        3. 调用 ContextManager.reset_messages() 清空消息
-        4. 创建新会话记录并更新 sessions.json
-        5. 更新 _current_session_name
-        6. 发布 EVENT_SESSION_CHANGED 事件
+        1. 生成新会话 ID（时间戳格式）
+        2. 在 context_service 中创建会话文件
+        3. 更新会话索引
+        4. 更新内部状态
+        5. 发布 EVENT_SESSION_CHANGED 事件
         
+        Args:
+            project_root: 项目根目录路径
+            work_mode: 工作模式（"workflow" | "free_chat"）
+            
         Returns:
-            (是否成功, 消息或新会话名称)
+            str: 新会话 ID
         """
+        from domain.services import context_service
+        
         with self._lock:
-            project_path = self.get_project_path()
+            # 生成会话 ID
+            session_id = self._generate_session_id()
+            session_name = self._generate_session_name()
             
-            # 保存当前会话（如果有消息）
-            if self._current_session_name and project_path:
-                self._save_current_session_internal(project_path)
+            previous_session_id = self._current_session_id
             
-            # 生成新会话名称
-            new_name = self._generate_session_name()
-            previous_name = self._current_session_name
+            # 创建空会话文件
+            context_service.save_messages(project_root, session_id, [])
             
-            # 重置 ContextManager 消息
-            if self.context_manager:
-                state = self.context_manager._get_internal_state()
-                new_state = self.context_manager.reset_messages(state, keep_system=True)
-                self.context_manager._set_internal_state(new_state)
+            # 更新会话索引
+            context_service.update_session_index(
+                project_root,
+                session_id,
+                {
+                    "session_id": session_id,
+                    "name": session_name,
+                    "created_at": datetime.now().isoformat(),
+                    "updated_at": datetime.now().isoformat(),
+                    "message_count": 0,
+                    "work_mode": work_mode,
+                },
+                set_current=True
+            )
             
-            # 更新状态
-            self._current_session_name = new_name
-            self._session_metadata = {
-                "name": new_name,
-                "created_at": datetime.now().isoformat(),
-                "updated_at": datetime.now().isoformat(),
-                "message_count": 0,
-            }
-            
-            # 创建新会话文件
-            if project_path and self.message_store:
-                state = self.context_manager._get_internal_state() if self.context_manager else {"messages": []}
-                self.message_store.save_session(state, project_path, new_name)
+            # 更新内部状态
+            self._current_session_id = session_id
+            self._project_root = project_root
+            self._is_dirty = False
             
             if self.logger:
-                self.logger.info(f"New session created: {new_name}")
+                self.logger.info(f"新会话已创建: {session_id}")
             
             # 发布事件
             self._publish_session_changed_event(
                 action="new",
-                previous_session_name=previous_name
+                previous_session_id=previous_session_id
             )
             
-            return True, new_name
-    
-    def switch_session(self, session_name: str) -> Tuple[bool, str]:
+            return session_id
+
+    def switch_session(
+        self,
+        project_root: str,
+        session_id: str,
+        state: Dict[str, Any]
+    ) -> Dict[str, Any]:
         """
-        切换到指定会话（原子操作）
+        切换到指定会话
         
         执行步骤：
-        1. 保存当前会话（若有消息）
-        2. 从会话文件加载选中会话的消息
-        3. 调用 ContextManager.load_messages_from_data() 加载消息
-        4. 更新 _current_session_name
-        5. 发布 EVENT_SESSION_CHANGED 事件
+        1. 保存当前会话（若有未保存的更改）
+        2. 从 context_service 加载目标会话消息
+        3. 通过 MessageStore 更新 GraphState.messages
+        4. 更新会话索引中的当前会话
+        5. 更新内部状态
+        6. 发布 EVENT_SESSION_CHANGED 事件
         
         Args:
-            session_name: 目标会话名称
+            project_root: 项目根目录路径
+            session_id: 目标会话 ID
+            state: 当前 GraphState（字典形式）
             
         Returns:
-            (是否成功, 消息)
+            Dict: 更新后的 GraphState（字典形式）
         """
+        from domain.services import context_service
+        from domain.llm.message_types import Message
+        
         with self._lock:
-            project_path = self.get_project_path()
-            if not project_path:
-                return False, "No project path"
+            # 保存当前会话（如果有未保存的更改）
+            if self._is_dirty and self._current_session_id:
+                self.save_current_session(state, project_root)
             
-            # 保存当前会话
-            if self._current_session_name:
-                self._save_current_session_internal(project_path)
+            previous_session_id = self._current_session_id
             
-            previous_name = self._current_session_name
+            # 加载目标会话消息
+            messages_data = context_service.load_messages(project_root, session_id)
             
-            # 加载目标会话
-            if self.message_store and self.context_manager:
-                state = self.context_manager._get_internal_state()
-                new_state, success, msg, metadata = self.message_store.load_session(
-                    project_path, session_name, state
-                )
-                
-                if not success:
-                    return False, msg
-                
-                # 更新 ContextManager 状态
-                self.context_manager._set_internal_state(new_state)
-                
-                # 更新状态
-                self._current_session_name = session_name
-                self._session_metadata = metadata or {}
-                
-                if self.logger:
-                    self.logger.info(f"Switched to session: {session_name}")
-                
-                # 发布事件
-                self._publish_session_changed_event(
-                    action="switch",
-                    previous_session_name=previous_name
-                )
-                
-                return True, f"Switched to: {session_name}"
+            # 重建消息对象
+            messages = []
+            for msg_data in messages_data:
+                try:
+                    messages.append(Message.from_dict(msg_data))
+                except Exception as e:
+                    if self.logger:
+                        self.logger.warning(f"消息反序列化失败: {e}")
             
-            return False, "MessageStore or ContextManager not available"
+            # 通过 MessageStore 更新状态
+            new_state = self.message_store._message_adapter.update_state_messages(
+                state, messages
+            )
+            
+            # 恢复摘要
+            metadata = context_service.get_session_metadata(project_root, session_id)
+            if metadata:
+                new_state["conversation_summary"] = metadata.get("summary", "")
+            
+            # 更新会话索引中的当前会话
+            context_service.set_current_session_id(project_root, session_id)
+            
+            # 更新内部状态
+            self._current_session_id = session_id
+            self._project_root = project_root
+            self._is_dirty = False
+            
+            if self.logger:
+                self.logger.info(f"已切换到会话: {session_id}")
+            
+            # 发布事件
+            self._publish_session_changed_event(
+                action="switch",
+                previous_session_id=previous_session_id
+            )
+            
+            return new_state
     
-    def save_current_session(self) -> Tuple[bool, str]:
+    def save_current_session(
+        self,
+        state: Dict[str, Any],
+        project_root: str
+    ) -> bool:
         """
         保存当前会话
         
+        执行步骤：
+        1. 从 GraphState 提取消息
+        2. 通过 context_service 保存到文件
+        3. 更新会话索引
+        4. 重置 _is_dirty 标志
+        5. 发布 EVENT_SESSION_CHANGED 事件
+        
+        Args:
+            state: 当前 GraphState（字典形式）
+            project_root: 项目根目录路径
+            
         Returns:
-            (是否成功, 消息)
+            bool: 是否保存成功
         """
+        from domain.services import context_service
+        
         with self._lock:
-            project_path = self.get_project_path()
-            if not project_path:
-                return False, "No project path"
+            if not self._current_session_id:
+                if self.logger:
+                    self.logger.warning("无当前会话，无法保存")
+                return False
             
-            if not self._current_session_name:
-                return False, "No current session"
+            # 提取消息
+            messages = self.message_store.get_messages(state)
+            messages_data = [msg.to_dict() for msg in messages]
             
-            success, msg = self._save_current_session_internal(project_path)
+            # 获取首条用户消息作为预览
+            preview = ""
+            for msg in messages:
+                if msg.is_user():
+                    preview = msg.content[:50]
+                    break
             
-            if success:
-                # 发布事件
-                self._publish_session_changed_event(action="save")
+            # 保存消息到文件
+            context_service.save_messages(
+                project_root,
+                self._current_session_id,
+                messages_data
+            )
             
-            return success, msg
+            # 更新会话索引
+            context_service.update_session_index(
+                project_root,
+                self._current_session_id,
+                {
+                    "updated_at": datetime.now().isoformat(),
+                    "message_count": len(messages),
+                    "preview": preview,
+                    "summary": state.get("conversation_summary", ""),
+                }
+            )
+            
+            # 重置脏标志
+            self._is_dirty = False
+            
+            if self.logger:
+                self.logger.debug(f"会话已保存: {self._current_session_id}")
+            
+            # 发布事件
+            self._publish_session_changed_event(action="save")
+            
+            return True
     
-    def delete_session(self, session_name: str) -> Tuple[bool, str]:
+    def delete_session(
+        self,
+        project_root: str,
+        session_id: str
+    ) -> bool:
         """
         删除指定会话
         
         Args:
-            session_name: 要删除的会话名称
+            project_root: 项目根目录路径
+            session_id: 要删除的会话 ID
             
         Returns:
-            (是否成功, 消息)
+            bool: 是否删除成功
         """
+        from domain.services import context_service
+        
         with self._lock:
-            project_path = self.get_project_path()
-            if not project_path:
-                return False, "No project path"
-            
-            if not self.message_store:
-                return False, "MessageStore not available"
-            
             # 删除会话文件
-            success, msg = self.message_store.delete_session(project_path, session_name)
+            success = context_service.delete_session(project_root, session_id)
             
             if success:
-                if self.logger:
-                    self.logger.info(f"Session deleted: {session_name}")
+                # 从索引中移除
+                context_service.remove_from_session_index(project_root, session_id)
                 
-                # 如果删除的是当前会话，创建新会话
-                if session_name == self._current_session_name:
-                    self._current_session_name = ""
-                    self._session_metadata = {}
-                    # 创建新会话
-                    self.new_session()
-                else:
-                    # 发布事件
-                    self._publish_session_changed_event(action="delete")
+                if self.logger:
+                    self.logger.info(f"会话已删除: {session_id}")
+                
+                # 如果删除的是当前会话，清空状态
+                if session_id == self._current_session_id:
+                    self._current_session_id = ""
+                    self._is_dirty = False
+                
+                # 发布事件
+                self._publish_session_changed_event(action="delete")
             
-            return success, msg
+            return success
     
-    def rename_session(self, old_name: str, new_name: str) -> Tuple[bool, str]:
+    def rename_session(
+        self,
+        project_root: str,
+        session_id: str,
+        new_name: str
+    ) -> bool:
         """
         重命名会话
         
         Args:
-            old_name: 旧会话名称
-            new_name: 新会话名称
+            project_root: 项目根目录路径
+            session_id: 会话 ID
+            new_name: 新名称
             
         Returns:
-            (是否成功, 消息)
+            bool: 是否重命名成功
         """
+        from domain.services import context_service
+        
         with self._lock:
-            project_path = self.get_project_path()
-            if not project_path:
-                return False, "No project path"
-            
-            if not self.message_store:
-                return False, "MessageStore not available"
-            
-            success, msg = self.message_store.rename_session(
-                project_path, old_name, new_name
+            # 更新会话索引中的名称
+            success = context_service.update_session_index(
+                project_root,
+                session_id,
+                {
+                    "name": new_name,
+                    "updated_at": datetime.now().isoformat(),
+                }
             )
             
             if success:
-                # 如果重命名的是当前会话，更新状态
-                if old_name == self._current_session_name:
-                    self._current_session_name = new_name
-                    self._session_metadata["name"] = new_name
-                
                 if self.logger:
-                    self.logger.info(f"Session renamed: {old_name} -> {new_name}")
+                    self.logger.info(f"会话已重命名: {session_id} -> {new_name}")
                 
                 # 发布事件
                 self._publish_session_changed_event(action="rename")
             
-            return success, msg
+            return success
 
     # ============================================================
-    # 启动恢复方法
+    # 会话查询方法
     # ============================================================
     
-    def restore_on_startup(self) -> Tuple[bool, str]:
+    def get_current_session_id(self) -> str:
         """
-        启动时恢复会话
-        
-        执行步骤：
-        1. 读取 sessions.json 获取 current_session_name
-        2. 若存在当前会话，加载会话消息
-        3. 若不存在当前会话，生成新会话名称并创建
-        4. 发布 EVENT_SESSION_CHANGED 事件
+        获取当前会话 ID
         
         Returns:
-            (是否成功, 消息)
+            str: 当前会话 ID，无会话时返回空字符串
         """
         with self._lock:
-            project_path = self.get_project_path()
-            if not project_path:
-                if self.logger:
-                    self.logger.debug("No project path, creating new session")
-                return self.new_session()
-            
-            if not self.message_store or not self.context_manager:
-                return self.new_session()
-            
-            # 尝试加载当前会话
-            state = self.context_manager._get_internal_state()
-            new_state, success, msg, metadata = self.message_store.load_current_session(
-                project_path, state
-            )
-            
-            if success and metadata:
-                # 恢复成功
-                self.context_manager._set_internal_state(new_state)
-                
-                session_name = metadata.get("name", "")
-                self._current_session_name = session_name
-                self._session_metadata = metadata
-                
-                if self.logger:
-                    self.logger.info(f"Session restored: {session_name}")
-                
-                # 发布事件
-                self._publish_session_changed_event(action="restore")
-                
-                return True, f"Restored: {session_name}"
-            else:
-                # 加载失败，创建新会话
-                if self.logger:
-                    self.logger.debug(f"No current session to restore: {msg}")
-                return self.new_session()
+            return self._current_session_id
     
-    def get_all_sessions(self) -> List[Dict[str, Any]]:
+    def get_all_sessions(self, project_root: str) -> List[SessionInfo]:
         """
         获取所有会话列表
         
+        Args:
+            project_root: 项目根目录路径
+            
         Returns:
-            会话列表
+            List[SessionInfo]: 会话信息列表，按更新时间倒序
         """
-        project_path = self.get_project_path()
-        if not project_path or not self.message_store:
-            return []
+        from domain.services import context_service
         
-        return self.message_store.get_all_sessions(project_path)
+        sessions_data = context_service.list_sessions(project_root)
+        
+        result = []
+        for data in sessions_data:
+            result.append(SessionInfo(
+                session_id=data.get("session_id", ""),
+                name=data.get("name", data.get("session_id", "")),
+                created_at=data.get("created_at", ""),
+                updated_at=data.get("updated_at", ""),
+                message_count=data.get("message_count", 0),
+                preview=data.get("preview", ""),
+                has_partial_response=data.get("has_partial_response", False),
+            ))
+        
+        return result
+    
+    def get_session_info(
+        self,
+        project_root: str,
+        session_id: str
+    ) -> Optional[SessionInfo]:
+        """
+        获取会话详情
+        
+        Args:
+            project_root: 项目根目录路径
+            session_id: 会话 ID
+            
+        Returns:
+            SessionInfo: 会话信息，不存在返回 None
+        """
+        from domain.services import context_service
+        
+        metadata = context_service.get_session_metadata(project_root, session_id)
+        
+        if not metadata:
+            return None
+        
+        return SessionInfo(
+            session_id=session_id,
+            name=metadata.get("name", session_id),
+            created_at=metadata.get("created_at", ""),
+            updated_at=metadata.get("updated_at", ""),
+            message_count=metadata.get("message_count", 0),
+            preview=metadata.get("preview", ""),
+            has_partial_response=metadata.get("has_partial_response", False),
+        )
+    
+    def get_last_session_id(self, project_root: str) -> Optional[str]:
+        """
+        获取上次使用的会话 ID
+        
+        从会话索引中读取 current_session_id。
+        
+        Args:
+            project_root: 项目根目录路径
+            
+        Returns:
+            str: 上次使用的会话 ID，不存在返回 None
+        """
+        from domain.services import context_service
+        
+        return context_service.get_current_session_id(project_root)
+    
+    # ============================================================
+    # 应用生命周期集成
+    # ============================================================
+    
+    def on_app_startup(
+        self,
+        project_root: str,
+        state: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        应用启动时恢复会话
+        
+        执行步骤：
+        1. 读取会话索引获取 current_session_id
+        2. 若存在当前会话，加载会话消息
+        3. 若不存在当前会话，创建新会话
+        4. 发布 EVENT_SESSION_CHANGED 事件
+        
+        Args:
+            project_root: 项目根目录路径
+            state: 初始 GraphState（字典形式）
+            
+        Returns:
+            Dict: 更新后的 GraphState（字典形式）
+        """
+        from domain.services import context_service
+        
+        with self._lock:
+            self._project_root = project_root
+            
+            # 获取上次使用的会话 ID
+            last_session_id = context_service.get_current_session_id(project_root)
+            
+            if last_session_id:
+                # 检查会话文件是否存在
+                messages = context_service.load_messages(project_root, last_session_id)
+                
+                if messages is not None:
+                    # 恢复会话
+                    new_state = self.switch_session(
+                        project_root, last_session_id, state
+                    )
+                    
+                    if self.logger:
+                        self.logger.info(f"会话已恢复: {last_session_id}")
+                    
+                    return new_state
+            
+            # 无可恢复的会话，创建新会话
+            session_id = self.create_session(project_root)
+            
+            if self.logger:
+                self.logger.info(f"创建新会话: {session_id}")
+            
+            return state
+    
+    def on_app_shutdown(
+        self,
+        state: Dict[str, Any],
+        project_root: str
+    ) -> None:
+        """
+        应用关闭时保存会话
+        
+        Args:
+            state: 当前 GraphState（字典形式）
+            project_root: 项目根目录路径
+        """
+        with self._lock:
+            if self._current_session_id and self._is_dirty:
+                self.save_current_session(state, project_root)
+                
+                if self.logger:
+                    self.logger.info(f"应用关闭，会话已保存: {self._current_session_id}")
+    
+    def mark_dirty(self) -> None:
+        """
+        标记有未保存的更改
+        
+        当消息被添加或修改时调用此方法。
+        """
+        with self._lock:
+            self._is_dirty = True
     
     # ============================================================
     # 内部辅助方法
     # ============================================================
     
-    def _save_current_session_internal(self, project_path: str) -> Tuple[bool, str]:
+    def _generate_session_id(self) -> str:
         """
-        内部保存当前会话方法
+        生成会话 ID
         
-        Args:
-            project_path: 项目路径
-            
+        格式：YYYYMMDD_HHMMSS
+        
         Returns:
-            (是否成功, 消息)
+            str: 会话 ID
         """
-        if not self._current_session_name:
-            return False, "No current session"
-        
-        if not self.message_store or not self.context_manager:
-            return False, "Services not available"
-        
-        state = self.context_manager._get_internal_state()
-        success, msg = self.message_store.save_session(
-            state, project_path, self._current_session_name
-        )
-        
-        if success:
-            # 更新元数据
-            messages = self.context_manager.get_messages(state)
-            self._session_metadata["updated_at"] = datetime.now().isoformat()
-            self._session_metadata["message_count"] = len(messages)
-            
-            if self.logger:
-                self.logger.debug(f"Session saved: {self._current_session_name}")
-        
-        return success, msg
+        return datetime.now().strftime("%Y%m%d_%H%M%S")
     
     def _generate_session_name(self) -> str:
         """
         生成会话名称
         
-        格式：Chat YYYY-MM-DD HH:mm（精确到分钟）
+        格式：Chat YYYY-MM-DD HH:mm
         
         Returns:
             str: 会话名称
         """
-        now = datetime.now().strftime("%Y-%m-%d %H:%M")
-        return f"Chat {now}"
+        return f"Chat {datetime.now().strftime('%Y-%m-%d %H:%M')}"
     
     def _publish_session_changed_event(
         self,
         action: str,
-        previous_session_name: str = ""
+        previous_session_id: str = ""
     ) -> None:
         """
         发布会话变更事件
         
         Args:
             action: 触发动作（"new", "switch", "save", "delete", "rename", "restore"）
-            previous_session_name: 之前的会话名称
+            previous_session_id: 之前的会话 ID
         """
         if self.event_bus:
             try:
                 from shared.event_types import EVENT_SESSION_CHANGED
                 
-                # 获取消息数量
-                message_count = 0
-                if self.context_manager:
-                    state = self.context_manager._get_internal_state()
-                    messages = self.context_manager.get_messages(state)
-                    message_count = len(messages)
-                
                 self.event_bus.publish(EVENT_SESSION_CHANGED, {
-                    "session_name": self._current_session_name,
-                    "message_count": message_count,
+                    "session_id": self._current_session_id,
+                    "session_name": self._get_current_session_name(),
                     "action": action,
-                    "previous_session_name": previous_session_name,
+                    "previous_session_id": previous_session_id,
                 })
             except ImportError:
                 if self.logger:
                     self.logger.warning("EVENT_SESSION_CHANGED not defined")
     
-    def _set_session_name_internal(self, name: str) -> None:
-        """
-        内部设置会话名称（不发布事件）
+    def _get_current_session_name(self) -> str:
+        """获取当前会话名称"""
+        if not self._current_session_id or not self._project_root:
+            return ""
         
-        Args:
-            name: 会话名称
-        """
-        with self._lock:
-            self._current_session_name = name
+        from domain.services import context_service
+        
+        metadata = context_service.get_session_metadata(
+            self._project_root, self._current_session_id
+        )
+        
+        return metadata.get("name", self._current_session_id) if metadata else ""
 
 
 # ============================================================
@@ -538,4 +666,5 @@ class SessionStateManager:
 
 __all__ = [
     "SessionStateManager",
+    "SessionInfo",
 ]

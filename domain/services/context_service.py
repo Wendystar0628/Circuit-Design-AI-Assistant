@@ -3,8 +3,10 @@
 对话历史服务 - 无状态对话历史读写
 
 职责：
-- 管理对话历史的读写
+- 管理对话历史的读写（会话文件 CRUD）
+- 管理会话索引（sessions.json）
 - 支持消息追加和查询
+- 文件名安全处理
 - 不持有任何内存状态
 
 设计原则：
@@ -14,14 +16,12 @@
 
 存储路径：
 - 对话历史：{project_root}/.circuit_ai/conversations/{session_id}.json
+- 会话索引：{project_root}/.circuit_ai/conversations/sessions.json
 
 被调用方：
+- SessionStateManager（会话生命周期协调）
 - 所有需要对话历史的图节点
 - UI 对话面板
-
-注意：
-- 完整实现在阶段三
-- 本模块提供接口骨架
 
 使用示例：
     from domain.services import context_service
@@ -39,11 +39,12 @@
         session_id="20240101_120000"
     )
     
-    # 追加消息
-    context_service.append_message(
-        project_root="/path/to/project",
-        session_id="20240101_120000",
-        message={"role": "assistant", "content": "Hi!"}
+    # 获取当前会话 ID
+    current_id = context_service.get_current_session_id(project_root)
+    
+    # 更新会话索引
+    context_service.update_session_index(
+        project_root, session_id, {"name": "New Name"}
     )
 """
 
@@ -54,6 +55,9 @@ from typing import Any, Dict, List, Optional
 
 # 对话历史目录相对路径
 CONVERSATIONS_DIR = ".circuit_ai/conversations"
+
+# 会话索引文件名
+SESSIONS_INDEX_FILE = "sessions.json"
 
 
 def save_messages(
@@ -198,6 +202,8 @@ def list_sessions(
     """
     列出所有会话
     
+    优先从会话索引读取，同时与实际文件同步。
+    
     Args:
         project_root: 项目根目录路径
         limit: 返回数量限制
@@ -205,29 +211,50 @@ def list_sessions(
     Returns:
         List[Dict]: 会话摘要列表，按更新时间倒序
     """
-    root = Path(project_root)
-    conv_dir = root / CONVERSATIONS_DIR
+    # 从索引读取
+    index_data = _load_sessions_index(project_root)
+    sessions = index_data.get("sessions", [])
     
-    if not conv_dir.exists():
-        return []
+    # 如果索引为空，扫描目录
+    if not sessions:
+        root = Path(project_root)
+        conv_dir = root / CONVERSATIONS_DIR
+        
+        if conv_dir.exists():
+            # 获取所有 JSON 文件（排除 sessions.json）
+            json_files = [
+                f for f in conv_dir.glob("*.json")
+                if f.name != SESSIONS_INDEX_FILE
+            ]
+            
+            # 按修改时间排序
+            json_files.sort(key=lambda f: f.stat().st_mtime, reverse=True)
+            
+            for file_path in json_files[:limit]:
+                data = _read_json_file(file_path)
+                if data:
+                    session_id = data.get("session_id", file_path.stem)
+                    sessions.append({
+                        "session_id": session_id,
+                        "name": data.get("name", session_id),
+                        "created_at": data.get("created_at", ""),
+                        "updated_at": data.get("updated_at", ""),
+                        "message_count": data.get("message_count", 0),
+                        "preview": data.get("preview", ""),
+                    })
+            
+            # 保存到索引
+            if sessions:
+                index_data["sessions"] = sessions
+                _save_sessions_index(project_root, index_data)
     
-    # 获取所有 JSON 文件
-    json_files = list(conv_dir.glob("*.json"))
+    # 按更新时间排序
+    sessions.sort(
+        key=lambda s: s.get("updated_at", ""),
+        reverse=True
+    )
     
-    # 按修改时间排序
-    json_files.sort(key=lambda f: f.stat().st_mtime, reverse=True)
-    
-    sessions = []
-    for file_path in json_files[:limit]:
-        data = _read_json_file(file_path)
-        if data:
-            sessions.append({
-                "session_id": data.get("session_id", file_path.stem),
-                "updated_at": data.get("updated_at", ""),
-                "message_count": data.get("message_count", 0),
-            })
-    
-    return sessions
+    return sessions[:limit]
 
 
 def delete_session(
@@ -288,6 +315,140 @@ def get_conversation_path(
 
 
 # ============================================================
+# 会话索引管理
+# ============================================================
+
+def get_current_session_id(project_root: str) -> Optional[str]:
+    """
+    获取当前会话 ID
+    
+    从 sessions.json 索引文件读取 current_session_id。
+    
+    Args:
+        project_root: 项目根目录路径
+        
+    Returns:
+        str: 当前会话 ID，不存在返回 None
+    """
+    index_data = _load_sessions_index(project_root)
+    return index_data.get("current_session_id") or None
+
+
+def set_current_session_id(project_root: str, session_id: str) -> bool:
+    """
+    设置当前会话 ID
+    
+    Args:
+        project_root: 项目根目录路径
+        session_id: 会话 ID
+        
+    Returns:
+        bool: 是否设置成功
+    """
+    index_data = _load_sessions_index(project_root)
+    index_data["current_session_id"] = session_id
+    return _save_sessions_index(project_root, index_data)
+
+
+def get_session_metadata(
+    project_root: str,
+    session_id: str
+) -> Optional[Dict[str, Any]]:
+    """
+    获取会话元数据
+    
+    Args:
+        project_root: 项目根目录路径
+        session_id: 会话 ID
+        
+    Returns:
+        Dict: 会话元数据，不存在返回 None
+    """
+    index_data = _load_sessions_index(project_root)
+    sessions = index_data.get("sessions", [])
+    
+    for session in sessions:
+        if session.get("session_id") == session_id:
+            return session
+    
+    return None
+
+
+def update_session_index(
+    project_root: str,
+    session_id: str,
+    updates: Dict[str, Any],
+    set_current: bool = False
+) -> bool:
+    """
+    更新会话索引
+    
+    如果会话不存在则创建，存在则更新。
+    
+    Args:
+        project_root: 项目根目录路径
+        session_id: 会话 ID
+        updates: 要更新的字段
+        set_current: 是否设置为当前会话
+        
+    Returns:
+        bool: 是否更新成功
+    """
+    index_data = _load_sessions_index(project_root)
+    sessions = index_data.get("sessions", [])
+    
+    # 查找是否已存在
+    existing_idx = None
+    for i, session in enumerate(sessions):
+        if session.get("session_id") == session_id:
+            existing_idx = i
+            break
+    
+    if existing_idx is not None:
+        # 更新现有记录
+        sessions[existing_idx].update(updates)
+    else:
+        # 添加新记录
+        new_session = {"session_id": session_id}
+        new_session.update(updates)
+        sessions.append(new_session)
+    
+    index_data["sessions"] = sessions
+    
+    # 设置当前会话
+    if set_current:
+        index_data["current_session_id"] = session_id
+    
+    return _save_sessions_index(project_root, index_data)
+
+
+def remove_from_session_index(project_root: str, session_id: str) -> bool:
+    """
+    从会话索引中移除会话
+    
+    Args:
+        project_root: 项目根目录路径
+        session_id: 会话 ID
+        
+    Returns:
+        bool: 是否移除成功
+    """
+    index_data = _load_sessions_index(project_root)
+    sessions = index_data.get("sessions", [])
+    
+    # 过滤掉要删除的会话
+    index_data["sessions"] = [
+        s for s in sessions if s.get("session_id") != session_id
+    ]
+    
+    # 如果删除的是当前会话，清空 current_session_id
+    if index_data.get("current_session_id") == session_id:
+        index_data["current_session_id"] = ""
+    
+    return _save_sessions_index(project_root, index_data)
+
+
+# ============================================================
 # 内部辅助函数
 # ============================================================
 
@@ -306,19 +467,87 @@ def _write_json_file(file_path: Path, data: Dict[str, Any]) -> None:
     file_path.write_text(content, encoding="utf-8")
 
 
+def _get_sessions_index_path(project_root: str) -> Path:
+    """获取会话索引文件路径"""
+    return Path(project_root) / CONVERSATIONS_DIR / SESSIONS_INDEX_FILE
+
+
+def _load_sessions_index(project_root: str) -> Dict[str, Any]:
+    """
+    加载会话索引文件
+    
+    Args:
+        project_root: 项目根目录路径
+        
+    Returns:
+        Dict: 索引数据，若不存在则返回空结构
+    """
+    index_path = _get_sessions_index_path(project_root)
+    
+    if not index_path.exists():
+        return {
+            "current_session_id": "",
+            "sessions": []
+        }
+    
+    data = _read_json_file(index_path)
+    
+    # 确保必要字段存在
+    if "current_session_id" not in data:
+        data["current_session_id"] = ""
+    if "sessions" not in data:
+        data["sessions"] = []
+    
+    return data
+
+
+def _save_sessions_index(
+    project_root: str,
+    index_data: Dict[str, Any]
+) -> bool:
+    """
+    保存会话索引文件
+    
+    Args:
+        project_root: 项目根目录路径
+        index_data: 索引数据
+        
+    Returns:
+        bool: 是否保存成功
+    """
+    index_path = _get_sessions_index_path(project_root)
+    
+    try:
+        index_path.parent.mkdir(parents=True, exist_ok=True)
+        _write_json_file(index_path, index_data)
+        return True
+    except Exception:
+        return False
+
+
 # ============================================================
 # 模块导出
 # ============================================================
 
 __all__ = [
+    # 消息操作
     "save_messages",
     "load_messages",
     "append_message",
     "get_recent_messages",
     "get_message_count",
-    "list_sessions",
-    "delete_session",
     "clear_messages",
     "get_conversation_path",
+    # 会话管理
+    "list_sessions",
+    "delete_session",
+    # 会话索引管理
+    "get_current_session_id",
+    "set_current_session_id",
+    "get_session_metadata",
+    "update_session_index",
+    "remove_from_session_index",
+    # 常量
     "CONVERSATIONS_DIR",
+    "SESSIONS_INDEX_FILE",
 ]

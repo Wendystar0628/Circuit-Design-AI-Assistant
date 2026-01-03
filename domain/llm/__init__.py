@@ -93,6 +93,12 @@ from domain.llm.message_store import (
     IMPORTANCE_LOW,
 )
 
+# 会话状态管理器
+from domain.llm.session_state_manager import (
+    SessionStateManager,
+    SessionInfo,
+)
+
 # 上下文压缩
 from domain.llm.context_compressor import (
     ContextCompressor,
@@ -222,6 +228,9 @@ __all__ = [
     "IMPORTANCE_HIGH",
     "IMPORTANCE_MEDIUM",
     "IMPORTANCE_LOW",
+    # 会话状态管理器
+    "SessionStateManager",
+    "SessionInfo",
     # 上下文压缩
     "ContextCompressor",
     "CompressPreview",

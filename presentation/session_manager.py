@@ -329,14 +329,36 @@ class SessionManager:
             return
         
         try:
-            success, msg = self.session_state_manager.restore_on_startup()
+            # 获取项目路径
+            project_root = None
+            if self.session_state:
+                project_root = self.session_state.project_root
             
-            if success:
+            if not project_root:
                 if self.logger:
-                    self.logger.info(f"Session restored: {msg}")
+                    self.logger.warning("No project root available for session restore")
+                return
+            
+            # 调用 on_app_startup 恢复会话
+            # 需要传入当前状态，这里使用空字典作为初始状态
+            initial_state = {}
+            new_state = self.session_state_manager.on_app_startup(project_root, initial_state)
+            
+            # 同步新状态到 ContextManager，确保 UI 能正确加载消息
+            if new_state and self.context_manager:
+                try:
+                    self.context_manager._set_internal_state(new_state)
+                except Exception as e:
+                    if self.logger:
+                        self.logger.warning(f"Failed to sync state to ContextManager: {e}")
+            
+            session_id = self.session_state_manager.get_current_session_id()
+            if session_id:
+                if self.logger:
+                    self.logger.info(f"Session restored: {session_id}")
             else:
                 if self.logger:
-                    self.logger.warning(f"Session restore failed: {msg}")
+                    self.logger.warning("Session restore completed but no session ID")
                     
         except Exception as e:
             if self.logger:
@@ -358,14 +380,24 @@ class SessionManager:
             return
         
         try:
-            success, msg = self.session_state_manager.save_current_session()
+            # 获取项目路径
+            project_root = None
+            if self.session_state:
+                project_root = self.session_state.project_root
             
-            if success:
+            if not project_root:
                 if self.logger:
-                    self.logger.info("Conversation saved")
-            else:
-                if self.logger:
-                    self.logger.warning(f"Failed to save conversation: {msg}")
+                    self.logger.warning("No project root available for saving conversation")
+                return
+            
+            # 获取当前状态（使用空字典作为默认）
+            current_state = {}
+            
+            # 调用 on_app_shutdown 保存会话
+            self.session_state_manager.on_app_shutdown(current_state, project_root)
+            
+            if self.logger:
+                self.logger.info("Conversation saved")
                     
         except Exception as e:
             if self.logger:
@@ -380,7 +412,7 @@ class SessionManager:
         重命名会话（委托给 SessionStateManager）
         
         Args:
-            old_name: 旧会话名称
+            old_name: 旧会话名称（实际上是 session_id）
             new_name: 新会话名称
             
         Returns:
@@ -388,13 +420,25 @@ class SessionManager:
         """
         if self.session_state_manager:
             try:
-                success, msg = self.session_state_manager.rename_session(old_name, new_name)
+                # 获取项目路径
+                project_root = None
+                if self.session_state:
+                    project_root = self.session_state.project_root
+                
+                if not project_root:
+                    return False, "No project root available"
+                
+                # old_name 实际上是 session_id
+                success = self.session_state_manager.rename_session(
+                    project_root, old_name, new_name
+                )
                 
                 if success:
                     if self.logger:
                         self.logger.info(f"Session renamed via SessionStateManager: {old_name} -> {new_name}")
-                
-                return success, msg
+                    return True, "Session renamed successfully"
+                else:
+                    return False, "Failed to rename session"
                 
             except Exception as e:
                 if self.logger:

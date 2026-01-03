@@ -338,11 +338,13 @@ class HistoryDialog(QDialog):
                     self.logger.debug("No project path, cannot load sessions")
                 return sessions
             
-            # 从 SessionStateManager 获取所有会话
-            from domain.llm.session_state_manager import SessionStateManager
-            session_manager = SessionStateManager()
+            # 使用 ServiceLocator 获取 SessionStateManager 单例
+            if not self.session_state_manager:
+                if self.logger:
+                    self.logger.warning("SessionStateManager not available")
+                return sessions
             
-            session_list = session_manager.get_all_sessions(project_path)
+            session_list = self.session_state_manager.get_all_sessions(project_path)
             
             for session_info in session_list:
                 # 解析时间
@@ -428,15 +430,10 @@ class HistoryDialog(QDialog):
             # 从 context_service 加载会话消息
             from domain.services import context_service
             
-            messages_data = context_service.load_messages(project_path, session_id)
+            messages = context_service.load_messages(project_path, session_id)
             
-            if messages_data:
-                messages = messages_data
-                if self.logger:
-                    self.logger.debug(f"Loaded {len(messages)} messages for session: {session_id}")
-            else:
-                if self.logger:
-                    self.logger.warning(f"No messages found for session: {session_id}")
+            if self.logger:
+                self.logger.debug(f"Loaded {len(messages)} messages for session: {session_id}")
                     
         except Exception as e:
             if self.logger:
@@ -505,15 +502,25 @@ class HistoryDialog(QDialog):
                 except Exception:
                     pass
             
-            # 使用 SessionStateManager 切换会话
-            from domain.llm.session_state_manager import SessionStateManager
-            session_manager = SessionStateManager()
+            # 使用 ServiceLocator 获取 SessionStateManager 单例
+            if not self.session_state_manager:
+                if self.logger:
+                    self.logger.error("SessionStateManager not available")
+                return False
             
-            new_state = session_manager.switch_session(
+            new_state = self.session_state_manager.switch_session(
                 project_path, session_id, current_state
             )
             
             if new_state is not None:
+                # 同步新状态到 ContextManager，确保 UI 能正确加载消息
+                if self.context_manager:
+                    try:
+                        self.context_manager._set_internal_state(new_state)
+                    except Exception as e:
+                        if self.logger:
+                            self.logger.warning(f"Failed to sync state to ContextManager: {e}")
+                
                 if self.logger:
                     self.logger.info(f"Session opened: {session_id}")
                 return True
@@ -631,11 +638,13 @@ class HistoryDialog(QDialog):
                     self.logger.error("No project path available")
                 return False
             
-            # 使用 SessionStateManager 删除会话
-            from domain.llm.session_state_manager import SessionStateManager
-            session_manager = SessionStateManager()
+            # 使用 ServiceLocator 获取 SessionStateManager 单例
+            if not self.session_state_manager:
+                if self.logger:
+                    self.logger.error("SessionStateManager not available")
+                return False
             
-            success = session_manager.delete_session(project_path, session_id)
+            success = self.session_state_manager.delete_session(project_path, session_id)
             
             if success:
                 if self.logger:

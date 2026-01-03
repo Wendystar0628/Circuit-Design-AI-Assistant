@@ -222,7 +222,7 @@ class SessionStateManager:
             Dict: 更新后的 GraphState（字典形式）
         """
         from domain.services import context_service
-        from domain.llm.message_types import Message
+        from domain.llm.message_helpers import dicts_to_messages
         
         with self._lock:
             # 保存当前会话（如果有未保存的更改）
@@ -234,19 +234,13 @@ class SessionStateManager:
             # 加载目标会话消息
             messages_data = context_service.load_messages(project_root, session_id)
             
-            # 重建消息对象
-            messages = []
-            for msg_data in messages_data:
-                try:
-                    messages.append(Message.from_dict(msg_data))
-                except Exception as e:
-                    if self.logger:
-                        self.logger.warning(f"消息反序列化失败: {e}")
+            # 使用 message_helpers 反序列化
+            messages = dicts_to_messages(messages_data) if messages_data else []
             
-            # 通过 MessageStore 更新状态
-            new_state = self.message_store._message_adapter.update_state_messages(
-                state, messages
-            )
+            # 直接更新 GraphState.messages
+            import copy
+            new_state = copy.deepcopy(state)
+            new_state["messages"] = messages
             
             # 恢复摘要
             metadata = context_service.get_session_metadata(project_root, session_id)
@@ -295,6 +289,12 @@ class SessionStateManager:
             bool: 是否保存成功
         """
         from domain.services import context_service
+        from domain.llm.message_helpers import (
+            messages_to_dicts,
+            is_human_message,
+            get_role,
+            ROLE_USER,
+        )
         
         with self._lock:
             if not self._current_session_id:
@@ -304,13 +304,14 @@ class SessionStateManager:
             
             # 提取消息
             messages = self.message_store.get_messages(state)
-            messages_data = [msg.to_dict() for msg in messages]
+            messages_data = messages_to_dicts(messages)
             
             # 获取首条用户消息作为预览
             preview = ""
             for msg in messages:
-                if msg.is_user():
-                    preview = msg.content[:50]
+                if is_human_message(msg):
+                    content = msg.content if isinstance(msg.content, str) else ""
+                    preview = content[:50]
                     break
             
             # 保存消息到文件

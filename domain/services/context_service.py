@@ -106,7 +106,7 @@ def load_messages(
     
     Args:
         project_root: 项目根目录路径
-        session_id: 会话 ID
+        session_id: 会话 ID（也可以是旧格式的 file_name）
         
     Returns:
         List[Dict]: 消息列表，文件不存在时返回空列表
@@ -202,7 +202,7 @@ def list_sessions(
     """
     列出所有会话
     
-    优先从会话索引读取，同时与实际文件同步。
+    从会话索引读取，仅支持新格式（session_id）。
     
     Args:
         project_root: 项目根目录路径
@@ -215,46 +215,27 @@ def list_sessions(
     index_data = _load_sessions_index(project_root)
     sessions = index_data.get("sessions", [])
     
-    # 如果索引为空，扫描目录
-    if not sessions:
-        root = Path(project_root)
-        conv_dir = root / CONVERSATIONS_DIR
-        
-        if conv_dir.exists():
-            # 获取所有 JSON 文件（排除 sessions.json）
-            json_files = [
-                f for f in conv_dir.glob("*.json")
-                if f.name != SESSIONS_INDEX_FILE
-            ]
-            
-            # 按修改时间排序
-            json_files.sort(key=lambda f: f.stat().st_mtime, reverse=True)
-            
-            for file_path in json_files[:limit]:
-                data = _read_json_file(file_path)
-                if data:
-                    session_id = data.get("session_id", file_path.stem)
-                    sessions.append({
-                        "session_id": session_id,
-                        "name": data.get("name", session_id),
-                        "created_at": data.get("created_at", ""),
-                        "updated_at": data.get("updated_at", ""),
-                        "message_count": data.get("message_count", 0),
-                        "preview": data.get("preview", ""),
-                    })
-            
-            # 保存到索引
-            if sessions:
-                index_data["sessions"] = sessions
-                _save_sessions_index(project_root, index_data)
+    # 仅保留有 session_id 的会话（新格式）
+    valid_sessions = []
+    for session in sessions:
+        session_id = session.get("session_id")
+        if session_id:
+            valid_sessions.append({
+                "session_id": session_id,
+                "name": session.get("name", session_id),
+                "created_at": session.get("created_at", ""),
+                "updated_at": session.get("updated_at", ""),
+                "message_count": session.get("message_count", 0),
+                "preview": session.get("preview", ""),
+            })
     
     # 按更新时间排序
-    sessions.sort(
+    valid_sessions.sort(
         key=lambda s: s.get("updated_at", ""),
         reverse=True
     )
     
-    return sessions[:limit]
+    return valid_sessions[:limit]
 
 
 def delete_session(

@@ -19,9 +19,22 @@
 import html
 import re
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
-from domain.llm.message_types import Message, ROLE_USER, ROLE_ASSISTANT, ROLE_SYSTEM
+from langchain_core.messages import BaseMessage
+
+from domain.llm.message_helpers import (
+    ROLE_USER,
+    ROLE_ASSISTANT,
+    ROLE_SYSTEM,
+    get_role,
+    get_reasoning_content,
+    get_operations,
+    get_attachments,
+    get_timestamp,
+    is_partial_response,
+    is_ai_message,
+)
 
 
 
@@ -29,35 +42,41 @@ from domain.llm.message_types import Message, ROLE_USER, ROLE_ASSISTANT, ROLE_SY
 # 消息显示格式化
 # ============================================================
 
-def format_message_for_display(message: Message) -> str:
+def format_message_for_display(message: BaseMessage) -> str:
     """
     格式化消息用于 UI 显示
     
     Args:
-        message: 消息对象
+        message: LangChain 消息对象
         
     Returns:
         HTML 格式的消息内容
     """
     parts = []
     
+    # 获取内容
+    content = message.content if isinstance(message.content, str) else ""
+    
     # 格式化主内容
-    content_html = _format_content_html(message.content)
+    content_html = _format_content_html(content)
     parts.append(content_html)
     
     # 助手消息：添加思考内容（如果有）
-    if message.is_assistant() and message.reasoning_content:
-        reasoning_html = format_reasoning_content(message.reasoning_content)
+    reasoning = get_reasoning_content(message)
+    if is_ai_message(message) and reasoning:
+        reasoning_html = format_reasoning_content(reasoning)
         parts.insert(0, reasoning_html)  # 思考内容放在前面
     
     # 助手消息：添加操作摘要（如果有）
-    if message.is_assistant() and message.operations:
-        operations_html = render_operations_summary(message.operations)
+    operations = get_operations(message)
+    if is_ai_message(message) and operations:
+        operations_html = render_operations_summary(operations)
         parts.append(operations_html)
     
     # 添加附件（如果有）
-    if message.attachments:
-        attachments_html = _format_attachments_html(message.attachments)
+    attachments = get_attachments(message)
+    if attachments:
+        attachments_html = _format_attachments_html(attachments)
         parts.append(attachments_html)
     
     return "\n".join(parts)
@@ -103,14 +122,17 @@ def _format_code_block(code: str, language: str = "") -> str:
     return f'<pre><code{lang_class}>{code}</code></pre>'
 
 
-def _format_attachments_html(attachments: List[Any]) -> str:
+def _format_attachments_html(attachments: List[Dict[str, Any]]) -> str:
     """格式化附件列表"""
     items = []
     for att in attachments:
-        if att.type == "image":
-            items.append(f'<div class="attachment-image"><img src="{att.path}" alt="{att.name}"></div>')
+        att_type = att.get("type", "file")
+        att_path = att.get("path", "")
+        att_name = att.get("name", "未知文件")
+        if att_type == "image":
+            items.append(f'<div class="attachment-image"><img src="{att_path}" alt="{att_name}"></div>')
         else:
-            items.append(f'<div class="attachment-file">📎 {att.name}</div>')
+            items.append(f'<div class="attachment-file">📎 {att_name}</div>')
     
     return f'<div class="attachments">{"".join(items)}</div>'
 
@@ -257,14 +279,14 @@ def render_operations_summary(operations: List[str]) -> str:
 # ============================================================
 
 def format_messages_for_export(
-    messages: List[Message],
+    messages: List[BaseMessage],
     format: str = "markdown"
 ) -> str:
     """
     格式化消息用于导出
     
     Args:
-        messages: 消息列表
+        messages: LangChain 消息列表
         format: 导出格式 ("markdown" | "json" | "text")
         
     Returns:
@@ -278,35 +300,41 @@ def format_messages_for_export(
         return _format_messages_text(messages)
 
 
-def _format_messages_markdown(messages: List[Message]) -> str:
+def _format_messages_markdown(messages: List[BaseMessage]) -> str:
     """导出为 Markdown 格式"""
     lines = ["# 对话记录\n"]
     
     for msg in messages:
+        role = get_role(msg)
+        timestamp = get_timestamp(msg)
+        reasoning = get_reasoning_content(msg)
+        operations = get_operations(msg)
+        content = msg.content if isinstance(msg.content, str) else ""
+        
         # 角色标题
         role_name = {
             ROLE_USER: "👤 用户",
             ROLE_ASSISTANT: "🤖 助手",
             ROLE_SYSTEM: "⚙️ 系统",
-        }.get(msg.role, msg.role)
+        }.get(role, role)
         
         lines.append(f"## {role_name}")
-        lines.append(f"*{msg.timestamp}*\n")
+        lines.append(f"*{timestamp}*\n")
         
         # 思考内容
-        if msg.reasoning_content:
+        if reasoning:
             lines.append("<details>")
             lines.append("<summary>💭 思考过程</summary>\n")
-            lines.append(msg.reasoning_content)
+            lines.append(reasoning)
             lines.append("</details>\n")
         
         # 主内容
-        lines.append(msg.content)
+        lines.append(content)
         
         # 操作摘要
-        if msg.operations:
+        if operations:
             lines.append("\n**执行的操作：**")
-            for op in msg.operations:
+            for op in operations:
                 lines.append(f"- {op}")
         
         lines.append("\n---\n")
@@ -314,36 +342,43 @@ def _format_messages_markdown(messages: List[Message]) -> str:
     return "\n".join(lines)
 
 
-def _format_messages_json(messages: List[Message]) -> str:
+def _format_messages_json(messages: List[BaseMessage]) -> str:
     """导出为 JSON 格式"""
     import json
+    from domain.llm.message_helpers import messages_to_dicts
     return json.dumps(
-        [msg.to_dict() for msg in messages],
+        messages_to_dicts(messages),
         ensure_ascii=False,
         indent=2
     )
 
 
-def _format_messages_text(messages: List[Message]) -> str:
+def _format_messages_text(messages: List[BaseMessage]) -> str:
     """导出为纯文本格式"""
     lines = []
     
     for msg in messages:
+        role = get_role(msg)
+        timestamp = get_timestamp(msg)
+        reasoning = get_reasoning_content(msg)
+        operations = get_operations(msg)
+        content = msg.content if isinstance(msg.content, str) else ""
+        
         role_name = {
             ROLE_USER: "用户",
             ROLE_ASSISTANT: "助手",
             ROLE_SYSTEM: "系统",
-        }.get(msg.role, msg.role)
+        }.get(role, role)
         
-        lines.append(f"[{role_name}] ({msg.timestamp})")
+        lines.append(f"[{role_name}] ({timestamp})")
         
-        if msg.reasoning_content:
-            lines.append(f"[思考] {msg.reasoning_content}")
+        if reasoning:
+            lines.append(f"[思考] {reasoning}")
         
-        lines.append(msg.content)
+        lines.append(content)
         
-        if msg.operations:
-            lines.append("[操作] " + ", ".join(msg.operations))
+        if operations:
+            lines.append("[操作] " + ", ".join(operations))
         
         lines.append("")
     

@@ -30,13 +30,18 @@
 import copy
 from typing import Any, Dict, List, Optional, Tuple
 
-from domain.llm.message_types import (
-    Message,
+from domain.llm.message_helpers import (
     ROLE_SYSTEM,
     ROLE_USER,
     ROLE_ASSISTANT,
+    is_system_message,
+    is_ai_message,
+    get_reasoning_content,
+    get_operations,
+    get_role,
+    message_to_dict,
+    dict_to_message,
 )
-from domain.llm.message_adapter import MessageAdapter
 from domain.llm.token_counter import count_tokens
 
 

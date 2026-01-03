@@ -413,19 +413,18 @@ class ConversationViewModel(QObject):
             return
         
         try:
-            # 获取内部消息
+            # 获取消息（直接使用 LangChain 消息类型）
             if state is not None:
-                from domain.llm.message_adapter import MessageAdapter
-                adapter = MessageAdapter()
-                internal_messages = adapter.extract_messages_from_state(state)
+                messages = state.get("messages", [])
             else:
                 # 使用有状态版本的方法
-                internal_messages = self.context_manager.get_display_messages()
+                messages = self.context_manager.get_display_messages()
             
             # 转换为显示格式
+            from domain.llm.message_helpers import is_system_message
             self._messages = [
-                self.format_message(msg) for msg in internal_messages
-                if not msg.is_system()  # 不显示系统消息
+                self.format_message(msg) for msg in messages
+                if not is_system_message(msg)  # 不显示系统消息
             ]
             
             # 更新使用率
@@ -438,48 +437,62 @@ class ConversationViewModel(QObject):
             if self.logger:
                 self.logger.error(f"加载消息失败: {e}")
     
-    def format_message(self, internal_msg) -> DisplayMessage:
+    def format_message(self, lc_msg) -> DisplayMessage:
         """
-        将内部消息转换为 DisplayMessage
+        将 LangChain 消息转换为 DisplayMessage
         
         Args:
-            internal_msg: 内部消息对象（Message 类型）
+            lc_msg: LangChain 消息对象
             
         Returns:
             DisplayMessage: UI 友好的消息格式
         """
+        from domain.llm.message_helpers import (
+            get_role,
+            get_reasoning_content,
+            get_operations,
+            get_attachments,
+            get_timestamp,
+            is_partial_response,
+            get_stop_reason,
+            get_web_search_results,
+        )
+        
+        # 获取消息内容
+        content = lc_msg.content if isinstance(lc_msg.content, str) else ""
+        
         # 生成唯一 ID
-        msg_id = internal_msg.metadata.get("id", str(uuid.uuid4()))
+        kwargs = getattr(lc_msg, "additional_kwargs", {}) or {}
+        metadata = kwargs.get("metadata", {})
+        msg_id = metadata.get("id", str(uuid.uuid4()))
         
         # 转换 Markdown 为 HTML
-        content_html = self._markdown_to_html(internal_msg.content)
+        content_html = self._markdown_to_html(content)
         reasoning_html = ""
-        if internal_msg.reasoning_content:
-            reasoning_html = self._markdown_to_html(internal_msg.reasoning_content)
+        reasoning = get_reasoning_content(lc_msg)
+        if reasoning:
+            reasoning_html = self._markdown_to_html(reasoning)
         
         # 格式化时间戳
-        timestamp_display = self._format_timestamp(internal_msg.timestamp)
+        timestamp_display = self._format_timestamp(get_timestamp(lc_msg))
         
-        # 转换附件
-        attachments = [
-            att.to_dict() if hasattr(att, 'to_dict') else att
-            for att in internal_msg.attachments
-        ]
+        # 获取附件
+        attachments = get_attachments(lc_msg)
         
         # 获取联网搜索结果
-        web_search_results = getattr(internal_msg, 'web_search_results', []) or []
+        web_search_results = get_web_search_results(lc_msg)
         
         # 获取部分响应标记（3.0.10 数据稳定性）
-        is_partial = internal_msg.metadata.get("is_partial", False)
-        stop_reason = internal_msg.metadata.get("stop_reason", "")
+        is_partial = is_partial_response(lc_msg)
+        stop_reason = get_stop_reason(lc_msg)
         
         return DisplayMessage(
             id=msg_id,
-            role=internal_msg.role,
+            role=get_role(lc_msg),
             content_html=content_html,
-            content=internal_msg.content,  # 保留原始内容用于 LaTeX 检测
+            content=content,  # 保留原始内容用于 LaTeX 检测
             reasoning_html=reasoning_html,
-            operations=internal_msg.operations.copy(),
+            operations=list(get_operations(lc_msg)),
             attachments=attachments,
             timestamp_display=timestamp_display,
             is_streaming=False,
@@ -690,18 +703,8 @@ class ConversationViewModel(QObject):
         # 注意：不直接操作 _messages 列表，通过 load_messages() 统一同步
         if self.context_manager:
             try:
-                from domain.llm.message_types import Attachment
-                
-                # 转换附件为 Attachment 对象列表
-                att_list = None
-                if attachments:
-                    att_list = []
-                    for att in attachments:
-                        att_list.append(Attachment(
-                            type=att.get("type", "file"),
-                            path=att.get("path", ""),
-                            name=att.get("name", ""),
-                        ))
+                # 附件已经是字典格式，直接传递
+                att_list = attachments if attachments else None
                 
                 # 使用有状态便捷方法添加用户消息
                 self.context_manager.add_user_message(text, att_list)

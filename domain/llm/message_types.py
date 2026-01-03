@@ -1,48 +1,17 @@
-# Message Types - Message Structure Definitions
+# Message Types - Data Structure Definitions
 """
-消息类型定义 - 定义对话消息的数据结构
+消息相关数据结构定义
 
-职责：
-- 定义内部消息结构
-- 提供与 LangChain 消息类型的相互转换
-- 确保消息格式一致性
+本模块定义消息相关的辅助数据结构：
+- TokenUsage: Token 使用统计
+- Attachment: 消息附件
 
-消息结构：
-{
-    "role": str,           # "user" | "assistant" | "system"
-    "content": str,        # 文本内容
-    "attachments": list,   # 附件列表（图片/文件引用）
-    "timestamp": str,      # ISO时间戳
-    "metadata": dict,      # 额外元数据
-    "operations": list,    # 操作摘要（仅助手消息）
-    "reasoning_content": str,  # 深度思考内容（仅助手消息，可选）
-    "usage": dict,         # Token 使用统计（仅助手消息，可选）
-}
-
-使用示例：
-    from domain.llm.message_types import Message, create_user_message
-    
-    msg = create_user_message("Hello, help me design a circuit")
-    lc_msg = to_langchain_message(msg)
+注意：消息本身直接使用 LangChain 消息类型（HumanMessage、AIMessage 等），
+不再定义内部 Message 类。消息操作请使用 message_helpers 模块。
 """
 
-from dataclasses import dataclass, field
-from datetime import datetime
-from typing import Any, Dict, List, Optional, Union
-
-
-
-# ============================================================
-# 常量定义
-# ============================================================
-
-# 消息角色
-ROLE_USER = "user"
-ROLE_ASSISTANT = "assistant"
-ROLE_SYSTEM = "system"
-
-# 有效角色列表
-VALID_ROLES = {ROLE_USER, ROLE_ASSISTANT, ROLE_SYSTEM}
+from dataclasses import dataclass
+from typing import Any, Dict, Optional
 
 
 # ============================================================
@@ -51,7 +20,11 @@ VALID_ROLES = {ROLE_USER, ROLE_ASSISTANT, ROLE_SYSTEM}
 
 @dataclass
 class TokenUsage:
-    """Token 使用统计"""
+    """
+    Token 使用统计
+    
+    用于记录 LLM 调用的 Token 消耗情况。
+    """
     total_tokens: int = 0
     prompt_tokens: int = 0
     completion_tokens: int = 0
@@ -81,7 +54,11 @@ class TokenUsage:
 
 @dataclass
 class Attachment:
-    """消息附件"""
+    """
+    消息附件
+    
+    用于表示用户消息中的附件（图片、文件等）。
+    """
     type: str              # "image" | "file"
     path: str              # 文件路径
     name: str              # 显示名称
@@ -110,303 +87,11 @@ class Attachment:
         )
 
 
-
-@dataclass
-class Message:
-    """
-    对话消息
-    
-    统一的消息数据结构，支持用户消息、助手消息和系统消息。
-    
-    压缩时的清理策略（详见 context_compressor.py）：
-    - reasoning_content: 旧消息会被截断或清空（节省 30-50% Token）
-    - operations: 会被合并去重，每条消息限制数量
-    - content: 旧消息过长时会被智能截断
-    - metadata/timestamp/usage: 保留，不影响 LLM 上下文
-    
-    数据稳定性字段（3.0.10）：
-    - is_partial: 标记为部分响应（用户中断生成）
-    - stop_reason: 停止原因（仅 is_partial=True 时有效）
-    - tool_calls_pending: 中断时未完成的工具调用
-    """
-    role: str                                    # "user" | "assistant" | "system"
-    content: str                                 # 文本内容（压缩时可能被截断）
-    attachments: List[Attachment] = field(default_factory=list)  # 附件列表
-    timestamp: str = ""                          # ISO 时间戳
-    metadata: Dict[str, Any] = field(default_factory=dict)       # 额外元数据
-    operations: List[str] = field(default_factory=list)          # 操作摘要（压缩时合并去重）
-    reasoning_content: str = ""                  # 深度思考内容（压缩时清理）
-    usage: Optional[TokenUsage] = None           # Token 使用统计（仅助手）
-    web_search_results: List[Dict[str, Any]] = field(default_factory=list)  # 联网搜索结果（仅助手）
-    # 数据稳定性字段（3.0.10）
-    is_partial: bool = False                     # 是否为部分响应（用户中断）
-    stop_reason: str = ""                        # 停止原因（user_requested/timeout/error/session_switch/app_shutdown）
-    tool_calls_pending: List[Dict[str, Any]] = field(default_factory=list)  # 中断时未完成的工具调用
-    
-    def __post_init__(self):
-        """初始化后处理"""
-        # 验证角色
-        if self.role not in VALID_ROLES:
-            raise ValueError(f"Invalid role: {self.role}. Must be one of {VALID_ROLES}")
-        
-        # 自动设置时间戳
-        if not self.timestamp:
-            self.timestamp = datetime.now().isoformat()
-    
-    def to_dict(self) -> Dict[str, Any]:
-        """转换为字典"""
-        result = {
-            "role": self.role,
-            "content": self.content,
-            "attachments": [a.to_dict() for a in self.attachments],
-            "timestamp": self.timestamp,
-            "metadata": self.metadata,
-        }
-        
-        # 仅助手消息包含的字段
-        if self.role == ROLE_ASSISTANT:
-            result["operations"] = self.operations
-            result["reasoning_content"] = self.reasoning_content
-            if self.usage:
-                result["usage"] = self.usage.to_dict()
-            if self.web_search_results:
-                result["web_search_results"] = self.web_search_results
-            # 数据稳定性字段（3.0.10）
-            if self.is_partial:
-                result["is_partial"] = self.is_partial
-                result["stop_reason"] = self.stop_reason
-            if self.tool_calls_pending:
-                result["tool_calls_pending"] = self.tool_calls_pending
-        
-        return result
-    
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'Message':
-        """从字典创建"""
-        attachments = [
-            Attachment.from_dict(a) if isinstance(a, dict) else a
-            for a in data.get("attachments", [])
-        ]
-        
-        usage = None
-        if "usage" in data and data["usage"]:
-            usage = TokenUsage.from_dict(data["usage"])
-        
-        return cls(
-            role=data.get("role", ROLE_USER),
-            content=data.get("content", ""),
-            attachments=attachments,
-            timestamp=data.get("timestamp", ""),
-            metadata=data.get("metadata", {}),
-            operations=data.get("operations", []),
-            reasoning_content=data.get("reasoning_content", ""),
-            usage=usage,
-            web_search_results=data.get("web_search_results", []),
-            # 数据稳定性字段（3.0.10）
-            is_partial=data.get("is_partial", False),
-            stop_reason=data.get("stop_reason", ""),
-            tool_calls_pending=data.get("tool_calls_pending", []),
-        )
-    
-    def is_user(self) -> bool:
-        """是否为用户消息"""
-        return self.role == ROLE_USER
-    
-    def is_assistant(self) -> bool:
-        """是否为助手消息"""
-        return self.role == ROLE_ASSISTANT
-    
-    def is_system(self) -> bool:
-        """是否为系统消息"""
-        return self.role == ROLE_SYSTEM
-
-
-
-# ============================================================
-# 工厂函数
-# ============================================================
-
-def create_user_message(
-    content: str,
-    attachments: Optional[List[Attachment]] = None,
-    metadata: Optional[Dict[str, Any]] = None,
-) -> Message:
-    """
-    创建用户消息
-    
-    Args:
-        content: 消息内容
-        attachments: 附件列表
-        metadata: 额外元数据
-        
-    Returns:
-        Message: 用户消息对象
-    """
-    return Message(
-        role=ROLE_USER,
-        content=content,
-        attachments=attachments or [],
-        metadata=metadata or {},
-    )
-
-
-def create_assistant_message(
-    content: str,
-    reasoning_content: str = "",
-    operations: Optional[List[str]] = None,
-    usage: Optional[TokenUsage] = None,
-    metadata: Optional[Dict[str, Any]] = None,
-    web_search_results: Optional[List[Dict[str, Any]]] = None,
-    is_partial: bool = False,
-    stop_reason: str = "",
-    tool_calls_pending: Optional[List[Dict[str, Any]]] = None,
-) -> Message:
-    """
-    创建助手消息
-    
-    Args:
-        content: 消息内容
-        reasoning_content: 深度思考内容
-        operations: 操作摘要列表
-        usage: Token 使用统计
-        metadata: 额外元数据
-        web_search_results: 联网搜索结果
-        is_partial: 是否为部分响应（用户中断）
-        stop_reason: 停止原因
-        tool_calls_pending: 中断时未完成的工具调用
-        
-    Returns:
-        Message: 助手消息对象
-    """
-    return Message(
-        role=ROLE_ASSISTANT,
-        content=content,
-        reasoning_content=reasoning_content,
-        operations=operations or [],
-        usage=usage,
-        metadata=metadata or {},
-        web_search_results=web_search_results or [],
-        is_partial=is_partial,
-        stop_reason=stop_reason,
-        tool_calls_pending=tool_calls_pending or [],
-    )
-
-
-def create_system_message(
-    content: str,
-    metadata: Optional[Dict[str, Any]] = None,
-) -> Message:
-    """
-    创建系统消息
-    
-    Args:
-        content: 消息内容
-        metadata: 额外元数据
-        
-    Returns:
-        Message: 系统消息对象
-    """
-    return Message(
-        role=ROLE_SYSTEM,
-        content=content,
-        metadata=metadata or {},
-    )
-
-
-
-# ============================================================
-# LangChain 消息转换（向后兼容）
-# ============================================================
-# 注意：转换逻辑已移至 message_adapter.py
-# 这里保留导入以保持向后兼容性
-
-def to_langchain_message(msg: Message) -> Any:
-    """
-    将内部消息转换为 LangChain 消息对象
-    
-    注意：此函数已移至 message_adapter.py，这里保留以保持向后兼容。
-    建议使用 MessageAdapter 类进行转换。
-    
-    Args:
-        msg: 内部消息对象
-        
-    Returns:
-        LangChain 消息对象（HumanMessage/AIMessage/SystemMessage）
-    """
-    from domain.llm.message_adapter import to_langchain_message as _to_lc
-    return _to_lc(msg)
-
-
-def from_langchain_message(lc_msg: Any) -> Message:
-    """
-    将 LangChain 消息转换为内部格式
-    
-    注意：此函数已移至 message_adapter.py，这里保留以保持向后兼容。
-    建议使用 MessageAdapter 类进行转换。
-    
-    Args:
-        lc_msg: LangChain 消息对象
-        
-    Returns:
-        Message: 内部消息对象
-    """
-    from domain.llm.message_adapter import from_langchain_message as _from_lc
-    return _from_lc(lc_msg)
-
-
-def messages_to_langchain(messages: List[Message]) -> List[Any]:
-    """
-    批量转换消息列表为 LangChain 格式
-    
-    注意：此函数已移至 message_adapter.py，这里保留以保持向后兼容。
-    
-    Args:
-        messages: 内部消息列表
-        
-    Returns:
-        LangChain 消息列表
-    """
-    from domain.llm.message_adapter import messages_to_langchain as _to_lc
-    return _to_lc(messages)
-
-
-def messages_from_langchain(lc_messages: List[Any]) -> List[Message]:
-    """
-    批量转换 LangChain 消息列表为内部格式
-    
-    注意：此函数已移至 message_adapter.py，这里保留以保持向后兼容。
-    
-    Args:
-        lc_messages: LangChain 消息列表
-        
-    Returns:
-        内部消息列表
-    """
-    from domain.llm.message_adapter import messages_from_langchain as _from_lc
-    return _from_lc(lc_messages)
-
-
 # ============================================================
 # 模块导出
 # ============================================================
 
 __all__ = [
-    # 常量
-    "ROLE_USER",
-    "ROLE_ASSISTANT",
-    "ROLE_SYSTEM",
-    "VALID_ROLES",
-    # 数据结构
     "TokenUsage",
     "Attachment",
-    "Message",
-    # 工厂函数
-    "create_user_message",
-    "create_assistant_message",
-    "create_system_message",
-    # LangChain 转换
-    "to_langchain_message",
-    "from_langchain_message",
-    "messages_to_langchain",
-    "messages_from_langchain",
 ]

@@ -12,7 +12,7 @@
 设计原则：
 - 状态不可变：消息操作返回更新后的 state 副本
 - 线程安全：内部使用 RLock 保护共享状态
-- 解耦设计：通过 MessageAdapter 与 GraphState 交互，不直接操作 state["messages"]
+- 直接使用 LangChain 消息类型：通过 message_helpers 操作
 - 禁止文件 I/O：所有文件操作由 context_service 负责
 
 使用示例：
@@ -27,16 +27,24 @@ import copy
 import threading
 from typing import Any, Dict, List, Optional, Tuple
 
-from domain.llm.message_types import (
-    Message,
+from langchain_core.messages import BaseMessage, AIMessage
+
+from domain.llm.message_helpers import (
     ROLE_USER,
     ROLE_ASSISTANT,
     ROLE_SYSTEM,
-    create_user_message,
-    create_assistant_message,
+    create_human_message,
+    create_ai_message,
     create_system_message,
+    get_role,
+    get_operations,
+    is_partial_response,
+    is_ai_message,
+    is_system_message,
+    message_to_dict,
+    dict_to_message,
+    dicts_to_messages,
 )
-from domain.llm.message_adapter import MessageAdapter
 
 
 # ============================================================
@@ -60,10 +68,10 @@ class MessageStore:
     管理消息的存储、检索和分类。
     遵循状态不可变原则，所有操作返回新的 state 副本。
     
-    解耦设计：
-    - 内部操作使用 InternalMessage 格式
-    - 通过 MessageAdapter 与 GraphState 交互
-    - 不直接操作 state["messages"]，保持与 LangGraph 的解耦
+    设计原则：
+    - 直接使用 LangChain 消息类型
+    - 通过 message_helpers 创建和操作消息
+    - 不引入内部消息格式，避免转换开销
     
     职责边界：
     - 专注 GraphState.messages 的内存操作
@@ -74,7 +82,6 @@ class MessageStore:
         """初始化消息存储"""
         self._lock = threading.RLock()
         self._logger = None
-        self._message_adapter = MessageAdapter()
     
     @property
     def logger(self):
@@ -96,11 +103,10 @@ class MessageStore:
         state: Dict[str, Any],
         role: str,
         content: str,
-        attachments: Optional[List[Any]] = None,
+        attachments: Optional[List[Dict[str, Any]]] = None,
         operations: Optional[List[str]] = None,
         reasoning_content: str = "",
         usage: Optional[Dict[str, int]] = None,
-        metadata: Optional[Dict[str, Any]] = None,
         web_search_results: Optional[List[Dict[str, Any]]] = None,
         is_partial: bool = False,
         stop_reason: str = "",
@@ -108,8 +114,6 @@ class MessageStore:
     ) -> Dict[str, Any]:
         """
         添加消息到状态
-        
-        通过 MessageAdapter 与 GraphState 交互，保持解耦。
         
         Args:
             state: 当前状态
@@ -119,7 +123,6 @@ class MessageStore:
             operations: 操作摘要（仅助手消息）
             reasoning_content: 思考内容（仅助手消息）
             usage: Token 使用统计（仅助手消息）
-            metadata: 额外元数据
             web_search_results: 联网搜索结果（仅助手消息）
             is_partial: 是否为部分响应
             stop_reason: 停止原因
@@ -129,39 +132,33 @@ class MessageStore:
             更新后的状态副本
         """
         with self._lock:
-            # 创建消息（内部格式）
+            # 创建 LangChain 消息
             if role == ROLE_USER:
-                msg = create_user_message(
+                msg = create_human_message(
                     content=content,
                     attachments=attachments,
-                    metadata=metadata,
                 )
             elif role == ROLE_ASSISTANT:
-                from domain.llm.message_types import TokenUsage
-                token_usage = None
-                if usage:
-                    token_usage = TokenUsage.from_dict(usage)
-                msg = create_assistant_message(
+                msg = create_ai_message(
                     content=content,
                     reasoning_content=reasoning_content,
                     operations=operations,
-                    usage=token_usage,
-                    metadata=metadata,
-                    web_search_results=web_search_results,
+                    usage=usage,
                     is_partial=is_partial,
                     stop_reason=stop_reason,
                     tool_calls_pending=tool_calls_pending,
+                    web_search_results=web_search_results,
                 )
             elif role == ROLE_SYSTEM:
-                msg = create_system_message(
-                    content=content,
-                    metadata=metadata,
-                )
+                msg = create_system_message(content=content)
             else:
                 raise ValueError(f"Invalid role: {role}")
             
-            # 通过 MessageAdapter 追加消息到状态
-            new_state = self._message_adapter.append_message_to_state(state, msg)
+            # 追加消息到状态
+            new_state = copy.deepcopy(state)
+            if "messages" not in new_state:
+                new_state["messages"] = []
+            new_state["messages"].append(msg)
             
             if self.logger:
                 self.logger.debug(
@@ -179,33 +176,30 @@ class MessageStore:
         self,
         state: Dict[str, Any],
         limit: Optional[int] = None
-    ) -> List[Message]:
+    ) -> List[BaseMessage]:
         """
         获取消息历史
-        
-        通过 MessageAdapter 从 GraphState 提取消息。
         
         Args:
             state: 当前状态
             limit: 返回数量限制
             
         Returns:
-            消息列表（内部格式）
+            LangChain 消息列表
         """
         with self._lock:
-            # 通过 MessageAdapter 提取消息
-            messages = self._message_adapter.extract_messages_from_state(state)
+            messages = state.get("messages", [])
             
             if limit:
                 messages = messages[-limit:]
             
-            return messages
+            return list(messages)
     
     def get_recent_messages(
         self,
         state: Dict[str, Any],
         n: int = 10
-    ) -> List[Message]:
+    ) -> List[BaseMessage]:
         """
         获取最近 N 条消息
         
@@ -217,30 +211,6 @@ class MessageStore:
             消息列表
         """
         return self.get_messages(state, limit=n)
-    
-    def get_langchain_messages(
-        self,
-        state: Dict[str, Any],
-        limit: Optional[int] = None
-    ) -> List[Any]:
-        """
-        获取 LangChain 格式的消息
-        
-        注意：此方法直接返回 GraphState 中的消息，用于需要 LangChain 格式的场景。
-        
-        Args:
-            state: 当前状态
-            limit: 返回数量限制
-            
-        Returns:
-            LangChain 消息列表
-        """
-        with self._lock:
-            # 获取内部消息后转换为 LangChain 格式
-            messages = self._message_adapter.extract_messages_from_state(state)
-            if limit:
-                messages = messages[-limit:]
-            return self._message_adapter.to_langchain_messages(messages)
 
     # ============================================================
     # 消息分类
@@ -249,7 +219,7 @@ class MessageStore:
     def classify_messages(
         self,
         state: Dict[str, Any]
-    ) -> Dict[str, List[Message]]:
+    ) -> Dict[str, List[BaseMessage]]:
         """
         对消息进行重要性分级
         
@@ -283,13 +253,13 @@ class MessageStore:
     
     def _classify_single_message(
         self,
-        msg: Message,
+        msg: BaseMessage,
         index: int,
         total: int
     ) -> str:
         """分类单条消息"""
         # 系统消息始终重要
-        if msg.is_system():
+        if is_system_message(msg):
             return IMPORTANCE_HIGH
         
         # 最近 3 条消息重要
@@ -297,15 +267,16 @@ class MessageStore:
             return IMPORTANCE_HIGH
         
         # 包含操作的助手消息重要
-        if msg.is_assistant() and msg.operations:
+        if is_ai_message(msg) and get_operations(msg):
             return IMPORTANCE_HIGH
         
         # 包含代码块的消息中等重要
-        if "```" in msg.content:
+        content = msg.content if isinstance(msg.content, str) else ""
+        if "```" in content:
             return IMPORTANCE_MEDIUM
         
         # 较长的消息中等重要
-        if len(msg.content) > 500:
+        if len(content) > 500:
             return IMPORTANCE_MEDIUM
         
         return IMPORTANCE_LOW
@@ -372,7 +343,7 @@ class MessageStore:
     def get_last_partial_message(
         self,
         state: Dict[str, Any]
-    ) -> Optional[Message]:
+    ) -> Optional[AIMessage]:
         """
         获取最后一条部分响应消息
         
@@ -380,12 +351,12 @@ class MessageStore:
             state: 当前状态
             
         Returns:
-            Message: 部分响应消息，不存在返回 None
+            AIMessage: 部分响应消息，不存在返回 None
         """
         messages = self.get_messages(state)
         
         for msg in reversed(messages):
-            if msg.is_assistant() and msg.is_partial:
+            if is_ai_message(msg) and is_partial_response(msg):
                 return msg
         
         return None
@@ -404,6 +375,7 @@ class MessageStore:
             bool: 是否有部分响应
         """
         return self.get_last_partial_message(state) is not None
+
     
     def mark_partial_as_complete(
         self,
@@ -422,21 +394,31 @@ class MessageStore:
         Returns:
             更新后的状态副本
         """
-        messages = self._message_adapter.extract_messages_from_state(state)
+        from domain.llm.message_helpers import mark_as_complete
+        
+        new_state = copy.deepcopy(state)
+        messages = new_state.get("messages", [])
         
         # 找到最后一条部分响应
         for i in range(len(messages) - 1, -1, -1):
             msg = messages[i]
-            if msg.is_assistant() and msg.is_partial:
+            if is_ai_message(msg) and is_partial_response(msg):
                 # 更新消息
-                msg.is_partial = False
-                msg.stop_reason = ""
+                updated_msg = mark_as_complete(msg)
                 if additional_content:
-                    msg.content += additional_content
+                    # 追加内容需要创建新消息
+                    updated_msg = create_ai_message(
+                        content=msg.content + additional_content,
+                        reasoning_content=msg.additional_kwargs.get("reasoning_content", ""),
+                        operations=msg.additional_kwargs.get("operations", []),
+                        usage=msg.additional_kwargs.get("usage"),
+                        is_partial=False,
+                        stop_reason="",
+                    )
+                messages[i] = updated_msg
                 break
         
-        # 更新状态
-        new_state = self._message_adapter.update_state_messages(state, messages)
+        new_state["messages"] = messages
         
         if self.logger:
             self.logger.info("部分响应已标记为完成")
@@ -458,17 +440,17 @@ class MessageStore:
         Returns:
             更新后的状态副本
         """
-        messages = self._message_adapter.extract_messages_from_state(state)
+        new_state = copy.deepcopy(state)
+        messages = new_state.get("messages", [])
         
         # 找到并移除最后一条部分响应
         for i in range(len(messages) - 1, -1, -1):
             msg = messages[i]
-            if msg.is_assistant() and msg.is_partial:
+            if is_ai_message(msg) and is_partial_response(msg):
                 messages.pop(i)
                 break
         
-        # 更新状态
-        new_state = self._message_adapter.update_state_messages(state, messages)
+        new_state["messages"] = messages
         
         if self.logger:
             self.logger.info("部分响应已移除")
@@ -536,8 +518,6 @@ class MessageStore:
         """
         重置消息列表
         
-        通过 MessageAdapter 更新 GraphState。
-        
         Args:
             state: 当前状态
             keep_system: 是否保留系统消息
@@ -546,15 +526,16 @@ class MessageStore:
             更新后的状态副本
         """
         with self._lock:
+            new_state = copy.deepcopy(state)
+            
             if keep_system:
-                # 提取所有消息，过滤保留系统消息
-                all_messages = self._message_adapter.extract_messages_from_state(state)
-                system_msgs = [msg for msg in all_messages if msg.is_system()]
-                # 通过 MessageAdapter 更新状态
-                new_state = self._message_adapter.update_state_messages(state, system_msgs)
+                # 过滤保留系统消息
+                messages = new_state.get("messages", [])
+                system_msgs = [msg for msg in messages if is_system_message(msg)]
+                new_state["messages"] = system_msgs
             else:
                 # 清空所有消息
-                new_state = self._message_adapter.update_state_messages(state, [])
+                new_state["messages"] = []
             
             # 清空摘要
             new_state["conversation_summary"] = ""
@@ -582,18 +563,11 @@ class MessageStore:
             更新后的状态副本
         """
         with self._lock:
-            # 将字典数据转换为 Message 对象
-            messages = []
-            for msg_data in messages_data:
-                try:
-                    msg = Message.from_dict(msg_data)
-                    messages.append(msg)
-                except Exception as e:
-                    if self.logger:
-                        self.logger.warning(f"消息反序列化失败: {e}")
+            # 使用 message_helpers 反序列化
+            messages = dicts_to_messages(messages_data)
             
-            # 通过 MessageAdapter 更新状态
-            new_state = self._message_adapter.update_state_messages(state, messages)
+            new_state = copy.deepcopy(state)
+            new_state["messages"] = messages
             
             if self.logger:
                 self.logger.debug(f"从数据加载了 {len(messages)} 条消息")

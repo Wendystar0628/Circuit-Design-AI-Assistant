@@ -5,8 +5,13 @@ LLM 交互域
 设计说明：
 - 本模块包含 LLM 对话交互的核心业务逻辑
 - 与具体 LLM 提供商无关，通过抽象接口调用适配器
+- 消息直接使用 LangChain 消息类型，通过 message_helpers 操作
 
 目录结构（阶段三实现）：
+
+消息辅助模块：
+- message_helpers.py: LangChain 消息扩展字段读写辅助函数
+- message_types.py: 辅助数据结构（TokenUsage、Attachment）
 
 上下文管理模块组：
 - context_manager.py: 门面类，协调各子模块
@@ -27,25 +32,52 @@ Prompt 管理模块：
 - external_service_manager.py: 外部服务统一管理（重试/熔断）
 """
 
-# 消息类型
-from domain.llm.message_types import (
-    Message,
-    TokenUsage,
-    Attachment,
+# 消息辅助函数
+from domain.llm.message_helpers import (
+    # 角色常量
     ROLE_USER,
     ROLE_ASSISTANT,
     ROLE_SYSTEM,
-    create_user_message,
-    create_assistant_message,
+    ROLE_TOOL,
+    VALID_ROLES,
+    # 消息创建
+    create_human_message,
+    create_ai_message,
     create_system_message,
-    to_langchain_message,
-    from_langchain_message,
-    messages_to_langchain,
-    messages_from_langchain,
+    create_tool_message,
+    # 扩展字段读取
+    get_reasoning_content,
+    get_operations,
+    get_usage,
+    get_attachments,
+    get_timestamp,
+    is_partial_response,
+    get_stop_reason,
+    get_tool_calls_pending,
+    get_web_search_results,
+    # 扩展字段写入
+    set_reasoning_content,
+    set_operations,
+    mark_as_partial,
+    mark_as_complete,
+    # 消息类型判断
+    is_human_message,
+    is_ai_message,
+    is_system_message,
+    is_tool_message,
+    get_role,
+    # 序列化
+    message_to_dict,
+    dict_to_message,
+    messages_to_dicts,
+    dicts_to_messages,
 )
 
-# 消息适配器（解耦层）
-from domain.llm.message_adapter import MessageAdapter
+# 辅助数据结构
+from domain.llm.message_types import (
+    TokenUsage,
+    Attachment,
+)
 
 # 对话格式化
 from domain.llm.conversation import (
@@ -184,22 +216,46 @@ from domain.llm.external_service_manager import (
 from domain.llm.llm_executor import LLMExecutor
 
 __all__ = [
-    # 消息类型
-    "Message",
-    "TokenUsage",
-    "Attachment",
+    # 角色常量
     "ROLE_USER",
     "ROLE_ASSISTANT",
     "ROLE_SYSTEM",
-    "create_user_message",
-    "create_assistant_message",
+    "ROLE_TOOL",
+    "VALID_ROLES",
+    # 消息创建
+    "create_human_message",
+    "create_ai_message",
     "create_system_message",
-    "to_langchain_message",
-    "from_langchain_message",
-    "messages_to_langchain",
-    "messages_from_langchain",
-    # 消息适配器
-    "MessageAdapter",
+    "create_tool_message",
+    # 扩展字段读取
+    "get_reasoning_content",
+    "get_operations",
+    "get_usage",
+    "get_attachments",
+    "get_timestamp",
+    "is_partial_response",
+    "get_stop_reason",
+    "get_tool_calls_pending",
+    "get_web_search_results",
+    # 扩展字段写入
+    "set_reasoning_content",
+    "set_operations",
+    "mark_as_partial",
+    "mark_as_complete",
+    # 消息类型判断
+    "is_human_message",
+    "is_ai_message",
+    "is_system_message",
+    "is_tool_message",
+    "get_role",
+    # 序列化
+    "message_to_dict",
+    "dict_to_message",
+    "messages_to_dicts",
+    "dicts_to_messages",
+    # 辅助数据结构
+    "TokenUsage",
+    "Attachment",
     # 对话格式化
     "format_message_for_display",
     "format_reasoning_content",

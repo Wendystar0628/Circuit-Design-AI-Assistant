@@ -38,11 +38,12 @@
 import threading
 from typing import Any, Dict, List, Optional, Tuple
 
+from langchain_core.messages import BaseMessage
+
 from domain.llm.message_store import MessageStore
 from domain.llm.token_monitor import TokenMonitor
 from domain.llm.context_compressor import ContextCompressor, CompressPreview
 from domain.llm.cache_stats_tracker import CacheStatsTracker, SessionCacheStats
-from domain.llm.message_types import Message
 
 
 # ============================================================

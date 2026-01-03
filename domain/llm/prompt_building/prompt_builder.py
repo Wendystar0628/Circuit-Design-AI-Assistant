@@ -384,65 +384,25 @@ class PromptBuilder:
             return None
     
     def _build_implicit_context_section(self, project_path: str, budget: int) -> Optional[PromptSection]:
-        """构建隐式上下文部分"""
-        try:
-            from domain.llm.context_retrieval import ImplicitContextCollector
-            collector = ImplicitContextCollector()
-            implicit = collector.collect(project_path)
-            
-            if not implicit:
-                return None
-            
-            content = self._formatter.format_implicit_context(implicit)
-            token_count = count_tokens(content)
-            
-            if token_count > budget:
-                content = self._file_processor.truncate_to_budget(content, budget)
-                token_count = budget
-            
-            return PromptSection(
-                name="implicit_context",
-                content=content,
-                token_count=token_count,
-                priority=3
-            )
-        except Exception as e:
-            self._logger.warning(f"Failed to build implicit context section: {e}")
-            return None
+        """构建隐式上下文部分
+        
+        注意：隐式上下文现在通过 ImplicitContextAggregator.collect_async() 收集，
+        并通过 ContextRetriever 统一管理。此方法保留用于向后兼容，
+        但建议使用 ContextRetriever.retrieve_async() 获取完整上下文。
+        """
+        # 隐式上下文已通过 ContextRetriever 收集，此处返回 None
+        # 避免重复收集
+        return None
     
     def _build_dependency_section(self, project_path: str, budget: int) -> Optional[PromptSection]:
-        """构建依赖文件部分"""
-        try:
-            from domain.llm.context_retrieval import DependencyAnalyzer, ImplicitContextCollector
-            
-            collector = ImplicitContextCollector()
-            implicit = collector.collect(project_path)
-            
-            if not implicit or not implicit.current_circuit_file:
-                return None
-            
-            analyzer = DependencyAnalyzer()
-            dependencies = analyzer.get_dependency_content(implicit.current_circuit_file, max_depth=2)
-            
-            if not dependencies:
-                return None
-            
-            content = self._formatter.format_dependencies(dependencies)
-            token_count = count_tokens(content)
-            
-            if token_count > budget:
-                content = self._file_processor.truncate_to_budget(content, budget)
-                token_count = budget
-            
-            return PromptSection(
-                name="dependencies",
-                content=content,
-                token_count=token_count,
-                priority=4
-            )
-        except Exception as e:
-            self._logger.warning(f"Failed to build dependency section: {e}")
-            return None
+        """构建依赖文件部分
+        
+        注意：依赖文件现在通过 ContextRetriever 统一管理。
+        此方法保留用于向后兼容。
+        """
+        # 依赖文件已通过 ContextRetriever 收集，此处返回 None
+        # 避免重复收集
+        return None
     
     def _build_summary_section(self, budget: int) -> Optional[PromptSection]:
         """构建结构化摘要部分"""

@@ -82,6 +82,8 @@ from domain.llm.context_retrieval.dependency_analyzer import (
     DependencyAnalyzer,
     DependencyGraph,
     DependencyNode,
+    MAX_DEPTH,
+    SPICE_EXTENSIONS as DEPENDENCY_SPICE_EXTENSIONS,
 )
 
 # 关键词检索
@@ -134,6 +136,7 @@ __all__ = [
     "DependencyAnalyzer",
     "DependencyGraph",
     "DependencyNode",
+    "MAX_DEPTH",
     # 常量
     "SPICE_EXTENSIONS",
     "SPICE_METRICS",

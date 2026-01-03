@@ -454,14 +454,14 @@ class ContextRetriever:
         project_path: str,
         token_budget: int,
     ) -> List[RetrievalResult]:
-        """获取依赖文件内容"""
+        """获取依赖文件内容（使用异步方法）"""
         results: List[RetrievalResult] = []
 
-        dependencies = await asyncio.to_thread(
-            self._dependency_analyzer.get_dependency_content,
+        # 使用异步方法获取依赖内容
+        dependencies = await self._dependency_analyzer.get_dependency_content_async(
             circuit_file,
-            max_depth=3,
             project_path=project_path,
+            max_depth=3,
         )
 
         if not dependencies:
@@ -475,10 +475,19 @@ class ContextRetriever:
             if total_tokens + token_count > token_budget:
                 break
 
+            # 根据深度设置相关度分数
+            depth = dep.get("depth", 0)
+            if depth <= 1:
+                relevance = 0.9  # 直接依赖
+            elif depth <= 3:
+                relevance = 0.7  # 间接依赖
+            else:
+                relevance = 0.5  # 深层依赖
+
             results.append(RetrievalResult(
                 path=dep.get("path", ""),
                 content=content,
-                relevance=0.9 if dep.get("depth", 0) <= 1 else 0.7,
+                relevance=relevance,
                 source="dependency",
                 token_count=token_count,
             ))

@@ -61,8 +61,8 @@ from domain.llm.context_retrieval.design_goals_collector import (
 # 诊断信息收集
 from domain.llm.context_retrieval.diagnostics_collector import (
     DiagnosticsCollector,
-    Diagnostics,
     DiagnosticItem,
+    ErrorRecord,
 )
 
 # 关键词提取
@@ -116,8 +116,8 @@ __all__ = [
     "DesignGoalsCollector",
     # 诊断信息收集
     "DiagnosticsCollector",
-    "Diagnostics",
     "DiagnosticItem",
+    "ErrorRecord",
     # 关键词提取
     "KeywordExtractor",
     "ExtractedKeywords",

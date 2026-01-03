@@ -36,6 +36,7 @@ from domain.llm.context_retrieval.simulation_context_collector import (
     SimulationContextCollector,
 )
 from domain.llm.context_retrieval.design_goals_collector import DesignGoalsCollector
+from domain.llm.context_retrieval.diagnostics_collector import DiagnosticsCollector
 
 
 # ============================================================
@@ -108,9 +109,10 @@ class ImplicitContextAggregator:
     def _register_default_collectors(self):
         """注册默认收集器"""
         self._collectors = [
-            CircuitFileCollector(),
-            SimulationContextCollector(),
-            DesignGoalsCollector(),
+            DiagnosticsCollector(),      # CRITICAL 优先级
+            CircuitFileCollector(),       # HIGH 优先级
+            SimulationContextCollector(), # HIGH 优先级
+            DesignGoalsCollector(),       # MEDIUM 优先级
         ]
 
     def register_collector(self, collector: ContextSource) -> None:

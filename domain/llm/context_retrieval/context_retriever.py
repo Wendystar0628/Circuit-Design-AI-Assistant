@@ -48,7 +48,6 @@ from domain.llm.context_retrieval.implicit_context_aggregator import (
 )
 from domain.llm.context_retrieval.diagnostics_collector import (
     DiagnosticsCollector,
-    Diagnostics,
 )
 from domain.llm.context_retrieval.keyword_extractor import (
     KeywordExtractor,
@@ -102,7 +101,6 @@ class RetrievalResult:
 class RetrievalContext:
     """完整的检索上下文"""
     implicit_results: List[ContextResult] = field(default_factory=list)
-    diagnostics: Optional[Diagnostics] = None
     retrieval_results: List[RetrievalResult] = field(default_factory=list)
     keywords: Optional[ExtractedKeywords] = None
     total_tokens: int = 0
@@ -111,6 +109,11 @@ class RetrievalContext:
     def items(self) -> List[RetrievalResult]:
         """获取所有检索结果"""
         return self.retrieval_results
+    
+    @property
+    def has_diagnostics(self) -> bool:
+        """检查是否包含诊断信息"""
+        return any(r.source == "diagnostics" for r in self.retrieval_results)
 
 
 # ============================================================
@@ -126,10 +129,12 @@ class ContextRetriever:
 
     def __init__(self):
         self._implicit_aggregator = ImplicitContextAggregator()
-        self._diagnostics_collector = DiagnosticsCollector()
         self._keyword_extractor = KeywordExtractor()
         self._dependency_analyzer = DependencyAnalyzer()
         self._retrieval_merger = RetrievalMerger()
+        
+        # 保留对 DiagnosticsCollector 的引用，用于 record_error/clear_error_history
+        self._diagnostics_collector: Optional[DiagnosticsCollector] = None
 
         self._unified_search_service = None
         self._async_file_ops = None
@@ -213,20 +218,15 @@ class ContextRetriever:
             project_path, state_context or {}
         )
 
-        # Step 2: 收集隐式上下文
+        # Step 2: 收集隐式上下文（包含诊断信息）
         context.implicit_results = await self._implicit_aggregator.collect_async(
             collection_context
         )
 
-        # Step 3: 收集诊断信息
-        context.diagnostics = await self._collect_diagnostics_async(
-            collection_context
-        )
-
-        # Step 4: 提取关键词
+        # Step 3: 提取关键词
         context.keywords = self._keyword_extractor.extract(message)
 
-        # Step 5-6: 并发执行搜索和依赖分析
+        # Step 4: 并发执行搜索和依赖分析
         search_results = await self._collect_search_results_async(
             message=message,
             keywords=context.keywords,
@@ -234,7 +234,7 @@ class ContextRetriever:
             token_budget=token_budget,
         )
 
-        # Step 7: 融合所有结果
+        # Step 5: 融合所有结果
         all_results = self._convert_implicit_to_retrieval(context.implicit_results)
         all_results.extend(search_results)
 
@@ -281,22 +281,14 @@ class ContextRetriever:
     # 内部协调方法（异步）
     # ============================================================
 
-    async def _collect_diagnostics_async(
-        self,
-        collection_context: CollectionContext,
-    ) -> Diagnostics:
-        """异步收集诊断信息"""
-        circuit_file = None
-        if collection_context.circuit_file_path:
-            circuit_file = collection_context.get_absolute_path(
-                collection_context.circuit_file_path
-            )
-
-        return await asyncio.to_thread(
-            self._diagnostics_collector.collect,
-            collection_context.project_path,
-            circuit_file,
-        )
+    def _get_diagnostics_collector(self) -> Optional[DiagnosticsCollector]:
+        """获取 DiagnosticsCollector 实例（从聚合器中查找）"""
+        if self._diagnostics_collector is None:
+            for collector in self._implicit_aggregator._collectors:
+                if isinstance(collector, DiagnosticsCollector):
+                    self._diagnostics_collector = collector
+                    break
+        return self._diagnostics_collector
 
     async def _collect_search_results_async(
         self,
@@ -499,13 +491,36 @@ class ContextRetriever:
     # 错误历史管理
     # ============================================================
 
-    def record_error(self, circuit_file: str, error: str):
-        """记录错误到历史"""
-        self._diagnostics_collector.record_error(circuit_file, error)
+    def record_error(
+        self,
+        circuit_file: str,
+        error: str,
+        error_type: str = "simulation",
+        command: Optional[str] = None,
+    ) -> None:
+        """
+        记录错误到历史
+        
+        Args:
+            circuit_file: 电路文件路径
+            error: 错误消息
+            error_type: 错误类型（默认 "simulation"）
+            command: 失败的仿真命令（可选）
+        """
+        collector = self._get_diagnostics_collector()
+        if collector:
+            collector.record_error(circuit_file, error_type, error, command)
 
-    def clear_error_history(self, circuit_file: str):
-        """清除错误历史"""
-        self._diagnostics_collector.clear_error_history(circuit_file)
+    def clear_error_history(self, circuit_file: str) -> None:
+        """
+        清除错误历史
+        
+        Args:
+            circuit_file: 电路文件路径
+        """
+        collector = self._get_diagnostics_collector()
+        if collector:
+            collector.clear_error_history(circuit_file)
 
 
 __all__ = [

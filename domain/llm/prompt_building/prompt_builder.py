@@ -336,17 +336,37 @@ class PromptBuilder:
         )
     
     def _build_diagnostics_section(self, project_path: str, budget: int) -> Optional[PromptSection]:
-        """构建诊断信息部分"""
+        """
+        构建诊断信息部分
+        
+        注意：诊断信息现在通过 ImplicitContextAggregator 收集，
+        此方法作为备用方案，直接从 ContextRetriever 获取诊断结果。
+        """
         try:
-            from domain.llm.context_retrieval import DiagnosticsCollector
-            collector = DiagnosticsCollector()
-            diagnostics = collector.collect(project_path)
+            import asyncio
+            from domain.llm.context_retrieval import (
+                DiagnosticsCollector,
+                CollectionContext,
+            )
             
-            if not diagnostics or diagnostics.is_empty():
+            collector = DiagnosticsCollector()
+            ctx = CollectionContext(project_path=project_path)
+            
+            # 运行异步收集
+            try:
+                loop = asyncio.get_running_loop()
+                future = asyncio.run_coroutine_threadsafe(
+                    collector.collect_async(ctx), loop
+                )
+                result = future.result(timeout=5)
+            except RuntimeError:
+                result = asyncio.run(collector.collect_async(ctx))
+            
+            if result.is_empty:
                 return None
             
-            content = self._formatter.format_diagnostics(diagnostics)
-            token_count = count_tokens(content)
+            content = result.content
+            token_count = result.token_count
             
             if token_count > budget:
                 content = self._file_processor.truncate_to_budget(content, budget)

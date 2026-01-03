@@ -82,6 +82,8 @@ class DisplayMessage:
     attachments: List[Dict[str, Any]] = field(default_factory=list)  # 附件列表
     timestamp_display: str = ""                  # 格式化的时间戳字符串
     is_streaming: bool = False                   # 是否正在流式输出
+    is_partial: bool = False                     # 是否为部分响应（已中断）
+    stop_reason: str = ""                        # 停止原因（仅 is_partial=True 时有效）
     web_search_results: List[Dict[str, Any]] = field(default_factory=list)  # 联网搜索结果
     
     # 建议选项相关（仅 role=suggestion 时有效）
@@ -467,6 +469,10 @@ class ConversationViewModel(QObject):
         # 获取联网搜索结果
         web_search_results = getattr(internal_msg, 'web_search_results', []) or []
         
+        # 获取部分响应标记（3.0.10 数据稳定性）
+        is_partial = internal_msg.metadata.get("is_partial", False)
+        stop_reason = internal_msg.metadata.get("stop_reason", "")
+        
         return DisplayMessage(
             id=msg_id,
             role=internal_msg.role,
@@ -477,6 +483,8 @@ class ConversationViewModel(QObject):
             attachments=attachments,
             timestamp_display=timestamp_display,
             is_streaming=False,
+            is_partial=is_partial,
+            stop_reason=stop_reason,
             web_search_results=web_search_results,
         )
 
@@ -1234,25 +1242,23 @@ class ConversationViewModel(QObject):
             content: 部分响应内容
             reason: 停止原因
         """
-        # 添加中断标记
-        interrupted_marker = f"\n\n*[已中断 - {self._get_stop_reason_text(reason)}]*"
-        marked_content = content + interrupted_marker
-        
-        # 转换为 HTML
-        content_html = self._markdown_to_html(marked_content)
+        # 转换为 HTML（不再在内容中添加中断标记，由 MessageBubble 渲染）
+        content_html = self._markdown_to_html(content)
         reasoning_html = ""
         if self._current_reasoning_content:
             reasoning_html = self._markdown_to_html(self._current_reasoning_content)
         
-        # 创建消息
+        # 创建消息（设置 is_partial 和 stop_reason 供 MessageBubble 渲染中断标记）
         msg = DisplayMessage(
             id=str(uuid.uuid4()),
             role=ROLE_ASSISTANT,
             content_html=content_html,
-            content=marked_content,
+            content=content,
             reasoning_html=reasoning_html,
             timestamp_display=self._format_timestamp(datetime.now().isoformat()),
             is_streaming=False,
+            is_partial=True,
+            stop_reason=reason,
         )
         
         # 添加到消息列表

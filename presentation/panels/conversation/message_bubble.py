@@ -242,6 +242,12 @@ class MessageBubble(QWidget):
             ops_card = self.render_operations_card(message.operations)
             bubble_layout.addWidget(ops_card)
         
+        # 已中断标记（3.0.9 停止反馈 UI）
+        is_partial = getattr(message, 'is_partial', False)
+        if is_partial:
+            interrupted_widget = self._render_interrupted_marker(message)
+            bubble_layout.addWidget(interrupted_widget)
+        
         # 不使用 stretch，让 bubble 自然填满
         layout.addWidget(bubble, 1)
         
@@ -360,6 +366,63 @@ class MessageBubble(QWidget):
         
         layout.addStretch(2)
         return container
+    
+    def _render_interrupted_marker(self, message) -> QWidget:
+        """
+        渲染"已中断"标记（3.0.9 停止反馈 UI）
+        
+        Args:
+            message: DisplayMessage 对象
+            
+        Returns:
+            QWidget: 已中断标记组件
+        """
+        container = QWidget()
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(0, 4, 0, 0)
+        layout.setSpacing(4)
+        
+        # 中断图标
+        icon_label = QLabel("⚠️")
+        icon_label.setFixedWidth(16)
+        layout.addWidget(icon_label)
+        
+        # 中断文本
+        stop_reason = getattr(message, 'stop_reason', '') or ''
+        reason_text = self._get_stop_reason_display(stop_reason)
+        
+        text_label = QLabel(f"已中断 - {reason_text}")
+        text_label.setStyleSheet("""
+            QLabel {
+                color: #999999;
+                font-size: 11px;
+                font-style: italic;
+            }
+        """)
+        layout.addWidget(text_label)
+        
+        layout.addStretch()
+        return container
+    
+    def _get_stop_reason_display(self, reason: str) -> str:
+        """
+        获取停止原因的显示文本
+        
+        Args:
+            reason: 停止原因代码
+            
+        Returns:
+            str: 显示文本
+        """
+        reason_texts = {
+            "user_requested": "用户停止",
+            "timeout": "超时",
+            "error": "错误",
+            "session_switch": "会话切换",
+            "app_shutdown": "应用关闭",
+            "cancelled": "已取消",
+        }
+        return reason_texts.get(reason, "已停止")
     
     def render_operations_card(self, operations: List[str]) -> QWidget:
         """

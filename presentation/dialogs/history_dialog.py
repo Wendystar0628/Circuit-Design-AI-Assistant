@@ -490,22 +490,36 @@ class HistoryDialog(QDialog):
             return False
         
         try:
-            session_name = session_id
-            
-            if not self.session_state_manager:
+            # 获取项目路径
+            project_path = self._get_project_path()
+            if not project_path:
                 if self.logger:
-                    self.logger.error("SessionStateManager not available")
+                    self.logger.error("No project path available")
                 return False
             
-            success, msg = self.session_state_manager.switch_session(session_name)
+            # 获取当前 GraphState
+            current_state = {}
+            if self.context_manager:
+                try:
+                    current_state = self.context_manager._get_internal_state()
+                except Exception:
+                    pass
             
-            if success:
+            # 使用 SessionStateManager 切换会话
+            from domain.llm.session_state_manager import SessionStateManager
+            session_manager = SessionStateManager()
+            
+            new_state = session_manager.switch_session(
+                project_path, session_id, current_state
+            )
+            
+            if new_state is not None:
                 if self.logger:
-                    self.logger.info(f"Session opened: {session_name}")
+                    self.logger.info(f"Session opened: {session_id}")
                 return True
             else:
                 if self.logger:
-                    self.logger.warning(f"Failed to open session: {msg}")
+                    self.logger.warning(f"Failed to open session: {session_id}")
                 return False
             
         except Exception as e:

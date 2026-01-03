@@ -862,15 +862,6 @@ class ConversationPanel(QWidget):
             if self.logger:
                 self.logger.warning(f"创建新会话文件失败: {e}")
     
-    def _archive_conversation(self) -> None:
-        """归档当前对话（保留用于兼容）"""
-        # 获取当前会话名称
-        session_name = ""
-        if self.view_model:
-            session_name = self.view_model.current_session_name
-        
-        self._save_current_conversation(session_name)
-    
     def handle_stream_chunk(self, chunk_type: str, text: str) -> None:
         """
         处理流式输出块（由 MainWindow 调用）

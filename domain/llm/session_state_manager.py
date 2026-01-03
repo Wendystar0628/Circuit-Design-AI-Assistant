@@ -434,6 +434,25 @@ class SessionStateManager:
         with self._lock:
             return self._current_session_id
     
+    def get_current_session_name(self) -> str:
+        """
+        获取当前会话名称
+        
+        Returns:
+            str: 当前会话名称，无会话时返回空字符串
+        """
+        with self._lock:
+            if not self._current_session_id or not self._project_root:
+                return ""
+            
+            from domain.services import context_service
+            
+            metadata = context_service.get_session_metadata(
+                self._project_root, self._current_session_id
+            )
+            
+            return metadata.get("name", self._current_session_id) if metadata else ""
+    
     def get_all_sessions(self, project_root: str) -> List[SessionInfo]:
         """
         获取所有会话列表

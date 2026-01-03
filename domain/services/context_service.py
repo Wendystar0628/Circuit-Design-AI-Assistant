@@ -297,6 +297,56 @@ def clear_messages(
     save_messages(project_root, session_id, [])
 
 
+def session_exists(
+    project_root: str,
+    session_id: str
+) -> bool:
+    """
+    检查会话是否存在
+    
+    Args:
+        project_root: 项目根目录路径
+        session_id: 会话 ID
+        
+    Returns:
+        bool: 会话文件是否存在
+    """
+    if not session_id:
+        return False
+    
+    root = Path(project_root)
+    file_path = root / CONVERSATIONS_DIR / f"{session_id}.json"
+    return file_path.exists()
+
+
+def rename_session(
+    project_root: str,
+    session_id: str,
+    new_name: str
+) -> bool:
+    """
+    重命名会话
+    
+    仅更新会话索引中的名称，不修改文件名。
+    
+    Args:
+        project_root: 项目根目录路径
+        session_id: 会话 ID
+        new_name: 新名称
+        
+    Returns:
+        bool: 是否重命名成功
+    """
+    if not session_id or not new_name:
+        return False
+    
+    return update_session_index(
+        project_root,
+        session_id,
+        {"name": new_name}
+    )
+
+
 def get_conversation_path(
     project_root: str,
     session_id: str
@@ -541,6 +591,8 @@ __all__ = [
     # 会话管理
     "list_sessions",
     "delete_session",
+    "session_exists",
+    "rename_session",
     # 会话索引管理
     "get_current_session_id",
     "set_current_session_id",

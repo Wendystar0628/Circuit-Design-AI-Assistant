@@ -563,6 +563,42 @@ class MessageStore:
                 self.logger.info("消息列表已重置")
             
             return new_state
+    
+    def load_messages_from_data(
+        self,
+        state: Dict[str, Any],
+        messages_data: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """
+        从数据加载消息到状态
+        
+        用于从文件恢复会话时，将消息数据加载到 GraphState。
+        
+        Args:
+            state: 当前状态
+            messages_data: 消息数据列表（字典格式）
+            
+        Returns:
+            更新后的状态副本
+        """
+        with self._lock:
+            # 将字典数据转换为 Message 对象
+            messages = []
+            for msg_data in messages_data:
+                try:
+                    msg = Message.from_dict(msg_data)
+                    messages.append(msg)
+                except Exception as e:
+                    if self.logger:
+                        self.logger.warning(f"消息反序列化失败: {e}")
+            
+            # 通过 MessageAdapter 更新状态
+            new_state = self._message_adapter.update_state_messages(state, messages)
+            
+            if self.logger:
+                self.logger.debug(f"从数据加载了 {len(messages)} 条消息")
+            
+            return new_state
 
 
 # ============================================================

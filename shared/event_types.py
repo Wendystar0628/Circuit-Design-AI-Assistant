@@ -377,12 +377,9 @@ EVENT_CONTEXT_COMPRESS_COMPLETE = "context_compress_complete"
 
 # 对话重置（新开对话）
 # 携带数据：
-#   - archived_session_id: str - 被归档的会话 ID（若有）
+#   - previous_session_id: str - 之前的会话 ID（若有）
 #   - new_session_id: str - 新会话 ID
 EVENT_CONVERSATION_RESET = "conversation_reset"
-
-# 对话归档
-EVENT_CONVERSATION_ARCHIVED = "conversation_archived"
 
 # 对话更新（消息列表变化）
 EVENT_CONVERSATION_UPDATED = "conversation_updated"
@@ -765,7 +762,6 @@ __all__ = [
     "EVENT_CONTEXT_COMPRESS_COMPLETE",
     # 对话管理事件
     "EVENT_CONVERSATION_RESET",
-    "EVENT_CONVERSATION_ARCHIVED",
     "EVENT_CONVERSATION_UPDATED",
     "EVENT_SESSION_LOADED",
     "EVENT_SESSION_NAME_CHANGED",

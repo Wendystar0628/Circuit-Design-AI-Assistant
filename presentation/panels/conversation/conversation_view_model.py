@@ -858,7 +858,7 @@ class ConversationViewModel(QObject):
         """
         获取已存在的会话名称集合
         
-        从配置和归档中收集所有已使用的会话名称。
+        从 SessionStateManager 收集所有已使用的会话名称。
         
         Returns:
             set: 已存在的会话名称集合
@@ -926,15 +926,29 @@ class ConversationViewModel(QObject):
         """
         重置会话（新开对话时调用）
         
-        委托给 SessionStateManager.new_session()
+        委托给 SessionStateManager.create_session()
         
         Returns:
-            str: 新的会话名称
+            str: 新的会话 ID
         """
         if self.session_state_manager:
-            success, result = self.session_state_manager.new_session()
-            if success:
-                return result
+            try:
+                # 获取项目路径
+                from shared.service_locator import ServiceLocator
+                from shared.service_names import SVC_SESSION_STATE
+                
+                session_state = ServiceLocator.get_optional(SVC_SESSION_STATE)
+                if session_state and session_state.project_root:
+                    session_id = self.session_state_manager.create_session(
+                        session_state.project_root
+                    )
+                    self._current_session_id = session_id
+                    self._current_session_name = self.session_state_manager.get_current_session_name()
+                    self.session_name_updated.emit(self._current_session_name)
+                    return self._current_session_name
+            except Exception as e:
+                if self.logger:
+                    self.logger.error(f"Failed to create new session: {e}")
         
         # 回退：生成唯一的会话名称
         self._current_session_name = self.generate_unique_session_name()
@@ -949,7 +963,21 @@ class ConversationViewModel(QObject):
             (是否成功, 新会话名称或错误消息)
         """
         if self.session_state_manager:
-            return self.session_state_manager.new_session()
+            try:
+                # 获取项目路径
+                from shared.service_locator import ServiceLocator
+                from shared.service_names import SVC_SESSION_STATE
+                
+                session_state = ServiceLocator.get_optional(SVC_SESSION_STATE)
+                if session_state and session_state.project_root:
+                    session_id = self.session_state_manager.create_session(
+                        session_state.project_root
+                    )
+                    session_name = self.session_state_manager.get_current_session_name()
+                    return True, session_name
+                return False, "No project path available"
+            except Exception as e:
+                return False, str(e)
         return False, "SessionStateManager not available"
     
     def request_save_session(self) -> Tuple[bool, str]:
@@ -960,7 +988,26 @@ class ConversationViewModel(QObject):
             (是否成功, 消息)
         """
         if self.session_state_manager:
-            return self.session_state_manager.save_current_session()
+            try:
+                # 获取项目路径和当前状态
+                from shared.service_locator import ServiceLocator
+                from shared.service_names import SVC_SESSION_STATE
+                
+                session_state = ServiceLocator.get_optional(SVC_SESSION_STATE)
+                if session_state and session_state.project_root:
+                    # 获取当前 GraphState
+                    if self.context_manager:
+                        state = self.context_manager._get_internal_state()
+                        success = self.session_state_manager.save_current_session(
+                            state, session_state.project_root
+                        )
+                        if success:
+                            return True, "Session saved successfully"
+                        return False, "Failed to save session"
+                    return False, "ContextManager not available"
+                return False, "No project path available"
+            except Exception as e:
+                return False, str(e)
         return False, "SessionStateManager not available"
     
     def _update_usage_ratio(self) -> None:

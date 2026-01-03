@@ -365,11 +365,12 @@ class LLMExecutor(QObject):
                 if self._check_stop_requested():
                     if self.logger:
                         self.logger.info(f"Stop requested during streaming: task_id={task_id}")
-                    break
+                    # 主动抛出 CancelledError 以触发统一的停止处理逻辑
+                    raise asyncio.CancelledError()
                 
                 # 检查是否被取消
                 if asyncio.current_task().cancelled():
-                    break
+                    raise asyncio.CancelledError()
                 
                 # 处理思考内容
                 if chunk.reasoning_content:
@@ -676,11 +677,12 @@ class LLMExecutor(QObject):
                 if self._check_stop_requested():
                     if self.logger:
                         self.logger.info("Stop requested during streaming")
-                    break
+                    # 主动抛出 CancelledError 以触发统一的停止处理逻辑
+                    raise asyncio.CancelledError()
                 
                 # 检查是否被取消
                 if asyncio.current_task() and asyncio.current_task().cancelled():
-                    break
+                    raise asyncio.CancelledError()
                 
                 # 处理思考内容
                 if chunk.reasoning_content:
@@ -723,12 +725,18 @@ class LLMExecutor(QObject):
                 
         except asyncio.CancelledError:
             # 任务被取消，保存部分结果
+            stop_reason = "cancelled"
+            if self.stop_controller:
+                stop_reason_enum = self.stop_controller.get_stop_reason()
+                if stop_reason_enum:
+                    stop_reason = stop_reason_enum.value
+            
             self._last_result = {
                 "content": content,
                 "reasoning_content": reasoning_content if reasoning_content else None,
                 "usage": usage,
                 "is_partial": True,
-                "stop_reason": "cancelled",
+                "stop_reason": stop_reason,
             }
             
             # 关闭异步生成器
@@ -739,10 +747,20 @@ class LLMExecutor(QObject):
                     if self.logger:
                         self.logger.warning(f"Failed to close stream generator: {e}")
             
+            # 通知 StopController（如果是通过停止检查点触发的）
+            if self.stop_controller:
+                self.stop_controller.mark_stopping()
+                self.stop_controller.mark_stopped({
+                    "is_partial": True,
+                    "cleanup_success": True,
+                    "partial_content": content,
+                })
+            
             if self.logger:
                 self.logger.info(
                     f"LLM stream generation cancelled: "
-                    f"partial_content_length={len(content)}"
+                    f"partial_content_length={len(content)}, "
+                    f"stop_reason={stop_reason}"
                 )
             
             raise

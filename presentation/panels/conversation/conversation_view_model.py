@@ -553,10 +553,21 @@ class ConversationViewModel(QObject):
         return msg
     
     def start_streaming(self) -> None:
-        """开始流式输出"""
+        """
+        开始流式输出
+        
+        设置加载状态，清空流式缓冲区，并注册任务到 StopController。
+        """
         self._is_loading = True
         self._current_stream_content = ""
         self._current_reasoning_content = ""
+        
+        # 注册任务到 StopController，允许用户停止
+        if self.stop_controller:
+            import uuid
+            task_id = f"llm_{uuid.uuid4().hex[:8]}"
+            self.stop_controller.register_task(task_id)
+        
         self.can_send_changed.emit(False)
     
     # ============================================================
@@ -1045,6 +1056,10 @@ class ConversationViewModel(QObject):
         self._current_stream_content = ""
         self._current_reasoning_content = ""
         
+        # 重置 StopController 状态为 IDLE，允许新任务注册
+        if self.stop_controller:
+            self.stop_controller.reset()
+        
         # 从 ContextManager 重新加载消息以保持同步
         # 注意：不直接操作 _messages 列表，避免消息重复
         self.load_messages()
@@ -1189,6 +1204,12 @@ class ConversationViewModel(QObject):
         处理停止完成事件（由 StopController 发布）
         
         处理部分响应，更新消息列表，恢复 UI 状态。
+        
+        关键步骤：
+        1. 处理部分响应（保存或丢弃）
+        2. 清空流式状态
+        3. 调用 StopController.reset() 重置状态为 IDLE
+        4. 发出信号通知 UI 恢复
         """
         data = event_data.get("data", event_data)
         task_id = data.get("task_id", "")
@@ -1209,9 +1230,11 @@ class ConversationViewModel(QObject):
         
         # 根据内容长度决定是否保存
         MIN_PARTIAL_LENGTH = 50
+        saved = False
         if partial_content and len(partial_content) >= MIN_PARTIAL_LENGTH:
             # 保存部分响应，标记为已中断
             self._save_partial_response(partial_content, reason)
+            saved = True
         else:
             if self.logger:
                 self.logger.debug(
@@ -1223,15 +1246,25 @@ class ConversationViewModel(QObject):
         self._current_reasoning_content = ""
         self._is_loading = False
         
+        # 重置 StopController 状态为 IDLE，允许新任务注册
+        if self.stop_controller:
+            self.stop_controller.reset()
+            if self.logger:
+                self.logger.debug("StopController reset to IDLE")
+        
         # 发出信号
         result = {
             "task_id": task_id,
             "reason": reason,
             "is_partial": is_partial,
-            "saved": len(partial_content) >= MIN_PARTIAL_LENGTH if partial_content else False,
+            "saved": saved,
         }
         self.stop_completed.emit(result)
+        
+        # 发出可发送状态变化信号，恢复发送按钮
         self.can_send_changed.emit(True)
+        
+        # 发出流式输出完成信号
         self.stream_finished.emit()
     
     def _save_partial_response(self, content: str, reason: str) -> None:

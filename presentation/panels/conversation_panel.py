@@ -522,9 +522,12 @@ class ConversationPanel(QWidget):
         """处理可发送状态变化"""
         if self._input_area:
             if can_send:
-                # 恢复发送模式
+                # 恢复发送模式（停止完成或工作流解锁时）
                 self._input_area.set_button_mode(ButtonMode.SEND)
-            self._input_area.set_send_enabled(can_send)
+                self._input_area.set_send_enabled(True)
+            else:
+                # 禁用发送（工作流锁定时）
+                self._input_area.set_send_enabled(False)
     
     @pyqtSlot()
     def _on_stop_requested(self) -> None:
@@ -536,12 +539,17 @@ class ConversationPanel(QWidget):
     
     @pyqtSlot(dict)
     def _on_stop_completed(self, result: dict) -> None:
-        """处理停止完成信号（来自 ViewModel）"""
-        # 恢复发送按钮
-        if self._input_area:
-            self._input_area.set_button_mode(ButtonMode.SEND)
+        """
+        处理停止完成信号（来自 ViewModel）
         
-        # 刷新显示
+        此时 ViewModel 已经：
+        1. 处理了部分响应
+        2. 重置了 StopController
+        3. 发出了 can_send_changed(True) 信号
+        
+        这里只需要刷新显示。
+        """
+        # 刷新显示（显示部分响应消息）
         self.refresh_display()
         
         if self.logger:

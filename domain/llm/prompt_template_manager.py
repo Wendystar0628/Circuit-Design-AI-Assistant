@@ -110,6 +110,14 @@ FALLBACK_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "required_variables": ["user_message"],
         "content": "Respond to the user:\n\n{user_message}"
     },
+    "FREE_WORK_SYSTEM": {
+        "name": "Free Work Mode",
+        "description": "System prompt for free work mode",
+        "version": "0.0.1",
+        "variables": ["design_goals", "current_circuit"],
+        "required_variables": [],
+        "content": "You are a circuit design assistant.\n\nDesign Goals:\n{design_goals}\n\nCurrent Circuit:\n{current_circuit}"
+    },
 }
 
 

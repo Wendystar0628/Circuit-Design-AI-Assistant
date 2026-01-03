@@ -58,6 +58,10 @@ PROMPT_SUMMARIZE_CONVERSATION = "SUMMARIZE_CONVERSATION"
 # 使用节点：intent_analysis_node
 PROMPT_INTENT_ANALYSIS = "INTENT_ANALYSIS"
 
+# 自由工作模式系统提示词 - 自由工作模式下的系统级提示词
+# 使用节点：free_work_node
+PROMPT_FREE_WORK_SYSTEM = "FREE_WORK_SYSTEM"
+
 
 # ============================================================
 # 输出格式模板名称常量
@@ -85,9 +89,10 @@ TEMPLATE_FORMAT_MAPPING = {
     PROMPT_OPTIMIZE_PARAMETERS: FORMAT_SPICE_OUTPUT,
     PROMPT_FIX_ERROR: FORMAT_SPICE_OUTPUT,
     PROMPT_EXECUTE_INSTRUCTION: FORMAT_SPICE_OUTPUT,
-    PROMPT_GENERAL_CONVERSATION: None,  # 通用对话不需要特定格式
-    PROMPT_SUMMARIZE_CONVERSATION: None,  # 摘要不需要特定格式
+    PROMPT_GENERAL_CONVERSATION: None,
+    PROMPT_SUMMARIZE_CONVERSATION: None,
     PROMPT_INTENT_ANALYSIS: FORMAT_JSON_OUTPUT,
+    PROMPT_FREE_WORK_SYSTEM: None,
 }
 
 
@@ -100,6 +105,7 @@ NODE_DESIGN_GOALS = "design_goals_node"
 NODE_INITIAL_DESIGN = "initial_design_node"
 NODE_ANALYSIS = "analysis_node"
 NODE_INTENT_ANALYSIS = "intent_analysis_node"
+NODE_FREE_WORK = "free_work_node"
 
 # Action 名称常量
 ACTION_OPTIMIZE_PARAMETERS = "OptimizeParametersAction"
@@ -108,13 +114,13 @@ ACTION_EXECUTE_INSTRUCTION = "ExecuteInstructionAction"
 ACTION_GENERAL_CONVERSATION = "GeneralConversationAction"
 
 # 节点/Action 与模板的映射
-# 用于文档和调试，实际调用时节点直接使用模板常量
 NODE_TEMPLATE_MAPPING = {
     # LangGraph 节点
     NODE_DESIGN_GOALS: PROMPT_EXTRACT_DESIGN_GOALS,
     NODE_INITIAL_DESIGN: PROMPT_INITIAL_DESIGN,
     NODE_ANALYSIS: PROMPT_ANALYZE_SIMULATION,
     NODE_INTENT_ANALYSIS: PROMPT_INTENT_ANALYSIS,
+    NODE_FREE_WORK: PROMPT_FREE_WORK_SYSTEM,
     # Action 类
     ACTION_OPTIMIZE_PARAMETERS: PROMPT_OPTIMIZE_PARAMETERS,
     ACTION_FIX_ERROR: PROMPT_FIX_ERROR,
@@ -135,10 +141,6 @@ def get_template_for_node(node_name: str) -> str:
         
     Raises:
         KeyError: 节点名称未在映射中定义
-        
-    使用示例：
-        template_name = get_template_for_node("design_goals_node")
-        prompt = prompt_manager.get_template(template_name, variables)
     """
     if node_name not in NODE_TEMPLATE_MAPPING:
         raise KeyError(f"No template mapping found for node: {node_name}")
@@ -160,6 +162,7 @@ __all__ = [
     "PROMPT_GENERAL_CONVERSATION",
     "PROMPT_SUMMARIZE_CONVERSATION",
     "PROMPT_INTENT_ANALYSIS",
+    "PROMPT_FREE_WORK_SYSTEM",
     # 输出格式模板
     "FORMAT_SPICE_OUTPUT",
     "FORMAT_JSON_OUTPUT",
@@ -172,6 +175,7 @@ __all__ = [
     "NODE_INITIAL_DESIGN",
     "NODE_ANALYSIS",
     "NODE_INTENT_ANALYSIS",
+    "NODE_FREE_WORK",
     # Action 名称常量
     "ACTION_OPTIMIZE_PARAMETERS",
     "ACTION_FIX_ERROR",

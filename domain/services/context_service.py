@@ -18,6 +18,11 @@
 - 对话历史：{project_root}/.circuit_ai/conversations/{session_id}.json
 - 会话索引：{project_root}/.circuit_ai/conversations/sessions.json
 
+消息格式：
+- 使用 message_helpers.message_to_dict() 序列化的格式
+- 必须包含 "type" 字段（"user"/"assistant"/"system"/"tool"）
+- 扩展字段存储在 "additional_kwargs" 中
+
 被调用方：
 - SessionStateManager（会话生命周期协调）
 - 所有需要对话历史的图节点
@@ -25,12 +30,14 @@
 
 使用示例：
     from domain.services import context_service
+    from domain.llm.message_helpers import message_to_dict, create_human_message
     
-    # 保存消息
+    # 保存消息（使用 message_helpers 序列化）
+    msg = create_human_message("Hello")
     context_service.save_messages(
         project_root="/path/to/project",
         session_id="20240101_120000",
-        messages=[{"role": "user", "content": "Hello"}]
+        messages=[message_to_dict(msg)]
     )
     
     # 加载消息
@@ -135,13 +142,13 @@ def append_message(
     Args:
         project_root: 项目根目录路径
         session_id: 会话 ID
-        message: 消息字典，必须包含 role 和 content
+        message: 消息字典，必须包含 type 和 content 字段
         
     Raises:
         ValueError: 消息格式无效
     """
-    if not message.get("role") or "content" not in message:
-        raise ValueError("Message must have 'role' and 'content' fields")
+    if not message.get("type") or "content" not in message:
+        raise ValueError("Message must have 'type' and 'content' fields")
     
     # 加载现有消息
     messages = load_messages(project_root, session_id)

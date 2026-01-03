@@ -435,18 +435,20 @@ def dict_to_message(data: Dict[str, Any]) -> BaseMessage:
     从字典反序列化为 LangChain 消息
     
     Args:
-        data: 字典数据
+        data: 字典数据，必须包含 "type" 字段
         
     Returns:
         LangChain 消息实例
+        
+    Raises:
+        ValueError: 如果 type 字段缺失或无效
     """
-    msg_type = data.get("type", ROLE_USER)
+    msg_type = data.get("type")
+    if not msg_type:
+        raise ValueError("Message data must contain 'type' field")
+    
     content = data.get("content", "")
     kwargs = data.get("additional_kwargs", {})
-    
-    # 兼容旧格式：role 字段
-    if "role" in data and "type" not in data:
-        msg_type = data["role"]
     
     if msg_type in (ROLE_USER, "human"):
         return HumanMessage(
@@ -471,11 +473,7 @@ def dict_to_message(data: Dict[str, Any]) -> BaseMessage:
             additional_kwargs=kwargs,
         )
     else:
-        # 默认为用户消息
-        return HumanMessage(
-            content=content,
-            additional_kwargs=kwargs,
-        )
+        raise ValueError(f"Unknown message type: {msg_type}")
 
 
 def messages_to_dicts(msgs: List[BaseMessage]) -> List[Dict[str, Any]]:

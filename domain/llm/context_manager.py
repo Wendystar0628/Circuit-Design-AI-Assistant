@@ -43,7 +43,11 @@ from langchain_core.messages import BaseMessage
 from domain.llm.message_store import MessageStore
 from domain.llm.token_monitor import TokenMonitor
 from domain.llm.context_compressor import ContextCompressor, CompressPreview
-from domain.llm.cache_stats_tracker import CacheStatsTracker, SessionCacheStats
+from domain.llm.cache_stats_tracker import (
+    CacheStatsTracker, 
+    SessionCacheStats,
+    CacheEfficiencyReport,
+)
 
 
 # ============================================================
@@ -404,6 +408,42 @@ class ContextManager:
     def reset_cache_stats(self) -> None:
         """重置缓存统计数据"""
         self._cache_stats_tracker.reset_stats()
+    
+    def get_cache_savings(self) -> Dict[str, Any]:
+        """
+        计算缓存节省的 token 数
+        
+        Returns:
+            节省统计字典
+        """
+        return self._cache_stats_tracker.get_cache_savings()
+    
+    def get_cache_stats_by_time_window(self, seconds: float) -> SessionCacheStats:
+        """
+        按时间窗口统计缓存
+        
+        Args:
+            seconds: 时间窗口大小（秒）
+            
+        Returns:
+            时间窗口内的统计
+        """
+        return self._cache_stats_tracker.get_stats_by_time_window(seconds)
+    
+    def generate_cache_efficiency_report(
+        self, 
+        time_window_seconds: Optional[float] = None
+    ) -> CacheEfficiencyReport:
+        """
+        生成缓存效率报告
+        
+        Args:
+            time_window_seconds: 可选的时间窗口（秒）
+            
+        Returns:
+            CacheEfficiencyReport: 效率报告
+        """
+        return self._cache_stats_tracker.generate_efficiency_report(time_window_seconds)
     
     # ============================================================
     # 便捷方法（基于 state 参数）

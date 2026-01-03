@@ -449,7 +449,8 @@ class HistoryDialog(QDialog):
         html_parts = []
         
         for msg in messages:
-            role = msg.get("role", "unknown")
+            # 兼容两种格式：新格式使用 "type"，旧格式使用 "role"
+            role = msg.get("type") or msg.get("role", "unknown")
             content = msg.get("content", "")
             timestamp = msg.get("timestamp", "")
             
@@ -687,21 +688,7 @@ class HistoryDialog(QDialog):
         if not self._current_session_id:
             return
         
-        # 确认对话框
-        result = QMessageBox.question(
-            self,
-            self._get_text("dialog.confirm", "Confirm"),
-            self._get_text(
-                "dialog.history.open_confirm",
-                "Switch to this session? Current session will be saved automatically."
-            ),
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No
-        )
-        
-        if result != QMessageBox.StandardButton.Yes:
-            return
-        
+        # 直接打开会话，无需确认（当前会话会自动保存）
         if self.open_session(self._current_session_id):
             self.accept()
 

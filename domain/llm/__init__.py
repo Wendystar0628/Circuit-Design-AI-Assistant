@@ -108,6 +108,7 @@ from domain.llm.token_counter import (
 from domain.llm.cache_stats_tracker import (
     CacheStats,
     SessionCacheStats,
+    CacheEfficiencyReport,
     CacheStatsTracker,
 )
 
@@ -276,6 +277,7 @@ __all__ = [
     # 缓存统计
     "CacheStats",
     "SessionCacheStats",
+    "CacheEfficiencyReport",
     "CacheStatsTracker",
     # Token 监控
     "TokenMonitor",

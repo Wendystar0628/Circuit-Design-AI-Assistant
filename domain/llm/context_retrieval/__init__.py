@@ -9,29 +9,20 @@
 - 融合排序并控制 Token 预算
 
 模块结构：
-- context_retriever.py          - 门面类，协调各子模块（异步接口）
-- implicit_context_collector.py - 隐式上下文收集
-- diagnostics_collector.py      - 诊断信息收集
-- keyword_extractor.py          - 关键词提取
-- keyword_retriever.py          - 精确匹配检索（独立使用）
-- vector_retriever.py           - 向量语义检索（阶段四启用）
-- dependency_analyzer.py        - 电路依赖图分析
-- retrieval_merger.py           - 多路检索结果融合
-
-与其他模块的职责划分：
-- 阶段二 FileSearchService：基础设施层的精确文件搜索引擎
-- 阶段三 context_retrieval/：专注于 LLM 对话场景的上下文收集和组装
-- 阶段五 UnifiedSearchService：统一搜索门面，融合精确搜索和语义搜索结果
+- context_retriever.py              - 门面类，协调各子模块（异步接口）
+- context_source_protocol.py        - 上下文源协议定义
+- implicit_context_aggregator.py    - 隐式上下文聚合器
+- circuit_file_collector.py         - 电路文件收集器
+- simulation_context_collector.py   - 仿真上下文收集器
+- design_goals_collector.py         - 设计目标收集器
+- diagnostics_collector.py          - 诊断信息收集
+- keyword_extractor.py              - 关键词提取
+- dependency_analyzer.py            - 电路依赖图分析
+- retrieval_merger.py               - 多路检索结果融合
 
 调用关系：
+- context_retriever.py 通过 ImplicitContextAggregator 收集隐式上下文
 - context_retriever.py 通过 UnifiedSearchService 执行统一搜索
-- 所有搜索操作通过 UnifiedSearchService 进行，确保精确搜索和语义搜索的统一融合
-
-阶段依赖说明：
-- 向量检索功能依赖阶段四的 vector_store
-- 阶段三实现时，向量检索路径返回空结果
-- 仅启用隐式上下文收集、关键词匹配和依赖分析
-- 阶段四完成后，通过配置开关启用完整的混合检索能力
 """
 
 from domain.llm.context_retrieval.context_retriever import (
@@ -41,32 +32,65 @@ from domain.llm.context_retrieval.context_retriever import (
     SPICE_EXTENSIONS,
     SPICE_METRICS,
 )
-from domain.llm.context_retrieval.implicit_context_collector import (
-    ImplicitContextCollector,
-    ImplicitContext,
+
+# 上下文源协议
+from domain.llm.context_retrieval.context_source_protocol import (
+    ContextSource,
+    ContextPriority,
+    CollectionContext,
+    ContextResult,
+    build_collection_context,
 )
+
+# 隐式上下文聚合器
+from domain.llm.context_retrieval.implicit_context_aggregator import (
+    ImplicitContextAggregator,
+)
+
+# 专职收集器
+from domain.llm.context_retrieval.circuit_file_collector import (
+    CircuitFileCollector,
+)
+from domain.llm.context_retrieval.simulation_context_collector import (
+    SimulationContextCollector,
+)
+from domain.llm.context_retrieval.design_goals_collector import (
+    DesignGoalsCollector,
+)
+
+# 诊断信息收集
 from domain.llm.context_retrieval.diagnostics_collector import (
     DiagnosticsCollector,
     Diagnostics,
     DiagnosticItem,
 )
+
+# 关键词提取
 from domain.llm.context_retrieval.keyword_extractor import (
     KeywordExtractor,
     ExtractedKeywords,
 )
+
+# 结果融合
 from domain.llm.context_retrieval.retrieval_merger import (
     RetrievalMerger,
     RetrievalItem,
 )
+
+# 依赖分析
 from domain.llm.context_retrieval.dependency_analyzer import (
     DependencyAnalyzer,
     DependencyGraph,
     DependencyNode,
 )
+
+# 关键词检索
 from domain.llm.context_retrieval.keyword_retriever import (
     KeywordRetriever,
     KeywordMatch,
 )
+
+# 向量检索（阶段四启用）
 from domain.llm.context_retrieval.vector_retriever import (
     VectorRetriever,
     VectorMatch,
@@ -78,9 +102,18 @@ __all__ = [
     "ContextRetriever",
     "RetrievalResult",
     "RetrievalContext",
-    # 隐式上下文收集
-    "ImplicitContextCollector",
-    "ImplicitContext",
+    # 上下文源协议
+    "ContextSource",
+    "ContextPriority",
+    "CollectionContext",
+    "ContextResult",
+    "build_collection_context",
+    # 隐式上下文聚合器
+    "ImplicitContextAggregator",
+    # 专职收集器
+    "CircuitFileCollector",
+    "SimulationContextCollector",
+    "DesignGoalsCollector",
     # 诊断信息收集
     "DiagnosticsCollector",
     "Diagnostics",
@@ -88,10 +121,10 @@ __all__ = [
     # 关键词提取
     "KeywordExtractor",
     "ExtractedKeywords",
-    # 关键词检索（独立使用）
+    # 关键词检索
     "KeywordRetriever",
     "KeywordMatch",
-    # 向量检索（阶段四启用）
+    # 向量检索
     "VectorRetriever",
     "VectorMatch",
     # 结果融合

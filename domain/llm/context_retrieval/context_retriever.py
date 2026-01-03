@@ -334,40 +334,117 @@ class ContextRetriever:
         query: str,
         token_budget: int,
     ) -> List[RetrievalResult]:
-        """通过 UnifiedSearchService 执行关键词搜索"""
+        """
+        通过 UnifiedSearchService 执行统一搜索
+        
+        集成说明（3.2.3.5）：
+        - 通过 ServiceLocator.get(SVC_UNIFIED_SEARCH_SERVICE) 获取实例
+        - 调用 search(query, ...) 统一搜索入口
+        - 返回 UnifiedSearchResult，包含 exact_matches 和 semantic_matches
+        - 结果已按 Token 预算截断，可直接用于 Prompt 构建
+        
+        Args:
+            query: 搜索查询（从 KeywordExtractor 提取的关键词）
+            token_budget: 分配给搜索结果的 Token 预算
+            
+        Returns:
+            List[RetrievalResult]: 检索结果列表
+        """
         results: List[RetrievalResult] = []
 
         if not self.unified_search_service:
+            if self.logger:
+                self.logger.debug(
+                    "UnifiedSearchService not available, skipping unified search"
+                )
             return results
 
         try:
+            # 导入搜索范围枚举（延迟导入避免循环依赖）
+            from domain.search.models.unified_search_result import SearchScope
+            
+            # 执行统一搜索
+            # scope="all" 同时搜索代码和文档
+            # include_exact=True, include_semantic=True
             search_result = await asyncio.to_thread(
                 self.unified_search_service.search,
                 query,
+                scope=SearchScope.ALL,
+                max_results=10,
                 token_budget=token_budget,
             )
 
+            # 处理精确匹配结果（正则/模糊/符号），优先用于代码定位
             for match in search_result.exact_matches:
+                # 构建内容：包含上下文
+                content_parts = []
+                if match.context_before:
+                    content_parts.extend(match.context_before)
+                if match.line_content:
+                    content_parts.append(f">>> {match.line_content}")
+                if match.context_after:
+                    content_parts.extend(match.context_after)
+                
+                content = "\n".join(content_parts) if content_parts else (match.line_content or "")
+                
                 results.append(RetrievalResult(
                     path=match.file_path,
-                    content=match.line_content or "",
+                    content=content,
                     relevance=match.score,
                     source="exact",
-                    token_count=self._estimate_tokens(match.line_content or ""),
+                    token_count=match.token_count or self._estimate_tokens(content),
                 ))
 
+            # 处理语义匹配结果（向量检索），优先用于知识参考
             for match in search_result.semantic_matches:
                 results.append(RetrievalResult(
                     path=match.source,
                     content=match.content,
                     relevance=match.score,
                     source="semantic",
-                    token_count=self._estimate_tokens(match.content),
+                    token_count=match.token_count or self._estimate_tokens(match.content),
                 ))
 
+            if self.logger:
+                self.logger.debug(
+                    f"Unified search completed: exact={len(search_result.exact_matches)}, "
+                    f"semantic={len(search_result.semantic_matches)}, "
+                    f"tokens={search_result.total_tokens_used}/{token_budget}"
+                )
+
+        except ImportError as e:
+            # SearchScope 导入失败，使用简化调用
+            if self.logger:
+                self.logger.debug(f"SearchScope import failed, using simplified call: {e}")
+            try:
+                search_result = await asyncio.to_thread(
+                    self.unified_search_service.search,
+                    query,
+                    token_budget=token_budget,
+                )
+                for match in search_result.exact_matches:
+                    results.append(RetrievalResult(
+                        path=match.file_path,
+                        content=match.line_content or "",
+                        relevance=match.score,
+                        source="exact",
+                        token_count=self._estimate_tokens(match.line_content or ""),
+                    ))
+                for match in search_result.semantic_matches:
+                    results.append(RetrievalResult(
+                        path=match.source,
+                        content=match.content,
+                        relevance=match.score,
+                        source="semantic",
+                        token_count=self._estimate_tokens(match.content),
+                    ))
+            except Exception as inner_e:
+                if self.logger:
+                    self.logger.warning(f"Simplified search also failed: {inner_e}")
+                    
         except Exception as e:
             if self.logger:
-                self.logger.warning(f"Search failed: {e}")
+                self.logger.warning(f"Unified search failed: {e}")
 
         return results
 

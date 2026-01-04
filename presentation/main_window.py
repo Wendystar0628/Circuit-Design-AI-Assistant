@@ -275,13 +275,13 @@ class MainWindow(QMainWindow):
         self._tab_controller.register_tab(
             TAB_CONVERSATION,
             chat_panel,
-            self._get_text("panel.conversation", "对话"),
+            self._get_text("panel.chat", "Chat"),
             "resources/icons/panel/chat.svg"
         )
         self._panels["chat"] = chat_panel
         self._panel_manager.register_panel(
             "conversation", chat_panel, PanelRegion.RIGHT,
-            title_key="panel.conversation"
+            title_key="panel.chat"
         )
         
         # 注册调试面板（根据配置）
@@ -291,7 +291,7 @@ class MainWindow(QMainWindow):
             self._tab_controller.register_tab(
                 TAB_DEVTOOLS,
                 devtools_panel,
-                self._get_text("panel.devtools", "调试"),
+                self._get_text("panel.devtools", "DevTools"),
                 "resources/icons/panel/bug.svg"
             )
             self._panels["devtools"] = devtools_panel

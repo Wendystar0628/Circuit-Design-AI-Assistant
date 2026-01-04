@@ -124,6 +124,10 @@ class ActionHandlers:
             "on_api_config": self.on_api_config,
             "on_help_docs": self.on_help_docs,
             "on_about": self.on_about,
+            # 仿真相关回调
+            "on_run_auto_simulation": self.on_run_auto_simulation,
+            "on_run_select_simulation": self.on_run_select_simulation,
+            "on_stop_simulation": self.on_stop_simulation,
         }
 
     # ============================================================
@@ -380,6 +384,72 @@ class ActionHandlers:
         from presentation.dialogs import AboutDialog
         dialog = AboutDialog(self._main_window)
         dialog.exec()
+
+    # ============================================================
+    # 仿真操作回调
+    # ============================================================
+
+    def on_run_auto_simulation(self):
+        """自动检测并运行仿真（阶段四实现中）"""
+        # 检查是否已打开项目
+        try:
+            from shared.service_locator import ServiceLocator
+            from shared.service_names import SVC_SESSION_STATE
+            
+            session_state = ServiceLocator.get_optional(SVC_SESSION_STATE)
+            if session_state and not session_state.project_root:
+                QMessageBox.warning(
+                    self._main_window,
+                    self._get_text("dialog.warning.title", "Warning"),
+                    self._get_text("status.open_workspace", "Please open a workspace folder")
+                )
+                return
+        except Exception:
+            pass
+        
+        # TODO: 阶段四完整实现
+        # 调用 simulation_service.run_with_auto_detect()
+        QMessageBox.information(
+            self._main_window,
+            self._get_text("toolbar.run_auto", "Auto Run"),
+            "Auto-detect and run simulation\n\nThis feature is under development in Phase 4."
+        )
+
+    def on_run_select_simulation(self):
+        """手动选择文件并运行仿真（阶段四实现中）"""
+        # 检查是否已打开项目
+        try:
+            from shared.service_locator import ServiceLocator
+            from shared.service_names import SVC_SESSION_STATE
+            
+            session_state = ServiceLocator.get_optional(SVC_SESSION_STATE)
+            if session_state and not session_state.project_root:
+                QMessageBox.warning(
+                    self._main_window,
+                    self._get_text("dialog.warning.title", "Warning"),
+                    self._get_text("status.open_workspace", "Please open a workspace folder")
+                )
+                return
+        except Exception:
+            pass
+        
+        # TODO: 阶段四完整实现
+        # 弹出文件选择对话框，调用 simulation_service.run_with_manual_select()
+        QMessageBox.information(
+            self._main_window,
+            self._get_text("toolbar.run_select", "Select Run"),
+            "Select simulation file and run\n\nThis feature is under development in Phase 4."
+        )
+
+    def on_stop_simulation(self):
+        """停止当前仿真（阶段四实现中）"""
+        # TODO: 阶段四完整实现
+        # 调用 simulation_service.stop_simulation()
+        QMessageBox.information(
+            self._main_window,
+            self._get_text("btn.stop", "Stop"),
+            "Stop simulation\n\nThis feature is under development in Phase 4."
+        )
 
 
 __all__ = ["ActionHandlers"]

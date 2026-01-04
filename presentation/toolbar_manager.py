@@ -137,7 +137,7 @@ class ToolbarManager:
         # - 工作流锁定时（workflow_locked = True）两个运行按钮均禁用
         # ============================================================
         
-        # [▶ 自动运行] 按钮（灰显，阶段四启用）
+        # [▶ 自动运行] 按钮（阶段四实现中）
         # 点击时调用 simulation_service.run_with_auto_detect()
         # - 使用被引用分析法扫描项目中的可仿真文件
         # - 检测到唯一主电路时，直接启动仿真
@@ -145,10 +145,12 @@ class ToolbarManager:
         # - 适用场景：常规仿真运行，自动模式工作流中使用此方式
         self._actions["toolbar_run_auto"] = QAction(self._main_window)
         self._actions["toolbar_run_auto"].setIcon(self._load_icon("play"))
-        self._actions["toolbar_run_auto"].setEnabled(False)
+        # 保持启用状态以响应悬停和点击，点击时显示提示
+        if "on_run_auto_simulation" in callbacks:
+            self._actions["toolbar_run_auto"].triggered.connect(callbacks["on_run_auto_simulation"])
         self._toolbar.addAction(self._actions["toolbar_run_auto"])
         
-        # [📁 选择运行] 按钮（灰显，阶段四启用）
+        # [📁 选择运行] 按钮（阶段四实现中）
         # 点击时调用 simulation_service.run_with_manual_select()
         # - 弹出 select_simulation_file_dialog 对话框
         # - 对话框显示所有支持的文件类型（从 executor_registry 获取）
@@ -156,13 +158,17 @@ class ToolbarManager:
         # - 适用场景：用户希望明确指定仿真文件，或运行 Python 脚本
         self._actions["toolbar_run_select"] = QAction(self._main_window)
         self._actions["toolbar_run_select"].setIcon(self._load_icon("folder_play"))
-        self._actions["toolbar_run_select"].setEnabled(False)
+        # 保持启用状态以响应悬停和点击，点击时显示提示
+        if "on_run_select_simulation" in callbacks:
+            self._actions["toolbar_run_select"].triggered.connect(callbacks["on_run_select_simulation"])
         self._toolbar.addAction(self._actions["toolbar_run_select"])
         
-        # [停止] 按钮（灰显，阶段四启用）
+        # [停止] 按钮（阶段四实现中）
         self._actions["toolbar_stop"] = QAction(self._main_window)
         self._actions["toolbar_stop"].setIcon(self._load_icon("stop"))
-        self._actions["toolbar_stop"].setEnabled(False)
+        # 保持启用状态以响应悬停和点击，点击时显示提示
+        if "on_stop_simulation" in callbacks:
+            self._actions["toolbar_stop"].triggered.connect(callbacks["on_stop_simulation"])
         self._toolbar.addAction(self._actions["toolbar_stop"])
         
         self._toolbar.addSeparator()

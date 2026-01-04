@@ -318,10 +318,12 @@ class SessionManager:
         
         在 EVENT_STATE_PROJECT_OPENED 后调用，SessionStateManager 执行以下步骤：
         1. 读取 sessions.json 获取 current_session_id
-        2. 若存在当前会话，加载会话消息
+        2. 若存在当前会话，加载会话消息并同步到 ContextManager
         3. 若不存在当前会话，创建新会话
-        4. 同步状态到 ContextManager
-        5. 手动刷新对话面板（因为 EVENT_SESSION_CHANGED 在状态同步前发布）
+        4. 发布 EVENT_SESSION_CHANGED 事件
+        
+        注意：SessionStateManager.switch_session() 和 create_session() 已内置状态同步，
+        无需在此处手动同步。
         """
         if not self.session_state_manager:
             if self.logger:
@@ -340,21 +342,11 @@ class SessionManager:
                 return
             
             # 调用 on_app_startup 恢复会话
-            # 需要传入当前状态，这里使用空字典作为初始状态
+            # SessionStateManager 内部会同步状态到 ContextManager
             initial_state = {}
             new_state = self.session_state_manager.on_app_startup(project_root, initial_state)
             
-            # 同步新状态到 ContextManager，确保 UI 能正确加载消息
-            if new_state and self.context_manager:
-                try:
-                    self.context_manager._set_internal_state(new_state)
-                except Exception as e:
-                    if self.logger:
-                        self.logger.warning(f"Failed to sync state to ContextManager: {e}")
-            
-            # 手动刷新对话面板
-            # 因为 EVENT_SESSION_CHANGED 在 switch_session 中发布，
-            # 但此时 ContextManager._internal_state 还未设置
+            # 手动刷新对话面板（确保 UI 显示最新消息）
             self._refresh_chat_panel()
             
             session_id = self.session_state_manager.get_current_session_id()

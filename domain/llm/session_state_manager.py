@@ -144,7 +144,8 @@ class SessionStateManager:
         2. 在 context_service 中创建会话文件
         3. 更新会话索引
         4. 更新内部状态
-        5. 发布 EVENT_SESSION_CHANGED 事件
+        5. 重置 ContextManager 状态（清空消息）
+        6. 发布 EVENT_SESSION_CHANGED 事件
         
         Args:
             project_root: 项目根目录路径
@@ -186,7 +187,10 @@ class SessionStateManager:
             self._is_dirty = False
             
             if self.logger:
-                self.logger.info(f"新会话已创建: {session_id}")
+                self.logger.info(f"新会话已创建: {session_id}, 名称: {session_name}")
+            
+            # 重置 ContextManager 状态（清空消息，确保新对话从空白开始）
+            self._sync_state_to_context_manager({"messages": [], "conversation_summary": ""})
             
             # 发布事件
             self._publish_session_changed_event(
@@ -200,7 +204,8 @@ class SessionStateManager:
         self,
         project_root: str,
         session_id: str,
-        state: Dict[str, Any]
+        state: Dict[str, Any],
+        sync_to_context_manager: bool = True
     ) -> Dict[str, Any]:
         """
         切换到指定会话
@@ -211,12 +216,14 @@ class SessionStateManager:
         3. 通过 MessageStore 更新 GraphState.messages
         4. 更新会话索引中的当前会话
         5. 更新内部状态
-        6. 发布 EVENT_SESSION_CHANGED 事件
+        6. 同步状态到 ContextManager（确保 UI 能正确加载消息）
+        7. 发布 EVENT_SESSION_CHANGED 事件
         
         Args:
             project_root: 项目根目录路径
             session_id: 目标会话 ID
             state: 当前 GraphState（字典形式）
+            sync_to_context_manager: 是否同步状态到 ContextManager（默认 True）
             
         Returns:
             Dict: 更新后的 GraphState（字典形式）
@@ -256,7 +263,12 @@ class SessionStateManager:
             self._is_dirty = False
             
             if self.logger:
-                self.logger.info(f"已切换到会话: {session_id}")
+                self.logger.info(f"已切换到会话: {session_id}, 消息数: {len(messages)}")
+            
+            # 同步状态到 ContextManager（在发布事件之前）
+            # 这确保 EVENT_SESSION_CHANGED 事件处理器能正确加载消息
+            if sync_to_context_manager:
+                self._sync_state_to_context_manager(new_state)
             
             # 发布事件
             self._publish_session_changed_event(
@@ -265,6 +277,28 @@ class SessionStateManager:
             )
             
             return new_state
+    
+    def _sync_state_to_context_manager(self, state: Dict[str, Any]) -> None:
+        """
+        同步状态到 ContextManager
+        
+        确保 ContextManager._internal_state 与当前会话状态一致。
+        
+        Args:
+            state: 要同步的状态
+        """
+        try:
+            from shared.service_locator import ServiceLocator
+            from shared.service_names import SVC_CONTEXT_MANAGER
+            
+            context_manager = ServiceLocator.get_optional(SVC_CONTEXT_MANAGER)
+            if context_manager:
+                context_manager._set_internal_state(state)
+                if self.logger:
+                    self.logger.debug("状态已同步到 ContextManager")
+        except Exception as e:
+            if self.logger:
+                self.logger.warning(f"同步状态到 ContextManager 失败: {e}")
     
     def save_current_session(
         self,
@@ -544,7 +578,7 @@ class SessionStateManager:
         
         执行步骤：
         1. 读取会话索引获取 current_session_id
-        2. 若存在当前会话，加载会话消息
+        2. 若存在当前会话，加载会话消息并同步到 ContextManager
         3. 若不存在当前会话，创建新会话
         4. 发布 EVENT_SESSION_CHANGED 事件
         
@@ -568,13 +602,14 @@ class SessionStateManager:
                 messages = context_service.load_messages(project_root, last_session_id)
                 
                 if messages is not None:
-                    # 恢复会话
+                    # 恢复会话（sync_to_context_manager=True 确保状态同步）
                     new_state = self.switch_session(
-                        project_root, last_session_id, state
+                        project_root, last_session_id, state,
+                        sync_to_context_manager=True
                     )
                     
                     if self.logger:
-                        self.logger.info(f"会话已恢复: {last_session_id}")
+                        self.logger.info(f"会话已恢复: {last_session_id}, 消息数: {len(messages)}")
                     
                     return new_state
             

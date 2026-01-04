@@ -682,6 +682,9 @@ class ConversationViewModel(QObject):
         """
         发送消息并触发 LLM 调用
         
+        消息会被添加到当前打开的会话（由 SessionStateManager 管理），
+        而不是关闭软件时持久化的会话。
+        
         Args:
             text: 消息文本
             attachments: 附件列表
@@ -709,6 +712,10 @@ class ConversationViewModel(QObject):
                 # 使用有状态便捷方法添加用户消息
                 self.context_manager.add_user_message(text, att_list)
                 
+                # 标记会话为脏，确保消息会被保存
+                if self.session_state_manager:
+                    self.session_state_manager.mark_dirty()
+                
                 # 从 ContextManager 重新加载消息以保持同步
                 self.load_messages()
                 
@@ -734,9 +741,8 @@ class ConversationViewModel(QObject):
         触发 LLM 调用
         
         获取消息历史，调用 LLMExecutor 进行流式生成。
+        LLMExecutor.generate() 使用 @asyncSlot() 装饰器，会自动在 qasync 事件循环中执行。
         """
-        import asyncio
-        
         try:
             from shared.service_locator import ServiceLocator
             from shared.service_names import SVC_LLM_EXECUTOR, SVC_CONFIG_MANAGER
@@ -774,16 +780,14 @@ class ConversationViewModel(QObject):
             llm_executor.generation_complete.connect(self._on_llm_generation_complete)
             llm_executor.generation_error.connect(self._on_llm_generation_error)
             
-            # 使用 asyncio 调度 LLM 调用
-            loop = asyncio.get_event_loop()
-            loop.create_task(
-                llm_executor.generate(
-                    task_id=task_id,
-                    messages=messages,
-                    model=model,
-                    streaming=True,
-                    thinking=enable_thinking,
-                )
+            # 直接调用 generate() 方法
+            # @asyncSlot() 装饰器会自动将协程调度到 qasync 事件循环中执行
+            llm_executor.generate(
+                task_id=task_id,
+                messages=messages,
+                model=model,
+                streaming=True,
+                thinking=enable_thinking,
             )
             
             if self.logger:
@@ -1370,15 +1374,25 @@ class ConversationViewModel(QObject):
         
         在每轮对话完成后调用，委托给 SessionStateManager。
         """
-        if self.session_state_manager:
+        if self.session_state_manager and self.context_manager:
             try:
-                success, msg = self.session_state_manager.save_current_session()
-                if success:
-                    if self.logger:
-                        self.logger.debug(f"Auto-saved session: {self.current_session_name}")
-                else:
-                    if self.logger:
-                        self.logger.warning(f"Auto-save failed: {msg}")
+                # 获取项目路径
+                from shared.service_locator import ServiceLocator
+                from shared.service_names import SVC_SESSION_STATE
+                
+                session_state = ServiceLocator.get_optional(SVC_SESSION_STATE)
+                if session_state and session_state.project_root:
+                    # 获取当前 GraphState
+                    state = self.context_manager._get_internal_state()
+                    success = self.session_state_manager.save_current_session(
+                        state, session_state.project_root
+                    )
+                    if success:
+                        if self.logger:
+                            self.logger.debug(f"Auto-saved session: {self.current_session_name}")
+                    else:
+                        if self.logger:
+                            self.logger.warning("Auto-save failed")
             except Exception as e:
                 if self.logger:
                     self.logger.warning(f"Auto-save error: {e}")
@@ -1420,21 +1434,26 @@ class ConversationViewModel(QObject):
         处理会话变更事件（由 SessionStateManager 发布）
         
         响应会话切换、新建、恢复等操作，刷新 UI 显示。
+        
+        注意：SessionStateManager 在发布此事件前已同步状态到 ContextManager，
+        因此 load_messages() 能正确获取新会话的消息。
         """
         data = event_data.get("data", {})
         session_name = data.get("session_name", "")
         action = data.get("action", "")
+        session_id = data.get("session_id", "")
         
         if self.logger:
-            self.logger.debug(f"Session changed: {action}, name={session_name}")
+            self.logger.debug(f"Session changed: action={action}, id={session_id}, name={session_name}")
         
         # 更新内部状态
+        self._current_session_id = session_id
         self._current_session_name = session_name
         
         # 发出会话名称更新信号
         self.session_name_updated.emit(session_name)
         
-        # 重新加载消息
+        # 重新加载消息（ContextManager 状态已由 SessionStateManager 同步）
         self.load_messages()
         
         # 更新使用率

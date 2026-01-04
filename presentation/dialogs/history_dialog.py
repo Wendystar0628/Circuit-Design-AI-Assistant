@@ -307,7 +307,10 @@ class HistoryDialog(QDialog):
         self._sessions.clear()
         self._session_list.clear()
         
-        # 从 Checkpointer 获取会话列表
+        # 先保存当前会话，确保历史列表显示最新内容
+        self._save_current_session_before_load()
+        
+        # 从 SessionStateManager 获取会话列表
         sessions = self._get_sessions_from_checkpointer()
         
         for session in sessions:
@@ -325,6 +328,39 @@ class HistoryDialog(QDialog):
         
         if self.logger:
             self.logger.info(f"Loaded {len(self._sessions)} sessions")
+    
+    def _save_current_session_before_load(self) -> None:
+        """
+        加载会话列表前保存当前会话
+        
+        确保历史对话框显示的内容与本地文件一致。
+        """
+        try:
+            project_path = self._get_project_path()
+            if not project_path:
+                return
+            
+            if not self.session_state_manager:
+                return
+            
+            # 获取当前状态
+            current_state = {}
+            if self.context_manager:
+                try:
+                    current_state = self.context_manager._get_internal_state()
+                except Exception:
+                    pass
+            
+            # 标记为脏并保存
+            self.session_state_manager.mark_dirty()
+            self.session_state_manager.save_current_session(current_state, project_path)
+            
+            if self.logger:
+                self.logger.debug("Current session saved before loading history")
+                
+        except Exception as e:
+            if self.logger:
+                self.logger.warning(f"Failed to save current session: {e}")
 
     def _get_sessions_from_checkpointer(self) -> List[SessionInfo]:
         """从 SessionStateManager 获取会话列表"""
@@ -509,19 +545,13 @@ class HistoryDialog(QDialog):
                     self.logger.error("SessionStateManager not available")
                 return False
             
+            # switch_session 内部会同步状态到 ContextManager
             new_state = self.session_state_manager.switch_session(
-                project_path, session_id, current_state
+                project_path, session_id, current_state,
+                sync_to_context_manager=True
             )
             
             if new_state is not None:
-                # 同步新状态到 ContextManager，确保 UI 能正确加载消息
-                if self.context_manager:
-                    try:
-                        self.context_manager._set_internal_state(new_state)
-                    except Exception as e:
-                        if self.logger:
-                            self.logger.warning(f"Failed to sync state to ContextManager: {e}")
-                
                 if self.logger:
                     self.logger.info(f"Session opened: {session_id}")
                 return True

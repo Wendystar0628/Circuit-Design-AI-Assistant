@@ -14,7 +14,13 @@
 """
 
 from domain.simulation.executor.simulation_executor import SimulationExecutor
+from domain.simulation.executor.executor_registry import (
+    ExecutorRegistry,
+    executor_registry,
+)
 
 __all__ = [
     "SimulationExecutor",
+    "ExecutorRegistry",
+    "executor_registry",
 ]

@@ -41,9 +41,6 @@ SVC_ASYNC_TASK_REGISTRY = "async_task_registry"
 # CPU 任务执行器 - CPU 密集型任务执行
 SVC_CPU_TASK_EXECUTOR = "cpu_task_executor"
 
-# 进程管理器 - 子进程管理
-SVC_PROCESS_MANAGER = "process_manager"
-
 # 国际化管理器 - 多语言支持
 SVC_I18N_MANAGER = "i18n_manager"
 
@@ -194,7 +191,6 @@ __all__ = [
     "SVC_WORKER_MANAGER",
     "SVC_ASYNC_TASK_REGISTRY",
     "SVC_CPU_TASK_EXECUTOR",
-    "SVC_PROCESS_MANAGER",
     "SVC_I18N_MANAGER",
     "SVC_STOP_CONTROLLER",
     "SVC_STREAM_THROTTLER",

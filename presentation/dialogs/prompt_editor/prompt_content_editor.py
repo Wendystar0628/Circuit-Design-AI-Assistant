@@ -86,6 +86,7 @@ class PromptContentEditor(QPlainTextEdit):
         super().__init__(parent)
         self._setup_ui()
         self._highlighter = VariableHighlighter(self.document())
+        self._highlight_enabled = True
         
         # 连接文本变化信号
         self.textChanged.connect(self._on_text_changed)
@@ -163,6 +164,24 @@ class PromptContentEditor(QPlainTextEdit):
             self.setStyleSheet("background-color: #f5f5f5;")
         else:
             self.setStyleSheet("")
+    
+    def set_variable_highlight_enabled(self, enabled: bool) -> None:
+        """
+        设置是否启用变量高亮
+        
+        Args:
+            enabled: 是否启用
+        """
+        self._highlight_enabled = enabled
+        if enabled:
+            self._highlighter = VariableHighlighter(self.document())
+        else:
+            # 移除高亮器
+            if self._highlighter:
+                self._highlighter.setDocument(None)
+                self._highlighter = None
+            # 刷新显示
+            self.setPlainText(self.toPlainText())
 
 
 __all__ = [

@@ -200,7 +200,6 @@ from domain.llm.prompt_building import (
 # 系统提示词注入器
 from domain.llm.system_prompt_injector import (
     SystemPromptInjector,
-    InjectionResult,
     LAYER_SEPARATOR,
     LAYER_MARKERS,
 )
@@ -360,7 +359,6 @@ __all__ = [
     "FileContentProcessor",
     # 系统提示词注入器
     "SystemPromptInjector",
-    "InjectionResult",
     "LAYER_SEPARATOR",
     "LAYER_MARKERS",
     # 身份提示词管理器

@@ -256,9 +256,10 @@ def get_ngspice_models_path() -> Optional[Path]:
 
 def get_ngspice_scripts_path() -> Optional[Path]:
     """
-    获取 share/ngspice/scripts 目录路径（spinit 模板）
+    获取 share/ngspice/scripts 目录路径（spinit 文件）
     
-    此目录包含 spinit 初始化脚本模板
+    此目录包含 spinit 初始化脚本，spinit 使用相对路径引用 codemodel 和 OSDI 文件，
+    ngspice 会自动在 SPICE_LIB_DIR 环境变量指向的目录中查找这些文件。
     
     注意：必须先调用 configure_ngspice() 才能获取有效路径
     

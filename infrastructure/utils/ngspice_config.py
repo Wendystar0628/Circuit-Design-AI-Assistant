@@ -198,7 +198,7 @@ def _validate_ngspice_path(ngspice_base: Path, platform_id: str) -> bool:
 
 def get_ngspice_path() -> Optional[Path]:
     """
-    获取当前平台的 ngspice 共享库路径
+    获取当前平台的 ngspice 基础目录路径（Spice64_dll 目录）
     
     注意：必须先调用 configure_ngspice() 才能获取有效路径
     
@@ -206,6 +206,75 @@ def get_ngspice_path() -> Optional[Path]:
         Path: ngspice 基础目录路径，不可用时返回 None
     """
     return _ngspice_path
+
+
+def get_ngspice_lib_path() -> Optional[Path]:
+    """
+    获取 lib/ngspice 目录路径（codemodel 和 OSDI 文件）
+    
+    此目录包含：
+    - analog.cm, digital.cm 等 codemodel 文件
+    - *.osdi OSDI 模型文件
+    
+    注意：必须先调用 configure_ngspice() 才能获取有效路径
+    
+    Returns:
+        Path: lib/ngspice 目录路径，不可用时返回 None
+    """
+    if not _ngspice_path:
+        return None
+    
+    platform_id = _get_platform()
+    config = PLATFORM_CONFIG.get(platform_id)
+    if not config:
+        return None
+    
+    lib_path = _ngspice_path / config["lib_dir"]
+    return lib_path if lib_path.exists() else None
+
+
+def get_ngspice_models_path() -> Optional[Path]:
+    """
+    获取 share/ngspice/models 目录路径（cmp/sub/custom）
+    
+    此目录包含：
+    - cmp/ - 基础器件模型参数（BJT、MOSFET、二极管等）
+    - sub/ - 子电路定义（运放、稳压器等）
+    - custom/ - 用户自定义模型
+    
+    注意：必须先调用 configure_ngspice() 才能获取有效路径
+    
+    Returns:
+        Path: share/ngspice/models 目录路径，不可用时返回 None
+    """
+    if not _ngspice_path:
+        return None
+    
+    models_path = _ngspice_path / "share" / "ngspice" / "models"
+    return models_path if models_path.exists() else None
+
+
+def get_ngspice_scripts_path() -> Optional[Path]:
+    """
+    获取 share/ngspice/scripts 目录路径（spinit 模板）
+    
+    此目录包含 spinit 初始化脚本模板
+    
+    注意：必须先调用 configure_ngspice() 才能获取有效路径
+    
+    Returns:
+        Path: share/ngspice/scripts 目录路径，不可用时返回 None
+    """
+    if not _ngspice_path:
+        return None
+    
+    platform_id = _get_platform()
+    config = PLATFORM_CONFIG.get(platform_id)
+    if not config:
+        return None
+    
+    scripts_path = _ngspice_path / config["scripts_dir"]
+    return scripts_path if scripts_path.exists() else None
 
 
 def _setup_environment(ngspice_base: Path, platform_id: str) -> None:
@@ -448,10 +517,17 @@ def get_ngspice_info() -> dict:
     Returns:
         dict: 包含配置状态的字典
     """
+    lib_path = get_ngspice_lib_path()
+    models_path = get_ngspice_models_path()
+    scripts_path = get_ngspice_scripts_path()
+    
     return {
         "configured": _ngspice_configured,
         "available": _ngspice_available,
         "path": str(_ngspice_path) if _ngspice_path else None,
+        "lib_path": str(lib_path) if lib_path else None,
+        "models_path": str(models_path) if models_path else None,
+        "scripts_path": str(scripts_path) if scripts_path else None,
         "error": _configuration_error,
         "platform": _get_platform(),
         "packaged": _is_packaged(),
@@ -466,6 +542,9 @@ def get_ngspice_info() -> dict:
 __all__ = [
     "configure_ngspice",
     "get_ngspice_path",
+    "get_ngspice_lib_path",
+    "get_ngspice_models_path",
+    "get_ngspice_scripts_path",
     "is_ngspice_available",
     "get_configuration_error",
     "get_ngspice_info",

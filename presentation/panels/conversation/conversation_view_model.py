@@ -680,7 +680,7 @@ class ConversationViewModel(QObject):
         attachments: Optional[List[Dict[str, Any]]] = None
     ) -> bool:
         """
-        发送消息
+        发送消息并触发 LLM 调用
         
         Args:
             text: 消息文本
@@ -715,6 +715,9 @@ class ConversationViewModel(QObject):
                 # 开始加载状态（流式输出）
                 self.start_streaming()
                 
+                # 触发 LLM 调用
+                self._trigger_llm_call()
+                
                 return True
                 
             except Exception as e:
@@ -725,6 +728,247 @@ class ConversationViewModel(QObject):
                 return False
         
         return False
+    
+    def _trigger_llm_call(self) -> None:
+        """
+        触发 LLM 调用
+        
+        获取消息历史，调用 LLMExecutor 进行流式生成。
+        """
+        import asyncio
+        
+        try:
+            from shared.service_locator import ServiceLocator
+            from shared.service_names import SVC_LLM_EXECUTOR, SVC_CONFIG_MANAGER
+            
+            llm_executor = ServiceLocator.get_optional(SVC_LLM_EXECUTOR)
+            config_manager = ServiceLocator.get_optional(SVC_CONFIG_MANAGER)
+            
+            if not llm_executor:
+                if self.logger:
+                    self.logger.error("LLMExecutor not available")
+                self._handle_llm_error("LLM 服务未初始化，请先配置 API Key")
+                return
+            
+            if not config_manager:
+                if self.logger:
+                    self.logger.error("ConfigManager not available")
+                self._handle_llm_error("配置服务不可用")
+                return
+            
+            # 获取模型配置
+            model = config_manager.get("llm_model", "glm-4.7")
+            enable_thinking = config_manager.get("enable_thinking", True)
+            
+            # 获取消息历史（用于 LLM 调用）
+            messages = self.context_manager.get_messages_for_llm()
+            
+            # 注入系统提示词
+            messages = self._inject_system_prompt(messages)
+            
+            # 生成任务 ID
+            task_id = f"llm_{uuid.uuid4().hex[:8]}"
+            
+            # 连接 LLMExecutor 信号
+            llm_executor.stream_chunk.connect(self._on_llm_stream_chunk)
+            llm_executor.generation_complete.connect(self._on_llm_generation_complete)
+            llm_executor.generation_error.connect(self._on_llm_generation_error)
+            
+            # 使用 asyncio 调度 LLM 调用
+            loop = asyncio.get_event_loop()
+            loop.create_task(
+                llm_executor.generate(
+                    task_id=task_id,
+                    messages=messages,
+                    model=model,
+                    streaming=True,
+                    thinking=enable_thinking,
+                )
+            )
+            
+            if self.logger:
+                self.logger.info(f"LLM call triggered: task_id={task_id}, model={model}")
+                
+        except Exception as e:
+            if self.logger:
+                self.logger.error(f"Failed to trigger LLM call: {e}")
+            self._handle_llm_error(f"调用 LLM 失败: {e}")
+    
+    def _inject_system_prompt(
+        self,
+        messages: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """
+        注入系统提示词
+        
+        Args:
+            messages: 原始消息列表
+            
+        Returns:
+            注入系统提示词后的消息列表
+        """
+        try:
+            from shared.service_locator import ServiceLocator
+            from shared.service_names import SVC_SYSTEM_PROMPT_INJECTOR
+            
+            injector = ServiceLocator.get_optional(SVC_SYSTEM_PROMPT_INJECTOR)
+            if injector:
+                system_prompt = injector.get_system_prompt()
+                if system_prompt:
+                    # 检查是否已有系统消息
+                    if messages and messages[0].get("role") == "system":
+                        # 替换现有系统消息
+                        messages[0]["content"] = system_prompt
+                    else:
+                        # 插入系统消息到开头
+                        messages.insert(0, {
+                            "role": "system",
+                            "content": system_prompt
+                        })
+        except Exception as e:
+            if self.logger:
+                self.logger.warning(f"Failed to inject system prompt: {e}")
+        
+        return messages
+    
+    def _on_llm_stream_chunk(
+        self,
+        task_id: str,
+        chunk_type: str,
+        chunk_data: Dict[str, Any]
+    ) -> None:
+        """
+        处理 LLM 流式输出块
+        
+        Args:
+            task_id: 任务 ID
+            chunk_type: 块类型 ("reasoning" | "content")
+            chunk_data: 块数据
+        """
+        text = chunk_data.get("text", "")
+        if text:
+            self.append_stream_chunk(text, chunk_type)
+    
+    def _on_llm_generation_complete(
+        self,
+        task_id: str,
+        result: Dict[str, Any]
+    ) -> None:
+        """
+        处理 LLM 生成完成
+        
+        Args:
+            task_id: 任务 ID
+            result: 生成结果
+        """
+        # 断开信号连接（避免重复处理）
+        try:
+            from shared.service_locator import ServiceLocator
+            from shared.service_names import SVC_LLM_EXECUTOR
+            
+            llm_executor = ServiceLocator.get_optional(SVC_LLM_EXECUTOR)
+            if llm_executor:
+                llm_executor.stream_chunk.disconnect(self._on_llm_stream_chunk)
+                llm_executor.generation_complete.disconnect(self._on_llm_generation_complete)
+                llm_executor.generation_error.disconnect(self._on_llm_generation_error)
+        except Exception:
+            pass
+        
+        # 提取结果
+        content = result.get("content", "")
+        reasoning_content = result.get("reasoning_content", "")
+        usage = result.get("usage")
+        is_partial = result.get("is_partial", False)
+        
+        # 添加助手消息到 ContextManager
+        if self.context_manager and content:
+            self.context_manager.add_assistant_message(
+                content=content,
+                reasoning_content=reasoning_content,
+                usage=usage,
+            )
+        
+        # 更新状态
+        self._is_loading = False
+        self._current_stream_content = ""
+        self._current_reasoning_content = ""
+        
+        # 重置 StopController 状态为 IDLE
+        if self.stop_controller:
+            self.stop_controller.reset()
+        
+        # 从 ContextManager 重新加载消息
+        self.load_messages()
+        
+        # 自动保存会话
+        self._auto_save_session()
+        
+        # 发出信号
+        self.stream_finished.emit()
+        self.can_send_changed.emit(True)
+        
+        if self.logger:
+            self.logger.info(
+                f"LLM generation complete: task_id={task_id}, "
+                f"content_len={len(content)}, is_partial={is_partial}"
+            )
+    
+    def _on_llm_generation_error(self, task_id: str, error_msg: str) -> None:
+        """
+        处理 LLM 生成错误
+        
+        Args:
+            task_id: 任务 ID
+            error_msg: 错误消息
+        """
+        # 断开信号连接
+        try:
+            from shared.service_locator import ServiceLocator
+            from shared.service_names import SVC_LLM_EXECUTOR
+            
+            llm_executor = ServiceLocator.get_optional(SVC_LLM_EXECUTOR)
+            if llm_executor:
+                llm_executor.stream_chunk.disconnect(self._on_llm_stream_chunk)
+                llm_executor.generation_complete.disconnect(self._on_llm_generation_complete)
+                llm_executor.generation_error.disconnect(self._on_llm_generation_error)
+        except Exception:
+            pass
+        
+        self._handle_llm_error(error_msg)
+    
+    def _handle_llm_error(self, error_msg: str) -> None:
+        """
+        处理 LLM 错误
+        
+        Args:
+            error_msg: 错误消息
+        """
+        if self.logger:
+            self.logger.error(f"LLM error: {error_msg}")
+        
+        # 更新状态
+        self._is_loading = False
+        self._current_stream_content = ""
+        self._current_reasoning_content = ""
+        
+        # 重置 StopController
+        if self.stop_controller:
+            self.stop_controller.reset()
+        
+        # 发出信号
+        self.stream_finished.emit()
+        self.can_send_changed.emit(True)
+        
+        # 发布错误事件
+        if self.event_bus:
+            try:
+                from shared.event_types import EVENT_LLM_ERROR
+                self.event_bus.publish(EVENT_LLM_ERROR, {
+                    "error": error_msg,
+                    "source": "conversation_view_model",
+                })
+            except ImportError:
+                pass
     
     def add_assistant_message(
         self,
@@ -1352,7 +1596,8 @@ class ConversationViewModel(QObject):
                 self.context_manager.add_assistant_message(
                     content,
                     reasoning_content=self._current_reasoning_content,
-                    metadata={"is_partial": True, "stop_reason": reason}
+                    is_partial=True,
+                    stop_reason=reason,
                 )
             except Exception as e:
                 if self.logger:

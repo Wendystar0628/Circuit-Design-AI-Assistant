@@ -17,7 +17,7 @@ SDK 选择说明：
 
 API 文档参考：
 - https://open.bigmodel.cn/dev/api
-- https://zhipu-ef7018ed.mintlify.app/cn/guide/models/text/glm-4.6
+- https://docs.bigmodel.cn/cn/guide/models/text/glm-4.7
 """
 
 import logging
@@ -62,7 +62,7 @@ class ZhipuClient(BaseLLMClient):
     实现 BaseLLMClient 接口，提供智谱 GLM API 的访问能力。
     
     特性：
-    - 支持深度思考模式（GLM-4.6）
+    - 支持深度思考模式（GLM-4.7）
     - 支持流式输出
     - 支持工具调用
     - 支持多模态输入（图像）
@@ -95,7 +95,7 @@ class ZhipuClient(BaseLLMClient):
         Args:
             api_key: 智谱 API 密钥
             base_url: API 端点（默认 https://open.bigmodel.cn/api/paas/v4）
-            model: 默认模型名称（默认 glm-4.6）
+            model: 默认模型名称（默认 glm-4.7）
             timeout: 普通请求超时秒数（默认 60）
         """
         super().__init__(

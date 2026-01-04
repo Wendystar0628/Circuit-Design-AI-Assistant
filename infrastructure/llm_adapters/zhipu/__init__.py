@@ -14,9 +14,9 @@ SDK 选择说明：
 
 API 文档参考：
 - API 文档：https://open.bigmodel.cn/dev/api
-- GLM-4.6 模型：https://zhipu-ef7018ed.mintlify.app/cn/guide/models/text/glm-4.6
-- 深度思考：https://zhipu-ef7018ed.mintlify.app/cn/guide/capabilities/thinking
-- 流式输出：https://zhipu-ef7018ed.mintlify.app/cn/guide/capabilities/streaming
+- GLM-4.7 模型：https://docs.bigmodel.cn/cn/guide/models/text/glm-4.7
+- 深度思考：https://docs.bigmodel.cn/cn/guide/capabilities/thinking
+- 流式输出：https://docs.bigmodel.cn/cn/guide/capabilities/streaming
 - 上下文缓存：https://zhipu-ef7018ed.mintlify.app/cn/guide/capabilities/cache
 
 使用示例：

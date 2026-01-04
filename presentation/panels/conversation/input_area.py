@@ -740,7 +740,7 @@ class InputArea(QWidget):
         if self._model_card_btn is None:
             return
         
-        display_name = "GLM-4.6"  # 最终回退默认值
+        display_name = "GLM-4.7"  # 最终回退默认值
         
         try:
             # 1. 从 ConfigManager 获取当前配置的模型和厂商
@@ -750,7 +750,7 @@ class InputArea(QWidget):
             
             config_manager = ServiceLocator.get_optional(SVC_CONFIG_MANAGER)
             if config_manager:
-                model_name = config_manager.get(CONFIG_MODEL, "glm-4.6")
+                model_name = config_manager.get(CONFIG_MODEL, "glm-4.7")
                 provider = config_manager.get(CONFIG_LLM_PROVIDER, "zhipu")
                 
                 # 2. 通过 ModelRegistry 获取 display_name
@@ -762,7 +762,7 @@ class InputArea(QWidget):
                     display_name = model_config.display_name
                 else:
                     # 3. ModelRegistry 中不存在，格式化显示
-                    # 将 "glm-4.6v" 转换为 "GLM-4.6V"
+                    # 将 "glm-4.7" 转换为 "GLM-4.7"
                     display_name = model_name.upper().replace("GLM-", "GLM-")
         except Exception:
             pass

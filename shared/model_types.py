@@ -34,8 +34,8 @@ class ModelConfig:
     
     id: str                           # 模型唯一标识，格式: "provider:model_name"
     provider: str                     # 厂商 ID（如 "zhipu", "deepseek"）
-    name: str                         # 模型名称（如 "glm-4.6v"）
-    display_name: str                 # 显示名称（如 "GLM-4.6V"）
+    name: str                         # 模型名称（如 "glm-4.7"）
+    display_name: str                 # 显示名称（如 "GLM-4.7"）
     
     # ============================================================
     # 能力标志
@@ -74,7 +74,7 @@ class ModelConfig:
     # ============================================================
     
     # 当消息包含图片时，自动切换到的视觉模型 ID
-    # 例如 "glm-4.6" 设置为 "zhipu:glm-4.6v"
+    # 例如 "glm-4.7" 设置为 "zhipu:glm-4.6v"
     vision_fallback: Optional[str] = None
     
     # 是否为视觉模型（用于判断是否需要特殊处理）

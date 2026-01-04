@@ -11,7 +11,7 @@ Token 预算分配器 - 计算和管理各部分的 Token 预算
     from domain.llm.prompt_building.token_budget_allocator import TokenBudgetAllocator
     
     allocator = TokenBudgetAllocator()
-    budget = allocator.allocate(model="glm-4.6")
+    budget = allocator.allocate(model="glm-4.7")
 """
 
 import logging

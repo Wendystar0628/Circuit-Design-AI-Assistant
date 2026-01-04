@@ -34,7 +34,7 @@ def get_zhipu_models() -> List[str]:
         from shared.model_registry import ModelRegistry
         return ModelRegistry.list_model_names("zhipu")
     except Exception:
-        return ["glm-4.6", "glm-4.6v", "glm-4.6v-flash"]
+        return ["glm-4.7", "glm-4.6v", "glm-4.6v-flash"]
 
 # 搜索供应商列表
 # 智谱内置搜索：无需额外配置，使用 LLM 的 API Key
@@ -380,7 +380,7 @@ class ApiConfigDialog(QDialog):
         self._base_url_edit.setText(base_url if base_url else DEFAULT_BASE_URL)
         
         # 模型
-        model = self.config_manager.get("model", "GLM-4.6")
+        model = self.config_manager.get("model", "GLM-4.7")
         index = self._model_combo.findText(model)
         if index >= 0:
             self._model_combo.setCurrentIndex(index)

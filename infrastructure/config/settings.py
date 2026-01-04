@@ -107,7 +107,7 @@ COMPRESS_FALLBACK_NEW_CONVERSATION = True  # 压缩失败时是否建议开启�
 DEFAULT_TIMEOUT = 60                 # LLM API 普通请求超时秒数
 DEFAULT_STREAMING = True             # 默认启用流式输出
 DEFAULT_LLM_PROVIDER = ""            # 默认 LLM 提供者（空表示未配置）
-DEFAULT_MODEL = "glm-4.6"            # 默认模型名称
+DEFAULT_MODEL = "glm-4.7"            # 默认模型名称
 DEFAULT_BASE_URL = "https://open.bigmodel.cn/api/paas/v4"  # 智谱 API 默认端点
 
 # ============================================================
@@ -141,7 +141,7 @@ SUPPORTED_LLM_PROVIDERS = [
 PROVIDER_DEFAULTS = {
     LLM_PROVIDER_ZHIPU: {
         "base_url": "https://open.bigmodel.cn/api/paas/v4",
-        "default_model": "glm-4.6",
+        "default_model": "glm-4.7",
         "supports_web_search": True,  # 厂商专属联网搜索
         "requires_api_key": True,     # 需要 API Key
         "implemented": True,

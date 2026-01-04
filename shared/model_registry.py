@@ -20,7 +20,7 @@
     config = ModelRegistry.get_current_model()
     
     # 切换模型
-    ModelRegistry.set_current_model("zhipu:glm-4.6v")
+    ModelRegistry.set_current_model("zhipu:glm-4.7")
     
     # 查询模型能力
     if config.supports_thinking:

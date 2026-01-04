@@ -727,7 +727,7 @@ def _init_llm_client():
     """
     初始化 LLM 客户端（可选）
     
-    根据配置创建 LLM 客户端并注册到 ServiceLocator。
+    根据配置创建 LLM 客户端并注册到 ServiceLocator 和 ExternalServiceManager。
     如果配置不完整（如 API Key 未设置），则跳过初始化。
     """
     global _logger
@@ -738,6 +738,8 @@ def _init_llm_client():
             SVC_CONFIG_MANAGER,
             SVC_CREDENTIAL_MANAGER,
             SVC_LLM_CLIENT,
+            SVC_EXTERNAL_SERVICE_MANAGER,
+            SVC_LLM_EXECUTOR,
         )
         from infrastructure.config.settings import LLM_PROVIDER_ZHIPU
         
@@ -771,6 +773,10 @@ def _init_llm_client():
         # 根据厂商创建客户端
         if provider == LLM_PROVIDER_ZHIPU:
             from infrastructure.llm_adapters.zhipu import ZhipuClient
+            from domain.llm.external_service_manager import (
+                ExternalServiceManager,
+                SERVICE_LLM_ZHIPU,
+            )
             
             client = ZhipuClient(
                 api_key=api_key,
@@ -778,10 +784,23 @@ def _init_llm_client():
                 model=model if model else None,
                 timeout=timeout,
             )
+            
+            # 注册到 ServiceLocator（供直接访问）
             ServiceLocator.register(SVC_LLM_CLIENT, client)
+            
+            # 创建并注册 ExternalServiceManager
+            external_service_manager = ExternalServiceManager()
+            external_service_manager.register_service(SERVICE_LLM_ZHIPU, client)
+            ServiceLocator.register(SVC_EXTERNAL_SERVICE_MANAGER, external_service_manager)
+            
+            # 创建并注册 LLMExecutor
+            from domain.llm.llm_executor import LLMExecutor
+            llm_executor = LLMExecutor()
+            ServiceLocator.register(SVC_LLM_EXECUTOR, llm_executor)
             
             if _logger:
                 _logger.info(f"Phase 3.6 LLM 客户端初始化完成：{provider}, model={model or 'default'}")
+                _logger.info("Phase 3.6 ExternalServiceManager 和 LLMExecutor 已注册")
         else:
             if _logger:
                 _logger.warning(f"Phase 3.6 LLM 客户端初始化跳过：厂商 {provider} 暂未实现")

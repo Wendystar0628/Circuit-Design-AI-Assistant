@@ -141,6 +141,9 @@ EVENT_LLM_CHUNK = "llm_chunk"
 # LLM 完成
 EVENT_LLM_COMPLETE = "llm_complete"
 
+# LLM 错误
+EVENT_LLM_ERROR = "llm_error"
+
 # LLM 工具调用
 EVENT_LLM_TOOL_CALL = "llm_tool_call"
 
@@ -716,6 +719,7 @@ __all__ = [
     # LLM 事件
     "EVENT_LLM_CHUNK",
     "EVENT_LLM_COMPLETE",
+    "EVENT_LLM_ERROR",
     "EVENT_LLM_TOOL_CALL",
     "EVENT_LLM_CLIENT_REINITIALIZED",
     "EVENT_MODEL_CHANGED",

@@ -120,8 +120,9 @@ class ContextManager:
         operations: Optional[List[str]] = None,
         reasoning_content: str = "",
         usage: Optional[Dict[str, int]] = None,
-        metadata: Optional[Dict[str, Any]] = None,
         web_search_results: Optional[List[Dict[str, Any]]] = None,
+        is_partial: bool = False,
+        stop_reason: str = "",
     ) -> Dict[str, Any]:
         """
         添加消息到状态
@@ -134,8 +135,9 @@ class ContextManager:
             operations: 操作摘要（仅助手消息）
             reasoning_content: 思考内容（仅助手消息）
             usage: Token 使用统计（仅助手消息）
-            metadata: 额外元数据
             web_search_results: 联网搜索结果（仅助手消息）
+            is_partial: 是否为部分响应
+            stop_reason: 停止原因
             
         Returns:
             更新后的状态副本
@@ -148,8 +150,9 @@ class ContextManager:
             operations=operations,
             reasoning_content=reasoning_content,
             usage=usage,
-            metadata=metadata,
             web_search_results=web_search_results,
+            is_partial=is_partial,
+            stop_reason=stop_reason,
         )
     
     def get_messages(
@@ -201,7 +204,8 @@ class ContextManager:
         Returns:
             LangChain 消息列表
         """
-        return self._message_store.get_langchain_messages(state, limit)
+        # MessageStore.get_messages 已经返回 LangChain 消息
+        return self._message_store.get_messages(state, limit)
     
     def classify_messages(
         self,
@@ -525,6 +529,8 @@ class ContextManager:
         tool_calls: Optional[List[Dict[str, Any]]] = None,
         usage: Optional[Dict[str, Any]] = None,
         web_search_results: Optional[List[Dict[str, Any]]] = None,
+        is_partial: bool = False,
+        stop_reason: str = "",
     ) -> None:
         """
         添加助手消息（有状态版本，供 UI 层使用）
@@ -535,6 +541,8 @@ class ContextManager:
             tool_calls: 工具调用列表
             usage: Token 使用统计
             web_search_results: 联网搜索结果
+            is_partial: 是否为部分响应
+            stop_reason: 停止原因
         """
         state = self._get_internal_state()
         
@@ -553,6 +561,8 @@ class ContextManager:
             operations=operations if operations else None,
             usage=usage,
             web_search_results=web_search_results,
+            is_partial=is_partial,
+            stop_reason=stop_reason,
         )
         self._set_internal_state(new_state)
         

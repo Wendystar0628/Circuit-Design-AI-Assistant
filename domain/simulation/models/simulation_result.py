@@ -174,7 +174,8 @@ class SimulationResult:
         raw_output: 原始输出（调试用）
         timestamp: ISO 格式时间戳
         duration_seconds: 执行耗时（秒）
-        version: 版本号，每次仿真递增
+        version: 版本号，对应 GraphState.iteration_count + 1
+        session_id: 所属会话 ID（用于追踪）
     """
     
     executor: str
@@ -208,7 +209,29 @@ class SimulationResult:
     """执行耗时（秒）"""
     
     version: int = 1
-    """版本号，每次仿真递增，用于验证数据新鲜度"""
+    """
+    版本号，对应 GraphState.iteration_count + 1
+    
+    作用域：单个会话（session）内的同一电路文件
+    递增规则：每次仿真后自动递增
+    用途：
+    - 追踪优化迭代过程（第 1 次、第 2 次...）
+    - 验证数据新鲜度（防止使用过期缓存）
+    - 支持历史对比（对比不同版本的性能）
+    - 文件命名（如 run_001.json, run_002.json）
+    
+    注意：version 由 SimulationService 根据 GraphState.iteration_count 自动计算
+    """
+    
+    session_id: str = ""
+    """
+    所属会话 ID（格式 YYYYMMDD_HHMMSS）
+    
+    用途：
+    - 关联仿真结果到具体会话
+    - 支持跨会话的结果查询
+    - 便于清理过期数据
+    """
     
     # ============================================================
     # 序列化方法
@@ -233,6 +256,7 @@ class SimulationResult:
             "timestamp": self.timestamp,
             "duration_seconds": self.duration_seconds,
             "version": self.version,
+            "session_id": self.session_id,
         }
     
     @classmethod
@@ -251,8 +275,21 @@ class SimulationResult:
         if data.get("data") is not None:
             sim_data = SimulationData.from_dict(data["data"])
         
-        # 反序列化错误信息（暂时作为字符串处理，后续集成 SimulationError 时更新）
-        error = data.get("error")
+        # 反序列化错误信息
+        error = None
+        error_data = data.get("error")
+        if error_data is not None:
+            if isinstance(error_data, dict):
+                # 尝试反序列化为 SimulationError
+                try:
+                    from domain.simulation.models.simulation_error import SimulationError
+                    error = SimulationError.from_dict(error_data)
+                except (KeyError, ValueError, ImportError):
+                    # 反序列化失败，保留原始字典
+                    error = error_data
+            else:
+                # 字符串或其他类型，直接保留
+                error = error_data
         
         return cls(
             executor=data["executor"],
@@ -266,6 +303,7 @@ class SimulationResult:
             timestamp=data.get("timestamp", datetime.now().isoformat()),
             duration_seconds=data.get("duration_seconds", 0.0),
             version=data.get("version", 1),
+            session_id=data.get("session_id", ""),
         )
     
     # ============================================================
@@ -359,13 +397,14 @@ class SimulationResult:
             str: 结果摘要
         """
         status = "成功" if self.success else "失败"
+        session_info = f", session={self.session_id}" if self.session_id else ""
         return (
             f"SimulationResult(executor={self.executor}, "
             f"file={self.file_path}, "
             f"type={self.analysis_type}, "
             f"status={status}, "
             f"duration={self.duration_seconds:.2f}s, "
-            f"version={self.version})"
+            f"version={self.version}{session_info})"
         )
 
 
@@ -381,7 +420,8 @@ def create_success_result(
     metrics: Optional[Dict[str, Any]] = None,
     raw_output: Optional[str] = None,
     duration_seconds: float = 0.0,
-    version: int = 1
+    version: int = 1,
+    session_id: str = ""
 ) -> SimulationResult:
     """
     创建成功的仿真结果
@@ -394,7 +434,8 @@ def create_success_result(
         metrics: 性能指标（可选）
         raw_output: 原始输出（可选）
         duration_seconds: 执行耗时
-        version: 版本号
+        version: 版本号（应从 GraphState.iteration_count + 1 计算）
+        session_id: 会话 ID（应从 GraphState.session_id 获取）
         
     Returns:
         SimulationResult: 成功的仿真结果
@@ -411,6 +452,7 @@ def create_success_result(
         timestamp=datetime.now().isoformat(),
         duration_seconds=duration_seconds,
         version=version,
+        session_id=session_id,
     )
 
 
@@ -421,7 +463,8 @@ def create_error_result(
     error: Any,
     raw_output: Optional[str] = None,
     duration_seconds: float = 0.0,
-    version: int = 1
+    version: int = 1,
+    session_id: str = ""
 ) -> SimulationResult:
     """
     创建失败的仿真结果
@@ -433,7 +476,8 @@ def create_error_result(
         error: 错误信息（SimulationError 或字符串）
         raw_output: 原始输出（可选）
         duration_seconds: 执行耗时
-        version: 版本号
+        version: 版本号（应从 GraphState.iteration_count + 1 计算）
+        session_id: 会话 ID（应从 GraphState.session_id 获取）
         
     Returns:
         SimulationResult: 失败的仿真结果
@@ -450,6 +494,7 @@ def create_error_result(
         timestamp=datetime.now().isoformat(),
         duration_seconds=duration_seconds,
         version=version,
+        session_id=session_id,
     )
 
 

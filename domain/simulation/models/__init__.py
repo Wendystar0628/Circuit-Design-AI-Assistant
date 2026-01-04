@@ -13,12 +13,34 @@
 - 支持 JSON 序列化
 """
 
-from circuit_design_ai.domain.simulation.models.simulation_result import (
+from domain.simulation.models.simulation_error import (
+    ErrorSeverity,
+    SimulationError,
+    SimulationErrorType,
+    create_convergence_error,
+    create_model_missing_error,
+    create_syntax_error,
+    create_timeout_error,
+)
+from domain.simulation.models.simulation_result import (
     SimulationData,
     SimulationResult,
+    create_error_result,
+    create_success_result,
 )
 
 __all__ = [
+    # Simulation Result
     "SimulationData",
     "SimulationResult",
+    "create_success_result",
+    "create_error_result",
+    # Simulation Error
+    "SimulationError",
+    "SimulationErrorType",
+    "ErrorSeverity",
+    "create_syntax_error",
+    "create_model_missing_error",
+    "create_convergence_error",
+    "create_timeout_error",
 ]

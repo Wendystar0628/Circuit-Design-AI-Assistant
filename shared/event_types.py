@@ -235,18 +235,73 @@ EVENT_WEB_SEARCH_ERROR = "web_search_error"
 # ============================================================
 
 # 仿真开始
+# 携带数据：
+#   - circuit_file: str - 电路文件路径
+#   - simulation_type: str - 仿真类型（"transient", "ac", "dc", "noise" 等）
+#   - config: dict - 仿真配置参数
 EVENT_SIM_STARTED = "sim_started"
 
+# 仿真进度
+# 携带数据：
+#   - progress: float - 进度百分比（0.0-1.0）
+#   - current_step: str - 当前步骤描述
+#   - elapsed_seconds: float - 已用时间（秒）
+#   - estimated_remaining: float - 预计剩余时间（秒，可选）
+EVENT_SIM_PROGRESS = "sim_progress"
+
 # 仿真完成
+# 携带数据：
+#   - result_path: str - 结果文件路径
+#   - metrics: dict - 性能指标摘要
+#   - duration_seconds: float - 总耗时（秒）
 EVENT_SIM_COMPLETE = "sim_complete"
 
 # 仿真错误
+# 携带数据：
+#   - error_type: str - 错误类型
+#   - error_message: str - 错误信息
+#   - file: str - 错误文件（可选）
+#   - line: int - 错误行号（可选）
+#   - recoverable: bool - 是否可恢复
 EVENT_SIM_ERROR = "sim_error"
 
+# 仿真取消
+# 携带数据：
+#   - reason: str - 取消原因（"user_requested", "timeout", "error"）
+#   - partial_result_path: str - 部分结果文件路径（若有）
+EVENT_SIM_CANCELLED = "sim_cancelled"
+
+# 仿真暂停
+# 携带数据：
+#   - progress: float - 暂停时的进度
+#   - state_snapshot: str - 状态快照路径（用于恢复）
+EVENT_SIM_PAUSED = "sim_paused"
+
+# 仿真恢复
+# 携带数据：
+#   - resumed_from: float - 恢复时的进度
+EVENT_SIM_RESUMED = "sim_resumed"
+
+# 仿真配置变更
+# 携带数据：
+#   - config_key: str - 变更的配置项
+#   - old_value: Any - 旧值
+#   - new_value: Any - 新值
+EVENT_SIM_CONFIG_CHANGED = "sim_config_changed"
+
 # 主电路变更
+# 携带数据：
+#   - old_path: str - 旧主电路路径（可选）
+#   - new_path: str - 新主电路路径
+#   - detection_method: str - 检测方式（"auto", "user_selected"）
 EVENT_MAIN_CIRCUIT_CHANGED = "main_circuit_changed"
 
 # 电路分析完成
+# 携带数据：
+#   - circuit_file: str - 电路文件路径
+#   - analysis_type: str - 分析类型
+#   - components: dict - 元件统计
+#   - topology: str - 拓扑类型（若识别）
 EVENT_CIRCUIT_ANALYSIS_COMPLETE = "circuit_analysis_complete"
 
 # 仿真需要用户选择主电路（检测到多个候选）
@@ -308,6 +363,84 @@ EVENT_WAVEFORM_DATA_READY = "waveform_data_ready"
 #   - levels: list - 生成的分辨率层级列表
 #   - build_time_ms: float - 构建耗时（毫秒）
 EVENT_PYRAMID_BUILD_COMPLETE = "pyramid_build_complete"
+
+# ============================================================
+# 高级仿真事件（PVT/蒙特卡洛/参数扫描）
+# ============================================================
+
+# PVT 角点仿真完成
+# 携带数据：
+#   - corner_name: str - 角点名称（如 "TT", "FF", "SS"）
+#   - process: str - 工艺角（"typical", "fast", "slow"）
+#   - voltage: float - 电压值
+#   - temperature: float - 温度值
+#   - result_path: str - 该角点结果文件路径
+#   - metrics: dict - 该角点性能指标
+#   - corner_index: int - 当前角点索引
+#   - total_corners: int - 总角点数
+EVENT_PVT_CORNER_COMPLETE = "sim_pvt_corner_complete"
+
+# 蒙特卡洛单次运行完成
+# 携带数据：
+#   - run_index: int - 当前运行索引
+#   - total_runs: int - 总运行次数
+#   - seed: int - 随机种子
+#   - result_path: str - 该次运行结果文件路径
+#   - metrics: dict - 该次运行性能指标
+EVENT_MONTE_CARLO_RUN_COMPLETE = "sim_monte_carlo_run_complete"
+
+# 参数扫描点完成
+# 携带数据：
+#   - param_name: str - 参数名称
+#   - param_value: float - 当前参数值
+#   - point_index: int - 当前扫描点索引
+#   - total_points: int - 总扫描点数
+#   - result_path: str - 该扫描点结果文件路径
+#   - metrics: dict - 该扫描点性能指标
+EVENT_SWEEP_POINT_COMPLETE = "sim_sweep_point_complete"
+
+# ============================================================
+# 电路图事件
+# ============================================================
+
+# 电路图加载完成
+# 携带数据：
+#   - source_file: str - 源网表文件路径
+#   - element_count: int - 元件数量
+#   - connection_count: int - 连接数量
+#   - layout_algorithm: str - 使用的布局算法
+EVENT_SCHEMATIC_LOADED = "schematic_loaded"
+
+# 电路图元件选中
+# 携带数据：
+#   - element_id: str - 元件 ID
+#   - element_type: str - 元件类型（"R", "C", "L", "M", "X" 等）
+#   - element_name: str - 元件名称
+#   - properties: dict - 元件属性
+#   - source_line: int - 网表中的行号
+EVENT_SCHEMATIC_ELEMENT_SELECTED = "schematic_element_selected"
+
+# 电路图元件悬停
+# 携带数据：
+#   - element_id: str - 元件 ID
+#   - element_type: str - 元件类型
+#   - element_name: str - 元件名称
+#   - position: tuple - 鼠标位置 (x, y)
+EVENT_SCHEMATIC_ELEMENT_HOVERED = "schematic_element_hovered"
+
+# 跳转到源码
+# 携带数据：
+#   - file_path: str - 文件路径
+#   - line_number: int - 行号
+#   - element_name: str - 元件名称
+EVENT_SCHEMATIC_JUMP_TO_SOURCE = "schematic_jump_to_source"
+
+# 电路图缩放变更
+# 携带数据：
+#   - zoom_level: float - 缩放级别
+#   - center_x: float - 视图中心 X
+#   - center_y: float - 视图中心 Y
+EVENT_SCHEMATIC_ZOOM_CHANGED = "schematic_zoom_changed"
 
 # ============================================================
 # RAG 事件
@@ -736,8 +869,13 @@ __all__ = [
     "EVENT_WEB_SEARCH_ERROR",
     # 仿真事件
     "EVENT_SIM_STARTED",
+    "EVENT_SIM_PROGRESS",
     "EVENT_SIM_COMPLETE",
     "EVENT_SIM_ERROR",
+    "EVENT_SIM_CANCELLED",
+    "EVENT_SIM_PAUSED",
+    "EVENT_SIM_RESUMED",
+    "EVENT_SIM_CONFIG_CHANGED",
     "EVENT_MAIN_CIRCUIT_CHANGED",
     "EVENT_CIRCUIT_ANALYSIS_COMPLETE",
     "EVENT_SIMULATION_NEED_SELECTION",
@@ -749,6 +887,16 @@ __all__ = [
     "EVENT_WAVEFORM_DATA_REQUESTED",
     "EVENT_WAVEFORM_DATA_READY",
     "EVENT_PYRAMID_BUILD_COMPLETE",
+    # 高级仿真事件
+    "EVENT_PVT_CORNER_COMPLETE",
+    "EVENT_MONTE_CARLO_RUN_COMPLETE",
+    "EVENT_SWEEP_POINT_COMPLETE",
+    # 电路图事件
+    "EVENT_SCHEMATIC_LOADED",
+    "EVENT_SCHEMATIC_ELEMENT_SELECTED",
+    "EVENT_SCHEMATIC_ELEMENT_HOVERED",
+    "EVENT_SCHEMATIC_JUMP_TO_SOURCE",
+    "EVENT_SCHEMATIC_ZOOM_CHANGED",
     # RAG 事件
     "EVENT_RAG_INDEX_STARTED",
     "EVENT_RAG_INDEX_PROGRESS",

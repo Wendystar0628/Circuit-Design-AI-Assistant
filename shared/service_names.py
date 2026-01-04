@@ -155,6 +155,9 @@ SVC_PROMPT_TEMPLATE_MANAGER = "prompt_template_manager"
 # 身份提示词管理器 - 自由工作模式身份提示词
 SVC_IDENTITY_PROMPT_MANAGER = "identity_prompt_manager"
 
+# 系统提示词注入器 - 系统提示词的唯一注入点
+SVC_SYSTEM_PROMPT_INJECTOR = "system_prompt_injector"
+
 # 外部服务管理器 - API 调用熔断和重试
 SVC_EXTERNAL_SERVICE_MANAGER = "external_service_manager"
 
@@ -224,6 +227,7 @@ __all__ = [
     "SVC_SESSION_STATE_MANAGER",
     "SVC_PROMPT_TEMPLATE_MANAGER",
     "SVC_IDENTITY_PROMPT_MANAGER",
+    "SVC_SYSTEM_PROMPT_INJECTOR",
     "SVC_EXTERNAL_SERVICE_MANAGER",
     "SVC_ITERATION_HISTORY_SERVICE",
     "SVC_VECTOR_STORE",

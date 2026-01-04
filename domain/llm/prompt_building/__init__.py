@@ -3,13 +3,17 @@
 Prompt 构建模块组
 
 职责：
-- 动态构建发送给 LLM 的完整提示词
+- 构建上下文信息（不含身份提示词）
 - 管理 Token 预算分配
 - 格式化各种上下文数据
 - 处理文件内容（截断、摘要）
 
+⚠️ 职责变更：
+- 身份提示词的注入已迁移到 SystemPromptInjector
+- PromptBuilder 仅负责任务模板和上下文格式化
+
 模块结构：
-- prompt_builder.py           - 门面类，协调各子模块
+- prompt_builder.py           - 门面类，协调各子模块（不含身份提示词）
 - token_budget_allocator.py   - Token 预算分配
 - context_formatter.py        - 各种上下文的格式化
 - file_content_processor.py   - 文件内容处理（截断、摘要）

@@ -1,21 +1,25 @@
 # Prompt Builder - Dynamic Prompt Construction Facade
 """
-提示词构建器 - 门面类，协调各子模块构建完整提示词
+提示词构建器 - 门面类，协调各子模块构建上下文和任务模板
 
 职责：
 - 作为统一入口协调各子模块
-- 按优先级组装最终 Prompt
+- 按优先级组装上下文信息（不含身份提示词）
 - 管理构建流程
+
+⚠️ 职责变更：
+- PromptBuilder 不再负责系统角色定义（身份提示词）
+- 身份提示词的注入已迁移到 SystemPromptInjector
+- 本类仅负责任务模板和上下文格式化
 
 使用示例：
     from domain.llm.prompt_building import PromptBuilder
-    from domain.llm.prompt_constants import PROMPT_EXTRACT_DESIGN_GOALS
     
     builder = PromptBuilder()
-    result = builder.build_prompt(
-        template_name=PROMPT_EXTRACT_DESIGN_GOALS,
+    result = builder.build_context(
         context={"circuit_type": "amplifier"},
-        user_message="Design a 20dB amplifier"
+        user_message="Design a 20dB amplifier",
+        project_path="/path/to/project"
     )
 """
 
@@ -30,24 +34,6 @@ from domain.llm.prompt_building.token_budget_allocator import (
 )
 from domain.llm.prompt_building.context_formatter import ContextFormatter
 from domain.llm.prompt_building.file_content_processor import FileContentProcessor
-
-
-# ============================================================
-# 常量定义
-# ============================================================
-
-# 系统角色定义
-SYSTEM_ROLE_DEFINITION = """You are an expert analog circuit design assistant. Your role is to help users design, analyze, and optimize electronic circuits using SPICE simulation.
-
-Key capabilities:
-- Extract design requirements and goals from user descriptions
-- Generate SPICE netlists for various circuit topologies
-- Analyze simulation results and compare with design targets
-- Suggest parameter optimizations to improve circuit performance
-- Debug and fix circuit errors (syntax, convergence, floating nodes)
-- Explain circuit concepts and design trade-offs
-
-Always provide clear, accurate, and practical guidance."""
 
 
 # ============================================================
@@ -83,20 +69,21 @@ class PromptBuilder:
     
     职责：
     - 作为统一入口协调各子模块
-    - 按优先级组装最终 Prompt
+    - 按优先级组装上下文信息（不含身份提示词）
+    
+    ⚠️ 注意：身份提示词由 SystemPromptInjector 负责注入
     
     组装顺序（按优先级从高到低）：
-    1. 系统角色定义
-    2. 诊断信息
-    3. 隐式上下文
-    4. 依赖文件上下文
-    5. 结构化对话摘要
-    6. 联网搜索结果
-    7. RAG 检索上下文
-    8. 近期对话历史
-    9. 用户手动选择的文件
-    10. 任务特定模板
-    11. 用户消息
+    1. 诊断信息
+    2. 隐式上下文
+    3. 依赖文件上下文
+    4. 结构化对话摘要
+    5. 联网搜索结果
+    6. RAG 检索上下文
+    7. 近期对话历史
+    8. 用户手动选择的文件
+    9. 任务特定模板（可选）
+    10. 用户消息
     """
     
     def __init__(
@@ -166,9 +153,8 @@ class PromptBuilder:
     # 主构建方法
     # ============================================================
     
-    def build_prompt(
+    def build_context(
         self,
-        template_name: str,
         context: Optional[Dict[str, Any]] = None,
         user_message: str = "",
         project_path: Optional[str] = None,
@@ -176,10 +162,11 @@ class PromptBuilder:
         model: Optional[str] = None
     ) -> BuildResult:
         """
-        构建完整提示词
+        构建上下文信息（不含身份提示词）
+        
+        此方法供 SystemPromptInjector 调用，构建 Layer 2 上下文
         
         Args:
-            template_name: 模板名称常量
             context: 模板变量上下文
             user_message: 用户消息
             project_path: 项目路径
@@ -187,7 +174,7 @@ class PromptBuilder:
             model: 模型名称
             
         Returns:
-            BuildResult 包含完整 prompt 和构建信息
+            BuildResult 包含上下文内容和构建信息
         """
         context = context or {}
         model = model or self._model
@@ -200,11 +187,11 @@ class PromptBuilder:
         used_tokens: Dict[str, int] = {}
         truncated: List[str] = []
         
-        # 按优先级收集各部分
-        self._collect_all_sections(
+        # 按优先级收集各部分（不含身份提示词）
+        self._collect_context_sections(
             sections, used_tokens, truncated,
             budget, context, user_message, project_path,
-            template_name, include_retrieval
+            include_retrieval
         )
         
         # 重新分配未使用的预算
@@ -224,7 +211,33 @@ class PromptBuilder:
             truncated_sections=truncated
         )
     
-    def _collect_all_sections(
+    def build_task_template(
+        self,
+        template_name: str,
+        context: Optional[Dict[str, Any]] = None
+    ) -> Optional[str]:
+        """
+        构建任务模板部分
+        
+        Args:
+            template_name: 模板名称常量
+            context: 模板变量上下文
+            
+        Returns:
+            任务模板内容，失败返回 None
+        """
+        manager = self._get_prompt_template_manager()
+        if not manager:
+            return None
+        
+        try:
+            content = manager.get_template(template_name, variables=context or {})
+            return content
+        except Exception as e:
+            self._logger.warning(f"Failed to get template {template_name}: {e}")
+            return None
+    
+    def _collect_context_sections(
         self,
         sections: List[PromptSection],
         used_tokens: Dict[str, int],
@@ -233,44 +246,38 @@ class PromptBuilder:
         context: Dict[str, Any],
         user_message: str,
         project_path: Optional[str],
-        template_name: str,
         include_retrieval: bool
     ) -> None:
-        """收集所有 Prompt 部分"""
+        """收集所有上下文部分（不含身份提示词）"""
         
-        # 1. 系统角色定义（优先级 1）
-        system_section = self._build_system_section(budget.system_prompt)
-        sections.append(system_section)
-        used_tokens["system_prompt"] = system_section.token_count
-        
-        # 2. 诊断信息（优先级 2）
+        # 1. 诊断信息（优先级 1）
         if include_retrieval and project_path:
             diag_section = self._build_diagnostics_section(project_path, budget.diagnostics)
             if diag_section:
                 sections.append(diag_section)
                 used_tokens["diagnostics"] = diag_section.token_count
         
-        # 3. 隐式上下文（优先级 3）
+        # 2. 隐式上下文（优先级 2）
         if include_retrieval and project_path:
             implicit_section = self._build_implicit_context_section(project_path, budget.implicit_context)
             if implicit_section:
                 sections.append(implicit_section)
                 used_tokens["implicit_context"] = implicit_section.token_count
         
-        # 4. 依赖文件（优先级 4）
+        # 3. 依赖文件（优先级 3）
         if include_retrieval and project_path:
             dep_section = self._build_dependency_section(project_path, budget.dependencies)
             if dep_section:
                 sections.append(dep_section)
                 used_tokens["dependencies"] = dep_section.token_count
         
-        # 5. 结构化摘要（优先级 5）
+        # 4. 结构化摘要（优先级 4）
         summary_section = self._build_summary_section(budget.summary)
         if summary_section:
             sections.append(summary_section)
             used_tokens["summary"] = summary_section.token_count
         
-        # 6. 联网搜索结果（优先级 6）
+        # 5. 联网搜索结果（优先级 5）
         web_results = context.get("web_search_results")
         if web_results:
             web_section = self._build_web_search_section(web_results, budget.web_search)
@@ -278,20 +285,20 @@ class PromptBuilder:
                 sections.append(web_section)
                 used_tokens["web_search"] = web_section.token_count
         
-        # 7. RAG 检索结果（优先级 7）
+        # 6. RAG 检索结果（优先级 6）
         if include_retrieval and project_path:
             rag_section = self._build_rag_section(user_message, project_path, budget.rag_results)
             if rag_section:
                 sections.append(rag_section)
                 used_tokens["rag_results"] = rag_section.token_count
         
-        # 8. 对话历史（优先级 8）
+        # 7. 对话历史（优先级 7）
         conv_section = self._build_conversation_section(budget.conversation)
         if conv_section:
             sections.append(conv_section)
             used_tokens["conversation"] = conv_section.token_count
         
-        # 9. 用户手动选择的文件（优先级 9）
+        # 8. 用户手动选择的文件（优先级 8）
         user_files = context.get("user_files", [])
         if user_files:
             files_section = self._build_user_files_section(user_files, budget.user_files)
@@ -299,41 +306,19 @@ class PromptBuilder:
                 sections.append(files_section)
                 used_tokens["user_files"] = files_section.token_count
         
-        # 10. 任务特定模板（优先级 10）
-        template_section = self._build_template_section(template_name, context)
-        if template_section:
-            sections.append(template_section)
-        
-        # 11. 用户消息（优先级 11）
+        # 9. 用户消息（优先级 9）
         if user_message:
             user_section = PromptSection(
                 name="user_message",
                 content=f"\n## User Message\n{user_message}",
                 token_count=count_tokens(user_message) + 10,
-                priority=11
+                priority=9
             )
             sections.append(user_section)
-
     
     # ============================================================
     # 各部分构建方法
     # ============================================================
-    
-    def _build_system_section(self, budget: int) -> PromptSection:
-        """构建系统角色定义部分"""
-        content = SYSTEM_ROLE_DEFINITION
-        token_count = count_tokens(content)
-        
-        if token_count > budget:
-            content = self._file_processor.truncate_to_budget(content, budget)
-            token_count = budget
-        
-        return PromptSection(
-            name="system_role",
-            content=content,
-            token_count=token_count,
-            priority=1
-        )
     
     def _build_diagnostics_section(self, project_path: str, budget: int) -> Optional[PromptSection]:
         """
@@ -377,7 +362,7 @@ class PromptBuilder:
                 name="diagnostics",
                 content=content,
                 token_count=token_count,
-                priority=2
+                priority=1
             )
         except Exception as e:
             self._logger.warning(f"Failed to build diagnostics section: {e}")
@@ -426,7 +411,7 @@ class PromptBuilder:
                 name="summary",
                 content=content,
                 token_count=token_count,
-                priority=5
+                priority=4
             )
         except Exception as e:
             self._logger.debug(f"No summary available: {e}")
@@ -448,7 +433,7 @@ class PromptBuilder:
             name="web_search",
             content=content,
             token_count=token_count,
-            priority=6
+            priority=5
         )
     
     def _build_rag_section(self, query: str, project_path: str, budget: int) -> Optional[PromptSection]:
@@ -478,7 +463,7 @@ class PromptBuilder:
                 name="rag_results",
                 content=content,
                 token_count=token_count,
-                priority=7
+                priority=6
             )
         except Exception as e:
             self._logger.warning(f"Failed to build RAG section: {e}")
@@ -506,7 +491,7 @@ class PromptBuilder:
                 name="conversation",
                 content=content,
                 token_count=token_count,
-                priority=8
+                priority=7
             )
         except Exception as e:
             self._logger.debug(f"No conversation history: {e}")
@@ -524,31 +509,11 @@ class PromptBuilder:
             name="user_files",
             content=content,
             token_count=token_count,
-            priority=9
+            priority=8
         )
     
-    def _build_template_section(self, template_name: str, context: Dict[str, Any]) -> Optional[PromptSection]:
-        """构建任务特定模板部分"""
-        manager = self._get_prompt_template_manager()
-        if not manager:
-            return None
-        
-        try:
-            content = manager.get_template(template_name, variables=context)
-            token_count = count_tokens(content)
-            
-            return PromptSection(
-                name="task_template",
-                content=f"\n## Task Instructions\n{content}",
-                token_count=token_count + 10,
-                priority=10
-            )
-        except Exception as e:
-            self._logger.warning(f"Failed to get template {template_name}: {e}")
-            return None
-    
     # ============================================================
-    # 便捷方法（向后兼容）
+    # 便捷方法
     # ============================================================
     
     def allocate_token_budget(self, model: Optional[str] = None) -> TokenBudget:
@@ -564,5 +529,4 @@ __all__ = [
     "PromptBuilder",
     "PromptSection",
     "BuildResult",
-    "SYSTEM_ROLE_DEFINITION",
 ]

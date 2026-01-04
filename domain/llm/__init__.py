@@ -197,6 +197,20 @@ from domain.llm.prompt_building import (
     FileContentProcessor,
 )
 
+# 系统提示词注入器
+from domain.llm.system_prompt_injector import (
+    SystemPromptInjector,
+    InjectionResult,
+    LAYER_SEPARATOR,
+    LAYER_MARKERS,
+)
+
+# 身份提示词管理器
+from domain.llm.identity_prompt_manager import (
+    IdentityPromptManager,
+    IdentityPrompt,
+)
+
 # 外部服务管理器
 from domain.llm.external_service_manager import (
     ExternalServiceManager,
@@ -344,6 +358,14 @@ __all__ = [
     "TokenBudgetAllocator",
     "ContextFormatter",
     "FileContentProcessor",
+    # 系统提示词注入器
+    "SystemPromptInjector",
+    "InjectionResult",
+    "LAYER_SEPARATOR",
+    "LAYER_MARKERS",
+    # 身份提示词管理器
+    "IdentityPromptManager",
+    "IdentityPrompt",
     # 外部服务管理器
     "ExternalServiceManager",
     "ServiceCallResult",

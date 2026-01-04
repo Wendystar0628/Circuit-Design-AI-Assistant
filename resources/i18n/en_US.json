@@ -236,5 +236,33 @@
   "dialog.select_image.title": "Select Image",
   "dialog.select_file.title": "Select File",
 
-  "error.image_too_large": "Image size exceeds {size}MB limit"
+  "error.image_too_large": "Image size exceeds {size}MB limit",
+
+  "dialog.prompt_editor.title": "Prompt Template Manager",
+  "dialog.prompt_editor.template_list": "Template List",
+  "dialog.prompt_editor.content": "Template Content",
+  "dialog.prompt_editor.variables": "Variables",
+  "dialog.prompt_editor.name": "Name",
+  "dialog.prompt_editor.source": "Source",
+  "dialog.prompt_editor.description": "Description",
+  "dialog.prompt_editor.legend": "● Built-in  ○ Custom  * Modified",
+  "dialog.prompt_editor.source_builtin": "Built-in",
+  "dialog.prompt_editor.source_custom": "Custom",
+  "dialog.prompt_editor.source_fallback": "Fallback",
+  "dialog.prompt_editor.save": "Save Current",
+  "dialog.prompt_editor.save_all": "Save All",
+  "dialog.prompt_editor.reset": "Reset to Default",
+  "dialog.prompt_editor.insert_variable": "Insert Variable",
+  "dialog.prompt_editor.variable_hint": "Double-click or select and click button to insert",
+  "dialog.prompt_editor.required_variable": "Required variable",
+  "dialog.prompt_editor.optional_variable": "Optional variable",
+  "dialog.prompt_editor.content_placeholder": "Edit template content here...\nUse {variable_name} format to insert variables",
+  "dialog.prompt_editor.init_failed": "Failed to load template data",
+  "dialog.prompt_editor.save_failed": "Save failed",
+  "dialog.prompt_editor.reset_confirm": "Are you sure you want to reset this template to built-in default?",
+  "dialog.prompt_editor.unsaved_changes": "There are unsaved changes. Are you sure you want to close?",
+  "dialog.prompt_editor.import_error": "Failed to load Prompt Editor module",
+
+  "menu.settings.prompt_editor": "Prompt Template Manager...",
+  "menu.settings.prompt_editor_tip": "Manage and edit LLM prompt templates"
 }

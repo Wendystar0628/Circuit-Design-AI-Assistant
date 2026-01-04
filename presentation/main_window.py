@@ -361,6 +361,9 @@ class MainWindow(QMainWindow):
         # 添加对话历史回调
         callbacks["on_show_history"] = self._on_show_history_dialog
         
+        # 添加 Prompt 编辑器回调
+        callbacks["on_prompt_editor"] = self._on_prompt_editor_triggered
+        
         # 添加面板切换回调
         callbacks["on_toggle_panel"] = self._on_toggle_panel
         
@@ -759,6 +762,28 @@ class MainWindow(QMainWindow):
         
         if self._session_manager:
             self._session_manager.set_current_session_name(name)
+
+    def _on_prompt_editor_triggered(self):
+        """显示 Prompt 模板编辑器对话框"""
+        try:
+            from presentation.dialogs.prompt_editor import PromptEditorDialog
+            dialog = PromptEditorDialog(self)
+            dialog.exec()
+        except ImportError as e:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.warning(
+                self,
+                self._get_text("dialog.warning.title", "Warning"),
+                self._get_text(
+                    "dialog.prompt_editor.import_error",
+                    "Failed to load Prompt Editor module."
+                )
+            )
+            if self.logger:
+                self.logger.error(f"Failed to import PromptEditorDialog: {e}")
+        except Exception as e:
+            if self.logger:
+                self.logger.error(f"Failed to open prompt editor dialog: {e}")
 
     # ============================================================
     # 公共接口

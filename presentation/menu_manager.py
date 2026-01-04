@@ -96,6 +96,10 @@ class MenuManager:
         self._menus["model"] = menubar.addMenu("")
         self._setup_model_menu()
         
+        # 设置菜单
+        self._menus["settings"] = menubar.addMenu("")
+        self._setup_settings_menu()
+        
         # 工具菜单
         self._menus["tools"] = menubar.addMenu("")
         self._setup_tools_menu()
@@ -294,6 +298,24 @@ class MenuManager:
             self._actions["model_config"].triggered.connect(self._callbacks["on_api_config"])
         menu.addAction(self._actions["model_config"])
 
+    def _setup_settings_menu(self) -> None:
+        """设置设置菜单"""
+        menu = self._menus["settings"]
+        
+        # Prompt 模板管理
+        self._actions["settings_prompt_editor"] = QAction(self._main_window)
+        self._actions["settings_prompt_editor"].setToolTip(
+            self._get_text(
+                "menu.settings.prompt_editor_tip",
+                "管理和编辑 LLM 提示词模板"
+            )
+        )
+        if "on_prompt_editor" in self._callbacks:
+            self._actions["settings_prompt_editor"].triggered.connect(
+                self._callbacks["on_prompt_editor"]
+            )
+        menu.addAction(self._actions["settings_prompt_editor"])
+
     def _setup_tools_menu(self) -> None:
         """设置工具菜单"""
         menu = self._menus["tools"]
@@ -388,6 +410,7 @@ class MenuManager:
         self._menus["simulation"].setTitle(self._get_text("menu.simulation", "Simulation"))
         self._menus["knowledge"].setTitle(self._get_text("menu.knowledge", "Knowledge Base"))
         self._menus["model"].setTitle(self._get_text("menu.model", "Model"))
+        self._menus["settings"].setTitle(self._get_text("menu.settings", "Settings"))
         self._menus["tools"].setTitle(self._get_text("menu.tools", "Tools"))
         self._menus["language"].setTitle(self._get_text("menu.language", "Language"))
         self._menus["help"].setTitle(self._get_text("menu.help", "Help"))
@@ -449,6 +472,11 @@ class MenuManager:
         # 模型菜单项
         self._actions["model_config"].setText(
             self._get_text("menu.model.config", "Model Configuration")
+        )
+        
+        # 设置菜单项
+        self._actions["settings_prompt_editor"].setText(
+            self._get_text("menu.settings.prompt_editor", "Prompt Template Manager...")
         )
         
         # 工具菜单项

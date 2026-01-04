@@ -236,5 +236,33 @@
   "dialog.select_image.title": "选择图片",
   "dialog.select_file.title": "选择文件",
 
-  "error.image_too_large": "图片大小超过 {size}MB 限制"
+  "error.image_too_large": "图片大小超过 {size}MB 限制",
+
+  "dialog.prompt_editor.title": "Prompt 模板管理",
+  "dialog.prompt_editor.template_list": "模板列表",
+  "dialog.prompt_editor.content": "模板内容",
+  "dialog.prompt_editor.variables": "变量",
+  "dialog.prompt_editor.name": "名称",
+  "dialog.prompt_editor.source": "来源",
+  "dialog.prompt_editor.description": "描述",
+  "dialog.prompt_editor.legend": "● 内置  ○ 自定义  * 已修改",
+  "dialog.prompt_editor.source_builtin": "内置",
+  "dialog.prompt_editor.source_custom": "自定义",
+  "dialog.prompt_editor.source_fallback": "回退",
+  "dialog.prompt_editor.save": "保存当前",
+  "dialog.prompt_editor.save_all": "保存全部",
+  "dialog.prompt_editor.reset": "重置为默认",
+  "dialog.prompt_editor.insert_variable": "插入变量",
+  "dialog.prompt_editor.variable_hint": "双击或选中后点击按钮插入变量",
+  "dialog.prompt_editor.required_variable": "必需变量",
+  "dialog.prompt_editor.optional_variable": "可选变量",
+  "dialog.prompt_editor.content_placeholder": "在此编辑模板内容...\n使用 {variable_name} 格式插入变量",
+  "dialog.prompt_editor.init_failed": "无法加载模板数据",
+  "dialog.prompt_editor.save_failed": "保存失败",
+  "dialog.prompt_editor.reset_confirm": "确定要将此模板重置为内置默认吗？",
+  "dialog.prompt_editor.unsaved_changes": "有未保存的修改，确定要关闭吗？",
+  "dialog.prompt_editor.import_error": "无法加载 Prompt 编辑器模块",
+
+  "menu.settings.prompt_editor": "Prompt 模板管理...",
+  "menu.settings.prompt_editor_tip": "管理和编辑 LLM 提示词模板"
 }

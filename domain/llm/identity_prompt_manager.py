@@ -4,22 +4,25 @@
 
 职责：
 - 管理自由工作模式的身份提示词加载、保存和重置
+- 管理变量定义和变量填充
 - 身份提示词作为高层级固定系统提示，类似 Cursor Rules
 
 设计原则：
 - 与 PromptTemplateManager 职责分离，专注身份提示词管理
 - 支持用户自定义覆盖内置默认
+- 支持变量系统，与工作流模式保持一致
 - 原子写入策略确保数据安全
 """
 
 import json
 import logging
 import os
+import re
 import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
@@ -30,6 +33,8 @@ class IdentityPrompt:
     name: str
     description: str
     content: str
+    variables: List[str]
+    required_variables: List[str]
     is_custom: bool
     created_at: datetime
     updated_at: datetime
@@ -58,6 +63,8 @@ class IdentityPrompt:
             name=identity.get("name", "身份提示词"),
             description=identity.get("description", ""),
             content=identity.get("content", ""),
+            variables=identity.get("variables", []),
+            required_variables=identity.get("required_variables", []),
             is_custom=metadata.get("is_custom", False),
             created_at=created_dt,
             updated_at=updated_dt,
@@ -72,6 +79,8 @@ class IdentityPrompt:
                 "name": self.name,
                 "description": self.description,
                 "content": self.content,
+                "variables": self.variables,
+                "required_variables": self.required_variables,
                 "metadata": {
                     "created_at": self.created_at.isoformat(),
                     "updated_at": self.updated_at.isoformat(),
@@ -89,11 +98,13 @@ class IdentityPromptManager(QObject):
         prompt_loaded: 提示词加载完成
         prompt_saved: 提示词保存完成
         prompt_reset: 提示词重置完成
+        variables_changed: 变量列表变化
     """
     
     prompt_loaded = pyqtSignal()
     prompt_saved = pyqtSignal(bool, str)  # success, message
     prompt_reset = pyqtSignal()
+    variables_changed = pyqtSignal()
     
     # 内置默认提示词路径
     BUILTIN_PATH = "resources/prompts/identity_prompt.json"
@@ -106,6 +117,9 @@ class IdentityPromptManager(QObject):
         "You are an expert analog circuit design assistant. "
         "Help users design, analyze, and optimize circuits using SPICE simulation."
     )
+    
+    # 变量占位符正则表达式
+    VARIABLE_PATTERN = re.compile(r'\{([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*)\}')
     
     def __init__(self, parent: Optional[QObject] = None):
         super().__init__(parent)
@@ -168,6 +182,8 @@ class IdentityPromptManager(QObject):
             name="身份提示词",
             description="回退默认",
             content=self.FALLBACK_CONTENT,
+            variables=[],
+            required_variables=[],
             is_custom=False,
             created_at=datetime.now(),
             updated_at=datetime.now(),
@@ -214,8 +230,12 @@ class IdentityPromptManager(QObject):
             self._logger.warning(f"加载内置提示词失败: {e}")
             return None
     
+    # ============================================================
+    # 内容管理方法
+    # ============================================================
+    
     def get_identity_prompt(self) -> str:
-        """获取当前身份提示词内容"""
+        """获取当前身份提示词内容（原始模板，含占位符）"""
         if self._current_prompt:
             return self._current_prompt.content
         return self.FALLBACK_CONTENT
@@ -224,12 +244,88 @@ class IdentityPromptManager(QObject):
         """获取完整身份提示词对象"""
         return self._current_prompt
     
-    def save_custom(self, content: str) -> bool:
+    def get_identity_prompt_filled(self, variables: Dict[str, Any]) -> str:
+        """
+        获取填充变量后的身份提示词内容
+        
+        Args:
+            variables: 变量名到值的映射
+            
+        Returns:
+            填充后的内容
+        """
+        content = self.get_identity_prompt()
+        return self._fill_variables(content, variables)
+    
+    def _fill_variables(self, content: str, variables: Dict[str, Any]) -> str:
+        """
+        填充变量占位符
+        
+        Args:
+            content: 原始内容
+            variables: 变量值字典
+            
+        Returns:
+            填充后的内容
+        """
+        def replace_var(match):
+            var_path = match.group(1)
+            value = self._get_nested_value(variables, var_path)
+            
+            if value is None:
+                # 检查是否为必需变量
+                if self._current_prompt and var_path in self._current_prompt.required_variables:
+                    self._logger.warning(f"必需变量 '{var_path}' 未提供")
+                return ""
+            
+            # 复杂对象序列化为 JSON
+            if isinstance(value, (dict, list)):
+                return json.dumps(value, ensure_ascii=False, indent=2)
+            
+            return str(value)
+        
+        return self.VARIABLE_PATTERN.sub(replace_var, content)
+    
+    def _get_nested_value(self, data: Dict[str, Any], path: str) -> Any:
+        """
+        获取嵌套属性值
+        
+        Args:
+            data: 数据字典
+            path: 属性路径（如 "obj.attr"）
+            
+        Returns:
+            属性值，不存在返回 None
+        """
+        parts = path.split(".")
+        current = data
+        
+        for part in parts:
+            if isinstance(current, dict):
+                current = current.get(part)
+            elif hasattr(current, part):
+                current = getattr(current, part)
+            else:
+                return None
+            
+            if current is None:
+                return None
+        
+        return current
+    
+    def save_custom(
+        self,
+        content: str,
+        variables: Optional[List[str]] = None,
+        required_variables: Optional[List[str]] = None
+    ) -> bool:
         """
         保存用户自定义身份提示词
         
         Args:
             content: 提示词内容
+            variables: 变量列表（None 表示保持不变）
+            required_variables: 必需变量列表（None 表示保持不变）
             
         Returns:
             是否保存成功
@@ -243,12 +339,20 @@ class IdentityPromptManager(QObject):
             custom_path = self._user_config_dir / self.CUSTOM_RELATIVE_PATH
             custom_path.parent.mkdir(parents=True, exist_ok=True)
             
+            # 确定变量列表
+            if variables is None:
+                variables = self._current_prompt.variables if self._current_prompt else []
+            if required_variables is None:
+                required_variables = self._current_prompt.required_variables if self._current_prompt else []
+            
             # 创建新的提示词对象
             now = datetime.now()
             new_prompt = IdentityPrompt(
                 name="自由工作模式身份提示词",
                 description="用户自定义身份提示词",
                 content=content,
+                variables=variables,
+                required_variables=required_variables,
                 is_custom=True,
                 created_at=self._current_prompt.created_at if self._current_prompt else now,
                 updated_at=now,
@@ -333,6 +437,124 @@ class IdentityPromptManager(QObject):
         if self._current_prompt:
             return self._current_prompt.source
         return "fallback"
+    
+    # ============================================================
+    # 变量管理方法
+    # ============================================================
+    
+    def get_variables(self) -> List[str]:
+        """获取可用变量列表"""
+        if self._current_prompt:
+            return self._current_prompt.variables.copy()
+        return []
+    
+    def get_required_variables(self) -> List[str]:
+        """获取必需变量列表"""
+        if self._current_prompt:
+            return self._current_prompt.required_variables.copy()
+        return []
+    
+    def add_variable(self, name: str, required: bool = False) -> bool:
+        """
+        添加变量
+        
+        Args:
+            name: 变量名
+            required: 是否为必需变量
+            
+        Returns:
+            是否添加成功
+        """
+        if not self._current_prompt:
+            return False
+        
+        # 验证变量名格式
+        if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', name):
+            self._logger.warning(f"无效的变量名: {name}")
+            return False
+        
+        # 检查是否已存在
+        if name in self._current_prompt.variables:
+            self._logger.warning(f"变量已存在: {name}")
+            return False
+        
+        # 添加变量
+        self._current_prompt.variables.append(name)
+        if required and name not in self._current_prompt.required_variables:
+            self._current_prompt.required_variables.append(name)
+        
+        self.variables_changed.emit()
+        return True
+    
+    def remove_variable(self, name: str) -> bool:
+        """
+        移除变量
+        
+        Args:
+            name: 变量名
+            
+        Returns:
+            是否移除成功
+        """
+        if not self._current_prompt:
+            return False
+        
+        if name not in self._current_prompt.variables:
+            return False
+        
+        self._current_prompt.variables.remove(name)
+        if name in self._current_prompt.required_variables:
+            self._current_prompt.required_variables.remove(name)
+        
+        self.variables_changed.emit()
+        return True
+    
+    def set_variable_required(self, name: str, required: bool) -> bool:
+        """
+        设置变量是否必需
+        
+        Args:
+            name: 变量名
+            required: 是否必需
+            
+        Returns:
+            是否设置成功
+        """
+        if not self._current_prompt:
+            return False
+        
+        if name not in self._current_prompt.variables:
+            return False
+        
+        if required:
+            if name not in self._current_prompt.required_variables:
+                self._current_prompt.required_variables.append(name)
+        else:
+            if name in self._current_prompt.required_variables:
+                self._current_prompt.required_variables.remove(name)
+        
+        self.variables_changed.emit()
+        return True
+    
+    def validate_variables(self, provided: Dict[str, Any]) -> tuple[bool, List[str]]:
+        """
+        校验提供的变量是否满足必需要求
+        
+        Args:
+            provided: 提供的变量字典
+            
+        Returns:
+            (是否通过, 缺失的必需变量列表)
+        """
+        if not self._current_prompt:
+            return True, []
+        
+        missing = []
+        for var in self._current_prompt.required_variables:
+            if var not in provided or provided[var] is None:
+                missing.append(var)
+        
+        return len(missing) == 0, missing
 
 
 __all__ = [

@@ -4,25 +4,26 @@
 
 职责：
 - 提供自由工作模式身份提示词的编辑界面
-- 支持变量管理（添加、删除、设置必需）
+- 支持变量管理（添加、删除）
 - 支持保存、重置操作
 - 显示当前状态（系统默认/用户自定义）
 
 设计原则：
 - 复用 PromptContentEditor 和 PromptVariablePanel 组件
-- 与 IdentityPromptManager 交互
-- 与工作流模式保持一致的用户体验
+- 变量面板直接嵌入，不使用外层 GroupBox，节省空间
+- 变量以横向按钮块形式显示
 """
 
 import logging
+import re
 from typing import List, Optional
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QFrame, QMessageBox, QInputDialog,
-    QSplitter, QGroupBox
+    QGroupBox
 )
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import pyqtSignal
 
 from .prompt_content_editor import PromptContentEditor
 from .prompt_variable_panel import PromptVariablePanel
@@ -67,16 +68,16 @@ class IdentityPromptTab(QWidget):
         self._connect_signals()
     
     def _setup_ui(self) -> None:
-        """初始化 UI"""
+        """初始化 UI - 紧凑布局"""
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(12)
+        layout.setSpacing(8)
         
         # 说明区域
         desc_frame = self._create_description_frame()
         layout.addWidget(desc_frame)
         
-        # 状态标签
+        # 状态行
         status_layout = QHBoxLayout()
         status_layout.setContentsMargins(0, 0, 0, 0)
         
@@ -93,10 +94,7 @@ class IdentityPromptTab(QWidget):
         status_layout.addStretch()
         layout.addLayout(status_layout)
         
-        # 主编辑区（分割器）
-        splitter = QSplitter(Qt.Orientation.Vertical)
-        
-        # 内容编辑器
+        # 内容编辑器（带标题）
         editor_group = QGroupBox(self._get_text(
             "dialog.identity_prompt.content",
             "提示词内容"
@@ -105,19 +103,14 @@ class IdentityPromptTab(QWidget):
         editor_layout.setContentsMargins(8, 12, 8, 8)
         
         self._content_editor = PromptContentEditor()
-        self._content_editor.set_variable_highlight_enabled(True)  # 启用变量高亮
+        self._content_editor.set_variable_highlight_enabled(True)
         editor_layout.addWidget(self._content_editor)
         
-        splitter.addWidget(editor_group)
+        layout.addWidget(editor_group, 1)  # 编辑器占据主要空间
         
-        # 变量面板
-        variable_group = self._create_variable_group()
-        splitter.addWidget(variable_group)
-        
-        # 设置分割比例
-        splitter.setSizes([400, 150])
-        
-        layout.addWidget(splitter, 1)
+        # 变量区域 - 直接嵌入，不使用 GroupBox
+        variable_section = self._create_variable_section()
+        layout.addWidget(variable_section)
         
         # 底部工具栏
         toolbar_layout = self._create_toolbar()
@@ -159,6 +152,56 @@ class IdentityPromptTab(QWidget):
         
         return frame
     
+    def _create_variable_section(self) -> QWidget:
+        """
+        创建变量区域 - 紧凑布局
+        
+        不使用 GroupBox，直接显示变量按钮和管理按钮
+        """
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+        
+        # 变量面板（横向流式布局，带标签）
+        self._variable_panel = PromptVariablePanel(show_label=True)
+        layout.addWidget(self._variable_panel)
+        
+        # 变量管理按钮行
+        btn_layout = QHBoxLayout()
+        btn_layout.setContentsMargins(0, 0, 0, 0)
+        btn_layout.setSpacing(8)
+        
+        self._add_var_btn = QPushButton(self._get_text(
+            "dialog.identity_prompt.add_variable",
+            "+ 添加变量"
+        ))
+        self._add_var_btn.setFixedHeight(28)
+        self._add_var_btn.clicked.connect(self._on_add_variable)
+        btn_layout.addWidget(self._add_var_btn)
+        
+        self._remove_var_btn = QPushButton(self._get_text(
+            "dialog.identity_prompt.remove_variable",
+            "- 删除变量"
+        ))
+        self._remove_var_btn.setFixedHeight(28)
+        self._remove_var_btn.clicked.connect(self._on_remove_variable)
+        btn_layout.addWidget(self._remove_var_btn)
+        
+        btn_layout.addStretch()
+        
+        # 提示文本
+        hint_label = QLabel(self._get_text(
+            "dialog.identity_prompt.variable_hint",
+            "使用 {变量名} 格式在提示词中引用变量，运行时将自动填充实际值"
+        ))
+        hint_label.setStyleSheet("color: #888; font-size: 11px;")
+        btn_layout.addWidget(hint_label)
+        
+        layout.addLayout(btn_layout)
+        
+        return widget
+    
     def _create_toolbar(self) -> QHBoxLayout:
         """创建底部工具栏"""
         layout = QHBoxLayout()
@@ -184,63 +227,11 @@ class IdentityPromptTab(QWidget):
         
         return layout
     
-    def _create_variable_group(self) -> QGroupBox:
-        """创建变量管理区域"""
-        group = QGroupBox(self._get_text(
-            "dialog.identity_prompt.variables",
-            "可用变量"
-        ))
-        layout = QVBoxLayout(group)
-        layout.setContentsMargins(8, 12, 8, 8)
-        layout.setSpacing(8)
-        
-        # 变量面板
-        self._variable_panel = PromptVariablePanel()
-        layout.addWidget(self._variable_panel)
-        
-        # 变量管理按钮
-        btn_layout = QHBoxLayout()
-        btn_layout.setContentsMargins(0, 0, 0, 0)
-        
-        self._add_var_btn = QPushButton(self._get_text(
-            "dialog.identity_prompt.add_variable",
-            "+ 添加变量"
-        ))
-        self._add_var_btn.clicked.connect(self._on_add_variable)
-        btn_layout.addWidget(self._add_var_btn)
-        
-        self._remove_var_btn = QPushButton(self._get_text(
-            "dialog.identity_prompt.remove_variable",
-            "- 删除变量"
-        ))
-        self._remove_var_btn.setEnabled(False)
-        self._remove_var_btn.clicked.connect(self._on_remove_variable)
-        btn_layout.addWidget(self._remove_var_btn)
-        
-        btn_layout.addStretch()
-        
-        layout.addLayout(btn_layout)
-        
-        # 提示文本
-        hint_label = QLabel(self._get_text(
-            "dialog.identity_prompt.variable_hint",
-            "使用 {变量名} 格式在提示词中引用变量，运行时将自动填充实际值"
-        ))
-        hint_label.setStyleSheet("color: #888; font-size: 11px;")
-        hint_label.setWordWrap(True)
-        layout.addWidget(hint_label)
-        
-        return group
-    
     def _connect_signals(self) -> None:
         """连接信号"""
         self._content_editor.content_changed.connect(self._on_content_changed)
         self._variable_panel.variable_insert_requested.connect(
             self._content_editor.insert_variable
-        )
-        # 连接变量面板的选择变化信号（用于启用/禁用删除按钮）
-        self._variable_panel._variable_list.itemSelectionChanged.connect(
-            self._on_variable_selection_changed
         )
     
     def _get_text(self, key: str, default: str) -> str:
@@ -408,11 +399,6 @@ class IdentityPromptTab(QWidget):
             self._is_dirty = new_dirty
             self.dirty_state_changed.emit(new_dirty)
     
-    def _on_variable_selection_changed(self) -> None:
-        """变量选择变化处理"""
-        has_selection = len(self._variable_panel._variable_list.selectedItems()) > 0
-        self._remove_var_btn.setEnabled(has_selection)
-    
     def _on_add_variable(self) -> None:
         """添加变量"""
         name, ok = QInputDialog.getText(
@@ -425,7 +411,6 @@ class IdentityPromptTab(QWidget):
             return
         
         # 验证变量名格式
-        import re
         if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', name):
             QMessageBox.warning(
                 self,
@@ -460,14 +445,30 @@ class IdentityPromptTab(QWidget):
         self.variables_changed.emit()
     
     def _on_remove_variable(self) -> None:
-        """删除变量"""
-        items = self._variable_panel._variable_list.selectedItems()
-        if not items:
+        """删除变量 - 弹出选择对话框"""
+        if not self._current_variables:
+            QMessageBox.information(
+                self,
+                self._get_text("dialog.info.title", "提示"),
+                self._get_text(
+                    "dialog.identity_prompt.no_variables_to_remove",
+                    "没有可删除的变量"
+                )
+            )
             return
         
-        # 获取变量名
-        from PyQt6.QtCore import Qt
-        var_name = items[0].data(Qt.ItemDataRole.UserRole)
+        # 弹出选择对话框
+        var_name, ok = QInputDialog.getItem(
+            self,
+            self._get_text("dialog.identity_prompt.remove_variable_title", "删除变量"),
+            self._get_text("dialog.identity_prompt.remove_variable_prompt", "选择要删除的变量："),
+            self._current_variables,
+            0,
+            False
+        )
+        
+        if not ok or not var_name:
+            return
         
         # 确认删除
         reply = QMessageBox.question(
@@ -537,10 +538,7 @@ class IdentityPromptTab(QWidget):
         """更新字符计数"""
         content = self._content_editor.get_content()
         count = len(content)
-        self._char_count_label.setText(self._get_text(
-            "dialog.identity_prompt.char_count",
-            f"字符数: {count}"
-        ).replace("0", str(count)))
+        self._char_count_label.setText(f"字符数: {count}")
 
 
 __all__ = ["IdentityPromptTab"]

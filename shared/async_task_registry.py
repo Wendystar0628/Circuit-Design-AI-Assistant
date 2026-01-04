@@ -221,7 +221,8 @@ class AsyncTaskRegistry(QObject):
         # 取消所有运行中的任务
         cancelled_count = self.cancel_all()
         
-        # 通知 StopController 开始清理
+        # 通知 StopController 开始清理（仅在有任务被取消时）
+        # mark_stopping() 会检查状态，非 STOP_REQUESTED 状态下会静默返回
         if self.stop_controller and cancelled_count > 0:
             self.stop_controller.mark_stopping()
         
@@ -483,6 +484,7 @@ class AsyncTaskRegistry(QObject):
                     self.logger.debug(f"Saving partial index progress for task '{task_id}'")
             
             # 通知 StopController 清理完成
+            # mark_stopping() 会检查状态，非 STOP_REQUESTED 状态下会静默返回
             if self.stop_controller:
                 self.stop_controller.mark_stopping()
             

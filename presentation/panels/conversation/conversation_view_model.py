@@ -140,6 +140,7 @@ class ConversationViewModel(QObject):
         
         # 停止控制相关
         self._stop_controller = None
+        self._current_task_id: Optional[str] = None  # 当前 LLM 任务 ID
         
         # 延迟获取的服务
         self._context_manager = None
@@ -569,17 +570,19 @@ class ConversationViewModel(QObject):
         """
         开始流式输出
         
-        设置加载状态，清空流式缓冲区，并注册任务到 StopController。
+        设置加载状态，清空流式缓冲区，生成任务 ID 并注册到 StopController。
+        任务 ID 会保存到 _current_task_id，供 _trigger_llm_call() 使用。
         """
         self._is_loading = True
         self._current_stream_content = ""
         self._current_reasoning_content = ""
         
+        # 生成任务 ID 并保存
+        self._current_task_id = f"llm_{uuid.uuid4().hex[:8]}"
+        
         # 注册任务到 StopController，允许用户停止
         if self.stop_controller:
-            import uuid
-            task_id = f"llm_{uuid.uuid4().hex[:8]}"
-            self.stop_controller.register_task(task_id)
+            self.stop_controller.register_task(self._current_task_id)
         
         self.can_send_changed.emit(False)
     
@@ -772,8 +775,8 @@ class ConversationViewModel(QObject):
             # 注入系统提示词
             messages = self._inject_system_prompt(messages)
             
-            # 生成任务 ID
-            task_id = f"llm_{uuid.uuid4().hex[:8]}"
+            # 使用 start_streaming() 中生成的任务 ID
+            task_id = self._current_task_id or f"llm_{uuid.uuid4().hex[:8]}"
             
             # 连接 LLMExecutor 信号
             llm_executor.stream_chunk.connect(self._on_llm_stream_chunk)
@@ -896,6 +899,7 @@ class ConversationViewModel(QObject):
         self._is_loading = False
         self._current_stream_content = ""
         self._current_reasoning_content = ""
+        self._current_task_id = None  # 清除任务 ID
         
         # 重置 StopController 状态为 IDLE
         if self.stop_controller:
@@ -954,6 +958,7 @@ class ConversationViewModel(QObject):
         self._is_loading = False
         self._current_stream_content = ""
         self._current_reasoning_content = ""
+        self._current_task_id = None  # 清除任务 ID
         
         # 重置 StopController
         if self.stop_controller:
@@ -1557,6 +1562,7 @@ class ConversationViewModel(QObject):
         self._current_stream_content = ""
         self._current_reasoning_content = ""
         self._is_loading = False
+        self._current_task_id = None  # 清除任务 ID
         
         # 重置 StopController 状态为 IDLE，允许新任务注册
         if self.stop_controller:

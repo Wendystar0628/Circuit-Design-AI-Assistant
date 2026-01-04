@@ -321,19 +321,29 @@ class StopController(QObject):
         """
         return self._stop_event.wait(timeout)
     
-    def mark_stopping(self) -> None:
+    def mark_stopping(self) -> bool:
         """
         标记正在停止（资源清理中）
         
         由执行器在开始清理资源时调用。
+        
+        Returns:
+            bool: 是否成功标记为 STOPPING 状态
+        
+        Note:
+            在非 STOP_REQUESTED 状态下调用是正常的竞态情况（如任务已完成或未注册），
+            此时静默返回 False，不打印警告。
+            
+            常见的正常竞态场景：
+            - 任务未通过 register_task() 注册就被停止
+            - 任务已经完成，状态已重置为 IDLE
+            - 多个组件同时响应停止事件，第一个已经完成状态转换
         """
         with self._lock:
             if self._state != StopState.STOP_REQUESTED:
-                if self.logger:
-                    self.logger.warning(
-                        f"mark_stopping called in unexpected state: {self._state.value}"
-                    )
-                return
+                # 非预期状态是正常的竞态情况，静默返回
+                # 不打印警告，因为这是预期的行为
+                return False
             
             old_state = self._state
             self._state = StopState.STOPPING
@@ -349,8 +359,10 @@ class StopController(QObject):
             "old_state": old_state.value,
             "new_state": self._state.value
         })
+        
+        return True
     
-    def mark_stopped(self, result: Optional[Dict[str, Any]] = None) -> None:
+    def mark_stopped(self, result: Optional[Dict[str, Any]] = None) -> bool:
         """
         标记停止完成
         
@@ -358,17 +370,21 @@ class StopController(QObject):
         
         Args:
             result: 停止结果，包含部分结果、清理状态等
+            
+        Returns:
+            bool: 是否成功标记为 STOPPED 状态
+        
+        Note:
+            在非 STOP_REQUESTED/STOPPING 状态下调用是正常的竞态情况，
+            此时静默返回 False。
         """
         with self._lock:
             # 取消超时定时器（3.0.10）
             self._cancel_timeout_timer()
             
             if self._state not in (StopState.STOP_REQUESTED, StopState.STOPPING):
-                if self.logger:
-                    self.logger.warning(
-                        f"mark_stopped called in unexpected state: {self._state.value}"
-                    )
-                return
+                # 非预期状态是正常的竞态情况，静默返回
+                return False
             
             old_state = self._state
             self._state = StopState.STOPPED
@@ -403,6 +419,8 @@ class StopController(QObject):
         self._emit_state_changed(self._state.value)
         self._emit_stop_completed(task_id, stop_result)
         self._publish_event("EVENT_STOP_COMPLETED", task_id, stop_result)
+        
+        return True
     
     def reset(self) -> None:
         """

@@ -293,6 +293,7 @@ class LLMExecutor(QObject):
                 await self.throttler.flush_all(task_id)
             
             # 通知 StopController
+            # mark_stopping() 会检查状态，非 STOP_REQUESTED 状态下会静默返回
             if self.stop_controller:
                 self.stop_controller.mark_stopping()
                 self.stop_controller.mark_stopped({
@@ -494,6 +495,7 @@ class LLMExecutor(QObject):
             self.generation_complete.emit(task_id, partial_result)
             
             # 通知 StopController
+            # mark_stopping() 会检查状态，非 STOP_REQUESTED 状态下会静默返回
             if self.stop_controller:
                 self.stop_controller.mark_stopping()
                 self.stop_controller.mark_stopped({
@@ -748,6 +750,7 @@ class LLMExecutor(QObject):
                         self.logger.warning(f"Failed to close stream generator: {e}")
             
             # 通知 StopController（如果是通过停止检查点触发的）
+            # mark_stopping() 会检查状态，非 STOP_REQUESTED 状态下会静默返回
             if self.stop_controller:
                 self.stop_controller.mark_stopping()
                 self.stop_controller.mark_stopped({

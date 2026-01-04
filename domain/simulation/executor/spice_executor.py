@@ -13,11 +13,15 @@ SPICE 仿真执行器
 - ngspice 在同一进程内执行，不需要启动独立子进程
 - 这种模式性能更高，但需要确保 ngspice 共享库路径正确配置
 
+路径解析策略：
+- 采用工作目录切换方案，利用 ngspice 原生的相对路径解析能力
+- 仿真执行前切换到电路文件所在目录，ngspice 自动基于该目录解析 .include/.lib 引用
+- 无需生成临时文件或修改网表内容
+
 职责精简说明：
 - ngspice 路径配置委托给 ngspice_config
 - 错误解析委托给 SpiceErrorParser（后续实现）
 - 错误恢复委托给 SpiceErrorRecovery（后续实现）
-- 路径预处理委托给 PathPreprocessor（后续实现）
 - 本模块专注于仿真执行核心逻辑
 
 使用示例：
@@ -42,10 +46,11 @@ SPICE 仿真执行器
 """
 
 import logging
+import os
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar
 
 import numpy as np
 
@@ -91,6 +96,9 @@ SUPPORTED_ANALYSES = ["ac", "dc", "tran", "noise", "op"]
 # 默认超时时间（秒）
 DEFAULT_TIMEOUT = 300
 
+# 泛型类型变量（用于 _execute_with_working_directory）
+T = TypeVar('T')
+
 
 # ============================================================
 # SpiceExecutor - SPICE 仿真执行器
@@ -107,7 +115,11 @@ class SpiceExecutor(SimulationExecutor):
     - 共享库模式：ngspice 在同一进程内执行，性能更高
     - 标准化结果：返回统一的 SimulationResult 数据结构
     - 错误处理：捕获并解析 ngspice 错误，提供恢复建议
-    - 路径预处理：处理 .include/.lib 路径（委托给 PathPreprocessor）
+    - 工作目录切换：自动切换到电路文件所在目录，确保相对路径正确解析
+    
+    注意：
+    - 工作目录是进程级状态，不支持同一进程内并发仿真
+    - 如需并发，应使用 subprocess 在独立进程中执行
     """
     
     def __init__(self):
@@ -191,44 +203,53 @@ class SpiceExecutor(SimulationExecutor):
                 duration_seconds=time.time() - start_time,
             )
         
-        # 3. 加载电路
-        try:
-            circuit_content = self._load_circuit_file(file_path)
-        except Exception as e:
-            return create_error_result(
-                executor=self.get_name(),
-                file_path=file_path,
-                analysis_type=analysis_type,
-                error=SimulationError(
-                    code="E009",
-                    type=SimulationErrorType.FILE_ACCESS,
-                    severity=ErrorSeverity.HIGH,
-                    message=f"加载电路文件失败: {e}",
-                    file_path=file_path,
-                ),
-                duration_seconds=time.time() - start_time,
-            )
+        # 3. 切换工作目录到电路文件所在目录，执行仿真
+        # ngspice 会基于当前工作目录解析 .include/.lib 中的相对路径
+        circuit_path = Path(file_path).resolve()
+        circuit_dir = circuit_path.parent
+        circuit_filename = circuit_path.name
         
-        # 4. 执行仿真
-        try:
-            result = self._run_simulation(
-                file_path=file_path,
-                circuit_content=circuit_content,
-                analysis_type=analysis_type,
-                analysis_config=analysis_config,
-            )
-            result.duration_seconds = time.time() - start_time
-            return result
+        def run_simulation_in_context() -> SimulationResult:
+            # 加载电路文件（使用文件名，因为已在正确的工作目录）
+            try:
+                circuit_content = self._load_circuit_file(circuit_filename)
+            except Exception as e:
+                return create_error_result(
+                    executor=self.get_name(),
+                    file_path=file_path,
+                    analysis_type=analysis_type,
+                    error=SimulationError(
+                        code="E009",
+                        type=SimulationErrorType.FILE_ACCESS,
+                        severity=ErrorSeverity.HIGH,
+                        message=f"加载电路文件失败: {e}",
+                        file_path=file_path,
+                    ),
+                    duration_seconds=time.time() - start_time,
+                )
             
-        except Exception as e:
-            self._logger.exception(f"仿真执行异常: {e}")
-            return create_error_result(
-                executor=self.get_name(),
-                file_path=file_path,
-                analysis_type=analysis_type,
-                error=self._parse_exception(e, file_path),
-                duration_seconds=time.time() - start_time,
-            )
+            # 执行仿真
+            try:
+                result = self._run_simulation(
+                    file_path=file_path,
+                    circuit_content=circuit_content,
+                    analysis_type=analysis_type,
+                    analysis_config=analysis_config,
+                )
+                result.duration_seconds = time.time() - start_time
+                return result
+                
+            except Exception as e:
+                self._logger.exception(f"仿真执行异常: {e}")
+                return create_error_result(
+                    executor=self.get_name(),
+                    file_path=file_path,
+                    analysis_type=analysis_type,
+                    error=self._parse_exception(e, file_path),
+                    duration_seconds=time.time() - start_time,
+                )
+        
+        return self._execute_with_working_directory(circuit_dir, run_simulation_in_context)
     
     # ============================================================
     # 公开辅助方法
@@ -429,6 +450,37 @@ class SpiceExecutor(SimulationExecutor):
     # ============================================================
     # 内部方法
     # ============================================================
+    
+    def _execute_with_working_directory(
+        self,
+        target_dir: Path,
+        callback: Callable[[], T]
+    ) -> T:
+        """
+        在指定工作目录下执行回调函数
+        
+        ngspice 在解析 .include 和 .lib 语句时，会基于当前工作目录解析相对路径。
+        通过切换到电路文件所在目录，可以让 ngspice 自动正确解析所有相对路径引用。
+        
+        Args:
+            target_dir: 目标工作目录
+            callback: 要执行的回调函数
+            
+        Returns:
+            回调函数的返回值
+            
+        Note:
+            - 使用 try-finally 确保无论成功或失败都恢复原工作目录
+            - 工作目录是进程级状态，不支持同一进程内并发仿真
+        """
+        original_dir = os.getcwd()
+        try:
+            os.chdir(target_dir)
+            self._logger.debug(f"工作目录切换: {original_dir} -> {target_dir}")
+            return callback()
+        finally:
+            os.chdir(original_dir)
+            self._logger.debug(f"工作目录恢复: {target_dir} -> {original_dir}")
     
     def _get_analysis_type(self, analysis_config: Optional[Dict[str, Any]]) -> str:
         """从配置中提取分析类型"""

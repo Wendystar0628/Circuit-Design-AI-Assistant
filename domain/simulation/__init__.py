@@ -10,11 +10,10 @@
 - executor/: 仿真执行器模块组
   - simulation_executor.py: 执行器抽象基类
   - executor_registry.py: 执行器注册表
-  - spice_executor.py: SPICE 执行器（直接使用 ProcessManager）
+  - spice_executor.py: SPICE 执行器（工作目录切换策略）
   - spice_error_parser.py: SPICE 错误解析
   - spice_error_recovery.py: SPICE 错误恢复
   - python_executor.py: Python 执行器（基础进程隔离）
-  - path_preprocessor.py: 路径预处理器
   - circuit_analyzer.py: 电路文件分析器
   - file_discovery.py: 文件发现策略
 - service/: 仿真服务层
@@ -66,10 +65,9 @@
 - feedback_generator.py: 反馈生成器
 - library_manager.py: 子电路库管理
 
-设计简化说明：
-- 移除了独立的 ProcessMonitor，执行器直接使用 shared/process_manager.py
+设计说明：
+- SPICE 执行器采用工作目录切换策略，利用 ngspice 原生的相对路径解析能力
 - Python 执行器采用基础进程隔离，不实现完整沙箱
-- 路径预处理器不直接依赖 DependencyHealthService，由调用方处理
 - 错误恢复机制增加了最大重试次数限制
 - 文件发现策略简化命名（FileDiscovery 替代 FileDiscoveryStrategy）
 """

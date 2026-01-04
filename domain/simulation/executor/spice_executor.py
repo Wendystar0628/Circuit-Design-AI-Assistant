@@ -20,7 +20,7 @@ SPICE 仿真执行器
 
 职责精简说明：
 - ngspice 路径配置委托给 ngspice_config
-- 错误解析委托给 SpiceErrorParser（后续实现）
+- 错误解析作为执行器内部职责（_parse_exception 方法）
 - 错误恢复委托给 SpiceErrorRecovery（后续实现）
 - 本模块专注于仿真执行核心逻辑
 
@@ -845,12 +845,23 @@ class SpiceExecutor(SimulationExecutor):
         """
         解析异常并转换为 SimulationError
         
+        基于关键词匹配将 Python 异常分类为结构化的错误类型。
+        在 PySpice 共享库模式下，错误信息来自 Python 异常而非原始 ngspice 输出。
+        
         Args:
             exception: 捕获的异常
             file_path: 电路文件路径
             
         Returns:
-            SimulationError: 结构化的错误信息
+            SimulationError: 结构化的错误信息，包含错误码、类型、严重级别、恢复建议
+            
+        错误分类规则：
+            - 语法错误：匹配 "syntax"、"parse" 关键词
+            - 模型缺失：匹配 "model"、"not found"、"unknown" 关键词
+            - 节点浮空：匹配 "floating"、"no dc path" 关键词
+            - 收敛失败：匹配 "convergence"、"no convergence" 关键词
+            - 超时：匹配 "timeout" 关键词
+            - 默认：NGSPICE_CRASH 类型
         """
         error_msg = str(exception)
         error_lower = error_msg.lower()

@@ -21,6 +21,33 @@ class ParsedInclude:
     statement_type: str  # "include" or "lib"
     raw_path: str
     is_quoted: bool = False
+    resolved_path: Optional[str] = None  # 解析后的相对路径（基于项目根目录）
+    exists: bool = False  # 引用的文件是否存在
+    
+    def resolve_path(self, base_dir: Path, project_root: Path) -> None:
+        """
+        解析路径并检查文件是否存在
+        
+        Args:
+            base_dir: 当前文件所在目录
+            project_root: 项目根目录
+        """
+        # 移除引号
+        clean_path = self.raw_path.strip('"').strip("'")
+        
+        # 尝试相对于当前文件目录解析
+        abs_path = (base_dir / clean_path).resolve()
+        
+        # 检查文件是否存在
+        self.exists = abs_path.exists()
+        
+        # 计算相对于项目根目录的路径
+        if self.exists:
+            try:
+                self.resolved_path = str(abs_path.relative_to(project_root))
+            except ValueError:
+                # 文件在项目根目录之外，使用绝对路径
+                self.resolved_path = str(abs_path)
 
 
 class IncludeParser:

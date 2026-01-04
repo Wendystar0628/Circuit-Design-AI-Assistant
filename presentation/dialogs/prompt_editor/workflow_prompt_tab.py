@@ -318,7 +318,7 @@ class WorkflowPromptTab(QWidget):
         self._view_model.select_template(key)
     
     def _on_vm_template_selected(self, key: str) -> None:
-        """ViewModel 通知模板选中"""
+        """ViewModel notifies template selected"""
         self._current_key = key
         state = self._view_model.get_template_state(key)
         
@@ -326,14 +326,20 @@ class WorkflowPromptTab(QWidget):
             self._clear_editor()
             return
         
-        # 更新信息区
-        self._name_label.setText(state.name)
-        self._desc_label.setText(state.description or "-")
+        # Update info area - use i18n for template name and description
+        name_key = f"template.{key.lower()}"
+        display_name = self._get_text(name_key, state.name)
+        self._name_label.setText(display_name)
+        
+        # Translate description
+        desc_key = f"template.{key.lower()}.desc"
+        display_desc = self._get_text(desc_key, state.description)
+        self._desc_label.setText(display_desc or "-")
         
         source_text = {
-            "builtin": self._get_text("dialog.prompt_editor.source_builtin", "内置"),
-            "custom": self._get_text("dialog.prompt_editor.source_custom", "自定义"),
-            "fallback": self._get_text("dialog.prompt_editor.source_fallback", "回退"),
+            "builtin": self._get_text("dialog.prompt_editor.source_builtin", "Built-in"),
+            "custom": self._get_text("dialog.prompt_editor.source_custom", "Custom"),
+            "fallback": self._get_text("dialog.prompt_editor.source_fallback", "Fallback"),
         }.get(state.source, state.source)
         self._source_label.setText(source_text)
         

@@ -1753,7 +1753,7 @@ class ModelConfigDialog(QDialog):
         self.retranslate_ui()
     
     def closeEvent(self, event):
-        """对话框关闭时清理临时文件"""
+        """Clean up temporary files when dialog closes"""
         self._cleanup_temp_files()
         super().closeEvent(event)
     

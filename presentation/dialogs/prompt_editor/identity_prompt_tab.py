@@ -174,7 +174,7 @@ class IdentityPromptTab(QWidget):
         
         self._add_var_btn = QPushButton(self._get_text(
             "dialog.identity_prompt.add_variable",
-            "+ 添加变量"
+            "+ Add Variable"
         ))
         self._add_var_btn.setFixedHeight(28)
         self._add_var_btn.clicked.connect(self._on_add_variable)
@@ -182,7 +182,7 @@ class IdentityPromptTab(QWidget):
         
         self._remove_var_btn = QPushButton(self._get_text(
             "dialog.identity_prompt.remove_variable",
-            "- 删除变量"
+            "- Delete Variable"
         ))
         self._remove_var_btn.setFixedHeight(28)
         self._remove_var_btn.clicked.connect(self._on_remove_variable)
@@ -193,7 +193,7 @@ class IdentityPromptTab(QWidget):
         # 提示文本
         hint_label = QLabel(self._get_text(
             "dialog.identity_prompt.variable_hint",
-            "使用 {变量名} 格式在提示词中引用变量，运行时将自动填充实际值"
+            "Use {variable_name} format to reference variables in the prompt, which will be automatically filled at runtime"
         ))
         hint_label.setStyleSheet("color: #888; font-size: 11px;")
         btn_layout.addWidget(hint_label)
@@ -220,8 +220,8 @@ class IdentityPromptTab(QWidget):
         # 字符计数
         self._char_count_label = QLabel(self._get_text(
             "dialog.identity_prompt.char_count",
-            "字符数: 0"
-        ))
+            "Character count: 0"
+        ).replace("{count}", "0"))
         self._char_count_label.setStyleSheet("color: #888;")
         layout.addWidget(self._char_count_label)
         
@@ -400,11 +400,11 @@ class IdentityPromptTab(QWidget):
             self.dirty_state_changed.emit(new_dirty)
     
     def _on_add_variable(self) -> None:
-        """添加变量"""
+        """Add variable"""
         name, ok = QInputDialog.getText(
             self,
-            self._get_text("dialog.identity_prompt.add_variable_title", "添加变量"),
-            self._get_text("dialog.identity_prompt.add_variable_prompt", "请输入变量名（仅支持字母、数字和下划线）：")
+            self._get_text("dialog.identity_prompt.add_variable_title", "Add Variable"),
+            self._get_text("dialog.identity_prompt.add_variable_prompt", "Enter variable name (letters, numbers, and underscores only):")
         )
         
         if not ok or not name:
@@ -445,23 +445,23 @@ class IdentityPromptTab(QWidget):
         self.variables_changed.emit()
     
     def _on_remove_variable(self) -> None:
-        """删除变量 - 弹出选择对话框"""
+        """Delete variable - show selection dialog"""
         if not self._current_variables:
             QMessageBox.information(
                 self,
-                self._get_text("dialog.info.title", "提示"),
+                self._get_text("dialog.info.title", "Information"),
                 self._get_text(
-                    "dialog.identity_prompt.no_variables_to_remove",
-                    "没有可删除的变量"
+                    "dialog.identity_prompt.no_variables",
+                    "No variables to delete"
                 )
             )
             return
         
-        # 弹出选择对话框
+        # Show selection dialog
         var_name, ok = QInputDialog.getItem(
             self,
-            self._get_text("dialog.identity_prompt.remove_variable_title", "删除变量"),
-            self._get_text("dialog.identity_prompt.remove_variable_prompt", "选择要删除的变量："),
+            self._get_text("dialog.identity_prompt.remove_variable_title", "Delete Variable"),
+            self._get_text("dialog.identity_prompt.remove_variable_prompt", "Select variable to delete:"),
             self._current_variables,
             0,
             False
@@ -538,7 +538,9 @@ class IdentityPromptTab(QWidget):
         """更新字符计数"""
         content = self._content_editor.get_content()
         count = len(content)
-        self._char_count_label.setText(f"字符数: {count}")
+        self._char_count_label.setText(
+            self._get_text("dialog.identity_prompt.char_count", "Character count: {count}").replace("{count}", str(count))
+        )
 
 
 __all__ = ["IdentityPromptTab"]

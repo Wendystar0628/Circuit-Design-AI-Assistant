@@ -163,7 +163,9 @@ class ContextCompressDialog(QDialog):
         msg_row.addWidget(QLabel(
             self._get_text("dialog.compress.message_count", "消息数量：")
         ))
-        self._message_count_label = QLabel("0 条")
+        self._message_count_label = QLabel(
+            self._get_text("dialog.compress.messages_unit", "0 messages").replace("messages", "0 messages")
+        )
         self._message_count_label.setStyleSheet("font-weight: bold;")
         msg_row.addWidget(self._message_count_label)
         msg_row.addStretch()
@@ -224,7 +226,9 @@ class ContextCompressDialog(QDialog):
         summary_row.addWidget(QLabel(
             self._get_text("dialog.compress.estimated_summary", "预计生成摘要：")
         ))
-        self._estimated_summary_label = QLabel("约 2,000 tokens")
+        self._estimated_summary_label = QLabel(
+            self._get_text("dialog.compress.approx_tokens", "approx. {tokens} tokens").replace("{tokens}", "2,000")
+        )
         summary_row.addWidget(self._estimated_summary_label)
         summary_row.addStretch()
         layout.addLayout(summary_row)
@@ -234,7 +238,9 @@ class ContextCompressDialog(QDialog):
         after_row.addWidget(QLabel(
             self._get_text("dialog.compress.estimated_after", "压缩后占用：")
         ))
-        self._estimated_usage_label = QLabel("约 12,000 tokens (12%)")
+        self._estimated_usage_label = QLabel(
+            self._get_text("dialog.compress.approx_usage", "approx. {tokens} tokens ({percent}%)").replace("{tokens}", "12,000").replace("{percent}", "12")
+        )
         self._estimated_usage_label.setStyleSheet(f"color: {SUCCESS_COLOR}; font-weight: bold;")
         after_row.addWidget(self._estimated_usage_label)
         after_row.addStretch()
@@ -320,7 +326,9 @@ class ContextCompressDialog(QDialog):
         keep_label.setStyleSheet("font-weight: bold; color: #4caf50;")
         content_layout.addWidget(keep_label)
         
-        self._keep_messages_label = QLabel("0 条")
+        self._keep_messages_label = QLabel(
+            self._get_text("dialog.compress.messages_unit", "0 messages").replace("messages", "0 messages")
+        )
         content_layout.addWidget(self._keep_messages_label)
         
         # 将被压缩的消息
@@ -330,7 +338,9 @@ class ContextCompressDialog(QDialog):
         compress_label.setStyleSheet("font-weight: bold; color: #ff9800;")
         content_layout.addWidget(compress_label)
         
-        self._compress_messages_label = QLabel("0 条")
+        self._compress_messages_label = QLabel(
+            self._get_text("dialog.compress.messages_unit", "0 messages").replace("messages", "0 messages")
+        )
         content_layout.addWidget(self._compress_messages_label)
         
         content_layout.addStretch()
@@ -407,7 +417,9 @@ class ContextCompressDialog(QDialog):
             total_tokens = stats.get("total_tokens", 100000)
             ratio = stats.get("usage_ratio", 0)
             
-            self._message_count_label.setText(f"{message_count} 条")
+            self._message_count_label.setText(
+                f"{message_count} {self._get_text('dialog.compress.messages_unit', 'messages')}"
+            )
             self._token_usage_label.setText(
                 f"{used_tokens:,} / {total_tokens:,} ({int(ratio * 100)}%)"
             )
@@ -439,8 +451,12 @@ class ContextCompressDialog(QDialog):
             keep_count = len(categories.get("must_keep", []))
             compress_count = len(categories.get("can_compress", []))
             
-            self._keep_messages_label.setText(f"{keep_count} 条")
-            self._compress_messages_label.setText(f"{compress_count} 条")
+            self._keep_messages_label.setText(
+                f"{keep_count} {self._get_text('dialog.compress.messages_unit', 'messages')}"
+            )
+            self._compress_messages_label.setText(
+                f"{compress_count} {self._get_text('dialog.compress.messages_unit', 'messages')}"
+            )
             
             # 更新预估
             self._update_estimate()
@@ -461,9 +477,11 @@ class ContextCompressDialog(QDialog):
         estimated_after = estimated_summary_tokens + keep_messages_tokens
         estimated_ratio = estimated_after / total_tokens if total_tokens > 0 else 0
         
-        self._estimated_summary_label.setText(f"约 {estimated_summary_tokens:,} tokens")
+        self._estimated_summary_label.setText(
+            self._get_text("dialog.compress.approx_tokens", "approx. {tokens} tokens").replace("{tokens}", f"{estimated_summary_tokens:,}")
+        )
         self._estimated_usage_label.setText(
-            f"约 {estimated_after:,} tokens ({int(estimated_ratio * 100)}%)"
+            self._get_text("dialog.compress.approx_usage", "approx. {tokens} tokens ({percent}%)").replace("{tokens}", f"{estimated_after:,}").replace("{percent}", str(int(estimated_ratio * 100)))
         )
 
 

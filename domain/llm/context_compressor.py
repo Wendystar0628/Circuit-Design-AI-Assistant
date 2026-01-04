@@ -698,7 +698,7 @@ class ContextCompressor:
         
         from domain.llm.message_helpers import is_human_message
         
-        lines = [f"对话摘要（{len(messages)} 条消息）："]
+        lines = [f"Conversation summary ({len(messages)} messages):"]
         
         # 提取用户问题
         user_msgs = [m for m in messages if is_human_message(m)]

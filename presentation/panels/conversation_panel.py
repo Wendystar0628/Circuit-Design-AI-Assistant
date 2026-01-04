@@ -824,7 +824,7 @@ class ConversationPanel(QWidget):
                 success = session_manager.save_current_session(state, project_path)
                 if success:
                     if self.logger:
-                        self.logger.info(f"对话已保存: {session_name}")
+                        self.logger.info(f"Conversation saved: {session_name}")
                 else:
                     if self.logger:
                         self.logger.warning("保存失败")

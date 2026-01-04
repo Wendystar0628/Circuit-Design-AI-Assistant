@@ -55,7 +55,7 @@ class TabController(QObject):
     使用示例：
         tab_controller = TabController()
         tab_controller.bind_tab_widget(tab_widget)
-        tab_controller.register_tab(TAB_CONVERSATION, chat_panel, "对话", "icons/chat.svg")
+        tab_controller.register_tab(TAB_CONVERSATION, chat_panel, "Conversation", "icons/chat.svg")
         tab_controller.switch_to_tab(TAB_CONVERSATION)
         tab_controller.set_badge(TAB_INFO, 3)
     """

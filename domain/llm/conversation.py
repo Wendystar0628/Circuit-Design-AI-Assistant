@@ -413,8 +413,8 @@ def _format_messages_text(messages: List[BaseMessage]) -> str:
     """导出为纯文本格式"""
     lines = []
     lines.append("=" * 50)
-    lines.append("对话记录")
-    lines.append(f"导出时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    lines.append("Conversation History")
+    lines.append(f"Export time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     lines.append("=" * 50)
     lines.append("")
     

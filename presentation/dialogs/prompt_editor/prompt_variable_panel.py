@@ -175,10 +175,10 @@ class VariableButton(QPushButton):
         
         self.setStyleSheet(base_style)
         
-        # 工具提示
+        # Tooltip
         tooltip = self._get_text(
             "dialog.prompt_editor.required_variable" if self._is_required else "dialog.prompt_editor.optional_variable",
-            "必需变量，点击插入" if self._is_required else "可选变量，点击插入"
+            "Required variable, click to insert" if self._is_required else "Optional variable, click to insert"
         )
         self.setToolTip(tooltip)
         
@@ -243,7 +243,7 @@ class PromptVariablePanel(QWidget):
             header_layout.setContentsMargins(0, 0, 0, 0)
             header_layout.setSpacing(8)
             
-            label = QLabel(self._get_text("dialog.prompt_editor.variables", "变量"))
+            label = QLabel(self._get_text("dialog.prompt_editor.variables", "Variables"))
             label.setStyleSheet("font-weight: bold; color: #555;")
             header_layout.addWidget(label)
             

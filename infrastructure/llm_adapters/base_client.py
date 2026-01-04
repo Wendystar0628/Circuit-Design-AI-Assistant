@@ -85,9 +85,9 @@ class ModelInfo:
 
 @dataclass
 class ChatResponse:
-    """对话响应"""
-    content: str                       # 最终回答内容
-    reasoning_content: Optional[str] = None  # 思考过程（深度思考模式）
+    """Chat response"""
+    content: str                       # Final answer content
+    reasoning_content: Optional[str] = None  # Reasoning process (deep thinking mode)
     tool_calls: Optional[List[Dict[str, Any]]] = None  # 工具调用
     usage: Optional[Dict[str, int]] = None  # token 使用统计
     finish_reason: Optional[str] = None  # 完成原因

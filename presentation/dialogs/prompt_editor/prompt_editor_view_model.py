@@ -124,22 +124,38 @@ class PromptEditorViewModel(QObject):
     
     def get_template_list(self) -> List[Dict[str, str]]:
         """
-        获取模板列表（用于 UI 显示）
+        Get template list (for UI display)
         
         Returns:
-            模板信息列表，每项包含 key, name, source, is_dirty
+            Template info list, each item contains key, name, source, is_dirty
         """
         result = []
         for key, state in self._edit_states.items():
+            # Use i18n key for template name
+            name_key = f"template.{key.lower()}"
+            name = self._get_text(name_key, state.name)
+            
             result.append({
                 "key": key,
-                "name": state.name,
+                "name": name,
                 "source": state.source,
                 "is_dirty": state.is_dirty,
             })
-        # 按名称排序
+        # Sort by name
         result.sort(key=lambda x: x["name"])
         return result
+    
+    def _get_text(self, key: str, default: str) -> str:
+        """Get internationalized text"""
+        try:
+            from shared.service_locator import ServiceLocator
+            from shared.service_names import SVC_I18N_MANAGER
+            i18n = ServiceLocator.get_optional(SVC_I18N_MANAGER)
+            if i18n:
+                return i18n.get_text(key, default)
+        except Exception:
+            pass
+        return default
     
     def select_template(self, key: str) -> bool:
         """

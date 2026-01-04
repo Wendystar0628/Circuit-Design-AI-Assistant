@@ -414,6 +414,7 @@ class MainWindow(QMainWindow):
             chat_panel.new_conversation_requested.connect(self._on_new_conversation)
             chat_panel.history_requested.connect(self._on_show_history_dialog)
             chat_panel.session_name_changed.connect(self._on_session_name_changed)
+            chat_panel.compress_requested.connect(self._on_compress_requested)
 
     # ============================================================
     # 国际化支持
@@ -784,6 +785,50 @@ class MainWindow(QMainWindow):
         except Exception as e:
             if self.logger:
                 self.logger.error(f"Failed to open prompt editor dialog: {e}")
+
+    def _on_compress_requested(self):
+        """处理压缩上下文请求，显示压缩对话框"""
+        try:
+            from presentation.dialogs.context_compress_dialog import ContextCompressDialog
+            
+            dialog = ContextCompressDialog(self)
+            dialog.load_preview()
+            
+            if dialog.exec():
+                if self.logger:
+                    self.logger.info("Context compression confirmed")
+                
+                # 刷新对话面板显示
+                if "chat" in self._panels:
+                    self._panels["chat"].refresh_display()
+            else:
+                if self.logger:
+                    self.logger.info("Context compression cancelled")
+                    
+        except ImportError as e:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.warning(
+                self,
+                self._get_text("dialog.warning.title", "Warning"),
+                self._get_text(
+                    "dialog.compress.import_error",
+                    "Failed to load Context Compress Dialog module."
+                )
+            )
+            if self.logger:
+                self.logger.error(f"Failed to import ContextCompressDialog: {e}")
+        except Exception as e:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.critical(
+                self,
+                self._get_text("dialog.error.title", "Error"),
+                self._get_text(
+                    "dialog.compress.error",
+                    f"Failed to open context compress dialog: {str(e)}"
+                )
+            )
+            if self.logger:
+                self.logger.error(f"Failed to open context compress dialog: {e}")
 
     # ============================================================
     # 公共接口

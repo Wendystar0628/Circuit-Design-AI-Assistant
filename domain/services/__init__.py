@@ -32,19 +32,11 @@ from domain.services.design_service import (
 
 from domain.services.simulation_service import (
     run_simulation,
-    run_simulation_async,
     load_sim_result,
     extract_metrics,
-    list_sim_results,
-    get_latest_sim_result,
-    delete_sim_result,
     get_sim_result_path,
-    run_pvt_analysis,
-    run_monte_carlo,
-    run_parametric_sweep,
     LoadResult,
     LoadErrorCode,
-    SIM_RESULTS_DIR,
 )
 
 from domain.services.context_service import (
@@ -114,19 +106,11 @@ __all__ = [
     "validate_design_goals",
     # Simulation Service
     "run_simulation",
-    "run_simulation_async",
     "load_sim_result",
     "extract_metrics",
-    "list_sim_results",
-    "get_latest_sim_result",
-    "delete_sim_result",
     "get_sim_result_path",
-    "run_pvt_analysis",
-    "run_monte_carlo",
-    "run_parametric_sweep",
     "LoadResult",
     "LoadErrorCode",
-    "SIM_RESULTS_DIR",
     # Context Service
     "save_messages",
     "load_messages",

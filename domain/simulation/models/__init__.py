@@ -1,42 +1,24 @@
-# Simulation Models
+# Simulation Models Module
 """
-仿真模型定义
+仿真数据模型模块
 
-包含：
-- analysis_types: 分析类型枚举
-- simulation_config: 仿真配置数据类
-- simulation_result: 仿真结果数据类
+职责：
+- 定义标准化的仿真数据结构
+- 提供类型安全的数据容器
+- 支持序列化和反序列化
+
+设计原则：
+- 使用 dataclass 定义数据结构
+- 提供完整的类型注解
+- 支持 JSON 序列化
 """
 
-from .analysis_types import (
-    AnalysisType,
-    ANALYSIS_DEFAULTS,
-    get_analysis_defaults,
-)
-from .simulation_config import (
-    SimulationConfig,
-    PVTCorner,
-    MonteCarloConfig,
-    ParametricSweepConfig,
-)
-from .simulation_result import (
-    SimulationStatus,
+from circuit_design_ai.domain.simulation.models.simulation_result import (
+    SimulationData,
     SimulationResult,
-    MetricsSummary,
 )
 
 __all__ = [
-    # Analysis Types
-    "AnalysisType",
-    "ANALYSIS_DEFAULTS",
-    "get_analysis_defaults",
-    # Simulation Config
-    "SimulationConfig",
-    "PVTCorner",
-    "MonteCarloConfig",
-    "ParametricSweepConfig",
-    # Simulation Result
-    "SimulationStatus",
+    "SimulationData",
     "SimulationResult",
-    "MetricsSummary",
 ]

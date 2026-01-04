@@ -13,6 +13,14 @@
 - 支持 JSON 序列化
 """
 
+from domain.simulation.models.simulation_config import (
+    ACAnalysisConfig,
+    ConvergenceConfig,
+    DCAnalysisConfig,
+    GlobalSimulationConfig,
+    NoiseConfig,
+    TransientConfig,
+)
 from domain.simulation.models.simulation_error import (
     ErrorSeverity,
     SimulationError,
@@ -43,4 +51,11 @@ __all__ = [
     "create_model_missing_error",
     "create_convergence_error",
     "create_timeout_error",
+    # Simulation Config
+    "ACAnalysisConfig",
+    "DCAnalysisConfig",
+    "TransientConfig",
+    "NoiseConfig",
+    "ConvergenceConfig",
+    "GlobalSimulationConfig",
 ]

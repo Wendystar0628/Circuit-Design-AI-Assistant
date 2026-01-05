@@ -49,7 +49,7 @@ import time
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional
 
 from domain.simulation.executor.executor_registry import ExecutorRegistry, executor_registry
 from domain.simulation.executor.circuit_analyzer import (
@@ -698,161 +698,7 @@ class SimulationService:
             })
 
 
-# ============================================================
-# 模块级便捷函数（兼容旧接口）
-# ============================================================
 
-# 全局服务实例
-_service: Optional[SimulationService] = None
-
-
-def _get_service() -> SimulationService:
-    """获取全局服务实例"""
-    global _service
-    if _service is None:
-        _service = SimulationService()
-    return _service
-
-
-def run_simulation(
-    project_root: str,
-    circuit_file: str,
-    *,
-    analysis_type: str = "ac",
-    parameters: Optional[Dict[str, Any]] = None,
-) -> Tuple[str, Dict[str, Any]]:
-    """
-    执行仿真并返回结果文件路径和指标摘要
-    
-    Args:
-        project_root: 项目根目录路径
-        circuit_file: 电路文件相对路径
-        analysis_type: 分析类型（ac, dc, tran, op）
-        parameters: 仿真参数
-        
-    Returns:
-        Tuple[str, Dict]: (结果文件相对路径, 指标摘要)
-    """
-    service = _get_service()
-    
-    # 构建完整路径
-    file_path = str(Path(project_root) / circuit_file)
-    
-    # 构建配置
-    config = {"analysis_type": analysis_type}
-    if parameters:
-        config.update(parameters)
-    
-    # 执行仿真
-    result = service.run_simulation(
-        file_path=file_path,
-        analysis_config=config,
-        project_root=project_root,
-    )
-    
-    # 保存结果
-    result_path = service.save_sim_result(project_root, result)
-    
-    # 提取指标
-    metrics = extract_metrics(result.to_dict(), {})
-    
-    return result_path, metrics
-
-
-def load_sim_result(
-    project_root: str,
-    result_path: str,
-) -> LoadResult[Dict[str, Any]]:
-    """
-    从文件加载仿真结果
-    
-    Args:
-        project_root: 项目根目录路径
-        result_path: 结果文件相对路径
-        
-    Returns:
-        LoadResult[Dict]: 加载结果对象
-    """
-    service = _get_service()
-    load_result = service.load_sim_result(project_root, result_path)
-    
-    if load_result.success and load_result.data is not None:
-        return LoadResult.ok(load_result.data.to_dict(), result_path)
-    
-    return load_result
-
-
-def extract_metrics(
-    sim_data: Dict[str, Any],
-    goals: Dict[str, Any],
-) -> Dict[str, Any]:
-    """
-    从仿真结果中提取性能指标摘要
-    
-    Args:
-        sim_data: 仿真结果数据
-        goals: 设计目标
-        
-    Returns:
-        Dict: 性能指标摘要
-    """
-    if not sim_data:
-        return {"status": "no_data"}
-    
-    metrics = {
-        "status": "completed" if sim_data.get("success") else "failed",
-        "timestamp": sim_data.get("timestamp", ""),
-    }
-    
-    # 从仿真数据中提取指标
-    raw_metrics = sim_data.get("metrics", {})
-    
-    if goals:
-        for goal_key in goals.keys():
-            if goal_key in raw_metrics:
-                metrics[goal_key] = raw_metrics[goal_key]
-    else:
-        metrics.update(raw_metrics)
-    
-    return metrics
-
-
-def get_sim_result_path(
-    project_root: str,
-    result_id: Optional[str] = None,
-) -> str:
-    """获取仿真结果文件路径"""
-    root = Path(project_root)
-    if result_id:
-        return str(root / SIM_RESULTS_DIR / f"{result_id}.json")
-    return str(root / SIM_RESULTS_DIR)
-
-
-def list_sim_results(
-    project_root: str,
-    limit: int = 10,
-) -> List[Dict[str, Any]]:
-    """列出最近的仿真结果"""
-    return _get_service().list_sim_results(project_root, limit)
-
-
-def get_latest_sim_result(project_root: str) -> LoadResult[Dict[str, Any]]:
-    """获取最新的仿真结果"""
-    service = _get_service()
-    load_result = service.get_latest_sim_result(project_root)
-    
-    if load_result.success and load_result.data is not None:
-        return LoadResult.ok(load_result.data.to_dict(), load_result.file_path or "")
-    
-    return load_result
-
-
-def delete_sim_result(
-    project_root: str,
-    result_path: str,
-) -> bool:
-    """删除仿真结果文件"""
-    return _get_service().delete_sim_result(project_root, result_path)
 
 
 # ============================================================
@@ -862,14 +708,6 @@ def delete_sim_result(
 __all__ = [
     # 类
     "SimulationService",
-    # 便捷函数
-    "run_simulation",
-    "load_sim_result",
-    "extract_metrics",
-    "get_sim_result_path",
-    "list_sim_results",
-    "get_latest_sim_result",
-    "delete_sim_result",
     # 常量
     "SIM_RESULTS_DIR",
     # 类型

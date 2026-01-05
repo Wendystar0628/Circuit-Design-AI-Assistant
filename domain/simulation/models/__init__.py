@@ -36,6 +36,36 @@ from domain.simulation.models.simulation_result import (
     create_error_result,
     create_success_result,
 )
+from domain.simulation.models.analysis_result import (
+    # 基类
+    AnalysisResultBase,
+    # PVT 分析
+    PVTCorner,
+    PVTAnalysisResult,
+    # 蒙特卡洛分析
+    MetricStatistics,
+    HistogramData,
+    MonteCarloResult,
+    # 参数扫描
+    SweepParam,
+    SweepResult,
+    # 最坏情况分析
+    CriticalParam,
+    WorstCaseResult,
+    # 敏感度分析
+    ParamSensitivity,
+    TornadoChartData,
+    SensitivityResult,
+    # FFT 后处理
+    HarmonicData,
+    SpectrumData,
+    FFTResult,
+    # 拓扑识别
+    TopologyResult,
+    # 收敛诊断
+    SuggestedFix,
+    ConvergenceDiagnosis,
+)
 
 __all__ = [
     # Simulation Result
@@ -58,4 +88,32 @@ __all__ = [
     "NoiseConfig",
     "ConvergenceConfig",
     "GlobalSimulationConfig",
+    # Analysis Result - 基类
+    "AnalysisResultBase",
+    # Analysis Result - PVT 分析
+    "PVTCorner",
+    "PVTAnalysisResult",
+    # Analysis Result - 蒙特卡洛分析
+    "MetricStatistics",
+    "HistogramData",
+    "MonteCarloResult",
+    # Analysis Result - 参数扫描
+    "SweepParam",
+    "SweepResult",
+    # Analysis Result - 最坏情况分析
+    "CriticalParam",
+    "WorstCaseResult",
+    # Analysis Result - 敏感度分析
+    "ParamSensitivity",
+    "TornadoChartData",
+    "SensitivityResult",
+    # Analysis Result - FFT 后处理
+    "HarmonicData",
+    "SpectrumData",
+    "FFTResult",
+    # Analysis Result - 拓扑识别
+    "TopologyResult",
+    # Analysis Result - 收敛诊断
+    "SuggestedFix",
+    "ConvergenceDiagnosis",
 ]

@@ -865,11 +865,15 @@ class SpiceExecutor(SimulationExecutor):
         error_msg = str(exception)
         error_lower = error_msg.lower()
         
+        # 提取行号（如果包含）
+        line_number = self._extract_line_number(error_msg)
+        
         # 根据错误消息判断错误类型
         if "syntax" in error_lower or "parse" in error_lower:
             return create_syntax_error(
                 message=error_msg,
                 file_path=file_path,
+                line_number=line_number,
                 recovery_suggestion="请检查网表文件语法是否正确",
             )
         
@@ -888,22 +892,30 @@ class SpiceExecutor(SimulationExecutor):
             )
         
         if "model" in error_lower and ("not found" in error_lower or "unknown" in error_lower):
+            # 提取缺失的模型名称
+            missing_models = self._extract_missing_models(error_msg)
+            details = {"missing_models": missing_models} if missing_models else {}
             return SimulationError(
                 code="E002",
                 type=SimulationErrorType.MODEL_MISSING,
                 severity=ErrorSeverity.HIGH,
                 message=error_msg,
                 file_path=file_path,
+                details=details,
                 recovery_suggestion="请检查模型文件路径或安装缺失的模型库",
             )
         
         if "floating" in error_lower or "no dc path" in error_lower:
+            # 提取浮空节点名称
+            floating_nodes = self._extract_floating_nodes(error_msg)
+            details = {"floating_nodes": floating_nodes} if floating_nodes else {}
             return SimulationError(
                 code="E003",
                 type=SimulationErrorType.NODE_FLOATING,
                 severity=ErrorSeverity.MEDIUM,
                 message=error_msg,
                 file_path=file_path,
+                details=details,
                 recovery_suggestion="请检查电路连接，确保所有节点都有到地的直流路径",
             )
         
@@ -916,6 +928,124 @@ class SpiceExecutor(SimulationExecutor):
             file_path=file_path,
             recovery_suggestion="请检查电路文件和仿真配置",
         )
+    
+    def _extract_line_number(self, error_msg: str) -> Optional[int]:
+        """
+        从异常消息中提取行号
+        
+        支持的格式：
+        - "line 15"
+        - "Line: 15"
+        - ":15:"
+        - "at line 15"
+        
+        Args:
+            error_msg: 错误消息
+            
+        Returns:
+            Optional[int]: 行号，未找到返回 None
+        """
+        import re
+        
+        # 尝试多种行号格式
+        patterns = [
+            r'line\s*[:=]?\s*(\d+)',  # line 15, line: 15, line=15
+            r'at\s+line\s+(\d+)',      # at line 15
+            r':(\d+):',                 # :15:
+            r'行\s*[:：]?\s*(\d+)',     # 行 15, 行: 15
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, error_msg, re.IGNORECASE)
+            if match:
+                try:
+                    return int(match.group(1))
+                except ValueError:
+                    continue
+        
+        return None
+    
+    def _extract_missing_models(self, error_msg: str) -> List[str]:
+        """
+        从异常消息中提取缺失的模型名称
+        
+        支持的格式：
+        - "model 'xxx' not found"
+        - "unknown model xxx"
+        - "model xxx is not defined"
+        
+        Args:
+            error_msg: 错误消息
+            
+        Returns:
+            List[str]: 缺失的模型名称列表
+        """
+        import re
+        
+        models = []
+        
+        # 尝试多种模型名称格式
+        patterns = [
+            r"model\s+['\"]?(\w+)['\"]?\s+(?:not found|is not defined|unknown)",
+            r"unknown\s+model\s+['\"]?(\w+)['\"]?",
+            r"model\s+['\"](\w+)['\"]",
+            r"模型\s+['\"]?(\w+)['\"]?\s*(?:未找到|不存在)",
+        ]
+        
+        for pattern in patterns:
+            matches = re.findall(pattern, error_msg, re.IGNORECASE)
+            models.extend(matches)
+        
+        # 去重并保持顺序
+        seen = set()
+        unique_models = []
+        for model in models:
+            if model.lower() not in seen:
+                seen.add(model.lower())
+                unique_models.append(model)
+        
+        return unique_models
+    
+    def _extract_floating_nodes(self, error_msg: str) -> List[str]:
+        """
+        从异常消息中提取浮空节点名称
+        
+        支持的格式：
+        - "node xxx is floating"
+        - "floating node: xxx"
+        - "no dc path to ground at node xxx"
+        
+        Args:
+            error_msg: 错误消息
+            
+        Returns:
+            List[str]: 浮空节点名称列表
+        """
+        import re
+        
+        nodes = []
+        
+        # 尝试多种节点名称格式
+        patterns = [
+            r"node\s+['\"]?(\w+)['\"]?\s+(?:is\s+)?floating",
+            r"floating\s+node\s*[:=]?\s*['\"]?(\w+)['\"]?",
+            r"no\s+dc\s+path\s+(?:to\s+ground\s+)?(?:at\s+)?node\s+['\"]?(\w+)['\"]?",
+            r"节点\s+['\"]?(\w+)['\"]?\s*(?:浮空|悬空)",
+        ]
+        
+        for pattern in patterns:
+            matches = re.findall(pattern, error_msg, re.IGNORECASE)
+            nodes.extend(matches)
+        
+        # 去重并保持顺序
+        seen = set()
+        unique_nodes = []
+        for node in nodes:
+            if node.lower() not in seen:
+                seen.add(node.lower())
+                unique_nodes.append(node)
+        
+        return unique_nodes
     
     # ============================================================
     # 元器件模型集成（阶段十实现，此处预留接口）

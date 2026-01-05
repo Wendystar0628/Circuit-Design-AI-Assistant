@@ -283,14 +283,21 @@ class MetricCard(QFrame):
         Args:
             metric: DisplayMetric 数据对象
         """
-        self.set_metric(
-            name=metric.display_name,
-            value=metric.value,
-            unit=metric.unit,
-            target=metric.target,
-            is_met=metric.is_met,
-            trend=metric.trend
-        )
+        # 存储指标标识符（用于查找）
+        self._metric_name = metric.name
+        
+        # 设置显示数据
+        self._name_label.setText(metric.display_name)
+        
+        display_value = metric.value if not metric.unit or metric.unit in metric.value else f"{metric.value} {metric.unit}"
+        self._value_label.setText(display_value)
+        
+        self._target_label.setText(metric.target)
+        self._target_label.setVisible(bool(metric.target))
+        
+        self._is_met = metric.is_met
+        self._update_status_icon(metric.is_met)
+        self._update_trend_icon(metric.trend)
     
     def mousePressEvent(self, event):
         """处理鼠标点击事件"""

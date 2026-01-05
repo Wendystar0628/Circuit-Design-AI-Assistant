@@ -55,6 +55,9 @@ from presentation.panels.conversation import (
 # 从调试工具面板导入
 from presentation.panels.devtools_panel import DevToolsPanel
 
+# 从下栏面板导入
+from presentation.panels.bottom_panel import BottomPanel, TAB_SIMULATION, TAB_REPORT
+
 __all__ = [
     # File Browser
     "FileBrowserPanel",
@@ -88,4 +91,8 @@ __all__ = [
     "SUGGESTION_STATE_EXPIRED",
     # DevTools Panel
     "DevToolsPanel",
+    # Bottom Panel
+    "BottomPanel",
+    "TAB_SIMULATION",
+    "TAB_REPORT",
 ]

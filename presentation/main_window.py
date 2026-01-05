@@ -248,13 +248,15 @@ class MainWindow(QMainWindow):
         # 右栏 - 使用 QTabWidget 承载多个面板
         self._create_right_panel_tabs()
         
-        # 下栏 - 仿真结果（占位）
-        simulation_panel = self._create_placeholder_panel("panel.simulation")
-        simulation_panel.setMinimumHeight(100)
-        self._splitters["vertical"].addWidget(simulation_panel)
-        self._panels["simulation"] = simulation_panel
+        # 下栏 - 仿真结果面板
+        from presentation.panels.bottom_panel import BottomPanel
+        bottom_panel = BottomPanel()
+        bottom_panel.setMinimumHeight(100)
+        self._splitters["vertical"].addWidget(bottom_panel)
+        self._panels["bottom"] = bottom_panel
+        self._panels["simulation"] = bottom_panel.get_simulation_tab()
         self._panel_manager.register_panel(
-            "simulation", simulation_panel, PanelRegion.BOTTOM,
+            "bottom", bottom_panel, PanelRegion.BOTTOM,
             title_key="panel.simulation"
         )
 
@@ -463,7 +465,8 @@ class MainWindow(QMainWindow):
 
     def _update_panel_placeholders(self):
         """更新面板占位文本"""
-        placeholder_panels = ["simulation"]
+        # 注意：simulation 面板已替换为 BottomPanel，不再是占位面板
+        placeholder_panels = []
         for panel_name in placeholder_panels:
             panel = self._panels.get(panel_name)
             if panel:

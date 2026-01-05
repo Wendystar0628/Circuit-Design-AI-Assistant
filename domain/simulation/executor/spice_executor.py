@@ -18,10 +18,9 @@ SPICE 仿真执行器
 - 仿真执行前切换到电路文件所在目录，ngspice 自动基于该目录解析 .include/.lib 引用
 - 无需生成临时文件或修改网表内容
 
-职责精简说明：
+职责说明：
 - ngspice 路径配置委托给 ngspice_config
 - 错误解析作为执行器内部职责（_parse_exception 方法）
-- 错误恢复委托给 SpiceErrorRecovery（后续实现）
 - 本模块专注于仿真执行核心逻辑
 
 使用示例：

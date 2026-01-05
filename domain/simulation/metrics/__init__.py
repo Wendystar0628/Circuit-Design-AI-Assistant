@@ -27,6 +27,10 @@ from domain.simulation.metrics.amplifier_metrics import (
     AmplifierMetrics,
     amplifier_metrics,
 )
+from domain.simulation.metrics.noise_metrics import (
+    NoiseMetrics,
+    noise_metrics,
+)
 
 __all__ = [
     "MetricCategory",
@@ -35,4 +39,6 @@ __all__ = [
     "create_error_metric",
     "AmplifierMetrics",
     "amplifier_metrics",
+    "NoiseMetrics",
+    "noise_metrics",
 ]

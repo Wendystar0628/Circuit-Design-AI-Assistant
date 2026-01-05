@@ -7,7 +7,7 @@
 - MetricCard: 指标卡片组件
 - MetricsPanel: 指标显示面板
 - ChartViewer: 图表查看器
-- SimulationTab: 仿真结果标签页
+- SimulationTab: 仿真结果标签页主类
 """
 
 from presentation.panels.simulation.simulation_view_model import (
@@ -19,6 +19,12 @@ from presentation.panels.simulation.simulation_view_model import (
 from presentation.panels.simulation.metric_card import MetricCard
 from presentation.panels.simulation.metrics_panel import MetricsPanel
 from presentation.panels.simulation.chart_viewer import ChartViewer, ZoomableImageLabel
+from presentation.panels.simulation.simulation_tab import (
+    SimulationTab,
+    LeftPanel,
+    RightPanel,
+    StatusIndicator,
+)
 
 __all__ = [
     "SimulationViewModel",
@@ -29,4 +35,8 @@ __all__ = [
     "MetricsPanel",
     "ChartViewer",
     "ZoomableImageLabel",
+    "SimulationTab",
+    "LeftPanel",
+    "RightPanel",
+    "StatusIndicator",
 ]

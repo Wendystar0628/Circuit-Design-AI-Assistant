@@ -47,6 +47,7 @@
   "menu.tools.compress_context": "压缩上下文",
 
   "menu.settings": "设置",
+  "menu.settings.simulation": "仿真设置...",
   "menu.settings.api_config": "API 配置",
   "menu.settings.language": "语言",
   "menu.settings.preferences": "偏好设置",
@@ -357,5 +358,18 @@
   "template.free_work_system.desc": "自由工作模式下的系统级提示词，提供完整的电路设计助手能力",
 
   "menu.settings.prompt_editor": "Prompt 模板管理...",
-  "menu.settings.prompt_editor_tip": "管理和编辑 LLM 提示词模板"
+  "menu.settings.prompt_editor_tip": "管理和编辑 LLM 提示词模板",
+
+  "sim_settings_title": "仿真设置",
+  "sim_settings_analysis_tab": "分析类型",
+  "sim_settings_chart_tab": "图表显示",
+  "sim_settings_basic_group": "基础分析",
+  "sim_settings_advanced_group": "高级分析",
+  "sim_settings_no_analysis": "未选择任何分析类型",
+  "btn_ok": "确定",
+  "btn_apply": "应用",
+  "btn_cancel": "取消",
+  "btn_reset_default": "重置默认",
+
+  "dialog.simulation_settings.import_error": "无法加载仿真设置模块。"
 }

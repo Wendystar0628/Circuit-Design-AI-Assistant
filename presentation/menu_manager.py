@@ -302,6 +302,17 @@ class MenuManager:
         """设置设置菜单"""
         menu = self._menus["settings"]
         
+        # 仿真设置
+        self._actions["settings_simulation"] = QAction(self._main_window)
+        self._actions["settings_simulation"].setShortcut("Ctrl+Shift+,")
+        if "on_simulation_settings" in self._callbacks:
+            self._actions["settings_simulation"].triggered.connect(
+                self._callbacks["on_simulation_settings"]
+            )
+        menu.addAction(self._actions["settings_simulation"])
+        
+        menu.addSeparator()
+        
         # Prompt 模板管理
         self._actions["settings_prompt_editor"] = QAction(self._main_window)
         self._actions["settings_prompt_editor"].setToolTip(
@@ -475,6 +486,9 @@ class MenuManager:
         )
         
         # 设置菜单项
+        self._actions["settings_simulation"].setText(
+            self._get_text("menu.settings.simulation", "Simulation Settings...")
+        )
         self._actions["settings_prompt_editor"].setText(
             self._get_text("menu.settings.prompt_editor", "Prompt Template Manager...")
         )

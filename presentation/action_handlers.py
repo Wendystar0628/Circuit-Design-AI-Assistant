@@ -128,6 +128,7 @@ class ActionHandlers:
             "on_run_auto_simulation": self.on_run_auto_simulation,
             "on_run_select_simulation": self.on_run_select_simulation,
             "on_stop_simulation": self.on_stop_simulation,
+            "on_simulation_settings": self.on_simulation_settings,
         }
 
     # ============================================================
@@ -450,6 +451,47 @@ class ActionHandlers:
             self._get_text("btn.stop", "Stop"),
             "Stop simulation\n\nThis feature is under development in Phase 4."
         )
+
+    def on_simulation_settings(self):
+        """打开仿真设置对话框"""
+        try:
+            from presentation.dialogs.simulation_settings_dialog import SimulationSettingsDialog
+            from shared.service_locator import ServiceLocator
+            from shared.service_names import SVC_SESSION_STATE
+            
+            # 获取项目根目录
+            project_root = None
+            session_state = ServiceLocator.get_optional(SVC_SESSION_STATE)
+            if session_state:
+                project_root = session_state.project_root
+            
+            dialog = SimulationSettingsDialog(self._main_window)
+            
+            # 如果有项目根目录，加载项目配置
+            if project_root:
+                dialog.load_settings(project_root)
+            
+            dialog.exec()
+            
+        except ImportError as e:
+            QMessageBox.warning(
+                self._main_window,
+                self._get_text("dialog.warning.title", "Warning"),
+                self._get_text(
+                    "dialog.simulation_settings.import_error",
+                    "Failed to load Simulation Settings module."
+                )
+            )
+            if self.logger:
+                self.logger.error(f"Failed to import SimulationSettingsDialog: {e}")
+        except Exception as e:
+            QMessageBox.critical(
+                self._main_window,
+                self._get_text("dialog.error.title", "Error"),
+                f"Failed to open simulation settings: {str(e)}"
+            )
+            if self.logger:
+                self.logger.error(f"Failed to open simulation settings dialog: {e}")
 
 
 __all__ = ["ActionHandlers"]

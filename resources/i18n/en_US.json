@@ -47,6 +47,7 @@
   "menu.tools.compress_context": "Compress Context",
 
   "menu.settings": "Settings",
+  "menu.settings.simulation": "Simulation Settings...",
   "menu.settings.api_config": "API Configuration",
   "menu.settings.language": "Language",
   "menu.settings.preferences": "Preferences",
@@ -357,5 +358,18 @@
   "template.free_work_system.desc": "System-level prompt for free work mode, providing complete circuit design assistant capabilities",
 
   "menu.settings.prompt_editor": "Prompt Template Manager...",
-  "menu.settings.prompt_editor_tip": "Manage and edit LLM prompt templates"
+  "menu.settings.prompt_editor_tip": "Manage and edit LLM prompt templates",
+
+  "sim_settings_title": "Simulation Settings",
+  "sim_settings_analysis_tab": "Analysis Types",
+  "sim_settings_chart_tab": "Chart Display",
+  "sim_settings_basic_group": "Basic Analysis",
+  "sim_settings_advanced_group": "Advanced Analysis",
+  "sim_settings_no_analysis": "No analysis type selected",
+  "btn_ok": "OK",
+  "btn_apply": "Apply",
+  "btn_cancel": "Cancel",
+  "btn_reset_default": "Reset Default",
+
+  "dialog.simulation_settings.import_error": "Failed to load Simulation Settings module."
 }

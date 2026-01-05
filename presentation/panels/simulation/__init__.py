@@ -18,6 +18,7 @@ from presentation.panels.simulation.simulation_view_model import (
 )
 from presentation.panels.simulation.metric_card import MetricCard
 from presentation.panels.simulation.metrics_panel import MetricsPanel
+from presentation.panels.simulation.chart_viewer import ChartViewer, ZoomableImageLabel
 
 __all__ = [
     "SimulationViewModel",
@@ -26,4 +27,6 @@ __all__ = [
     "TuningParameter",
     "MetricCard",
     "MetricsPanel",
+    "ChartViewer",
+    "ZoomableImageLabel",
 ]

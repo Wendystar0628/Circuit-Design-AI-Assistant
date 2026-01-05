@@ -3,7 +3,27 @@
 设计管理域
 
 包含：
+- design_goals.py: 设计目标实体和管理器
 - undo_manager.py: 撤回快照管理
 - termination_checker.py: 终止条件判断
-- design_goal_extractor.py: 设计目标提取
 """
+
+from domain.design.design_goals import (
+    ConstraintType,
+    DesignGoal,
+    DesignGoalsCollection,
+    DesignGoalsManager,
+    SUPPORTED_METRICS,
+    get_metric_info,
+    get_supported_metric_identifiers,
+)
+
+__all__ = [
+    "ConstraintType",
+    "DesignGoal",
+    "DesignGoalsCollection",
+    "DesignGoalsManager",
+    "SUPPORTED_METRICS",
+    "get_metric_info",
+    "get_supported_metric_identifiers",
+]

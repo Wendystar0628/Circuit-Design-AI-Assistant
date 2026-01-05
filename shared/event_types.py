@@ -365,6 +365,17 @@ EVENT_WAVEFORM_DATA_READY = "waveform_data_ready"
 EVENT_PYRAMID_BUILD_COMPLETE = "pyramid_build_complete"
 
 # ============================================================
+# 分析选择事件
+# ============================================================
+
+# 分析类型选择变更
+# 携带数据：
+#   - enabled_analyses: list - 启用的分析类型列表
+#   - disabled_analyses: list - 禁用的分析类型列表
+#   - source: str - 变更来源（"dialog", "api", "load"）
+EVENT_ANALYSIS_SELECTION_CHANGED = "analysis_selection_changed"
+
+# ============================================================
 # 高级仿真事件（PVT/蒙特卡洛/参数扫描）
 # ============================================================
 
@@ -900,6 +911,8 @@ __all__ = [
     "EVENT_WAVEFORM_DATA_REQUESTED",
     "EVENT_WAVEFORM_DATA_READY",
     "EVENT_PYRAMID_BUILD_COMPLETE",
+    # 分析选择事件
+    "EVENT_ANALYSIS_SELECTION_CHANGED",
     # 高级仿真事件
     "EVENT_PVT_CORNER_COMPLETE",
     "EVENT_MONTE_CARLO_RUN_COMPLETE",

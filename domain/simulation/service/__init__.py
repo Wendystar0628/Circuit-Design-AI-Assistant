@@ -4,6 +4,7 @@
 
 职责：
 - 提供仿真配置管理服务
+- 提供分析类型选择服务
 - 提供快速调参服务（可选）
 
 设计原则：
@@ -18,9 +19,24 @@ from domain.simulation.service.simulation_config_service import (
     simulation_config_service,
 )
 
+from domain.simulation.service.analysis_selector import (
+    AnalysisType,
+    AnalysisSelection,
+    AnalysisSelector,
+    SelectionValidationResult,
+    analysis_selector,
+)
+
 __all__ = [
+    # 仿真配置服务
     "SimulationConfigService",
     "ValidationResult",
     "ValidationError",
     "simulation_config_service",
+    # 分析类型选择器
+    "AnalysisType",
+    "AnalysisSelection",
+    "AnalysisSelector",
+    "SelectionValidationResult",
+    "analysis_selector",
 ]

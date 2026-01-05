@@ -848,6 +848,29 @@ EVENT_INFO_PANEL_CLEARED = "info_panel.cleared"
 
 
 # ============================================================
+# 撤回操作事件
+# ============================================================
+
+# 撤回开始
+# 携带数据：
+#   - target_iteration: int - 目标迭代号
+#   - current_iteration: int - 当前迭代号
+EVENT_UNDO_STARTED = "undo_started"
+
+# 撤回完成
+# 携带数据：
+#   - restored_iteration: int - 恢复到的迭代号
+#   - previous_iteration: int - 撤回前的迭代号
+EVENT_UNDO_COMPLETED = "undo_completed"
+
+# 撤回失败
+# 携带数据：
+#   - error_code: str - 错误码
+#   - error_message: str - 错误信息
+#   - target_iteration: int - 目标迭代号
+EVENT_UNDO_FAILED = "undo_failed"
+
+# ============================================================
 # 文件引用校验事件
 # ============================================================
 
@@ -1025,6 +1048,10 @@ __all__ = [
     "EVENT_INFO_CARDS_LOADED",
     "EVENT_INFO_PANEL_CATEGORY_CHANGED",
     "EVENT_INFO_PANEL_CLEARED",
+    # 撤回操作事件
+    "EVENT_UNDO_STARTED",
+    "EVENT_UNDO_COMPLETED",
+    "EVENT_UNDO_FAILED",
     # 文件引用校验事件
     "EVENT_REQUEST_RESIMULATION",
     # 关键事件列表

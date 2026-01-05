@@ -16,10 +16,12 @@ from presentation.panels.simulation.simulation_view_model import (
     DisplayMetric,
     TuningParameter,
 )
+from presentation.panels.simulation.metric_card import MetricCard
 
 __all__ = [
     "SimulationViewModel",
     "SimulationStatus",
     "DisplayMetric",
     "TuningParameter",
+    "MetricCard",
 ]

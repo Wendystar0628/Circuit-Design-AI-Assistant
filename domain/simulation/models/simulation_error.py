@@ -87,6 +87,15 @@ class SimulationErrorType(Enum):
     
     PARAMETER_INVALID = "E010"
     """参数无效：仿真参数配置不正确"""
+    
+    SCRIPT_ERROR = "E011"
+    """脚本错误：Python 脚本执行失败"""
+    
+    OUTPUT_PARSE_ERROR = "E012"
+    """输出解析错误：无法解析脚本输出"""
+    
+    DEPENDENCY_MISSING = "E013"
+    """依赖缺失：脚本依赖的模块未安装"""
 
 
 # ============================================================
@@ -338,6 +347,9 @@ class SimulationError:
             SimulationErrorType.NGSPICE_CRASH: "系统错误",
             SimulationErrorType.FILE_ACCESS: "文件问题",
             SimulationErrorType.PARAMETER_INVALID: "配置问题",
+            SimulationErrorType.SCRIPT_ERROR: "脚本错误",
+            SimulationErrorType.OUTPUT_PARSE_ERROR: "输出解析",
+            SimulationErrorType.DEPENDENCY_MISSING: "依赖问题",
         }
         
         return category_map.get(self.type, "未知错误")

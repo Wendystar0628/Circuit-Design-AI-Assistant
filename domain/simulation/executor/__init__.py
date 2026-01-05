@@ -14,7 +14,7 @@
 
 执行器列表：
 - SpiceExecutor: SPICE 仿真执行器（使用 PySpice/NgSpiceShared）
-- PythonExecutor: Python 脚本执行器（后续实现）
+- PythonExecutor: Python 脚本执行器（在独立子进程中执行）
 """
 
 from domain.simulation.executor.simulation_executor import SimulationExecutor
@@ -23,6 +23,7 @@ from domain.simulation.executor.executor_registry import (
     executor_registry,
 )
 from domain.simulation.executor.spice_executor import SpiceExecutor
+from domain.simulation.executor.python_executor import PythonExecutor
 from domain.simulation.executor.circuit_analyzer import (
     CircuitAnalyzer,
     CircuitFileInfo,
@@ -34,6 +35,7 @@ __all__ = [
     "ExecutorRegistry",
     "executor_registry",
     "SpiceExecutor",
+    "PythonExecutor",
     "CircuitAnalyzer",
     "CircuitFileInfo",
     "MainCircuitDetectionResult",

@@ -599,6 +599,13 @@ def _delayed_init():
             _logger.info("Phase 3.5.3 StopController 初始化完成")
 
         # --------------------------------------------------------
+        # 3.5.4 ExecutorRegistry 初始化
+        # 依赖：Logger
+        # 职责：注册仿真执行器（SpiceExecutor、PythonExecutor）
+        # --------------------------------------------------------
+        _init_executor_registry()
+
+        # --------------------------------------------------------
         # 3.5.5 TracingLogger 初始化
         # 依赖：EventBus、TracingStore
         # 职责：内存缓冲 + 定时刷新追踪日志
@@ -678,6 +685,51 @@ def _delayed_init():
         # Phase 3 失败不致命，功能降级运行
         print("[WARNING] 部分功能可能不可用，应用将以降级模式运行")
 
+
+
+def _init_executor_registry():
+    """
+    初始化仿真执行器注册表（Phase 3.5.4）
+    
+    注册所有仿真执行器到全局注册表：
+    - SpiceExecutor: SPICE 仿真执行器（使用 PySpice/NgSpiceShared）
+    - PythonExecutor: Python 脚本执行器（在独立子进程中执行）
+    
+    执行器注册表是全局单例，通过 ServiceLocator 访问。
+    """
+    try:
+        from domain.simulation.executor import (
+            executor_registry,
+            SpiceExecutor,
+            PythonExecutor,
+        )
+        from shared.service_locator import ServiceLocator
+        from shared.service_names import SVC_EXECUTOR_REGISTRY
+        
+        # 注册 SpiceExecutor
+        spice_executor = SpiceExecutor()
+        executor_registry.register(spice_executor)
+        
+        # 注册 PythonExecutor
+        python_executor = PythonExecutor()
+        executor_registry.register(python_executor)
+        
+        # 将注册表注册到 ServiceLocator
+        ServiceLocator.register(SVC_EXECUTOR_REGISTRY, executor_registry)
+        
+        if _logger:
+            registry_info = executor_registry.get_registry_info()
+            _logger.info(
+                f"Phase 3.5.4 ExecutorRegistry 初始化完成，"
+                f"已注册 {registry_info['executor_count']} 个执行器: "
+                f"{[e['name'] for e in registry_info['executors']]}"
+            )
+            
+    except Exception as e:
+        if _logger:
+            _logger.warning(f"Phase 3.5.4 ExecutorRegistry 初始化失败（非致命）: {e}")
+        else:
+            print(f"[Phase 3.5.4] ExecutorRegistry 初始化失败: {e}")
 
 
 def _init_tracing_logger():

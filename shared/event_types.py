@@ -399,6 +399,19 @@ EVENT_MONTE_CARLO_RUN_COMPLETE = "sim_monte_carlo_run_complete"
 #   - metrics: dict - 该扫描点性能指标
 EVENT_SWEEP_POINT_COMPLETE = "sim_sweep_point_complete"
 
+# 最坏情况分析完成
+# 携带数据：
+#   - circuit_file: str - 电路文件路径
+#   - method: str - 分析方法（"rss" 或 "eva"）
+#   - metric: str - 分析的指标名称
+#   - nominal_value: float - 标称值
+#   - worst_case_max: float - 最坏情况最大值
+#   - worst_case_min: float - 最坏情况最小值
+#   - design_margin_percent: float - 设计裕度百分比
+#   - critical_params: list - 关键参数列表
+#   - simulation_count: int - 仿真次数
+EVENT_WORST_CASE_COMPLETE = "sim_worst_case_complete"
+
 # ============================================================
 # 电路图事件
 # ============================================================
@@ -891,6 +904,7 @@ __all__ = [
     "EVENT_PVT_CORNER_COMPLETE",
     "EVENT_MONTE_CARLO_RUN_COMPLETE",
     "EVENT_SWEEP_POINT_COMPLETE",
+    "EVENT_WORST_CASE_COMPLETE",
     # 电路图事件
     "EVENT_SCHEMATIC_LOADED",
     "EVENT_SCHEMATIC_ELEMENT_SELECTED",

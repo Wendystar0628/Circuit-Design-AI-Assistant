@@ -18,6 +18,8 @@
 - analysis/: 高级仿真分析模块组
   - pvt_analysis.py: PVT 角点仿真
   - monte_carlo_analysis.py: 蒙特卡洛分析
+  - parametric_sweep.py: 参数扫描分析
+  - worst_case_analysis.py: 最坏情况分析
 
 服务层（位于 domain/services/）：
 - simulation_service.py: 仿真服务（统一入口）
@@ -30,4 +32,6 @@
 - SimulationConfigService 管理配置的读写、校验、持久化，发布配置变更事件
 - PVTAnalyzer 执行多角点仿真，验证电路在极端条件下的性能
 - MonteCarloAnalyzer 执行统计分析，评估工艺偏差和元件容差影响
+- ParametricSweepAnalyzer 执行参数扫描，探索设计空间
+- WorstCaseAnalyzer 执行最坏情况分析，快速评估设计裕度
 """

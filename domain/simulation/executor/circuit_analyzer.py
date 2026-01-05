@@ -7,12 +7,14 @@
 - 识别主电路文件
 - 提取文件引用关系
 - 构建依赖关系图
+- 扫描项目目录中的可仿真文件
 
 设计原则：
 - 复用现有的 IncludeParser 进行语句解析
 - 使用被引用分析法识别主电路
 - 提供清晰的文件类型判断规则
 - 返回结构化的分析结果
+- 支持从 ExecutorRegistry 动态获取扩展名
 
 使用示例：
     analyzer = CircuitAnalyzer()
@@ -28,19 +30,70 @@
     if result["main_circuit"]:
         print(f"主电路: {result['main_circuit']}")
         print(f"置信度: {result['confidence']}")
+    
+    # 扫描可仿真文件（使用 ExecutorRegistry 的扩展名）
+    scan_result = analyzer.scan_simulatable_files(project_path)
+    print(f"发现 {len(scan_result.files)} 个可仿真文件")
 """
 
+import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, TYPE_CHECKING
 
 from domain.dependency.scanner.include_parser import IncludeParser, ParsedInclude
+
+if TYPE_CHECKING:
+    from domain.simulation.executor.executor_registry import ExecutorRegistry
 
 
 # ============================================================
 # 数据结构定义
 # ============================================================
+
+# ============================================================
+# 日志记录器
+# ============================================================
+
+_logger = logging.getLogger(__name__)
+
+
+# ============================================================
+# 数据结构定义
+# ============================================================
+
+@dataclass
+class ScanResult:
+    """
+    文件扫描结果
+    
+    Attributes:
+        files: 发现的可仿真文件列表（相对路径）
+        main_circuit_candidates: 主电路候选列表（相对路径）
+        dependency_graph: 文件依赖关系图
+    """
+    files: List[Path] = field(default_factory=list)
+    """发现的可仿真文件列表"""
+    
+    main_circuit_candidates: List[Path] = field(default_factory=list)
+    """主电路候选列表（可能为 0、1 或多个）"""
+    
+    dependency_graph: Dict[str, List[str]] = field(default_factory=dict)
+    """文件依赖关系图"""
+    
+    def has_single_main_circuit(self) -> bool:
+        """是否只有一个主电路候选"""
+        return len(self.main_circuit_candidates) == 1
+    
+    def has_multiple_candidates(self) -> bool:
+        """是否有多个主电路候选"""
+        return len(self.main_circuit_candidates) > 1
+    
+    def has_no_candidates(self) -> bool:
+        """是否没有主电路候选"""
+        return len(self.main_circuit_candidates) == 0
+
 
 @dataclass
 class CircuitFileInfo:
@@ -79,7 +132,7 @@ class CircuitAnalyzer:
     分析工作区中的电路文件结构，识别主电路文件，提取文件引用关系
     """
     
-    # 支持的电路文件扩展名
+    # 支持的电路文件扩展名（默认值，可通过 executor_registry 动态获取）
     CIRCUIT_EXTENSIONS = {".cir", ".sp", ".spice", ".net", ".ckt"}
     
     # 仿真控制语句模式
@@ -97,9 +150,46 @@ class CircuitAnalyzer:
     # 模型定义模式
     MODEL_PATTERN = re.compile(r'^\s*\.model\s+', re.IGNORECASE)
     
-    def __init__(self):
-        """初始化电路分析器"""
+    def __init__(self, executor_registry: Optional["ExecutorRegistry"] = None):
+        """
+        初始化电路分析器
+        
+        Args:
+            executor_registry: 执行器注册表（可选），用于动态获取支持的扩展名
+        """
         self.parser = IncludeParser()
+        self._executor_registry = executor_registry
+        self._logger = _logger
+    
+    # ============================================================
+    # 扩展名管理
+    # ============================================================
+    
+    def get_supported_extensions(self) -> List[str]:
+        """
+        获取支持的文件扩展名
+        
+        如果设置了 executor_registry，从注册表动态获取；
+        否则使用默认的 CIRCUIT_EXTENSIONS。
+        
+        Returns:
+            List[str]: 支持的文件扩展名列表
+        """
+        if self._executor_registry is not None:
+            extensions = self._executor_registry.get_all_supported_extensions()
+            if extensions:
+                return extensions
+        
+        return list(self.CIRCUIT_EXTENSIONS)
+    
+    def set_executor_registry(self, registry: "ExecutorRegistry") -> None:
+        """
+        设置执行器注册表
+        
+        Args:
+            registry: 执行器注册表实例
+        """
+        self._executor_registry = registry
     
     # ============================================================
     # 公开接口
@@ -118,8 +208,11 @@ class CircuitAnalyzer:
         project_root = Path(project_path).resolve()
         circuit_files = []
         
+        # 获取支持的扩展名
+        extensions = self.get_supported_extensions()
+        
         # 递归扫描所有电路文件
-        for ext in self.CIRCUIT_EXTENSIONS:
+        for ext in extensions:
             for file_path in project_root.rglob(f"*{ext}"):
                 # 跳过隐藏目录和备份文件
                 if self._should_skip_file(file_path):
@@ -131,6 +224,48 @@ class CircuitAnalyzer:
                     circuit_files.append(file_info)
         
         return circuit_files
+    
+    def scan_simulatable_files(self, project_path: str) -> ScanResult:
+        """
+        扫描项目目录中的可仿真文件
+        
+        返回扫描结果，包含文件列表、主电路候选和依赖关系图。
+        
+        Args:
+            project_path: 项目根目录路径
+            
+        Returns:
+            ScanResult: 扫描结果数据结构
+        """
+        project_root = Path(project_path).resolve()
+        
+        # 扫描所有电路文件
+        circuit_files = self.scan_circuit_files(project_path)
+        
+        if not circuit_files:
+            return ScanResult()
+        
+        # 构建依赖关系图
+        dep_graph = self.build_dependency_graph(project_path)
+        
+        # 检测主电路
+        detection_result = self.detect_main_circuit(project_path)
+        
+        # 构建文件路径列表
+        files = [Path(f.path) for f in circuit_files]
+        
+        # 构建主电路候选列表
+        candidates = []
+        if detection_result.main_circuit:
+            candidates.append(Path(detection_result.main_circuit))
+        for candidate in detection_result.candidates:
+            candidates.append(Path(candidate["path"]))
+        
+        return ScanResult(
+            files=files,
+            main_circuit_candidates=candidates,
+            dependency_graph=dep_graph,
+        )
     
     def parse_includes(self, file_path: str) -> List[ParsedInclude]:
         """
@@ -553,4 +688,5 @@ __all__ = [
     "CircuitAnalyzer",
     "CircuitFileInfo",
     "MainCircuitDetectionResult",
+    "ScanResult",
 ]

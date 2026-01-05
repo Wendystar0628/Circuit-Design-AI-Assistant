@@ -375,6 +375,26 @@ EVENT_PYRAMID_BUILD_COMPLETE = "pyramid_build_complete"
 #   - source: str - 变更来源（"dialog", "api", "load"）
 EVENT_ANALYSIS_SELECTION_CHANGED = "analysis_selection_changed"
 
+# 单个分析完成（批量执行时每完成一个分析发布）
+# 携带数据：
+#   - analysis_type: str - 分析类型（"ac", "dc", "tran" 等）
+#   - success: bool - 是否成功
+#   - result_path: str - 结果文件路径
+#   - metrics: dict - 性能指标摘要
+#   - duration_seconds: float - 该分析耗时（秒）
+#   - index: int - 当前分析索引（从 0 开始）
+#   - total: int - 总分析数量
+EVENT_ANALYSIS_COMPLETE = "analysis_complete"
+
+# 所有选中分析完成（批量执行全部完成后发布）
+# 携带数据：
+#   - total_count: int - 总分析数量
+#   - success_count: int - 成功数量
+#   - failed_count: int - 失败数量
+#   - total_duration_seconds: float - 总耗时（秒）
+#   - results: dict - 各分析结果摘要 {analysis_type: {success, result_path, metrics}}
+EVENT_ALL_ANALYSES_COMPLETE = "all_analyses_complete"
+
 # 图表类型选择变更
 # 携带数据：
 #   - enabled_charts: list - 启用的图表类型列表
@@ -920,6 +940,8 @@ __all__ = [
     "EVENT_PYRAMID_BUILD_COMPLETE",
     # 分析选择事件
     "EVENT_ANALYSIS_SELECTION_CHANGED",
+    "EVENT_ANALYSIS_COMPLETE",
+    "EVENT_ALL_ANALYSES_COMPLETE",
     "EVENT_CHART_SELECTION_CHANGED",
     # 高级仿真事件
     "EVENT_PVT_CORNER_COMPLETE",

@@ -77,6 +77,8 @@ from shared.event_types import (
     EVENT_MAIN_CIRCUIT_DETECTED,
     EVENT_SIMULATION_NEED_SELECTION,
     EVENT_SIMULATION_NO_MAIN_CIRCUIT,
+    EVENT_ANALYSIS_COMPLETE,
+    EVENT_ALL_ANALYSES_COMPLETE,
 )
 
 # 全局事件总线实例（延迟获取）
@@ -360,6 +362,150 @@ class SimulationService:
             session_id=session_id,
             on_progress=on_progress,
         )
+
+    def run_selected_analyses(
+        self,
+        file_path: str,
+        project_root: str,
+        *,
+        version: int = 1,
+        session_id: str = "",
+        on_progress: Optional[Callable[[float, str], None]] = None,
+    ) -> Dict[str, SimulationResult]:
+        """
+        执行用户选中的所有分析类型
+        
+        流程：
+        1. 从 AnalysisSelector 获取启用的分析列表（按优先级排序）
+        2. 从 SimulationConfigService 获取各分析的配置
+        3. 依次执行每个分析，收集结果
+        4. 每完成一个分析发布 EVENT_ANALYSIS_COMPLETE 事件
+        5. 全部完成后发布 EVENT_ALL_ANALYSES_COMPLETE 事件
+        
+        Args:
+            file_path: 电路文件路径
+            project_root: 项目根目录路径
+            version: 版本号
+            session_id: 会话 ID
+            on_progress: 进度回调函数
+            
+        Returns:
+            Dict[str, SimulationResult]: 分析类型到结果的映射
+        """
+        from domain.simulation.service.analysis_selector import analysis_selector, AnalysisType
+        from domain.simulation.service.simulation_config_service import simulation_config_service
+        
+        start_time = time.time()
+        results: Dict[str, SimulationResult] = {}
+        
+        # 获取按优先级排序的执行顺序
+        execution_order = analysis_selector.get_execution_order()
+        total_count = len(execution_order)
+        
+        if total_count == 0:
+            self._logger.warning("没有选中任何分析类型")
+            return results
+        
+        self._logger.info(f"开始批量执行 {total_count} 个分析: {[t.value for t in execution_order]}")
+        
+        # 加载配置
+        config = simulation_config_service.load_config(project_root)
+        
+        success_count = 0
+        failed_count = 0
+        
+        for index, analysis_type in enumerate(execution_order):
+            analysis_start_time = time.time()
+            analysis_type_str = analysis_type.value
+            
+            # 构建该分析类型的配置
+            analysis_config = self._build_analysis_config(analysis_type, config)
+            
+            self._logger.info(f"执行分析 [{index + 1}/{total_count}]: {analysis_type_str}")
+            
+            # 执行仿真
+            result = self.run_simulation(
+                file_path=file_path,
+                analysis_config=analysis_config,
+                project_root=project_root,
+                version=version,
+                session_id=session_id,
+                on_progress=on_progress,
+            )
+            
+            results[analysis_type_str] = result
+            analysis_duration = time.time() - analysis_start_time
+            
+            if result.success:
+                success_count += 1
+            else:
+                failed_count += 1
+            
+            # 发布单个分析完成事件
+            self._publish_analysis_complete_event(
+                analysis_type=analysis_type_str,
+                result=result,
+                index=index,
+                total=total_count,
+                duration=analysis_duration,
+            )
+        
+        total_duration = time.time() - start_time
+        
+        # 发布所有分析完成事件
+        self._publish_all_analyses_complete_event(
+            results=results,
+            total_count=total_count,
+            success_count=success_count,
+            failed_count=failed_count,
+            total_duration=total_duration,
+        )
+        
+        self._logger.info(
+            f"批量执行完成: 成功 {success_count}/{total_count}, "
+            f"失败 {failed_count}/{total_count}, 耗时 {total_duration:.2f}s"
+        )
+        
+        return results
+
+    def _build_analysis_config(
+        self,
+        analysis_type: "AnalysisType",
+        config: "FullSimulationConfig",
+    ) -> Dict[str, Any]:
+        """
+        根据分析类型构建仿真配置
+        
+        Args:
+            analysis_type: 分析类型枚举
+            config: 完整仿真配置
+            
+        Returns:
+            Dict[str, Any]: 仿真配置字典
+        """
+        from domain.simulation.service.analysis_selector import AnalysisType
+        
+        base_config = {
+            "analysis_type": analysis_type.value,
+            "timeout_seconds": config.global_config.timeout_seconds,
+            "temperature": config.global_config.temperature,
+            "convergence": config.global_config.convergence.to_dict(),
+        }
+        
+        if analysis_type == AnalysisType.AC:
+            base_config.update(config.ac.to_dict())
+        elif analysis_type == AnalysisType.DC:
+            base_config.update(config.dc.to_dict())
+        elif analysis_type == AnalysisType.TRANSIENT:
+            base_config.update(config.transient.to_dict())
+        elif analysis_type == AnalysisType.NOISE:
+            base_config.update(config.noise.to_dict())
+        elif analysis_type == AnalysisType.OP:
+            # OP 分析无额外配置
+            pass
+        # 高级分析类型暂不处理，由各自的分析模块负责
+        
+        return base_config
     
     # ============================================================
     # 文件扫描方法
@@ -695,6 +841,54 @@ class SimulationService:
                 "error_message": error_message,
                 "file": result.file_path,
                 "recoverable": False,
+            })
+
+    def _publish_analysis_complete_event(
+        self,
+        analysis_type: str,
+        result: SimulationResult,
+        index: int,
+        total: int,
+        duration: float,
+    ) -> None:
+        """发布单个分析完成事件"""
+        bus = _get_event_bus()
+        if bus:
+            bus.publish(EVENT_ANALYSIS_COMPLETE, {
+                "analysis_type": analysis_type,
+                "success": result.success,
+                "result_path": "",  # 由 run_simulation 内部保存
+                "metrics": result.metrics or {},
+                "duration_seconds": duration,
+                "index": index,
+                "total": total,
+            })
+
+    def _publish_all_analyses_complete_event(
+        self,
+        results: Dict[str, SimulationResult],
+        total_count: int,
+        success_count: int,
+        failed_count: int,
+        total_duration: float,
+    ) -> None:
+        """发布所有分析完成事件"""
+        bus = _get_event_bus()
+        if bus:
+            results_summary = {}
+            for analysis_type, result in results.items():
+                results_summary[analysis_type] = {
+                    "success": result.success,
+                    "result_path": "",
+                    "metrics": result.metrics or {},
+                }
+            
+            bus.publish(EVENT_ALL_ANALYSES_COMPLETE, {
+                "total_count": total_count,
+                "success_count": success_count,
+                "failed_count": failed_count,
+                "total_duration_seconds": total_duration,
+                "results": results_summary,
             })
 
 

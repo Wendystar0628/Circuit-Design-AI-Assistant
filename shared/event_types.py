@@ -375,6 +375,13 @@ EVENT_PYRAMID_BUILD_COMPLETE = "pyramid_build_complete"
 #   - source: str - 变更来源（"dialog", "api", "load"）
 EVENT_ANALYSIS_SELECTION_CHANGED = "analysis_selection_changed"
 
+# 图表类型选择变更
+# 携带数据：
+#   - enabled_charts: list - 启用的图表类型列表
+#   - disabled_charts: list - 禁用的图表类型列表
+#   - source: str - 变更来源（"dialog", "api", "load"）
+EVENT_CHART_SELECTION_CHANGED = "chart_selection_changed"
+
 # ============================================================
 # 高级仿真事件（PVT/蒙特卡洛/参数扫描）
 # ============================================================
@@ -913,6 +920,7 @@ __all__ = [
     "EVENT_PYRAMID_BUILD_COMPLETE",
     # 分析选择事件
     "EVENT_ANALYSIS_SELECTION_CHANGED",
+    "EVENT_CHART_SELECTION_CHANGED",
     # 高级仿真事件
     "EVENT_PVT_CORNER_COMPLETE",
     "EVENT_MONTE_CARLO_RUN_COMPLETE",

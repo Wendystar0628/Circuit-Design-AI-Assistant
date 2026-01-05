@@ -5,6 +5,7 @@
 职责：
 - 提供仿真配置管理服务
 - 提供分析类型选择服务
+- 提供图表类型选择服务
 - 提供快速调参服务（可选）
 
 设计原则：
@@ -27,6 +28,14 @@ from domain.simulation.service.analysis_selector import (
     analysis_selector,
 )
 
+from domain.simulation.service.chart_selector import (
+    ChartType,
+    ChartSelection,
+    ChartSelector,
+    ChartValidationResult,
+    chart_selector,
+)
+
 __all__ = [
     # 仿真配置服务
     "SimulationConfigService",
@@ -39,4 +48,10 @@ __all__ = [
     "AnalysisSelector",
     "SelectionValidationResult",
     "analysis_selector",
+    # 图表类型选择器
+    "ChartType",
+    "ChartSelection",
+    "ChartSelector",
+    "ChartValidationResult",
+    "chart_selector",
 ]

@@ -108,6 +108,7 @@ def count_directory(root_path: Path) -> Dict[str, Dict]:
         ".git",
         "node_modules",
         "vendor",       # 第三方库
+        "tests",        # 测试文件
     }
     
     for filepath in root_path.rglob("*.py"):

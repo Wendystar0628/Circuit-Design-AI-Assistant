@@ -31,6 +31,10 @@ from domain.simulation.metrics.noise_metrics import (
     NoiseMetrics,
     noise_metrics,
 )
+from domain.simulation.metrics.distortion_metrics import (
+    DistortionMetrics,
+    distortion_metrics,
+)
 
 __all__ = [
     "MetricCategory",
@@ -41,4 +45,6 @@ __all__ = [
     "amplifier_metrics",
     "NoiseMetrics",
     "noise_metrics",
+    "DistortionMetrics",
+    "distortion_metrics",
 ]

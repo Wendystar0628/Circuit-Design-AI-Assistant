@@ -15,6 +15,18 @@
 - distortion_metrics.py: 失真指标提取
 - power_metrics.py: 电源指标提取
 - transient_metrics.py: 瞬态指标提取
+
+使用示例：
+    from domain.simulation.metrics import metrics_extractor
+    
+    # 根据拓扑自动提取指标
+    metrics = metrics_extractor.extract_metrics(sim_data, topology="amplifier")
+    
+    # 提取所有可计算的指标
+    all_metrics = metrics_extractor.extract_all_metrics(sim_data)
+    
+    # 按名称提取单个指标
+    gain = metrics_extractor.get_metric_by_name(sim_data, "gain")
 """
 
 from domain.simulation.metrics.metric_result import (
@@ -43,12 +55,21 @@ from domain.simulation.metrics.transient_metrics import (
     TransientMetrics,
     transient_metrics,
 )
+from domain.simulation.metrics.metrics_extractor import (
+    MetricsExtractor,
+    metrics_extractor,
+)
 
 __all__ = [
+    # 门面类（推荐使用）
+    "MetricsExtractor",
+    "metrics_extractor",
+    # 数据类
     "MetricCategory",
     "MetricResult",
     "create_metric_result",
     "create_error_metric",
+    # 子模块提取器
     "AmplifierMetrics",
     "amplifier_metrics",
     "NoiseMetrics",

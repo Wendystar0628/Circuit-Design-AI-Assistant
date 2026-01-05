@@ -23,10 +23,16 @@ from domain.simulation.metrics.metric_result import (
     create_metric_result,
     create_error_metric,
 )
+from domain.simulation.metrics.amplifier_metrics import (
+    AmplifierMetrics,
+    amplifier_metrics,
+)
 
 __all__ = [
     "MetricCategory",
     "MetricResult",
     "create_metric_result",
     "create_error_metric",
+    "AmplifierMetrics",
+    "amplifier_metrics",
 ]

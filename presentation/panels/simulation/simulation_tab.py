@@ -512,8 +512,14 @@ class ChartViewerPanel(QFrame):
     """
     图表查看面板
     
-    包含图表查看器
+    包含多个标签页：图表视图、波形视图、原始数据、输出日志
     """
+    
+    # 标签页索引常量
+    TAB_CHART = 0
+    TAB_WAVEFORM = 1
+    TAB_RAW_DATA = 2
+    TAB_LOG = 3
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -530,9 +536,35 @@ class ChartViewerPanel(QFrame):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         
-        # 图表查看器
+        # 标签页容器
+        from PyQt6.QtWidgets import QTabWidget
+        self._tab_widget = QTabWidget()
+        self._tab_widget.setObjectName("chartTabWidget")
+        self._tab_widget.setDocumentMode(True)
+        
+        # 图表查看器标签页
         self._chart_viewer = ChartViewer()
-        layout.addWidget(self._chart_viewer)
+        self._tab_widget.addTab(self._chart_viewer, "")
+        
+        # 波形查看器标签页
+        from presentation.panels.simulation.waveform_widget import WaveformWidget
+        self._waveform_widget = WaveformWidget()
+        self._tab_widget.addTab(self._waveform_widget, "")
+        
+        # 原始数据表格标签页
+        from presentation.panels.simulation.raw_data_table import RawDataTable
+        self._raw_data_table = RawDataTable()
+        self._tab_widget.addTab(self._raw_data_table, "")
+        
+        # 输出日志查看器标签页
+        from presentation.panels.simulation.output_log_viewer import OutputLogViewer
+        self._output_log_viewer = OutputLogViewer()
+        self._tab_widget.addTab(self._output_log_viewer, "")
+        
+        layout.addWidget(self._tab_widget)
+        
+        # 初始化标签页标题
+        self._update_tab_titles()
     
     def _apply_style(self):
         """应用样式"""
@@ -540,12 +572,73 @@ class ChartViewerPanel(QFrame):
             #chartViewerPanel {{
                 background-color: {COLOR_BG_PRIMARY};
             }}
+            
+            #chartTabWidget {{
+                background-color: {COLOR_BG_PRIMARY};
+            }}
+            
+            #chartTabWidget::pane {{
+                border: none;
+            }}
+            
+            #chartTabWidget::tab-bar {{
+                alignment: left;
+            }}
+            
+            #chartTabWidget QTabBar::tab {{
+                background-color: {COLOR_BG_TERTIARY};
+                color: {COLOR_TEXT_SECONDARY};
+                padding: 6px 12px;
+                margin-right: 2px;
+                border: none;
+                border-bottom: 2px solid transparent;
+            }}
+            
+            #chartTabWidget QTabBar::tab:selected {{
+                color: {COLOR_ACCENT};
+                border-bottom: 2px solid {COLOR_ACCENT};
+            }}
+            
+            #chartTabWidget QTabBar::tab:hover:!selected {{
+                color: {COLOR_TEXT_PRIMARY};
+                background-color: {COLOR_ACCENT_LIGHT};
+            }}
         """)
+    
+    def _update_tab_titles(self):
+        """更新标签页标题"""
+        self._tab_widget.setTabText(self.TAB_CHART, self._get_text(
+            "simulation.tab.chart", "图表"
+        ))
+        self._tab_widget.setTabText(self.TAB_WAVEFORM, self._get_text(
+            "simulation.tab.waveform", "波形"
+        ))
+        self._tab_widget.setTabText(self.TAB_RAW_DATA, self._get_text(
+            "simulation.tab.raw_data", "原始数据"
+        ))
+        self._tab_widget.setTabText(self.TAB_LOG, self._get_text(
+            "simulation.tab.log", "输出日志"
+        ))
     
     @property
     def chart_viewer(self) -> ChartViewer:
         """获取图表查看器"""
         return self._chart_viewer
+    
+    @property
+    def waveform_widget(self):
+        """获取波形查看器"""
+        return self._waveform_widget
+    
+    @property
+    def raw_data_table(self):
+        """获取原始数据表格"""
+        return self._raw_data_table
+    
+    @property
+    def output_log_viewer(self):
+        """获取输出日志查看器"""
+        return self._output_log_viewer
     
     def load_chart(self, chart_path: str, chart_type: Optional[str] = None):
         """加载图表"""
@@ -555,13 +648,58 @@ class ChartViewerPanel(QFrame):
         """批量加载图表"""
         self._chart_viewer.load_charts(chart_paths)
     
+    def load_waveform(self, result, signal_name: str):
+        """加载波形数据"""
+        self._waveform_widget.load_waveform(result, signal_name)
+        self._tab_widget.setCurrentIndex(self.TAB_WAVEFORM)
+    
+    def load_raw_data(self, result, signal_names: Optional[List[str]] = None):
+        """加载原始数据"""
+        self._raw_data_table.load_data(result, signal_names)
+    
+    def load_output_log(self, sim_result_path: str, project_root: str):
+        """加载输出日志"""
+        self._output_log_viewer.load_log(sim_result_path, project_root)
+    
     def clear(self):
-        """清空图表"""
+        """清空所有内容"""
         self._chart_viewer.clear()
+        self._waveform_widget.clear_waveforms()
+        self._raw_data_table.clear()
+        self._output_log_viewer.clear()
+    
+    def switch_to_chart(self):
+        """切换到图表标签页"""
+        self._tab_widget.setCurrentIndex(self.TAB_CHART)
+    
+    def switch_to_waveform(self):
+        """切换到波形标签页"""
+        self._tab_widget.setCurrentIndex(self.TAB_WAVEFORM)
+    
+    def switch_to_raw_data(self):
+        """切换到原始数据标签页"""
+        self._tab_widget.setCurrentIndex(self.TAB_RAW_DATA)
+    
+    def switch_to_log(self):
+        """切换到输出日志标签页"""
+        self._tab_widget.setCurrentIndex(self.TAB_LOG)
     
     def retranslate_ui(self):
         """重新翻译 UI 文本"""
+        self._update_tab_titles()
         self._chart_viewer.retranslate_ui()
+        self._waveform_widget.retranslate_ui()
+        self._raw_data_table.retranslate_ui()
+        self._output_log_viewer.retranslate_ui()
+    
+    def _get_text(self, key: str, default: str) -> str:
+        """获取国际化文本"""
+        try:
+            from shared.i18n_manager import I18nManager
+            i18n = I18nManager()
+            return i18n.get_text(key, default)
+        except ImportError:
+            return default
 
 
 
@@ -746,6 +884,11 @@ class SimulationTab(QWidget):
         
         # 指标卡片点击
         self._metrics_summary_panel.metrics_panel.metric_clicked.connect(self._on_metric_clicked)
+        
+        # 图表查看器波形运算回调
+        self._chart_viewer_panel.chart_viewer.set_waveform_math_handler(
+            self._on_waveform_math_request
+        )
     
     def _subscribe_events(self):
         """订阅事件"""
@@ -1002,6 +1145,55 @@ class SimulationTab(QWidget):
         self._logger.debug(f"Metric clicked: {metric_name}")
         # 可以高亮对应的图表区域或显示详情
     
+    def _on_waveform_math_request(self):
+        """处理波形数学运算请求"""
+        self._logger.info("Waveform math dialog requested")
+        
+        # 获取当前仿真结果
+        current_result = self._view_model.current_result
+        if current_result is None:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.warning(
+                self,
+                self._get_text("waveform_math.title", "波形数学运算"),
+                self._get_text("waveform_math.no_data", "无仿真数据可用")
+            )
+            return
+        
+        # 打开波形数学运算对话框
+        try:
+            from presentation.panels.simulation.waveform_math_dialog import WaveformMathDialog
+            
+            dialog = WaveformMathDialog(self, current_result)
+            dialog.result_ready.connect(self._on_waveform_math_result)
+            dialog.exec()
+        except Exception as e:
+            self._logger.error(f"Failed to open waveform math dialog: {e}")
+    
+    def _on_waveform_math_result(self, waveform_data):
+        """
+        处理波形数学运算结果
+        
+        Args:
+            waveform_data: WaveformData 对象
+        """
+        self._logger.info(f"Waveform math result: {waveform_data.signal_name}")
+        
+        # 将计算结果添加到波形显示
+        # 这里可以将结果传递给 WaveformWidget 显示
+        # 或者添加到图表查看器中
+        
+        # 发布事件通知其他组件
+        event_bus = self._get_event_bus()
+        if event_bus:
+            from shared.event_types import EVENT_WAVEFORM_MATH_COMPLETE
+            event_bus.publish(EVENT_WAVEFORM_MATH_COMPLETE, {
+                "signal_name": waveform_data.signal_name,
+                "point_count": waveform_data.point_count,
+                "x_range": waveform_data.x_range,
+                "y_range": waveform_data.y_range,
+            })
+    
     # ============================================================
     # 公共方法
     # ============================================================
@@ -1024,7 +1216,39 @@ class SimulationTab(QWidget):
         if timestamp:
             self._metrics_summary_panel.set_result_timestamp(timestamp)
         
+        # 加载波形数据到各组件
+        self._load_waveform_data(result)
+        
         self._hide_empty_state()
+    
+    def _load_waveform_data(self, result):
+        """
+        加载波形数据到各组件
+        
+        Args:
+            result: SimulationResult 对象
+        """
+        if result is None:
+            return
+        
+        # 获取可用信号列表
+        data = getattr(result, 'data', None)
+        if data is None:
+            return
+        
+        signal_names = data.get_signal_names() if hasattr(data, 'get_signal_names') else []
+        
+        # 加载第一个信号到波形查看器
+        if signal_names:
+            self._chart_viewer_panel.waveform_widget.load_waveform(result, signal_names[0])
+        
+        # 加载原始数据表格
+        self._chart_viewer_panel.raw_data_table.load_data(result)
+        
+        # 加载输出日志（如果有）
+        raw_output = getattr(result, 'raw_output', None)
+        if raw_output:
+            self._chart_viewer_panel.output_log_viewer.load_log_from_text(raw_output)
     
     def update_metrics(self, metrics_list: List[DisplayMetric]):
         """
@@ -1062,6 +1286,72 @@ class SimulationTab(QWidget):
         self._chart_viewer_panel.clear()
         self._view_model.clear()
         self._status_indicator.hide_status()
+    
+    def export_waveform_data(self, format: str = "csv"):
+        """
+        导出波形数据
+        
+        Args:
+            format: 导出格式（csv/json/mat/npy/npz）
+        """
+        current_result = self._view_model.current_result
+        if current_result is None:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.warning(
+                self,
+                self._get_text("export.title", "导出数据"),
+                self._get_text("export.no_data", "无仿真数据可导出")
+            )
+            return
+        
+        # 获取导出路径
+        from PyQt6.QtWidgets import QFileDialog
+        from domain.simulation.data.data_exporter import data_exporter
+        
+        ext = data_exporter.get_format_extension(format)
+        filter_str = f"{format.upper()} Files (*{ext})"
+        
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            self._get_text("export.title", "导出数据"),
+            f"simulation_data{ext}",
+            filter_str
+        )
+        
+        if not path:
+            return
+        
+        # 执行导出
+        result = data_exporter.export_with_result(
+            current_result, format, path
+        )
+        
+        if result.success:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.information(
+                self,
+                self._get_text("export.title", "导出数据"),
+                self._get_text("export.success", "数据导出成功：{path}").format(path=path)
+            )
+        else:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.warning(
+                self,
+                self._get_text("export.title", "导出数据"),
+                self._get_text("export.failed", "导出失败：{error}").format(error=result.error_message)
+            )
+    
+    def get_waveform_widget(self):
+        """获取波形查看器组件"""
+        return self._chart_viewer_panel.waveform_widget
+    
+    def get_raw_data_table(self):
+        """获取原始数据表格组件"""
+        return self._chart_viewer_panel.raw_data_table
+    
+    def get_output_log_viewer(self):
+        """获取输出日志查看器组件"""
+        return self._chart_viewer_panel.output_log_viewer
     
     def refresh(self):
         """刷新显示"""

@@ -273,6 +273,36 @@ class MenuManager:
         self._actions["sim_stop"] = QAction(self._main_window)
         self._actions["sim_stop"].setEnabled(False)
         menu.addAction(self._actions["sim_stop"])
+        
+        menu.addSeparator()
+        
+        # 导出波形数据子菜单
+        self._menus["export_data"] = menu.addMenu("")
+        
+        # CSV 导出
+        self._actions["export_csv"] = QAction(self._main_window)
+        self._actions["export_csv"].setShortcut("Ctrl+Shift+E")
+        if "on_export_csv" in self._callbacks:
+            self._actions["export_csv"].triggered.connect(self._callbacks["on_export_csv"])
+        self._menus["export_data"].addAction(self._actions["export_csv"])
+        
+        # JSON 导出
+        self._actions["export_json"] = QAction(self._main_window)
+        if "on_export_json" in self._callbacks:
+            self._actions["export_json"].triggered.connect(self._callbacks["on_export_json"])
+        self._menus["export_data"].addAction(self._actions["export_json"])
+        
+        # MATLAB 导出
+        self._actions["export_matlab"] = QAction(self._main_window)
+        if "on_export_matlab" in self._callbacks:
+            self._actions["export_matlab"].triggered.connect(self._callbacks["on_export_matlab"])
+        self._menus["export_data"].addAction(self._actions["export_matlab"])
+        
+        # NumPy 导出
+        self._actions["export_numpy"] = QAction(self._main_window)
+        if "on_export_numpy" in self._callbacks:
+            self._actions["export_numpy"].triggered.connect(self._callbacks["on_export_numpy"])
+        self._menus["export_data"].addAction(self._actions["export_numpy"])
 
     def _setup_knowledge_menu(self) -> None:
         """设置知识库菜单"""
@@ -480,6 +510,23 @@ class MenuManager:
         # 仿真菜单项
         self._actions["sim_run"].setText(self._get_text("menu.simulation.run", "Run Simulation"))
         self._actions["sim_stop"].setText(self._get_text("menu.simulation.stop", "Stop Simulation"))
+        
+        # 导出数据子菜单
+        self._menus["export_data"].setTitle(
+            self._get_text("menu.simulation.export_data", "Export Waveform Data")
+        )
+        self._actions["export_csv"].setText(
+            self._get_text("menu.simulation.export_csv", "Export as CSV...")
+        )
+        self._actions["export_json"].setText(
+            self._get_text("menu.simulation.export_json", "Export as JSON...")
+        )
+        self._actions["export_matlab"].setText(
+            self._get_text("menu.simulation.export_matlab", "Export as MATLAB...")
+        )
+        self._actions["export_numpy"].setText(
+            self._get_text("menu.simulation.export_numpy", "Export as NumPy...")
+        )
         
         # 知识库菜单项
         self._actions["knowledge_import"].setText(

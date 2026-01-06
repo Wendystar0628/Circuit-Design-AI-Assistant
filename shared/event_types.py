@@ -329,6 +329,14 @@ EVENT_SIMULATION_ERROR_COLLECTED = "simulation_error_collected"
 #   - project_root: str - 项目根目录
 EVENT_SIM_RESULT_FILE_CREATED = "sim_result_file_created"
 
+# 波形数学运算完成
+# 携带数据：
+#   - signal_name: str - 结果信号名称
+#   - point_count: int - 数据点数量
+#   - x_range: tuple - X 轴范围
+#   - y_range: tuple - Y 轴范围
+EVENT_WAVEFORM_MATH_COMPLETE = "waveform_math_complete"
+
 # 主电路检测完成（项目打开或文件变更后）
 # 携带数据：
 #   - candidates: list - 主电路候选文件路径列表
@@ -962,6 +970,7 @@ __all__ = [
     "EVENT_SIMULATION_NO_MAIN_CIRCUIT",
     "EVENT_SIMULATION_ERROR_COLLECTED",
     "EVENT_SIM_RESULT_FILE_CREATED",
+    "EVENT_WAVEFORM_MATH_COMPLETE",
     "EVENT_MAIN_CIRCUIT_DETECTED",
     "EVENT_EXECUTOR_REGISTERED",
     "EVENT_EXECUTOR_UNREGISTERED",

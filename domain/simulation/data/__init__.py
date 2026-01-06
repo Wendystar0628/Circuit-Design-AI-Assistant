@@ -6,7 +6,7 @@
 - 波形数据降采样（LTTB 算法）
 - 多分辨率金字塔管理
 - 波形数据服务（统一访问入口）
-- 数据导出（CSV/MATLAB/NumPy）
+- 数据导出（CSV/MATLAB/NumPy/JSON）
 - 仿真输出日志解析
 
 设计原则：
@@ -35,6 +35,12 @@ from domain.simulation.data.waveform_data_service import (
     WaveformDataService,
     waveform_data_service,
 )
+from domain.simulation.data.data_exporter import (
+    ExportFormat,
+    ExportResult,
+    DataExporter,
+    data_exporter,
+)
 
 __all__ = [
     # Downsampler
@@ -54,4 +60,9 @@ __all__ = [
     "TableData",
     "WaveformDataService",
     "waveform_data_service",
+    # Data Exporter
+    "ExportFormat",
+    "ExportResult",
+    "DataExporter",
+    "data_exporter",
 ]

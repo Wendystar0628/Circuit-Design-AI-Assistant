@@ -1060,7 +1060,7 @@ class ChartViewer(QWidget):
         导出波形数据
         
         Args:
-            format: 导出格式（"csv", "json", "mat"）
+            format: 导出格式（"csv", "json", "mat", "npy", "npz"）
             path: 导出文件路径
             signals: 要导出的信号列表（None 表示全部）
             
@@ -1072,122 +1072,21 @@ class ChartViewer(QWidget):
             return False
         
         try:
-            # 尝试使用 data_exporter 模块
-            try:
-                from domain.simulation.data.data_exporter import DataExporter
-                exporter = DataExporter()
-                success = exporter.export(
-                    data=self._simulation_data,
-                    format=format,
-                    path=path,
-                    signals=signals,
-                )
-                if success:
-                    self.data_exported.emit(path)
-                    self._logger.info(f"Data exported to {format}: {path}")
-                return success
-            except ImportError:
-                # data_exporter 模块尚未实现，使用内置简单导出
-                return self._export_data_builtin(format, path, signals)
-                
+            from domain.simulation.data.data_exporter import data_exporter
+            
+            success = data_exporter.export(
+                data=self._simulation_data,
+                format=format,
+                path=path,
+                signals=signals,
+            )
+            if success:
+                self.data_exported.emit(path)
+                self._logger.info(f"Data exported to {format}: {path}")
+            return success
         except Exception as e:
             self._logger.error(f"Failed to export data: {e}")
             return False
-    
-    def _export_data_builtin(
-        self,
-        format: str,
-        path: str,
-        signals: Optional[List[str]] = None,
-    ) -> bool:
-        """内置简单数据导出实现"""
-        import json
-        
-        data = self._simulation_data
-        if data is None:
-            return False
-        
-        if format == "csv":
-            return self._export_csv(path, data, signals)
-        elif format == "json":
-            return self._export_json(path, data, signals)
-        else:
-            self._logger.error(f"Unsupported export format: {format}")
-            return False
-    
-    def _export_csv(self, path: str, data, signals: Optional[List[str]]) -> bool:
-        """导出为 CSV 格式"""
-        import csv
-        
-        # 确定 X 轴数据
-        x_data = None
-        x_name = "time"
-        
-        if hasattr(data, 'time') and data.time is not None:
-            x_data = data.time
-            x_name = "time"
-        elif hasattr(data, 'frequency') and data.frequency is not None:
-            x_data = data.frequency
-            x_name = "frequency"
-        
-        if x_data is None:
-            self._logger.error("No x-axis data available")
-            return False
-        
-        # 确定要导出的信号
-        signal_dict = getattr(data, 'signals', {})
-        signal_names = signals or list(signal_dict.keys())
-        
-        with open(path, "w", newline="", encoding="utf-8") as f:
-            writer = csv.writer(f)
-            
-            # 写入表头
-            header = [x_name] + signal_names
-            writer.writerow(header)
-            
-            # 写入数据
-            for i, x_val in enumerate(x_data):
-                row = [x_val]
-                for sig_name in signal_names:
-                    sig_data = signal_dict.get(sig_name)
-                    if sig_data is not None and i < len(sig_data):
-                        row.append(sig_data[i])
-                    else:
-                        row.append("")
-                writer.writerow(row)
-        
-        self.data_exported.emit(path)
-        self._logger.info(f"Data exported to CSV: {path}")
-        return True
-    
-    def _export_json(self, path: str, data, signals: Optional[List[str]]) -> bool:
-        """导出为 JSON 格式"""
-        import json
-        
-        export_data = {
-            "time": None,
-            "frequency": None,
-            "signals": {},
-        }
-        
-        if hasattr(data, 'time') and data.time is not None:
-            export_data["time"] = list(data.time)
-        if hasattr(data, 'frequency') and data.frequency is not None:
-            export_data["frequency"] = list(data.frequency)
-        
-        signal_dict = getattr(data, 'signals', {})
-        signal_names = signals or list(signal_dict.keys())
-        for sig_name in signal_names:
-            sig_data = signal_dict.get(sig_name)
-            if sig_data is not None:
-                export_data["signals"][sig_name] = list(sig_data)
-        
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(export_data, f, indent=2)
-        
-        self.data_exported.emit(path)
-        self._logger.info(f"Data exported to JSON: {path}")
-        return True
     
     # ============================================================
     # 事件处理
@@ -1288,13 +1187,19 @@ class ChartViewer(QWidget):
             self,
             self._tr("Export Data"),
             "",
-            "CSV Files (*.csv);;JSON Files (*.json);;All Files (*)"
+            "CSV Files (*.csv);;JSON Files (*.json);;MATLAB Files (*.mat);;NumPy Files (*.npy);;NumPy Compressed (*.npz);;All Files (*)"
         )
         
         if file_path:
             # 根据选择的过滤器或文件扩展名确定格式
             if file_path.endswith(".json") or "JSON" in selected_filter:
                 format = "json"
+            elif file_path.endswith(".mat") or "MATLAB" in selected_filter:
+                format = "mat"
+            elif file_path.endswith(".npz") or "Compressed" in selected_filter:
+                format = "npz"
+            elif file_path.endswith(".npy") or "NumPy Files" in selected_filter:
+                format = "npy"
             else:
                 format = "csv"
                 if not file_path.endswith(".csv"):

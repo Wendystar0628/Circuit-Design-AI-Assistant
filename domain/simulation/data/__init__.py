@@ -5,6 +5,7 @@
 职责：
 - 波形数据降采样（LTTB 算法）
 - 多分辨率金字塔管理
+- 波形数据服务（统一访问入口）
 - 数据导出（CSV/MATLAB/NumPy）
 - 仿真输出日志解析
 
@@ -27,6 +28,13 @@ from domain.simulation.data.resolution_pyramid import (
     get_optimal_data,
     select_optimal_level,
 )
+from domain.simulation.data.waveform_data_service import (
+    WaveformData,
+    TableRow,
+    TableData,
+    WaveformDataService,
+    waveform_data_service,
+)
 
 __all__ = [
     # Downsampler
@@ -40,4 +48,10 @@ __all__ = [
     "select_optimal_level",
     "get_level_data",
     "get_optimal_data",
+    # Waveform Data Service
+    "WaveformData",
+    "TableRow",
+    "TableData",
+    "WaveformDataService",
+    "waveform_data_service",
 ]

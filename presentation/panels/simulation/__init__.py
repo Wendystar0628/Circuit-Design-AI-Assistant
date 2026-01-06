@@ -8,6 +8,7 @@
 - MetricsPanel: 指标显示面板
 - ChartViewer: 图表查看器
 - WaveformWidget: 交互式波形图表组件
+- RawDataTable: 原始数据表格（虚拟滚动）
 - SimulationTab: 仿真结果标签页主类
 """
 
@@ -21,6 +22,7 @@ from presentation.panels.simulation.metric_card import MetricCard
 from presentation.panels.simulation.metrics_panel import MetricsPanel
 from presentation.panels.simulation.chart_viewer import ChartViewer, ZoomableImageLabel
 from presentation.panels.simulation.waveform_widget import WaveformWidget, WaveformMeasurement
+from presentation.panels.simulation.raw_data_table import RawDataTable, RawDataTableModel
 from presentation.panels.simulation.simulation_tab import (
     SimulationTab,
     MetricsSummaryPanel,
@@ -39,6 +41,8 @@ __all__ = [
     "ZoomableImageLabel",
     "WaveformWidget",
     "WaveformMeasurement",
+    "RawDataTable",
+    "RawDataTableModel",
     "SimulationTab",
     "MetricsSummaryPanel",
     "ChartViewerPanel",

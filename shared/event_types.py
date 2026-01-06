@@ -895,6 +895,43 @@ EVENT_UNDO_FAILED = "undo_failed"
 EVENT_REQUEST_RESIMULATION = "ui.request_resimulation"
 
 # ============================================================
+# 参数调整事件
+# ============================================================
+
+# 参数提取完成
+# 携带数据：
+#   - file_path: str - 电路文件路径
+#   - parameter_count: int - 提取的参数数量
+#   - parameters: list - 参数列表
+EVENT_PARAMETERS_EXTRACTED = "tuning.parameters_extracted"
+
+# 参数值变更
+# 携带数据：
+#   - param_name: str - 参数名称
+#   - old_value: float - 旧值
+#   - new_value: float - 新值
+#   - source: str - 变更来源（"slider", "input", "reset"）
+EVENT_PARAMETER_VALUE_CHANGED = "tuning.parameter_value_changed"
+
+# 参数应用到电路文件
+# 携带数据：
+#   - file_path: str - 电路文件路径
+#   - parameters: dict - 应用的参数字典 {name: value}
+#   - success: bool - 是否成功
+EVENT_PARAMETERS_APPLIED = "tuning.parameters_applied"
+
+# 请求自动仿真（参数变更后触发）
+# 携带数据：
+#   - changed_params: dict - 变更的参数字典
+#   - trigger_source: str - 触发来源（"auto_sim", "manual"）
+EVENT_TUNING_REQUEST_SIMULATION = "tuning.request_simulation"
+
+# 自动仿真模式变更
+# 携带数据：
+#   - enabled: bool - 是否启用自动仿真
+EVENT_AUTO_SIMULATION_CHANGED = "tuning.auto_simulation_changed"
+
+# ============================================================
 # 关键事件列表（需要特殊保护）
 # ============================================================
 
@@ -1070,6 +1107,12 @@ __all__ = [
     "EVENT_UNDO_FAILED",
     # 文件引用校验事件
     "EVENT_REQUEST_RESIMULATION",
+    # 参数调整事件
+    "EVENT_PARAMETERS_EXTRACTED",
+    "EVENT_PARAMETER_VALUE_CHANGED",
+    "EVENT_PARAMETERS_APPLIED",
+    "EVENT_TUNING_REQUEST_SIMULATION",
+    "EVENT_AUTO_SIMULATION_CHANGED",
     # 关键事件列表
     "CRITICAL_EVENTS",
 ]

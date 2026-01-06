@@ -442,13 +442,32 @@ class ActionHandlers:
             )
             return
         
-        # TODO: 实现完整的设计目标编辑对话框
-        # 当前显示占位提示
-        QMessageBox.information(
-            self._main_window,
-            self._get_text("menu.design.goals", "Design Goals"),
-            "Design Goals editor will be implemented in a future update"
-        )
+        try:
+            from presentation.dialogs.design_goals_dialog import DesignGoalsDialog
+            
+            dialog = DesignGoalsDialog(self._main_window)
+            dialog.load_goals(project_root)
+            dialog.exec()
+            
+        except ImportError as e:
+            QMessageBox.warning(
+                self._main_window,
+                self._get_text("dialog.warning.title", "Warning"),
+                self._get_text(
+                    "dialog.design_goals.import_error",
+                    "Failed to load Design Goals module."
+                )
+            )
+            if self.logger:
+                self.logger.error(f"Failed to import DesignGoalsDialog: {e}")
+        except Exception as e:
+            QMessageBox.critical(
+                self._main_window,
+                self._get_text("dialog.error.title", "Error"),
+                f"Failed to open design goals: {str(e)}"
+            )
+            if self.logger:
+                self.logger.error(f"Failed to open design goals dialog: {e}")
 
     def on_iteration_history(self):
         """打开迭代历史记录对话框"""

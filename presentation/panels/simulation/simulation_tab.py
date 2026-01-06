@@ -82,7 +82,6 @@ from shared.event_types import (
 # 样式常量
 # ============================================================
 
-PANEL_BG_COLOR = "#f8f9fa"
 METRICS_PANEL_MIN_WIDTH = 280
 CHART_PANEL_MIN_WIDTH = 400
 STATUS_BAR_HEIGHT = 48
@@ -351,12 +350,12 @@ class MetricsSummaryPanel(QFrame):
         """应用样式"""
         self.setStyleSheet(f"""
             #metricsSummaryPanel {{
-                background-color: {PANEL_BG_COLOR};
+                background-color: {COLOR_BG_PRIMARY};
                 border-right: 1px solid {COLOR_BORDER};
             }}
             
             #headerBar {{
-                background-color: #e8e9ea;
+                background-color: {COLOR_BG_PRIMARY};
                 border-bottom: 1px solid {COLOR_BORDER};
             }}
             
@@ -686,11 +685,11 @@ class SimulationTab(QWidget):
         """应用样式"""
         self.setStyleSheet(f"""
             SimulationTab {{
-                background-color: {PANEL_BG_COLOR};
+                background-color: {COLOR_BG_PRIMARY};
             }}
             
             #mainSplitter {{
-                background-color: {PANEL_BG_COLOR};
+                background-color: {COLOR_BG_PRIMARY};
             }}
             
             #mainSplitter::handle {{
@@ -698,7 +697,7 @@ class SimulationTab(QWidget):
             }}
             
             #emptyWidget {{
-                background-color: {PANEL_BG_COLOR};
+                background-color: {COLOR_BG_PRIMARY};
             }}
             
             #emptyIcon {{

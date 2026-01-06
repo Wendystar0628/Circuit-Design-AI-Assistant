@@ -42,6 +42,9 @@ from presentation.panels.simulation.simulation_view_model import (
 )
 from presentation.panels.simulation.metrics_panel import MetricsPanel
 from presentation.panels.simulation.chart_viewer import ChartViewer
+from domain.simulation.service.simulation_result_watcher import (
+    SimulationResultWatcher,
+)
 from resources.theme import (
     COLOR_BG_PRIMARY,
     COLOR_BG_SECONDARY,
@@ -71,6 +74,7 @@ from shared.event_types import (
     EVENT_WORKFLOW_LOCKED,
     EVENT_WORKFLOW_UNLOCKED,
     EVENT_SIM_RESULT_FILE_CREATED,
+    EVENT_SESSION_CHANGED,
 )
 
 
@@ -409,6 +413,9 @@ class SimulationTab(QWidget):
         self._project_root: Optional[str] = None
         self._is_workflow_running: bool = False
         
+        # 仿真结果文件监控器
+        self._result_watcher = SimulationResultWatcher()
+        
         # EventBus 引用
         self._event_bus = None
         self._subscriptions: List[tuple] = []
@@ -552,6 +559,7 @@ class SimulationTab(QWidget):
             (EVENT_WORKFLOW_LOCKED, self._on_workflow_locked),
             (EVENT_WORKFLOW_UNLOCKED, self._on_workflow_unlocked),
             (EVENT_SIM_RESULT_FILE_CREATED, self._on_sim_result_file_created),
+            (EVENT_SESSION_CHANGED, self._on_session_changed),
         ]
         
         for event_type, handler in subscriptions:
@@ -609,11 +617,19 @@ class SimulationTab(QWidget):
         # 清空当前显示
         self.clear()
         
-        # 尝试加载项目的仿真结果
-        self._load_project_simulation_result()
+        # 启动仿真结果文件监控器
+        if self._project_root:
+            self._result_watcher.start(self._project_root)
+        
+        # 显示空状态，等待会话变更事件或用户操作
+        # 根据 4.0.7 节设计：新会话不自动加载历史结果
+        self._show_empty_state()
     
     def _on_project_closed(self, event_data: dict):
         """处理项目关闭事件"""
+        # 停止仿真结果文件监控器
+        self._result_watcher.stop()
+        
         self._project_root = None
         self.clear()
         self._show_empty_state()
@@ -665,6 +681,64 @@ class SimulationTab(QWidget):
         self._is_workflow_running = False
         self._status_indicator.hide_status()
         self._set_controls_enabled(True)
+    
+    def _on_session_changed(self, event_data: dict):
+        """
+        处理会话变更事件
+        
+        根据 4.0.7 节设计：
+        - 新会话启动时，显示空状态，不自动加载历史结果
+        - 切换到已有会话时，根据 sim_result_path 加载或显示空状态
+        
+        Args:
+            event_data: 事件数据，包含 session_id, sim_result_path 等
+        """
+        action = event_data.get("action", "")
+        sim_result_path = event_data.get("sim_result_path", "")
+        session_id = event_data.get("session_id", "")
+        
+        self._logger.info(
+            f"Session changed: action={action}, session_id={session_id}, "
+            f"sim_result_path={sim_result_path}"
+        )
+        
+        # 新会话：显示空状态，不加载历史结果
+        if action == "new" or not sim_result_path:
+            self.clear()
+            self._show_empty_state()
+            return
+        
+        # 切换到已有会话：检查文件是否存在
+        if self._project_root and sim_result_path:
+            self._load_from_path(sim_result_path)
+    
+    def _load_from_path(self, sim_result_path: str):
+        """
+        从路径加载仿真结果
+        
+        Args:
+            sim_result_path: 仿真结果相对路径
+        """
+        if not self._project_root:
+            self._show_empty_state()
+            return
+        
+        try:
+            from shared.file_reference_validator import file_reference_validator
+            
+            # 校验文件是否存在
+            if not file_reference_validator.validate_sim_result_path(
+                self._project_root, sim_result_path
+            ):
+                self._show_file_missing_state()
+                return
+            
+            # 加载结果
+            self._load_simulation_result(sim_result_path)
+            
+        except Exception as e:
+            self._logger.warning(f"Failed to load from path: {e}")
+            self._show_file_missing_state()
     
     def _on_history_clicked(self):
         """处理历史按钮点击"""
@@ -846,6 +920,33 @@ class SimulationTab(QWidget):
         """显示空状态"""
         self._splitter.hide()
         self._empty_widget.show()
+        
+        # 更新空状态文本
+        self._empty_icon.setText("📊")
+        self._empty_label.setText(self._get_text(
+            "simulation.no_results",
+            "暂无仿真结果"
+        ))
+        self._empty_hint.setText(self._get_text(
+            "simulation.run_hint",
+            "运行仿真后，结果将显示在此处"
+        ))
+    
+    def _show_file_missing_state(self):
+        """显示文件丢失状态"""
+        self._splitter.hide()
+        self._empty_widget.show()
+        
+        # 更新为文件丢失提示
+        self._empty_icon.setText("⚠️")
+        self._empty_label.setText(self._get_text(
+            "simulation.file_missing",
+            "仿真结果文件已丢失"
+        ))
+        self._empty_hint.setText(self._get_text(
+            "simulation.file_missing_hint",
+            "请重新运行仿真或点击刷新按钮"
+        ))
     
     def _hide_empty_state(self):
         """隐藏空状态"""
@@ -924,6 +1025,9 @@ class SimulationTab(QWidget):
     
     def closeEvent(self, event):
         """处理关闭事件"""
+        # 停止仿真结果文件监控器
+        self._result_watcher.stop()
+        
         self._unsubscribe_events()
         self._view_model.dispose()
         super().closeEvent(event)
@@ -936,9 +1040,10 @@ class SimulationTab(QWidget):
     
     def _on_shown(self):
         """显示后的处理"""
-        # 如果有项目，尝试加载仿真结果
-        if self._project_root and self._empty_widget.isVisible():
-            self._load_project_simulation_result()
+        # 根据 4.0.7 节设计：新会话不自动加载历史结果
+        # 仿真结果的加载由 EVENT_SESSION_CHANGED 事件触发
+        # 或由用户点击刷新按钮手动触发
+        pass
 
 
 # ============================================================

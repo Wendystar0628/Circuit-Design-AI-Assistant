@@ -121,6 +121,7 @@ class ActionHandlers:
             "on_undo_iteration": self.on_undo_iteration,
             "on_toggle_panel": self.on_toggle_panel,
             "on_design_goals": self.on_design_goals,
+            "on_iteration_history": self.on_iteration_history,
             "on_api_config": self.on_api_config,
             "on_help_docs": self.on_help_docs,
             "on_about": self.on_about,
@@ -314,13 +315,100 @@ class ActionHandlers:
                 editor.redo()
 
     def on_undo_iteration(self):
-        """撤回本次迭代（迭代级别，阶段四实现）"""
-        # TODO: 阶段四实现，调用 undo_manager.restore_snapshot()
-        QMessageBox.information(
+        """撤回本次迭代（迭代级别）"""
+        # 检查是否已打开项目
+        project_root = self._get_project_root()
+        if not project_root:
+            QMessageBox.warning(
+                self._main_window,
+                self._get_text("dialog.warning.title", "Warning"),
+                self._get_text("status.open_workspace", "Please open a workspace folder")
+            )
+            return
+        
+        # 检查是否可以撤回
+        from domain.design.undo_manager import undo_manager
+        
+        if not undo_manager.can_undo(project_root):
+            QMessageBox.information(
+                self._main_window,
+                self._get_text("dialog.info.title", "Information"),
+                self._get_text(
+                    "undo.no_snapshots",
+                    "没有可用的检查点进行撤回"
+                )
+            )
+            return
+        
+        # 获取撤回信息
+        undo_info = undo_manager.get_undo_info(project_root)
+        
+        # 确认对话框
+        result = QMessageBox.warning(
             self._main_window,
-            self._get_text("menu.edit.undo_iteration", "Undo Iteration"),
-            "Undo iteration will be implemented in Phase 4"
+            self._get_text("dialog.warning.title", "Warning"),
+            self._get_text(
+                "undo.confirm",
+                f"确定要撤回到迭代 #{undo_info.target_iteration} 吗？\n\n"
+                "此操作将覆盖当前的所有文件修改。"
+            ),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
         )
+        
+        if result != QMessageBox.StandardButton.Yes:
+            return
+        
+        # 执行撤回
+        import asyncio
+        
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        
+        try:
+            undo_result = loop.run_until_complete(
+                undo_manager.undo_to_previous(project_root)
+            )
+            
+            if undo_result.success:
+                QMessageBox.information(
+                    self._main_window,
+                    self._get_text("dialog.info.title", "Information"),
+                    self._get_text(
+                        "undo.success",
+                        f"已恢复到迭代 #{undo_result.restored_iteration}"
+                    )
+                )
+            else:
+                QMessageBox.warning(
+                    self._main_window,
+                    self._get_text("dialog.error.title", "Error"),
+                    undo_result.message
+                )
+        except Exception as e:
+            if self.logger:
+                self.logger.error(f"Failed to undo iteration: {e}")
+            QMessageBox.critical(
+                self._main_window,
+                self._get_text("dialog.error.title", "Error"),
+                str(e)
+            )
+
+    def _get_project_root(self) -> Optional[str]:
+        """获取当前项目根目录"""
+        try:
+            from shared.service_locator import ServiceLocator
+            from shared.service_names import SVC_SESSION_STATE
+            
+            session_state = ServiceLocator.get_optional(SVC_SESSION_STATE)
+            if session_state:
+                return session_state.project_root
+        except Exception:
+            pass
+        return None
 
     # ============================================================
     # 视图操作回调
@@ -345,28 +433,61 @@ class ActionHandlers:
     def on_design_goals(self):
         """打开设计目标编辑对话框"""
         # 检查是否已打开项目
-        try:
-            from shared.service_locator import ServiceLocator
-            from shared.service_names import SVC_SESSION_STATE
-            
-            session_state = ServiceLocator.get_optional(SVC_SESSION_STATE)
-            if session_state and not session_state.project_root:
-                QMessageBox.warning(
-                    self._main_window,
-                    self._get_text("dialog.warning.title", "Warning"),
-                    self._get_text("status.open_workspace", "Please open a workspace folder")
-                )
-                return
-        except Exception:
-            pass
+        project_root = self._get_project_root()
+        if not project_root:
+            QMessageBox.warning(
+                self._main_window,
+                self._get_text("dialog.warning.title", "Warning"),
+                self._get_text("status.open_workspace", "Please open a workspace folder")
+            )
+            return
         
-        # TODO: 阶段四实现完整的设计目标编辑对话框
+        # TODO: 实现完整的设计目标编辑对话框
         # 当前显示占位提示
         QMessageBox.information(
             self._main_window,
             self._get_text("menu.design.goals", "Design Goals"),
-            "Design Goals editor will be implemented in Phase 4"
+            "Design Goals editor will be implemented in a future update"
         )
+
+    def on_iteration_history(self):
+        """打开迭代历史记录对话框"""
+        # 检查是否已打开项目
+        project_root = self._get_project_root()
+        if not project_root:
+            QMessageBox.warning(
+                self._main_window,
+                self._get_text("dialog.warning.title", "Warning"),
+                self._get_text("status.open_workspace", "Please open a workspace folder")
+            )
+            return
+        
+        try:
+            from presentation.dialogs.iteration_history_dialog import IterationHistoryDialog
+            
+            dialog = IterationHistoryDialog(self._main_window)
+            dialog.load_history(project_root)
+            dialog.exec()
+            
+        except ImportError as e:
+            QMessageBox.warning(
+                self._main_window,
+                self._get_text("dialog.warning.title", "Warning"),
+                self._get_text(
+                    "dialog.iteration_history.import_error",
+                    "Failed to load Iteration History module."
+                )
+            )
+            if self.logger:
+                self.logger.error(f"Failed to import IterationHistoryDialog: {e}")
+        except Exception as e:
+            QMessageBox.critical(
+                self._main_window,
+                self._get_text("dialog.error.title", "Error"),
+                f"Failed to open iteration history: {str(e)}"
+            )
+            if self.logger:
+                self.logger.error(f"Failed to open iteration history dialog: {e}")
 
     # ============================================================
     # 工具操作回调

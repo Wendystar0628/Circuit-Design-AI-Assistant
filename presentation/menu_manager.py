@@ -182,8 +182,9 @@ class MenuManager:
         
         menu.addSeparator()
         
-        # 撤回本次迭代（迭代级别，阶段四启用）
+        # 撤回本次迭代（迭代级别，Ctrl+Shift+Z）
         self._actions["edit_undo_iteration"] = QAction(self._main_window)
+        self._actions["edit_undo_iteration"].setShortcut("Ctrl+Shift+Z")
         self._actions["edit_undo_iteration"].setEnabled(False)
         if "on_undo_iteration" in self._callbacks:
             self._actions["edit_undo_iteration"].triggered.connect(self._callbacks["on_undo_iteration"])
@@ -259,6 +260,16 @@ class MenuManager:
         if "on_design_goals" in self._callbacks:
             self._actions["design_goals"].triggered.connect(self._callbacks["on_design_goals"])
         menu.addAction(self._actions["design_goals"])
+        
+        menu.addSeparator()
+        
+        # 查看迭代历史
+        self._actions["design_iteration_history"] = QAction(self._main_window)
+        if "on_iteration_history" in self._callbacks:
+            self._actions["design_iteration_history"].triggered.connect(
+                self._callbacks["on_iteration_history"]
+            )
+        menu.addAction(self._actions["design_iteration_history"])
 
     def _setup_simulation_menu(self) -> None:
         """设置仿真菜单"""
@@ -505,6 +516,9 @@ class MenuManager:
         # 设计菜单项
         self._actions["design_goals"].setText(
             self._get_text("menu.design.goals", "Design Goals")
+        )
+        self._actions["design_iteration_history"].setText(
+            self._get_text("menu.design.iteration_history", "Iteration History")
         )
         
         # 仿真菜单项

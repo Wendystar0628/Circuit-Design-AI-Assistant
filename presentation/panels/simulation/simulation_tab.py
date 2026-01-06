@@ -1570,13 +1570,20 @@ class SimulationTab(QWidget):
         self._load_project_simulation_result()
     
     def _show_history_dialog(self):
-        """显示历史记录对话框"""
+        """显示迭代历史记录对话框"""
         try:
-            # 历史对话框在阶段10实现，此处预留接口
-            self._logger.info("History dialog requested")
-            # from presentation.dialogs.history_dialog import HistoryDialog
-            # dialog = HistoryDialog(self._project_root, self)
-            # dialog.exec()
+            from presentation.dialogs.iteration_history_dialog import IterationHistoryDialog
+            
+            if not self._project_root:
+                self._logger.warning("No project root, cannot show history dialog")
+                return
+            
+            dialog = IterationHistoryDialog(self)
+            dialog.load_history(self._project_root)
+            dialog.exec()
+            
+        except ImportError as e:
+            self._logger.warning(f"Failed to import IterationHistoryDialog: {e}")
         except Exception as e:
             self._logger.warning(f"Failed to show history dialog: {e}")
     

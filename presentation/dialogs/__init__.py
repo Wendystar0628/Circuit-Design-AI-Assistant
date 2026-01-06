@@ -8,6 +8,8 @@
 - about_dialog.py: 关于对话框
 - context_compress_dialog.py: 上下文压缩预览对话框
 - history_dialog.py: 对话历史查看对话框
+- iteration_history_dialog.py: 迭代历史记录对话框
+- select_simulation_file_dialog.py: 选择仿真文件对话框
 - simulation_settings_dialog.py: 仿真设置对话框
 - prompt_editor/: Prompt 模板编辑器模块
 """
@@ -17,6 +19,8 @@ from .api_config_dialog import ApiConfigDialog, get_zhipu_models, DEFAULT_BASE_U
 from .about_dialog import AboutDialog, APP_VERSION
 from .context_compress_dialog import ContextCompressDialog
 from .history_dialog import HistoryDialog, SessionInfo
+from .iteration_history_dialog import IterationHistoryDialog, IterationRecord
+from .select_simulation_file_dialog import SelectSimulationFileDialog
 from .simulation_settings_dialog import SimulationSettingsDialog
 from .prompt_editor import PromptEditorDialog
 
@@ -36,6 +40,11 @@ __all__ = [
     # 对话历史对话框
     "HistoryDialog",
     "SessionInfo",
+    # 迭代历史记录对话框
+    "IterationHistoryDialog",
+    "IterationRecord",
+    # 选择仿真文件对话框
+    "SelectSimulationFileDialog",
     # 仿真设置对话框
     "SimulationSettingsDialog",
     # Prompt 模板编辑器

@@ -208,7 +208,8 @@ class MetricsSummaryPanel(QFrame):
     """
     指标摘要面板
     
-    包含时间戳栏、指标网格、综合评分和历史/刷新按钮
+    包含顶部信息栏（时间戳、总体分数、刷新/历史按钮）和指标网格
+    布局优化：将时间戳、总体分数、刷新按钮放在同一行，提高空间利用率
     """
     
     history_clicked = pyqtSignal()
@@ -220,6 +221,8 @@ class MetricsSummaryPanel(QFrame):
         self.setObjectName("metricsSummaryPanel")
         self.setMinimumWidth(METRICS_PANEL_MIN_WIDTH)
         
+        self._overall_score: float = 0.0
+        
         self._setup_ui()
         self._apply_style()
     
@@ -229,55 +232,99 @@ class MetricsSummaryPanel(QFrame):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         
-        # 时间戳栏
-        self._timestamp_bar = QFrame()
-        self._timestamp_bar.setObjectName("timestampBar")
-        self._timestamp_bar.setFixedHeight(28)
-        timestamp_layout = QHBoxLayout(self._timestamp_bar)
-        timestamp_layout.setContentsMargins(SPACING_NORMAL, 0, SPACING_NORMAL, 0)
-        timestamp_layout.setSpacing(SPACING_SMALL)
+        # 顶部信息栏（单行布局：时间戳 | 总体分数 | 按钮）
+        self._header_bar = QFrame()
+        self._header_bar.setObjectName("headerBar")
+        self._header_bar.setFixedHeight(36)
+        header_layout = QHBoxLayout(self._header_bar)
+        header_layout.setContentsMargins(SPACING_NORMAL, SPACING_SMALL, SPACING_NORMAL, SPACING_SMALL)
+        header_layout.setSpacing(SPACING_SMALL)
+        
+        # 左侧：时间戳区域
+        timestamp_container = QWidget()
+        timestamp_layout = QHBoxLayout(timestamp_container)
+        timestamp_layout.setContentsMargins(0, 0, 0, 0)
+        timestamp_layout.setSpacing(4)
         
         # 时间戳图标
         self._timestamp_icon = QLabel()
         self._timestamp_icon.setObjectName("timestampIcon")
-        self._timestamp_icon.setFixedSize(16, 16)
+        self._timestamp_icon.setFixedSize(14, 14)
         self._load_timestamp_icon()
         timestamp_layout.addWidget(self._timestamp_icon)
         
         # 时间戳文本
         self._timestamp_label = QLabel()
         self._timestamp_label.setObjectName("timestampLabel")
-        timestamp_layout.addWidget(self._timestamp_label, 1)
+        timestamp_layout.addWidget(self._timestamp_label)
         
-        layout.addWidget(self._timestamp_bar)
-        self._timestamp_bar.hide()  # 默认隐藏
+        header_layout.addWidget(timestamp_container)
         
-        # 指标面板
-        self._metrics_panel = MetricsPanel()
-        layout.addWidget(self._metrics_panel, 1)
+        # 中间弹性空间
+        header_layout.addStretch(1)
         
-        # 底部操作栏
-        bottom_bar = QFrame()
-        bottom_bar.setObjectName("bottomBar")
-        bottom_layout = QHBoxLayout(bottom_bar)
-        bottom_layout.setContentsMargins(SPACING_NORMAL, SPACING_SMALL, SPACING_NORMAL, SPACING_SMALL)
-        bottom_layout.setSpacing(SPACING_NORMAL)
+        # 中间：总体分数区域
+        score_container = QWidget()
+        score_layout = QHBoxLayout(score_container)
+        score_layout.setContentsMargins(0, 0, 0, 0)
+        score_layout.setSpacing(SPACING_SMALL)
+        
+        # 分数标签
+        self._score_title = QLabel()
+        self._score_title.setObjectName("scoreTitle")
+        score_layout.addWidget(self._score_title)
+        
+        # 分数进度条
+        self._score_bar = QProgressBar()
+        self._score_bar.setObjectName("scoreBar")
+        self._score_bar.setRange(0, 100)
+        self._score_bar.setValue(0)
+        self._score_bar.setTextVisible(False)
+        self._score_bar.setFixedWidth(80)
+        self._score_bar.setFixedHeight(6)
+        score_layout.addWidget(self._score_bar)
+        
+        # 分数值
+        self._score_value = QLabel("0%")
+        self._score_value.setObjectName("scoreValue")
+        self._score_value.setFixedWidth(50)
+        score_layout.addWidget(self._score_value)
+        
+        header_layout.addWidget(score_container)
+        
+        # 中间弹性空间
+        header_layout.addStretch(1)
+        
+        # 右侧：按钮区域
+        btn_container = QWidget()
+        btn_layout = QHBoxLayout(btn_container)
+        btn_layout.setContentsMargins(0, 0, 0, 0)
+        btn_layout.setSpacing(SPACING_SMALL)
         
         # 刷新按钮
         self._refresh_btn = QPushButton()
         self._refresh_btn.setObjectName("refreshBtn")
+        self._refresh_btn.setFixedHeight(24)
         self._refresh_btn.clicked.connect(self.refresh_clicked.emit)
-        bottom_layout.addWidget(self._refresh_btn)
+        btn_layout.addWidget(self._refresh_btn)
         
         # 查看历史按钮
         self._history_btn = QPushButton()
         self._history_btn.setObjectName("historyBtn")
+        self._history_btn.setFixedHeight(24)
         self._history_btn.clicked.connect(self.history_clicked.emit)
-        bottom_layout.addWidget(self._history_btn)
+        btn_layout.addWidget(self._history_btn)
         
-        bottom_layout.addStretch()
+        header_layout.addWidget(btn_container)
         
-        layout.addWidget(bottom_bar)
+        layout.addWidget(self._header_bar)
+        self._header_bar.hide()  # 默认隐藏，有数据时显示
+        
+        # 指标面板（不再包含综合评分，已移到顶部信息栏）
+        self._metrics_panel = MetricsPanel()
+        # 隐藏 MetricsPanel 内部的综合评分区域
+        self._metrics_panel._score_frame.hide()
+        layout.addWidget(self._metrics_panel, 1)
         
         # 初始化文本
         self.retranslate_ui()
@@ -288,12 +335,12 @@ class MetricsSummaryPanel(QFrame):
             from PyQt6.QtGui import QPixmap
             from pathlib import Path
             
-            icon_path = Path(__file__).parent.parent.parent.parent / "resources" / "icons" / "simulation" / "clock.svg"
+            icon_path = Path(__file__).parent.parent.parent / "resources" / "icons" / "simulation" / "clock.svg"
             if icon_path.exists():
                 pixmap = QPixmap(str(icon_path))
                 if not pixmap.isNull():
                     self._timestamp_icon.setPixmap(pixmap.scaled(
-                        16, 16,
+                        14, 14,
                         Qt.AspectRatioMode.KeepAspectRatio,
                         Qt.TransformationMode.SmoothTransformation
                     ))
@@ -308,7 +355,7 @@ class MetricsSummaryPanel(QFrame):
                 border-right: 1px solid {COLOR_BORDER};
             }}
             
-            #timestampBar {{
+            #headerBar {{
                 background-color: #e8e9ea;
                 border-bottom: 1px solid {COLOR_BORDER};
             }}
@@ -318,9 +365,26 @@ class MetricsSummaryPanel(QFrame):
                 font-size: {FONT_SIZE_SMALL}px;
             }}
             
-            #bottomBar {{
-                background-color: {COLOR_BG_TERTIARY};
-                border-top: 1px solid {COLOR_BORDER};
+            #scoreTitle {{
+                color: {COLOR_TEXT_SECONDARY};
+                font-size: {FONT_SIZE_SMALL}px;
+            }}
+            
+            #scoreValue {{
+                color: {COLOR_TEXT_PRIMARY};
+                font-size: {FONT_SIZE_SMALL}px;
+                font-weight: bold;
+            }}
+            
+            #scoreBar {{
+                background-color: #d0d0d0;
+                border: none;
+                border-radius: 3px;
+            }}
+            
+            #scoreBar::chunk {{
+                background-color: {COLOR_ACCENT};
+                border-radius: 3px;
             }}
             
             #historyBtn, #refreshBtn {{
@@ -328,8 +392,8 @@ class MetricsSummaryPanel(QFrame):
                 color: {COLOR_ACCENT};
                 border: 1px solid {COLOR_ACCENT};
                 border-radius: {BORDER_RADIUS_NORMAL}px;
-                padding: 6px 12px;
-                font-size: {FONT_SIZE_NORMAL}px;
+                padding: 2px 8px;
+                font-size: {FONT_SIZE_SMALL}px;
             }}
             
             #historyBtn:hover, #refreshBtn:hover {{
@@ -353,6 +417,10 @@ class MetricsSummaryPanel(QFrame):
     
     def set_overall_score(self, score: float):
         """设置综合评分"""
+        self._overall_score = max(0.0, min(100.0, score))
+        self._score_value.setText(f"{self._overall_score:.1f}%")
+        self._score_bar.setValue(int(self._overall_score))
+        # 同时更新 MetricsPanel 内部的分数（保持数据一致性）
         self._metrics_panel.set_overall_score(score)
     
     def set_result_timestamp(self, timestamp: str):
@@ -363,16 +431,21 @@ class MetricsSummaryPanel(QFrame):
             timestamp: ISO 格式时间戳
         """
         formatted = self._format_timestamp(timestamp)
-        self._timestamp_label.setText(self._get_text(
-            "simulation.timestamp_format",
-            f"仿真时间：{formatted}"
-        ).replace("{time}", formatted))
-        self._timestamp_bar.show()
+        self._timestamp_label.setText(formatted)
+        self._header_bar.show()
     
     def clear_result_timestamp(self):
         """清空时间戳显示"""
         self._timestamp_label.clear()
-        self._timestamp_bar.hide()
+        self._header_bar.hide()
+    
+    def show_header_bar(self):
+        """显示顶部信息栏"""
+        self._header_bar.show()
+    
+    def hide_header_bar(self):
+        """隐藏顶部信息栏"""
+        self._header_bar.hide()
     
     def _format_timestamp(self, iso_str: str) -> str:
         """
@@ -406,6 +479,9 @@ class MetricsSummaryPanel(QFrame):
         """清空显示"""
         self._metrics_panel.clear()
         self.clear_result_timestamp()
+        self._overall_score = 0.0
+        self._score_value.setText("0%")
+        self._score_bar.setValue(0)
     
     def retranslate_ui(self):
         """重新翻译 UI 文本"""
@@ -416,6 +492,10 @@ class MetricsSummaryPanel(QFrame):
         self._history_btn.setText(self._get_text(
             "simulation.view_history",
             "查看历史"
+        ))
+        self._score_title.setText(self._get_text(
+            "simulation.overall_score",
+            "Overall Score"
         ))
         self._metrics_panel.retranslate_ui()
     
@@ -1059,6 +1139,8 @@ class SimulationTab(QWidget):
         self._splitter.hide()
         self._empty_widget.show()
         self._metrics_summary_panel.clear_result_timestamp()
+        # 隐藏顶部信息栏
+        self._metrics_summary_panel.hide_header_bar()
         
         # 加载空状态图标
         self._load_empty_icon()
@@ -1085,6 +1167,8 @@ class SimulationTab(QWidget):
         self._splitter.hide()
         self._empty_widget.show()
         self._metrics_summary_panel.clear_result_timestamp()
+        # 隐藏顶部信息栏
+        self._metrics_summary_panel.hide_header_bar()
         
         # 加载文件丢失图标
         self._load_file_missing_icon()
@@ -1106,6 +1190,8 @@ class SimulationTab(QWidget):
         """隐藏空状态"""
         self._empty_widget.hide()
         self._splitter.show()
+        # 显示顶部信息栏
+        self._metrics_summary_panel.show_header_bar()
     
     def _set_controls_enabled(self, enabled: bool):
         """设置控件启用状态"""

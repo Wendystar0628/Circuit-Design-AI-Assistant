@@ -21,8 +21,8 @@ from presentation.panels.simulation.metrics_panel import MetricsPanel
 from presentation.panels.simulation.chart_viewer import ChartViewer, ZoomableImageLabel
 from presentation.panels.simulation.simulation_tab import (
     SimulationTab,
-    LeftPanel,
-    RightPanel,
+    MetricsSummaryPanel,
+    ChartViewerPanel,
     StatusIndicator,
 )
 
@@ -36,7 +36,7 @@ __all__ = [
     "ChartViewer",
     "ZoomableImageLabel",
     "SimulationTab",
-    "LeftPanel",
-    "RightPanel",
+    "MetricsSummaryPanel",
+    "ChartViewerPanel",
     "StatusIndicator",
 ]

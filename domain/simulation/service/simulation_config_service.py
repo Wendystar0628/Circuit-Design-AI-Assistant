@@ -53,8 +53,14 @@ from shared.event_types import EVENT_SIM_CONFIG_CHANGED
 # 常量定义
 # ============================================================
 
+# 从统一路径常量导入
+try:
+    from shared.constants.paths import SYSTEM_DIR
+    CONFIG_DIR = SYSTEM_DIR
+except ImportError:
+    CONFIG_DIR = ".circuit_ai"
+
 CONFIG_FILE_NAME = "simulation_config.json"
-CONFIG_DIR = ".circuit_ai"
 CONFIG_VERSION = "1.0"
 
 

@@ -323,6 +323,12 @@ EVENT_SIMULATION_NO_MAIN_CIRCUIT = "simulation_no_main_circuit"
 #   - line: int - 错误行号（可选）
 EVENT_SIMULATION_ERROR_COLLECTED = "simulation_error_collected"
 
+# 仿真结果文件创建（文件监控触发）
+# 携带数据：
+#   - file_path: str - 结果文件相对路径
+#   - project_root: str - 项目根目录
+EVENT_SIM_RESULT_FILE_CREATED = "sim_result_file_created"
+
 # 主电路检测完成（项目打开或文件变更后）
 # 携带数据：
 #   - candidates: list - 主电路候选文件路径列表
@@ -955,6 +961,7 @@ __all__ = [
     "EVENT_SIMULATION_NEED_SELECTION",
     "EVENT_SIMULATION_NO_MAIN_CIRCUIT",
     "EVENT_SIMULATION_ERROR_COLLECTED",
+    "EVENT_SIM_RESULT_FILE_CREATED",
     "EVENT_MAIN_CIRCUIT_DETECTED",
     "EVENT_EXECUTOR_REGISTERED",
     "EVENT_EXECUTOR_UNREGISTERED",

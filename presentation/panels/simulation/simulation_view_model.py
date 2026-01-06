@@ -167,6 +167,10 @@ class SimulationViewModel(BaseViewModel):
         self._error_message: str = ""
         self._tuning_parameters: List[TuningParameter] = []
         
+        # 版本校验字段
+        self._current_result_id: Optional[str] = None
+        self._current_result_timestamp: Optional[str] = None
+        
         # 历史指标（用于计算趋势）
         self._previous_metrics: Dict[str, float] = {}
         
@@ -351,13 +355,22 @@ class SimulationViewModel(BaseViewModel):
         """
         self._current_result = result
         
+        # 更新版本校验字段
+        self._current_result_id = getattr(result, 'id', None)
+        self._current_result_timestamp = getattr(result, 'timestamp', None)
+        
         if result.success and result.data is not None:
-            # 提取指标
-            if self.metrics_extractor:
+            # 优先使用已有的 metrics 数据
+            if result.metrics:
+                self._metrics_list = self._load_metrics_from_dict(result.metrics)
+            elif self.metrics_extractor:
+                # 从仿真数据中提取指标
                 raw_metrics = self.metrics_extractor.extract_all_metrics(result.data)
                 self._metrics_list = [
                     self.format_metric(m) for m in raw_metrics.values()
                 ]
+            else:
+                self._metrics_list = []
             
             # 计算综合评分
             self._calculate_overall_score()
@@ -385,6 +398,41 @@ class SimulationViewModel(BaseViewModel):
             "simulation_status": self._simulation_status,
             "error_message": self._error_message,
         })
+    
+    def check_for_updates(self, project_root: str) -> bool:
+        """
+        检查是否有更新的仿真结果
+        
+        Args:
+            project_root: 项目根目录
+            
+        Returns:
+            bool: 是否有更新
+        """
+        if self.simulation_service is None:
+            return False
+        
+        try:
+            load_result = self.simulation_service.get_latest_sim_result(project_root)
+            if not load_result.success or load_result.data is None:
+                return False
+            
+            latest_result = load_result.data
+            latest_timestamp = getattr(latest_result, 'timestamp', None)
+            
+            # 比较时间戳
+            if latest_timestamp and self._current_result_timestamp:
+                return latest_timestamp > self._current_result_timestamp
+            
+            # 如果没有当前结果，则有更新
+            if self._current_result is None:
+                return True
+            
+            return False
+            
+        except Exception as e:
+            self._logger.warning(f"Failed to check for updates: {e}")
+            return False
     
     def format_metric(self, metric: MetricResult) -> DisplayMetric:
         """
@@ -420,6 +468,121 @@ class SimulationViewModel(BaseViewModel):
             error_message=metric.error_message,
         )
     
+    def _load_metrics_from_dict(self, metrics_dict: Dict[str, Any]) -> List[DisplayMetric]:
+        """
+        从字典格式的 metrics 数据创建 DisplayMetric 列表
+        
+        支持两种格式：
+        1. 简单格式：{"gain": "20.5 dB", "bandwidth": "10 MHz"}
+        2. 完整格式：{"gain": {"value": 20.5, "unit": "dB", "target": 20.0, ...}}
+        
+        Args:
+            metrics_dict: 指标字典
+            
+        Returns:
+            List[DisplayMetric]: DisplayMetric 列表
+        """
+        display_metrics = []
+        
+        for name, data in metrics_dict.items():
+            if isinstance(data, dict):
+                # 完整格式：从字典创建 MetricResult 然后转换
+                try:
+                    metric = MetricResult.from_dict(data)
+                    display_metrics.append(self.format_metric(metric))
+                except Exception as e:
+                    self._logger.warning(f"Failed to parse metric {name}: {e}")
+                    # 尝试简单解析
+                    display_metrics.append(self._create_simple_display_metric(
+                        name, data.get("value"), data.get("unit", "")
+                    ))
+            else:
+                # 简单格式：字符串值
+                display_metrics.append(self._create_simple_display_metric(name, data))
+        
+        return display_metrics
+    
+    def _create_simple_display_metric(
+        self,
+        name: str,
+        value: Any,
+        unit: str = ""
+    ) -> DisplayMetric:
+        """
+        从简单值创建 DisplayMetric
+        
+        Args:
+            name: 指标名称
+            value: 指标值（可以是数字或字符串）
+            unit: 单位
+            
+        Returns:
+            DisplayMetric: 显示指标
+        """
+        # 解析值和单位
+        raw_value = None
+        formatted_value = str(value) if value is not None else "N/A"
+        
+        if isinstance(value, (int, float)):
+            raw_value = float(value)
+            formatted_value = self._format_value_with_unit(raw_value, unit)
+        elif isinstance(value, str):
+            # 尝试从字符串中提取数值
+            import re
+            match = re.match(r'^([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?)\s*(.*)$', value.strip())
+            if match:
+                try:
+                    raw_value = float(match.group(1))
+                    unit = match.group(2) or unit
+                    formatted_value = value
+                except ValueError:
+                    pass
+        
+        # 生成显示名称（将下划线转为空格，首字母大写）
+        display_name = name.replace("_", " ").title()
+        
+        # 推断类别
+        category = self._infer_category(name)
+        
+        return DisplayMetric(
+            name=name,
+            display_name=display_name,
+            value=formatted_value,
+            unit=unit,
+            target="",
+            is_met=None,
+            trend="unknown",
+            category=category,
+            raw_value=raw_value,
+            confidence=1.0,
+            error_message=None,
+        )
+    
+    def _infer_category(self, name: str) -> str:
+        """
+        根据指标名称推断类别
+        
+        Args:
+            name: 指标名称
+            
+        Returns:
+            str: 类别名称
+        """
+        name_lower = name.lower()
+        
+        if any(kw in name_lower for kw in ["gain", "bandwidth", "phase", "margin", "gbw"]):
+            return "amplifier"
+        elif any(kw in name_lower for kw in ["noise", "snr", "nf"]):
+            return "noise"
+        elif any(kw in name_lower for kw in ["thd", "distortion", "imd", "sfdr"]):
+            return "distortion"
+        elif any(kw in name_lower for kw in ["power", "current", "efficiency", "consumption"]):
+            return "power"
+        elif any(kw in name_lower for kw in ["rise", "fall", "slew", "settling", "overshoot"]):
+            return "transient"
+        else:
+            return "general"
+
     def _calculate_trend(
         self,
         metric_name: str,
@@ -896,6 +1059,10 @@ class SimulationViewModel(BaseViewModel):
         self._progress = 0.0
         self._error_message = ""
         self._tuning_parameters = []
+        
+        # 重置版本校验字段
+        self._current_result_id = None
+        self._current_result_timestamp = None
         
         self.notify_properties_changed({
             "current_result": None,

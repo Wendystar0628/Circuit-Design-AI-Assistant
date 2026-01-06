@@ -620,6 +620,8 @@ class MainWindow(QMainWindow):
             self._session_manager.save_session_state()
             # 保存对话会话
             self._session_manager.save_current_conversation()
+            # 释放资源
+            self._session_manager.dispose()
         
         super().closeEvent(event)
 

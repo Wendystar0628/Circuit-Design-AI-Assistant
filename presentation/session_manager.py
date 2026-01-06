@@ -45,6 +45,9 @@ class SessionManager:
         self._event_bus = None
         self._logger = None
         self._session_state_manager = None
+        
+        # 初始化仿真结果监控器
+        self._initialize_simulation_result_watcher()
 
     @property
     def config_manager(self):
@@ -452,6 +455,46 @@ class SessionManager:
                 return False, str(e)
         
         return False, "SessionStateManager not available"
+
+    # ============================================================
+    # 仿真结果监控器生命周期管理
+    # ============================================================
+
+    def _initialize_simulation_result_watcher(self):
+        """
+        初始化仿真结果监控器
+        
+        在 SessionManager 初始化时调用，启动监控器的事件订阅。
+        监控器会自动响应项目打开/关闭事件。
+        """
+        try:
+            from domain.simulation.service.simulation_result_watcher import (
+                simulation_result_watcher
+            )
+            simulation_result_watcher.initialize()
+            if self.logger:
+                self.logger.info("SimulationResultWatcher initialized via SessionManager")
+        except Exception as e:
+            if self.logger:
+                self.logger.error(f"Failed to initialize SimulationResultWatcher: {e}")
+
+    def dispose(self):
+        """
+        释放资源
+        
+        在应用关闭时调用，清理所有管理的资源。
+        """
+        try:
+            # 释放仿真结果监控器
+            from domain.simulation.service.simulation_result_watcher import (
+                simulation_result_watcher
+            )
+            simulation_result_watcher.dispose()
+            if self.logger:
+                self.logger.info("SimulationResultWatcher disposed via SessionManager")
+        except Exception as e:
+            if self.logger:
+                self.logger.error(f"Failed to dispose SimulationResultWatcher: {e}")
 
 
 __all__ = ["SessionManager"]

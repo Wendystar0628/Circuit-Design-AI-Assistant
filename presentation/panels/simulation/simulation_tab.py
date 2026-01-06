@@ -70,6 +70,7 @@ from shared.event_types import (
     EVENT_ITERATION_USER_CONFIRMED,
     EVENT_WORKFLOW_LOCKED,
     EVENT_WORKFLOW_UNLOCKED,
+    EVENT_SIM_RESULT_FILE_CREATED,
 )
 
 
@@ -203,10 +204,11 @@ class LeftPanel(QFrame):
     """
     左侧面板
     
-    包含指标网格、综合评分和历史按钮
+    包含指标网格、综合评分和历史/刷新按钮
     """
     
     history_clicked = pyqtSignal()
+    refresh_clicked = pyqtSignal()
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -234,6 +236,12 @@ class LeftPanel(QFrame):
         bottom_layout.setContentsMargins(SPACING_NORMAL, SPACING_SMALL, SPACING_NORMAL, SPACING_SMALL)
         bottom_layout.setSpacing(SPACING_NORMAL)
         
+        # 刷新按钮
+        self._refresh_btn = QPushButton()
+        self._refresh_btn.setObjectName("refreshBtn")
+        self._refresh_btn.clicked.connect(self.refresh_clicked.emit)
+        bottom_layout.addWidget(self._refresh_btn)
+        
         # 查看历史按钮
         self._history_btn = QPushButton()
         self._history_btn.setObjectName("historyBtn")
@@ -260,7 +268,7 @@ class LeftPanel(QFrame):
                 border-top: 1px solid {COLOR_BORDER};
             }}
             
-            #historyBtn {{
+            #historyBtn, #refreshBtn {{
                 background-color: transparent;
                 color: {COLOR_ACCENT};
                 border: 1px solid {COLOR_ACCENT};
@@ -269,11 +277,11 @@ class LeftPanel(QFrame):
                 font-size: {FONT_SIZE_NORMAL}px;
             }}
             
-            #historyBtn:hover {{
+            #historyBtn:hover, #refreshBtn:hover {{
                 background-color: {COLOR_ACCENT_LIGHT};
             }}
             
-            #historyBtn:pressed {{
+            #historyBtn:pressed, #refreshBtn:pressed {{
                 background-color: {COLOR_ACCENT};
                 color: white;
             }}
@@ -298,6 +306,10 @@ class LeftPanel(QFrame):
     
     def retranslate_ui(self):
         """重新翻译 UI 文本"""
+        self._refresh_btn.setText(self._get_text(
+            "simulation.refresh",
+            "刷新"
+        ))
         self._history_btn.setText(self._get_text(
             "simulation.view_history",
             "查看历史"
@@ -518,6 +530,7 @@ class SimulationTab(QWidget):
         
         # 左侧面板
         self._left_panel.history_clicked.connect(self._on_history_clicked)
+        self._left_panel.refresh_clicked.connect(self._on_refresh_clicked)
         
         # 指标卡片点击
         self._left_panel.metrics_panel.metric_clicked.connect(self._on_metric_clicked)
@@ -538,6 +551,7 @@ class SimulationTab(QWidget):
             (EVENT_ITERATION_USER_CONFIRMED, self._on_user_confirmed),
             (EVENT_WORKFLOW_LOCKED, self._on_workflow_locked),
             (EVENT_WORKFLOW_UNLOCKED, self._on_workflow_unlocked),
+            (EVENT_SIM_RESULT_FILE_CREATED, self._on_sim_result_file_created),
         ]
         
         for event_type, handler in subscriptions:
@@ -656,6 +670,53 @@ class SimulationTab(QWidget):
         """处理历史按钮点击"""
         self.history_requested.emit()
         self._show_history_dialog()
+    
+    def _on_refresh_clicked(self):
+        """处理刷新按钮点击"""
+        self._logger.info("Refresh button clicked")
+        self.refresh()
+    
+    def _on_sim_result_file_created(self, event_data: dict):
+        """
+        处理仿真结果文件创建事件（文件监控触发）
+        
+        Args:
+            event_data: 事件数据，包含 file_path 和 project_root
+        """
+        file_path = event_data.get("file_path", "")
+        event_project_root = event_data.get("project_root", "")
+        
+        # 检查是否为当前项目
+        if self._project_root and event_project_root:
+            if self._project_root != event_project_root:
+                return
+        
+        self._logger.info(f"Sim result file created: {file_path}")
+        
+        # 检查是否需要重新加载
+        if self._should_reload(file_path):
+            self._load_simulation_result(file_path)
+    
+    def _should_reload(self, file_path: str) -> bool:
+        """
+        判断是否需要重新加载
+        
+        避免重复加载相同的结果文件
+        
+        Args:
+            file_path: 结果文件路径
+            
+        Returns:
+            bool: 是否需要重新加载
+        """
+        # 获取当前显示的结果信息
+        current_result = self._view_model.current_result
+        if current_result is None:
+            return True
+        
+        # 比较时间戳（如果有的话）
+        # 新文件总是需要加载
+        return True
     
     def _on_metric_clicked(self, metric_name: str):
         """处理指标卡片点击"""
@@ -806,10 +867,12 @@ class SimulationTab(QWidget):
             service = SimulationService()
             
             # 尝试加载最新的仿真结果
-            result = service.load_latest_result(self._project_root)
-            if result and result.success:
-                self.load_result(result)
+            load_result = service.get_latest_sim_result(self._project_root)
+            if load_result.success and load_result.data:
+                self.load_result(load_result.data)
+                self._logger.info(f"Loaded simulation result: {load_result.file_path}")
             else:
+                self._logger.info(f"No simulation result found: {load_result.error_message}")
                 self._show_empty_state()
                 
         except Exception as e:
@@ -827,10 +890,8 @@ class SimulationTab(QWidget):
             
             load_result = service.load_sim_result(self._project_root, result_path)
             if load_result.success and load_result.data:
-                # 转换为 SimulationResult 并加载
-                from domain.simulation.models.simulation_result import SimulationResult
-                result = SimulationResult.from_dict(load_result.data)
-                self.load_result(result)
+                # load_result.data 已经是 SimulationResult 对象
+                self.load_result(load_result.data)
             else:
                 self._logger.warning(f"Failed to load result: {load_result.error_message}")
                 

@@ -103,8 +103,12 @@ def _get_event_bus() -> Optional[EventBus]:
 # 常量定义
 # ============================================================
 
-# 仿真结果目录相对路径
-SIM_RESULTS_DIR = ".circuit_ai/sim_results"
+# 从统一路径常量导入
+try:
+    from shared.constants.paths import SIM_RESULTS_DIR
+except ImportError:
+    # 回退到硬编码路径
+    SIM_RESULTS_DIR = ".circuit_ai/sim_results"
 
 # 默认超时时间（秒）
 DEFAULT_TIMEOUT = 300

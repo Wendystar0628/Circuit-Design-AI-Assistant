@@ -129,6 +129,7 @@ class ActionHandlers:
             "on_run_select_simulation": self.on_run_select_simulation,
             "on_stop_simulation": self.on_stop_simulation,
             "on_simulation_settings": self.on_simulation_settings,
+            "on_simulation_config": self.on_simulation_config,
         }
 
     # ============================================================
@@ -453,7 +454,7 @@ class ActionHandlers:
         )
 
     def on_simulation_settings(self):
-        """打开仿真设置对话框"""
+        """打开仿真设置对话框（分析类型和图表选择）"""
         try:
             from presentation.dialogs.simulation_settings_dialog import SimulationSettingsDialog
             from shared.service_locator import ServiceLocator
@@ -492,6 +493,49 @@ class ActionHandlers:
             )
             if self.logger:
                 self.logger.error(f"Failed to open simulation settings dialog: {e}")
+
+    def on_simulation_config(self):
+        """打开仿真参数配置对话框（AC/DC/瞬态/噪声/收敛参数）"""
+        try:
+            from presentation.dialogs.simulation_config.simulation_config_dialog import (
+                SimulationConfigDialog
+            )
+            from shared.service_locator import ServiceLocator
+            from shared.service_names import SVC_SESSION_STATE
+            
+            # 获取项目根目录
+            project_root = None
+            session_state = ServiceLocator.get_optional(SVC_SESSION_STATE)
+            if session_state:
+                project_root = session_state.project_root
+            
+            dialog = SimulationConfigDialog(self._main_window)
+            
+            # 如果有项目根目录，加载项目配置
+            if project_root:
+                dialog.load_config(project_root)
+            
+            dialog.exec()
+            
+        except ImportError as e:
+            QMessageBox.warning(
+                self._main_window,
+                self._get_text("dialog.warning.title", "Warning"),
+                self._get_text(
+                    "dialog.simulation_config.import_error",
+                    "Failed to load Simulation Config module."
+                )
+            )
+            if self.logger:
+                self.logger.error(f"Failed to import SimulationConfigDialog: {e}")
+        except Exception as e:
+            QMessageBox.critical(
+                self._main_window,
+                self._get_text("dialog.error.title", "Error"),
+                f"Failed to open simulation config: {str(e)}"
+            )
+            if self.logger:
+                self.logger.error(f"Failed to open simulation config dialog: {e}")
 
 
 __all__ = ["ActionHandlers"]

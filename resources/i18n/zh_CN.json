@@ -48,6 +48,7 @@
 
   "menu.settings": "设置",
   "menu.settings.simulation": "仿真设置...",
+  "menu.settings.simulation_config": "仿真参数配置...",
   "menu.settings.api_config": "API 配置",
   "menu.settings.language": "语言",
   "menu.settings.preferences": "偏好设置",

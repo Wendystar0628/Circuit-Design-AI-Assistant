@@ -302,7 +302,7 @@ class MenuManager:
         """设置设置菜单"""
         menu = self._menus["settings"]
         
-        # 仿真设置
+        # 仿真设置（分析类型和图表选择）
         self._actions["settings_simulation"] = QAction(self._main_window)
         self._actions["settings_simulation"].setShortcut("Ctrl+Shift+,")
         if "on_simulation_settings" in self._callbacks:
@@ -310,6 +310,15 @@ class MenuManager:
                 self._callbacks["on_simulation_settings"]
             )
         menu.addAction(self._actions["settings_simulation"])
+        
+        # 仿真参数配置（AC/DC/瞬态/噪声/收敛参数）
+        self._actions["settings_simulation_config"] = QAction(self._main_window)
+        self._actions["settings_simulation_config"].setShortcut("Ctrl+Alt+,")
+        if "on_simulation_config" in self._callbacks:
+            self._actions["settings_simulation_config"].triggered.connect(
+                self._callbacks["on_simulation_config"]
+            )
+        menu.addAction(self._actions["settings_simulation_config"])
         
         menu.addSeparator()
         
@@ -488,6 +497,9 @@ class MenuManager:
         # 设置菜单项
         self._actions["settings_simulation"].setText(
             self._get_text("menu.settings.simulation", "Simulation Settings...")
+        )
+        self._actions["settings_simulation_config"].setText(
+            self._get_text("menu.settings.simulation_config", "Simulation Parameters...")
         )
         self._actions["settings_prompt_editor"].setText(
             self._get_text("menu.settings.prompt_editor", "Prompt Template Manager...")

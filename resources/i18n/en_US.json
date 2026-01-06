@@ -48,6 +48,7 @@
 
   "menu.settings": "Settings",
   "menu.settings.simulation": "Simulation Settings...",
+  "menu.settings.simulation_config": "Simulation Parameters...",
   "menu.settings.api_config": "API Configuration",
   "menu.settings.language": "Language",
   "menu.settings.preferences": "Preferences",

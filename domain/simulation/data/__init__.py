@@ -41,6 +41,13 @@ from domain.simulation.data.data_exporter import (
     DataExporter,
     data_exporter,
 )
+from domain.simulation.data.simulation_output_reader import (
+    LogLevel,
+    LogLine,
+    SimulationSummary,
+    SimulationOutputReader,
+    simulation_output_reader,
+)
 
 __all__ = [
     # Downsampler
@@ -65,4 +72,10 @@ __all__ = [
     "ExportResult",
     "DataExporter",
     "data_exporter",
+    # Simulation Output Reader
+    "LogLevel",
+    "LogLine",
+    "SimulationSummary",
+    "SimulationOutputReader",
+    "simulation_output_reader",
 ]

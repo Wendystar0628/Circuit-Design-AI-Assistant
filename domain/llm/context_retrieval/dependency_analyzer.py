@@ -146,7 +146,9 @@ class DependencyAnalyzer:
             pass
 
     def _on_file_changed(self, event_data: Dict[str, Any]):
-        path = event_data.get("path", "")
+        # 事件数据在 "data" 字段中
+        data = event_data.get("data", event_data)
+        path = data.get("path", "")
         if path:
             self.invalidate_cache(path)
 

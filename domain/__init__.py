@@ -6,7 +6,7 @@
 - services/: 无状态领域服务（设计目标、仿真、对话历史、RAG、迭代历史）
 - design/: 设计管理域（目标、迭代、终止判断）
 - llm/: LLM交互域（上下文、Prompt、解析）
-- simulation/: 仿真执行域（PySpice、指标提取、图表）
+- simulation/: 仿真执行域（ngspice、指标提取、图表）
 - knowledge/: 知识检索域（RAG、论文处理、向量搜索）
 
 领域服务设计原则：

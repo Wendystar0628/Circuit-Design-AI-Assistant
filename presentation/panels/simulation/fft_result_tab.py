@@ -891,7 +891,9 @@ class FFTResultTab(QWidget):
     
     def _on_fft_complete(self, event_data: Dict[str, Any]):
         """处理 FFT 分析完成事件"""
-        result = event_data.get("result")
+        # 事件数据在 "data" 字段中
+        data = event_data.get("data", event_data)
+        result = data.get("result")
         if result:
             self.update_results(result)
     

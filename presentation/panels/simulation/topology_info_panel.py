@@ -870,7 +870,9 @@ class TopologyInfoPanel(QWidget):
     
     def _on_topology_detected(self, event_data: Dict[str, Any]):
         """处理拓扑识别完成事件"""
-        topology_result = event_data.get("topology_result")
+        # 事件数据在 "data" 字段中
+        data = event_data.get("data", event_data)
+        topology_result = data.get("topology_result")
         if topology_result:
             self.update_topology(topology_result)
     

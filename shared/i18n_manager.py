@@ -61,18 +61,32 @@ LANGUAGE_NAMES = {
 
 class I18nManager:
     """
-    国际化管理器
+    国际化管理器（单例模式）
     
     统一管理多语言文本和语言切换，从外部 JSON 文件加载文本。
     
     设计原则：
+    - 单例模式，避免重复加载语言文件
     - 延迟获取 ConfigManager 和 EventBus
     - 语言切换通过 EventBus 通知 UI 组件
     - 文本键不存在时返回键名本身，便于调试
     - 支持变量占位符 {variable_name}
     """
+    
+    _instance = None
+    _initialized = False
+
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
 
     def __init__(self):
+        # 单例模式：只初始化一次
+        if I18nManager._initialized:
+            return
+        I18nManager._initialized = True
+        
         # 当前语言
         self._current_language = LANG_EN_US
         

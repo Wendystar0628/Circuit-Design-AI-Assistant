@@ -13,7 +13,7 @@
 - 单一职责：每个执行器专注于一种仿真方式
 
 执行器列表：
-- SpiceExecutor: SPICE 仿真执行器（使用 PySpice/NgSpiceShared）
+- SpiceExecutor: SPICE 仿真执行器（使用 ctypes 直接调用 ngspice 共享库）
 - PythonExecutor: Python 脚本执行器（在独立子进程中执行）
 """
 
@@ -21,6 +21,13 @@ from domain.simulation.executor.simulation_executor import SimulationExecutor
 from domain.simulation.executor.executor_registry import (
     ExecutorRegistry,
     executor_registry,
+)
+from domain.simulation.executor.ngspice_shared import (
+    NgSpiceWrapper,
+    NgSpiceError,
+    NgSpiceLoadError,
+    NgSpiceInitError,
+    VectorInfo,
 )
 from domain.simulation.executor.spice_executor import SpiceExecutor
 from domain.simulation.executor.python_executor import PythonExecutor
@@ -35,6 +42,11 @@ __all__ = [
     "SimulationExecutor",
     "ExecutorRegistry",
     "executor_registry",
+    "NgSpiceWrapper",
+    "NgSpiceError",
+    "NgSpiceLoadError",
+    "NgSpiceInitError",
+    "VectorInfo",
     "SpiceExecutor",
     "PythonExecutor",
     "CircuitAnalyzer",

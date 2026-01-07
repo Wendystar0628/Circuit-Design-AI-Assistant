@@ -309,7 +309,9 @@ class ImplicitContextAggregator:
         Args:
             event_data: 事件数据
         """
-        path = event_data.get("path", "")
+        # 事件数据在 "data" 字段中
+        data = event_data.get("data", event_data)
+        path = data.get("path", "")
         if path:
             self._recently_modified_files[path] = time.time()
             

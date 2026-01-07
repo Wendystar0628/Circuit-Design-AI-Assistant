@@ -910,7 +910,9 @@ class DiagnosisPanel(QWidget):
     
     def _on_diagnosis_complete(self, event_data: Dict[str, Any]):
         """处理诊断完成事件"""
-        diagnosis = event_data.get("diagnosis")
+        # 事件数据在 "data" 字段中
+        data = event_data.get("data", event_data)
+        diagnosis = data.get("diagnosis")
         if diagnosis:
             self.update_diagnosis(diagnosis)
     

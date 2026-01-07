@@ -59,7 +59,7 @@
   - TracingLogger 关闭（最后一次刷新）
   - TracingStore 关闭
 
-注意：ngspice 路径配置必须在任何 PySpice 导入之前执行
+注意：ngspice 路径配置必须在应用启动时最先执行
 """
 
 import sys
@@ -692,7 +692,7 @@ def _init_executor_registry():
     初始化仿真执行器注册表（Phase 3.5.4）
     
     注册所有仿真执行器到全局注册表：
-    - SpiceExecutor: SPICE 仿真执行器（使用 PySpice/NgSpiceShared）
+    - SpiceExecutor: SPICE 仿真执行器（使用 ctypes 直接调用 ngspice 共享库）
     - PythonExecutor: Python 脚本执行器（在独立子进程中执行）
     
     执行器注册表是全局单例，通过 ServiceLocator 访问。
@@ -724,6 +724,12 @@ def _init_executor_registry():
                 f"已注册 {registry_info['executor_count']} 个执行器: "
                 f"{[e['name'] for e in registry_info['executors']]}"
             )
+            
+            # 检查 SpiceExecutor 是否可用
+            if spice_executor.is_available():
+                _logger.info("SpiceExecutor 初始化成功，SPICE 仿真功能可用")
+            else:
+                _logger.warning("SpiceExecutor 初始化失败，SPICE 仿真功能不可用")
             
     except Exception as e:
         if _logger:

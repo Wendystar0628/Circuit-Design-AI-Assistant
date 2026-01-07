@@ -4,24 +4,19 @@ SPICE 仿真执行器
 
 职责：
 - 实现 SimulationExecutor 接口
-- 封装 PySpice 库执行 SPICE 电路仿真
+- 通过 NgSpiceWrapper 执行 SPICE 电路仿真
 - 支持 AC、DC、瞬态、噪声分析
-- 通过 NgSpiceShared 共享库模式调用 ngspice
+- 动态注入分析命令到网表
 
 执行模式说明：
-- PySpice 通过 NgSpiceShared 共享库模式调用 ngspice
+- 通过 ctypes 直接调用 ngspice 共享库
 - ngspice 在同一进程内执行，不需要启动独立子进程
-- 这种模式性能更高，但需要确保 ngspice 共享库路径正确配置
+- 这种模式性能更高，且完全控制与 ngspice 的交互
 
 路径解析策略：
 - 采用工作目录切换方案，利用 ngspice 原生的相对路径解析能力
 - 仿真执行前切换到电路文件所在目录，ngspice 自动基于该目录解析 .include/.lib 引用
 - 无需生成临时文件或修改网表内容
-
-职责说明：
-- ngspice 路径配置委托给 ngspice_config
-- 错误解析作为执行器内部职责（_parse_exception 方法）
-- 本模块专注于仿真执行核心逻辑
 
 使用示例：
     from domain.simulation.executor.spice_executor import SpiceExecutor
@@ -40,12 +35,11 @@ SPICE 仿真执行器
     
     if result.success:
         print(f"仿真成功，耗时 {result.duration_seconds:.2f}s")
-        # 获取输出信号
-        vout = result.get_signal("V(out)")
 """
 
 import logging
 import os
+import re
 import time
 from datetime import datetime
 from pathlib import Path
@@ -54,6 +48,13 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar
 import numpy as np
 
 from domain.simulation.executor.simulation_executor import SimulationExecutor
+from domain.simulation.executor.ngspice_shared import (
+    NgSpiceWrapper,
+    NgSpiceError,
+    NgSpiceLoadError,
+    VectorInfo,
+    VectorType,
+)
 from domain.simulation.models.simulation_result import (
     SimulationData,
     SimulationResult,
@@ -64,21 +65,18 @@ from domain.simulation.models.simulation_error import (
     SimulationError,
     SimulationErrorType,
     ErrorSeverity,
-    create_syntax_error,
-    create_convergence_error,
-    create_timeout_error,
 )
 from domain.simulation.models.simulation_config import (
     ACAnalysisConfig,
     DCAnalysisConfig,
     TransientConfig,
     NoiseConfig,
-    GlobalSimulationConfig,
 )
 from infrastructure.utils.ngspice_config import (
     is_ngspice_available,
     get_configuration_error,
     get_ngspice_info,
+    get_ngspice_dll_path,
 )
 
 
@@ -95,7 +93,7 @@ SUPPORTED_ANALYSES = ["ac", "dc", "tran", "noise", "op"]
 # 默认超时时间（秒）
 DEFAULT_TIMEOUT = 300
 
-# 泛型类型变量（用于 _execute_with_working_directory）
+# 泛型类型变量
 T = TypeVar('T')
 
 
@@ -107,13 +105,13 @@ class SpiceExecutor(SimulationExecutor):
     """
     SPICE 仿真执行器
     
-    使用 PySpice 的 NgSpiceShared 共享库模式执行 SPICE 电路仿真。
+    通过 NgSpiceWrapper 直接调用 ngspice 共享库执行 SPICE 电路仿真。
     支持 AC、DC、瞬态、噪声分析。
     
     特性：
-    - 共享库模式：ngspice 在同一进程内执行，性能更高
+    - 直接调用 ngspice：不依赖 PySpice，避免版本兼容性问题
     - 标准化结果：返回统一的 SimulationResult 数据结构
-    - 错误处理：捕获并解析 ngspice 错误，提供恢复建议
+    - 错误处理：解析 ngspice 输出，提供恢复建议
     - 工作目录切换：自动切换到电路文件所在目录，确保相对路径正确解析
     
     注意：
@@ -124,13 +122,32 @@ class SpiceExecutor(SimulationExecutor):
     def __init__(self):
         """初始化 SPICE 执行器"""
         self._logger = logging.getLogger(__name__)
-        self._circuit = None
-        self._simulator = None
+        self._ngspice: Optional[NgSpiceWrapper] = None
+        self._init_error: Optional[str] = None
         
-        # 检查 ngspice 是否可用
+        # 尝试初始化 ngspice
+        self._try_init_ngspice()
+    
+    def _try_init_ngspice(self):
+        """尝试初始化 ngspice wrapper"""
         if not is_ngspice_available():
-            error_msg = get_configuration_error() or "ngspice 未正确配置"
-            self._logger.warning(f"SpiceExecutor 初始化警告: {error_msg}")
+            self._init_error = get_configuration_error() or "ngspice 未正确配置"
+            self._logger.warning(f"SpiceExecutor 初始化警告: {self._init_error}")
+            return
+        
+        try:
+            dll_path = get_ngspice_dll_path()
+            if dll_path:
+                self._ngspice = NgSpiceWrapper(dll_path)
+                self._logger.info("SpiceExecutor 初始化成功")
+            else:
+                self._init_error = "无法获取 ngspice DLL 路径"
+        except NgSpiceError as e:
+            self._init_error = str(e)
+            self._logger.warning(f"SpiceExecutor 初始化失败: {e}")
+        except Exception as e:
+            self._init_error = str(e)
+            self._logger.exception(f"SpiceExecutor 初始化异常: {e}")
     
     # ============================================================
     # SimulationExecutor 接口实现
@@ -168,7 +185,7 @@ class SpiceExecutor(SimulationExecutor):
         start_time = time.time()
         analysis_type = self._get_analysis_type(analysis_config)
         
-        # 1. 校验文件（优先于 ngspice 检查，确保文件错误优先报告）
+        # 1. 校验文件
         valid, error_msg = self.validate_file(file_path)
         if not valid:
             return create_error_result(
@@ -186,8 +203,8 @@ class SpiceExecutor(SimulationExecutor):
             )
         
         # 2. 检查 ngspice 是否可用
-        if not is_ngspice_available():
-            error_msg = get_configuration_error() or "ngspice 未正确配置"
+        if not self._ngspice:
+            error_msg = self._init_error or "ngspice 未初始化"
             return create_error_result(
                 executor=self.get_name(),
                 file_path=file_path,
@@ -203,35 +220,13 @@ class SpiceExecutor(SimulationExecutor):
             )
         
         # 3. 切换工作目录到电路文件所在目录，执行仿真
-        # ngspice 会基于当前工作目录解析 .include/.lib 中的相对路径
         circuit_path = Path(file_path).resolve()
         circuit_dir = circuit_path.parent
-        circuit_filename = circuit_path.name
         
         def run_simulation_in_context() -> SimulationResult:
-            # 加载电路文件（使用文件名，因为已在正确的工作目录）
-            try:
-                circuit_content = self._load_circuit_file(circuit_filename)
-            except Exception as e:
-                return create_error_result(
-                    executor=self.get_name(),
-                    file_path=file_path,
-                    analysis_type=analysis_type,
-                    error=SimulationError(
-                        code="E009",
-                        type=SimulationErrorType.FILE_ACCESS,
-                        severity=ErrorSeverity.HIGH,
-                        message=f"加载电路文件失败: {e}",
-                        file_path=file_path,
-                    ),
-                    duration_seconds=time.time() - start_time,
-                )
-            
-            # 执行仿真
             try:
                 result = self._run_simulation(
-                    file_path=file_path,
-                    circuit_content=circuit_content,
+                    file_path=str(circuit_path),
                     analysis_type=analysis_type,
                     analysis_config=analysis_config,
                 )
@@ -244,12 +239,12 @@ class SpiceExecutor(SimulationExecutor):
                     executor=self.get_name(),
                     file_path=file_path,
                     analysis_type=analysis_type,
-                    error=self._parse_exception(e, file_path),
+                    error=self._parse_ngspice_output(str(e), file_path),
                     duration_seconds=time.time() - start_time,
                 )
         
         return self._execute_with_working_directory(circuit_dir, run_simulation_in_context)
-    
+
     # ============================================================
     # 公开辅助方法
     # ============================================================
@@ -261,7 +256,7 @@ class SpiceExecutor(SimulationExecutor):
         Returns:
             bool: ngspice 是否已正确配置且可用
         """
-        return is_ngspice_available()
+        return self._ngspice is not None and self._ngspice.initialized
     
     def get_ngspice_info(self) -> Dict[str, Any]:
         """
@@ -271,23 +266,6 @@ class SpiceExecutor(SimulationExecutor):
             Dict: ngspice 配置详情
         """
         return get_ngspice_info()
-    
-    def load_circuit(self, spice_file_path: str) -> bool:
-        """
-        加载 SPICE 网表文件
-        
-        Args:
-            spice_file_path: 网表文件路径
-            
-        Returns:
-            bool: 是否加载成功
-        """
-        try:
-            self._circuit = self._load_circuit_file(spice_file_path)
-            return True
-        except Exception as e:
-            self._logger.error(f"加载电路失败: {e}")
-            return False
     
     # ============================================================
     # 分析方法
@@ -301,19 +279,7 @@ class SpiceExecutor(SimulationExecutor):
         points_per_decade: int = 20,
         sweep_type: str = "dec"
     ) -> SimulationResult:
-        """
-        执行 AC 小信号分析
-        
-        Args:
-            file_path: 电路文件路径
-            start_freq: 起始频率（Hz）
-            stop_freq: 终止频率（Hz）
-            points_per_decade: 每十倍频程点数
-            sweep_type: 扫描类型（dec/oct/lin）
-            
-        Returns:
-            SimulationResult: 仿真结果
-        """
+        """执行 AC 小信号分析"""
         config = {
             "analysis_type": "ac",
             "start_freq": start_freq,
@@ -331,19 +297,7 @@ class SpiceExecutor(SimulationExecutor):
         stop_value: float,
         step: float
     ) -> SimulationResult:
-        """
-        执行 DC 扫描分析
-        
-        Args:
-            file_path: 电路文件路径
-            source_name: 扫描源名称
-            start_value: 起始值
-            stop_value: 终止值
-            step: 步进值
-            
-        Returns:
-            SimulationResult: 仿真结果
-        """
+        """执行 DC 扫描分析"""
         config = {
             "analysis_type": "dc",
             "source_name": source_name,
@@ -361,19 +315,7 @@ class SpiceExecutor(SimulationExecutor):
         start_time: float = 0.0,
         max_step: Optional[float] = None
     ) -> SimulationResult:
-        """
-        执行瞬态分析
-        
-        Args:
-            file_path: 电路文件路径
-            step_time: 时间步长（秒）
-            end_time: 终止时间（秒）
-            start_time: 起始时间（秒）
-            max_step: 最大步长（秒）
-            
-        Returns:
-            SimulationResult: 仿真结果
-        """
+        """执行瞬态分析"""
         config = {
             "analysis_type": "tran",
             "step_time": step_time,
@@ -391,19 +333,7 @@ class SpiceExecutor(SimulationExecutor):
         start_freq: float = 1.0,
         stop_freq: float = 1e6
     ) -> SimulationResult:
-        """
-        执行噪声分析
-        
-        Args:
-            file_path: 电路文件路径
-            output_node: 输出节点
-            input_source: 输入源
-            start_freq: 起始频率（Hz）
-            stop_freq: 终止频率（Hz）
-            
-        Returns:
-            SimulationResult: 仿真结果
-        """
+        """执行噪声分析"""
         config = {
             "analysis_type": "noise",
             "output_node": output_node,
@@ -414,39 +344,6 @@ class SpiceExecutor(SimulationExecutor):
         return self.execute(file_path, config)
     
     # ============================================================
-    # 数据提取方法
-    # ============================================================
-    
-    def get_node_voltage(self, node_name: str) -> Optional[np.ndarray]:
-        """
-        获取节点电压
-        
-        Args:
-            node_name: 节点名称
-            
-        Returns:
-            Optional[np.ndarray]: 电压数据，若不存在则返回 None
-        """
-        # 此方法需要在仿真执行后调用
-        # 实际实现需要访问 PySpice 的仿真结果
-        self._logger.warning("get_node_voltage: 需要先执行仿真")
-        return None
-    
-    def get_branch_current(self, element_name: str) -> Optional[np.ndarray]:
-        """
-        获取支路电流
-        
-        Args:
-            element_name: 元件名称
-            
-        Returns:
-            Optional[np.ndarray]: 电流数据，若不存在则返回 None
-        """
-        # 此方法需要在仿真执行后调用
-        self._logger.warning("get_branch_current: 需要先执行仿真")
-        return None
-    
-    # ============================================================
     # 内部方法
     # ============================================================
     
@@ -455,23 +352,7 @@ class SpiceExecutor(SimulationExecutor):
         target_dir: Path,
         callback: Callable[[], T]
     ) -> T:
-        """
-        在指定工作目录下执行回调函数
-        
-        ngspice 在解析 .include 和 .lib 语句时，会基于当前工作目录解析相对路径。
-        通过切换到电路文件所在目录，可以让 ngspice 自动正确解析所有相对路径引用。
-        
-        Args:
-            target_dir: 目标工作目录
-            callback: 要执行的回调函数
-            
-        Returns:
-            回调函数的返回值
-            
-        Note:
-            - 使用 try-finally 确保无论成功或失败都恢复原工作目录
-            - 工作目录是进程级状态，不支持同一进程内并发仿真
-        """
+        """在指定工作目录下执行回调函数"""
         original_dir = os.getcwd()
         try:
             os.chdir(target_dir)
@@ -487,348 +368,200 @@ class SpiceExecutor(SimulationExecutor):
             return "ac"
         return analysis_config.get("analysis_type", "ac")
     
-    def _load_circuit_file(self, file_path: str) -> str:
-        """
-        加载电路文件内容
-        
-        Args:
-            file_path: 文件路径
-            
-        Returns:
-            str: 文件内容
-        """
-        path = Path(file_path)
-        return path.read_text(encoding='utf-8', errors='ignore')
-
     def _run_simulation(
         self,
         file_path: str,
-        circuit_content: str,
         analysis_type: str,
         analysis_config: Optional[Dict[str, Any]]
     ) -> SimulationResult:
-        """
-        执行仿真核心逻辑
+        """执行仿真核心逻辑"""
+        # 重置 ngspice 状态
+        self._ngspice.destroy()
         
-        Args:
-            file_path: 电路文件路径
-            circuit_content: 电路文件内容
-            analysis_type: 分析类型
-            analysis_config: 分析配置
-            
-        Returns:
-            SimulationResult: 仿真结果
-        """
-        try:
-            # 延迟导入 PySpice，确保 ngspice_config 已执行
-            from PySpice.Spice.NgSpice.Shared import NgSpiceShared
-            from PySpice.Spice.Parser import SpiceParser
-            from PySpice.Probe.Plot import plot
-            
-        except ImportError as e:
+        # 读取网表内容
+        circuit_path = Path(file_path)
+        netlist_content = circuit_path.read_text(encoding='utf-8', errors='ignore')
+        
+        # 生成分析命令
+        analysis_command = self._generate_analysis_command(analysis_type, analysis_config)
+        
+        # 注入分析命令到网表
+        modified_netlist = self._inject_analysis_command(netlist_content, analysis_command)
+        
+        # 加载网表
+        netlist_lines = modified_netlist.splitlines()
+        if not self._ngspice.load_netlist(netlist_lines):
+            stdout = self._ngspice.get_stdout()
             return create_error_result(
                 executor=self.get_name(),
                 file_path=file_path,
                 analysis_type=analysis_type,
-                error=SimulationError(
-                    code="E008",
-                    type=SimulationErrorType.NGSPICE_CRASH,
-                    severity=ErrorSeverity.CRITICAL,
-                    message=f"PySpice 导入失败: {e}",
-                    recovery_suggestion="请确保 PySpice 已正确安装",
-                ),
+                error=self._parse_ngspice_output(stdout, file_path),
+                raw_output=stdout,
             )
         
-        raw_output = ""
-        
-        try:
-            # 解析电路
-            parser = SpiceParser(source=circuit_content)
-            circuit = parser.build_circuit()
-            
-            # 创建仿真器
-            simulator = circuit.simulator(
-                temperature=27,
-                nominal_temperature=27
+        # 执行仿真
+        if not self._ngspice.run():
+            stdout = self._ngspice.get_stdout()
+            return create_error_result(
+                executor=self.get_name(),
+                file_path=file_path,
+                analysis_type=analysis_type,
+                error=self._parse_ngspice_output(stdout, file_path),
+                raw_output=stdout,
             )
-            
-            # 根据分析类型执行仿真
-            if analysis_type == "ac":
-                analysis_result = self._run_ac(simulator, analysis_config)
-            elif analysis_type == "dc":
-                analysis_result = self._run_dc(simulator, analysis_config)
-            elif analysis_type == "tran":
-                analysis_result = self._run_tran(simulator, analysis_config)
-            elif analysis_type == "noise":
-                analysis_result = self._run_noise(simulator, analysis_config)
-            elif analysis_type == "op":
-                analysis_result = self._run_op(simulator, analysis_config)
-            else:
-                return create_error_result(
-                    executor=self.get_name(),
-                    file_path=file_path,
-                    analysis_type=analysis_type,
-                    error=SimulationError(
-                        code="E010",
-                        type=SimulationErrorType.PARAMETER_INVALID,
-                        severity=ErrorSeverity.HIGH,
-                        message=f"不支持的分析类型: {analysis_type}",
-                        recovery_suggestion=f"支持的分析类型: {', '.join(SUPPORTED_ANALYSES)}",
-                    ),
+        
+        # 提取仿真数据
+        sim_data = self._extract_simulation_data(analysis_type)
+        raw_output = self._ngspice.get_stdout()
+        
+        return create_success_result(
+            executor=self.get_name(),
+            file_path=file_path,
+            analysis_type=analysis_type,
+            data=sim_data,
+            raw_output=raw_output,
+        )
+    
+    def _generate_analysis_command(
+        self,
+        analysis_type: str,
+        analysis_config: Optional[Dict[str, Any]]
+    ) -> str:
+        """生成分析命令"""
+        if analysis_type == "ac":
+            config = ACAnalysisConfig()
+            if analysis_config:
+                config = ACAnalysisConfig(
+                    start_freq=analysis_config.get("start_freq", config.start_freq),
+                    stop_freq=analysis_config.get("stop_freq", config.stop_freq),
+                    points_per_decade=analysis_config.get("points_per_decade", config.points_per_decade),
+                    sweep_type=analysis_config.get("sweep_type", config.sweep_type),
                 )
-            
-            # 提取仿真数据
-            sim_data = self._extract_simulation_data(analysis_result, analysis_type)
-            
-            return create_success_result(
-                executor=self.get_name(),
-                file_path=file_path,
-                analysis_type=analysis_type,
-                data=sim_data,
-                raw_output=raw_output,
-            )
-            
-        except Exception as e:
-            # 解析异常并返回错误结果
-            error = self._parse_exception(e, file_path)
-            return create_error_result(
-                executor=self.get_name(),
-                file_path=file_path,
-                analysis_type=analysis_type,
-                error=error,
-                raw_output=raw_output,
-            )
+            return f".ac {config.sweep_type} {config.points_per_decade} {config.start_freq} {config.stop_freq}"
+        
+        elif analysis_type == "dc":
+            config = DCAnalysisConfig()
+            if analysis_config:
+                config = DCAnalysisConfig(
+                    source_name=analysis_config.get("source_name", config.source_name),
+                    start_value=analysis_config.get("start_value", config.start_value),
+                    stop_value=analysis_config.get("stop_value", config.stop_value),
+                    step=analysis_config.get("step", config.step),
+                )
+            if not config.source_name:
+                return ""  # DC 分析需要指定源
+            return f".dc {config.source_name} {config.start_value} {config.stop_value} {config.step}"
+        
+        elif analysis_type == "tran":
+            config = TransientConfig()
+            if analysis_config:
+                config = TransientConfig(
+                    step_time=analysis_config.get("step_time", config.step_time),
+                    end_time=analysis_config.get("end_time", config.end_time),
+                    start_time=analysis_config.get("start_time", config.start_time),
+                    max_step=analysis_config.get("max_step", config.max_step),
+                )
+            cmd = f".tran {config.step_time} {config.end_time}"
+            if config.start_time > 0:
+                cmd += f" {config.start_time}"
+            if config.max_step:
+                cmd += f" {config.max_step}"
+            return cmd
+        
+        elif analysis_type == "noise":
+            config = NoiseConfig()
+            if analysis_config:
+                config = NoiseConfig(
+                    output_node=analysis_config.get("output_node", config.output_node),
+                    input_source=analysis_config.get("input_source", config.input_source),
+                    start_freq=analysis_config.get("start_freq", config.start_freq),
+                    stop_freq=analysis_config.get("stop_freq", config.stop_freq),
+                )
+            if not config.output_node or not config.input_source:
+                return ""
+            return f".noise v({config.output_node}) {config.input_source} dec 10 {config.start_freq} {config.stop_freq}"
+        
+        elif analysis_type == "op":
+            return ".op"
+        
+        return ""
     
-    def _run_ac(
-        self,
-        simulator,
-        analysis_config: Optional[Dict[str, Any]]
-    ):
-        """
-        执行 AC 分析
+    def _inject_analysis_command(self, netlist: str, analysis_command: str) -> str:
+        """将分析命令注入到网表中"""
+        if not analysis_command:
+            return netlist
         
-        Args:
-            simulator: PySpice 仿真器
-            analysis_config: 分析配置
-            
-        Returns:
-            分析结果对象
-        """
-        config = ACAnalysisConfig()
-        if analysis_config:
-            config = ACAnalysisConfig(
-                start_freq=analysis_config.get("start_freq", config.start_freq),
-                stop_freq=analysis_config.get("stop_freq", config.stop_freq),
-                points_per_decade=analysis_config.get("points_per_decade", config.points_per_decade),
-                sweep_type=analysis_config.get("sweep_type", config.sweep_type),
-            )
+        lines = netlist.splitlines()
+        result_lines = []
         
-        # 执行 AC 分析
-        analysis = simulator.ac(
-            start_frequency=config.start_freq,
-            stop_frequency=config.stop_freq,
-            number_of_points=config.points_per_decade,
-            variation=config.sweep_type,
-        )
+        # 检查网表中是否已有相同类型的分析命令
+        analysis_type = analysis_command.split()[0].lower()  # 如 ".ac", ".dc", ".tran"
+        has_analysis = False
+        has_end = False
         
-        return analysis
-    
-    def _run_dc(
-        self,
-        simulator,
-        analysis_config: Optional[Dict[str, Any]]
-    ):
-        """
-        执行 DC 分析
+        for line in lines:
+            stripped = line.strip().lower()
+            if stripped.startswith(analysis_type):
+                # 替换现有的分析命令
+                result_lines.append(analysis_command)
+                has_analysis = True
+            elif stripped == ".end":
+                has_end = True
+                # 在 .end 之前插入分析命令（如果还没有）
+                if not has_analysis:
+                    result_lines.append(analysis_command)
+                result_lines.append(line)
+            else:
+                result_lines.append(line)
         
-        Args:
-            simulator: PySpice 仿真器
-            analysis_config: 分析配置
-            
-        Returns:
-            分析结果对象
-        """
-        config = DCAnalysisConfig()
-        if analysis_config:
-            config = DCAnalysisConfig(
-                source_name=analysis_config.get("source_name", config.source_name),
-                start_value=analysis_config.get("start_value", config.start_value),
-                stop_value=analysis_config.get("stop_value", config.stop_value),
-                step=analysis_config.get("step", config.step),
-            )
+        # 如果网表没有 .end 语句，在末尾添加分析命令和 .end
+        if not has_end:
+            if not has_analysis:
+                result_lines.append(analysis_command)
+            result_lines.append(".end")
         
-        if not config.source_name:
-            raise ValueError("DC 分析需要指定 source_name")
-        
-        # 执行 DC 分析
-        analysis = simulator.dc(**{
-            config.source_name: slice(config.start_value, config.stop_value, config.step)
-        })
-        
-        return analysis
-    
-    def _run_tran(
-        self,
-        simulator,
-        analysis_config: Optional[Dict[str, Any]]
-    ):
-        """
-        执行瞬态分析
-        
-        Args:
-            simulator: PySpice 仿真器
-            analysis_config: 分析配置
-            
-        Returns:
-            分析结果对象
-        """
-        config = TransientConfig()
-        if analysis_config:
-            config = TransientConfig(
-                step_time=analysis_config.get("step_time", config.step_time),
-                end_time=analysis_config.get("end_time", config.end_time),
-                start_time=analysis_config.get("start_time", config.start_time),
-                max_step=analysis_config.get("max_step", config.max_step),
-                use_initial_conditions=analysis_config.get("use_initial_conditions", config.use_initial_conditions),
-            )
-        
-        # 构建参数
-        kwargs = {
-            "step_time": config.step_time,
-            "end_time": config.end_time,
-        }
-        
-        if config.start_time > 0:
-            kwargs["start_time"] = config.start_time
-        
-        if config.max_step is not None:
-            kwargs["max_time"] = config.max_step
-        
-        if config.use_initial_conditions:
-            kwargs["use_initial_condition"] = True
-        
-        # 执行瞬态分析
-        analysis = simulator.transient(**kwargs)
-        
-        return analysis
-    
-    def _run_noise(
-        self,
-        simulator,
-        analysis_config: Optional[Dict[str, Any]]
-    ):
-        """
-        执行噪声分析
-        
-        Args:
-            simulator: PySpice 仿真器
-            analysis_config: 分析配置
-            
-        Returns:
-            分析结果对象
-        """
-        config = NoiseConfig()
-        if analysis_config:
-            config = NoiseConfig(
-                output_node=analysis_config.get("output_node", config.output_node),
-                input_source=analysis_config.get("input_source", config.input_source),
-                start_freq=analysis_config.get("start_freq", config.start_freq),
-                stop_freq=analysis_config.get("stop_freq", config.stop_freq),
-            )
-        
-        if not config.output_node or not config.input_source:
-            raise ValueError("噪声分析需要指定 output_node 和 input_source")
-        
-        # 执行噪声分析
-        analysis = simulator.noise(
-            output=config.output_node,
-            input_source=config.input_source,
-            start_frequency=config.start_freq,
-            stop_frequency=config.stop_freq,
-            variation='dec',
-            number_of_points=10,
-        )
-        
-        return analysis
-    
-    def _run_op(
-        self,
-        simulator,
-        analysis_config: Optional[Dict[str, Any]]
-    ):
-        """
-        执行工作点分析
-        
-        Args:
-            simulator: PySpice 仿真器
-            analysis_config: 分析配置（OP 分析不需要额外配置）
-            
-        Returns:
-            分析结果对象
-        """
-        # 执行工作点分析
-        analysis = simulator.operating_point()
-        return analysis
-    
-    def _extract_simulation_data(
-        self,
-        analysis_result,
-        analysis_type: str
-    ) -> SimulationData:
-        """
-        从 PySpice 分析结果中提取数据
-        
-        Args:
-            analysis_result: PySpice 分析结果对象
-            analysis_type: 分析类型
-            
-        Returns:
-            SimulationData: 标准化的仿真数据
-        """
+        return '\n'.join(result_lines)
+
+    def _extract_simulation_data(self, analysis_type: str) -> SimulationData:
+        """从 ngspice 提取仿真数据"""
         frequency = None
         time_data = None
         signals = {}
         
-        try:
-            if analysis_type == "ac":
-                # AC 分析：提取频率和复数信号
-                frequency = np.array(analysis_result.frequency)
-                for node in analysis_result.nodes.values():
-                    name = str(node)
-                    # 存储幅度（dB）和相位
-                    signals[f"{name}_mag"] = np.abs(np.array(node))
-                    signals[f"{name}_phase"] = np.angle(np.array(node), deg=True)
-                    signals[name] = np.array(node)  # 复数值
-                    
-            elif analysis_type == "dc":
-                # DC 分析：提取扫描值和节点电压
-                # DC 分析的 x 轴是扫描源的值
-                for node in analysis_result.nodes.values():
-                    name = str(node)
-                    signals[name] = np.array(node)
-                    
-            elif analysis_type == "tran":
-                # 瞬态分析：提取时间和信号
-                time_data = np.array(analysis_result.time)
-                for node in analysis_result.nodes.values():
-                    name = str(node)
-                    signals[name] = np.array(node)
-                    
-            elif analysis_type == "noise":
-                # 噪声分析：提取频率和噪声谱密度
-                frequency = np.array(analysis_result.frequency)
-                for node in analysis_result.nodes.values():
-                    name = str(node)
-                    signals[name] = np.array(node)
-                    
-            elif analysis_type == "op":
-                # 工作点分析：提取节点电压
-                for node in analysis_result.nodes.values():
-                    name = str(node)
-                    signals[name] = np.array([float(node)])
-                    
-        except Exception as e:
-            self._logger.warning(f"提取仿真数据时出现警告: {e}")
+        # 获取所有向量
+        vectors = self._ngspice.get_all_vectors()
+        self._logger.debug(f"可用向量: {vectors}")
+        
+        for vec_name in vectors:
+            vec_info = self._ngspice.get_vector_info(vec_name)
+            if not vec_info:
+                continue
+            
+            # 根据向量类型处理
+            if vec_info.type == VectorType.SV_FREQUENCY:
+                # 频率数据：优先使用实数数据，如果没有则从复数数据提取实部
+                if vec_info.data is not None and len(vec_info.data) > 0:
+                    frequency = vec_info.data
+                elif vec_info.cdata is not None and len(vec_info.cdata) > 0:
+                    frequency = np.real(vec_info.cdata)
+            elif vec_info.type == VectorType.SV_TIME:
+                # 时间数据：优先使用实数数据
+                if vec_info.data is not None and len(vec_info.data) > 0:
+                    time_data = vec_info.data
+                elif vec_info.cdata is not None and len(vec_info.cdata) > 0:
+                    time_data = np.real(vec_info.cdata)
+            else:
+                # 其他向量作为信号
+                if vec_info.cdata is not None and len(vec_info.cdata) > 0:
+                    # 复数数据（AC 分析）
+                    signals[f"{vec_name}_mag"] = np.abs(vec_info.cdata)
+                    signals[f"{vec_name}_phase"] = np.angle(vec_info.cdata, deg=True)
+                    signals[f"{vec_name}_real"] = np.real(vec_info.cdata)
+                    signals[f"{vec_name}_imag"] = np.imag(vec_info.cdata)
+                elif vec_info.data is not None and len(vec_info.data) > 0:
+                    # 实数数据
+                    signals[vec_name] = vec_info.data
         
         return SimulationData(
             frequency=frequency,
@@ -836,252 +569,115 @@ class SpiceExecutor(SimulationExecutor):
             signals=signals,
         )
     
-    def _parse_exception(
+    def _parse_ngspice_output(
         self,
-        exception: Exception,
+        output: str,
         file_path: str
     ) -> SimulationError:
-        """
-        解析异常并转换为 SimulationError
+        """解析 ngspice 输出，提取错误信息"""
+        output_lower = output.lower()
         
-        基于关键词匹配将 Python 异常分类为结构化的错误类型。
-        在 PySpice 共享库模式下，错误信息来自 Python 异常而非原始 ngspice 输出。
-        
-        Args:
-            exception: 捕获的异常
-            file_path: 电路文件路径
-            
-        Returns:
-            SimulationError: 结构化的错误信息，包含错误码、类型、严重级别、恢复建议
-            
-        错误分类规则：
-            - 语法错误：匹配 "syntax"、"parse" 关键词
-            - 模型缺失：匹配 "model"、"not found"、"unknown" 关键词
-            - 节点浮空：匹配 "floating"、"no dc path" 关键词
-            - 收敛失败：匹配 "convergence"、"no convergence" 关键词
-            - 超时：匹配 "timeout" 关键词
-            - 默认：NGSPICE_CRASH 类型
-        """
-        error_msg = str(exception)
-        error_lower = error_msg.lower()
-        
-        # 提取行号（如果包含）
-        line_number = self._extract_line_number(error_msg)
-        
-        # 根据错误消息判断错误类型
-        if "syntax" in error_lower or "parse" in error_lower:
-            return create_syntax_error(
-                message=error_msg,
+        # 语法错误
+        if "syntax" in output_lower or "parse" in output_lower or "error:" in output_lower:
+            line_num = self._extract_line_number(output)
+            return SimulationError(
+                code="E001",
+                type=SimulationErrorType.SYNTAX_ERROR,
+                severity=ErrorSeverity.HIGH,
+                message=f"网表语法错误: {self._extract_error_message(output)}",
                 file_path=file_path,
-                line_number=line_number,
-                recovery_suggestion="请检查网表文件语法是否正确",
+                line_number=line_num,
+                recovery_suggestion="请检查网表语法，确保所有元件和节点名称正确",
             )
         
-        if "convergence" in error_lower or "no convergence" in error_lower:
-            is_dc = "dc" in error_lower or "operating point" in error_lower
-            return create_convergence_error(
-                message=error_msg,
-                is_dc=is_dc,
-                file_path=file_path,
-            )
-        
-        if "timeout" in error_lower:
-            return create_timeout_error(
-                message=error_msg,
-                file_path=file_path,
-            )
-        
-        if "model" in error_lower and ("not found" in error_lower or "unknown" in error_lower):
-            # 提取缺失的模型名称
-            missing_models = self._extract_missing_models(error_msg)
-            details = {"missing_models": missing_models} if missing_models else {}
+        # 模型缺失
+        if "model" in output_lower and ("not found" in output_lower or "unknown" in output_lower):
+            missing_models = self._extract_missing_models(output)
             return SimulationError(
                 code="E002",
                 type=SimulationErrorType.MODEL_MISSING,
                 severity=ErrorSeverity.HIGH,
-                message=error_msg,
+                message=f"缺少模型定义: {', '.join(missing_models) if missing_models else '未知'}",
                 file_path=file_path,
-                details=details,
-                recovery_suggestion="请检查模型文件路径或安装缺失的模型库",
+                recovery_suggestion="请添加缺失的 .model 语句或 .include 模型文件",
             )
         
-        if "floating" in error_lower or "no dc path" in error_lower:
-            # 提取浮空节点名称
-            floating_nodes = self._extract_floating_nodes(error_msg)
-            details = {"floating_nodes": floating_nodes} if floating_nodes else {}
+        # 节点浮空
+        if "floating" in output_lower or "no dc path" in output_lower:
+            floating_nodes = self._extract_floating_nodes(output)
             return SimulationError(
                 code="E003",
                 type=SimulationErrorType.NODE_FLOATING,
                 severity=ErrorSeverity.MEDIUM,
-                message=error_msg,
+                message=f"存在浮空节点: {', '.join(floating_nodes) if floating_nodes else '未知'}",
                 file_path=file_path,
-                details=details,
-                recovery_suggestion="请检查电路连接，确保所有节点都有到地的直流路径",
+                recovery_suggestion="请确保所有节点都有到地的直流通路，可添加大电阻连接到地",
             )
         
-        # 默认错误类型
+        # 收敛失败
+        if "convergence" in output_lower or "no convergence" in output_lower or "singular matrix" in output_lower:
+            return SimulationError(
+                code="E004",
+                type=SimulationErrorType.CONVERGENCE_DC,
+                severity=ErrorSeverity.MEDIUM,
+                message="仿真收敛失败",
+                file_path=file_path,
+                recovery_suggestion="尝试调整收敛参数（gmin、reltol、itl1）或检查电路拓扑",
+            )
+        
+        # 超时
+        if "timeout" in output_lower:
+            return SimulationError(
+                code="E006",
+                type=SimulationErrorType.TIMEOUT,
+                severity=ErrorSeverity.MEDIUM,
+                message="仿真超时",
+                file_path=file_path,
+                recovery_suggestion="尝试减少仿真时间范围或增加步长",
+            )
+        
+        # 默认错误（使用 NGSPICE_CRASH 作为通用错误类型）
         return SimulationError(
             code="E008",
             type=SimulationErrorType.NGSPICE_CRASH,
             severity=ErrorSeverity.HIGH,
-            message=error_msg,
+            message=f"仿真失败: {self._extract_error_message(output)}",
             file_path=file_path,
-            recovery_suggestion="请检查电路文件和仿真配置",
+            recovery_suggestion="请检查 ngspice 输出日志获取详细信息",
         )
     
-    def _extract_line_number(self, error_msg: str) -> Optional[int]:
-        """
-        从异常消息中提取行号
-        
-        支持的格式：
-        - "line 15"
-        - "Line: 15"
-        - ":15:"
-        - "at line 15"
-        
-        Args:
-            error_msg: 错误消息
-            
-        Returns:
-            Optional[int]: 行号，未找到返回 None
-        """
-        import re
-        
-        # 尝试多种行号格式
-        patterns = [
-            r'line\s*[:=]?\s*(\d+)',  # line 15, line: 15, line=15
-            r'at\s+line\s+(\d+)',      # at line 15
-            r':(\d+):',                 # :15:
-            r'行\s*[:：]?\s*(\d+)',     # 行 15, 行: 15
-        ]
-        
-        for pattern in patterns:
-            match = re.search(pattern, error_msg, re.IGNORECASE)
-            if match:
-                try:
-                    return int(match.group(1))
-                except ValueError:
-                    continue
-        
+    def _extract_error_message(self, output: str) -> str:
+        """从输出中提取错误消息"""
+        lines = output.splitlines()
+        for line in lines:
+            if "error" in line.lower():
+                return line.strip()
+        # 返回最后几行
+        return '\n'.join(lines[-3:]) if lines else "未知错误"
+    
+    def _extract_line_number(self, output: str) -> Optional[int]:
+        """从输出中提取行号"""
+        # 匹配类似 "line 42" 或 "at line 42" 的模式
+        match = re.search(r'(?:at\s+)?line\s+(\d+)', output, re.IGNORECASE)
+        if match:
+            return int(match.group(1))
         return None
     
-    def _extract_missing_models(self, error_msg: str) -> List[str]:
-        """
-        从异常消息中提取缺失的模型名称
-        
-        支持的格式：
-        - "model 'xxx' not found"
-        - "unknown model xxx"
-        - "model xxx is not defined"
-        
-        Args:
-            error_msg: 错误消息
-            
-        Returns:
-            List[str]: 缺失的模型名称列表
-        """
-        import re
-        
+    def _extract_missing_models(self, output: str) -> List[str]:
+        """从输出中提取缺失的模型名称"""
         models = []
-        
-        # 尝试多种模型名称格式
-        patterns = [
-            r"model\s+['\"]?(\w+)['\"]?\s+(?:not found|is not defined|unknown)",
-            r"unknown\s+model\s+['\"]?(\w+)['\"]?",
-            r"model\s+['\"](\w+)['\"]",
-            r"模型\s+['\"]?(\w+)['\"]?\s*(?:未找到|不存在)",
-        ]
-        
-        for pattern in patterns:
-            matches = re.findall(pattern, error_msg, re.IGNORECASE)
-            models.extend(matches)
-        
-        # 去重并保持顺序
-        seen = set()
-        unique_models = []
-        for model in models:
-            if model.lower() not in seen:
-                seen.add(model.lower())
-                unique_models.append(model)
-        
-        return unique_models
+        # 匹配类似 "model 'xxx' not found" 的模式
+        matches = re.findall(r"model\s+['\"]?(\w+)['\"]?\s+(?:not found|unknown)", output, re.IGNORECASE)
+        models.extend(matches)
+        return models
     
-    def _extract_floating_nodes(self, error_msg: str) -> List[str]:
-        """
-        从异常消息中提取浮空节点名称
-        
-        支持的格式：
-        - "node xxx is floating"
-        - "floating node: xxx"
-        - "no dc path to ground at node xxx"
-        
-        Args:
-            error_msg: 错误消息
-            
-        Returns:
-            List[str]: 浮空节点名称列表
-        """
-        import re
-        
+    def _extract_floating_nodes(self, output: str) -> List[str]:
+        """从输出中提取浮空节点名称"""
         nodes = []
-        
-        # 尝试多种节点名称格式
-        patterns = [
-            r"node\s+['\"]?(\w+)['\"]?\s+(?:is\s+)?floating",
-            r"floating\s+node\s*[:=]?\s*['\"]?(\w+)['\"]?",
-            r"no\s+dc\s+path\s+(?:to\s+ground\s+)?(?:at\s+)?node\s+['\"]?(\w+)['\"]?",
-            r"节点\s+['\"]?(\w+)['\"]?\s*(?:浮空|悬空)",
-        ]
-        
-        for pattern in patterns:
-            matches = re.findall(pattern, error_msg, re.IGNORECASE)
-            nodes.extend(matches)
-        
-        # 去重并保持顺序
-        seen = set()
-        unique_nodes = []
-        for node in nodes:
-            if node.lower() not in seen:
-                seen.add(node.lower())
-                unique_nodes.append(node)
-        
-        return unique_nodes
-    
-    # ============================================================
-    # 元器件模型集成（阶段十实现，此处预留接口）
-    # ============================================================
-    
-    def check_required_models(self, circuit_file: str) -> List[str]:
-        """
-        检查电路所需的 SPICE 模型
-        
-        Args:
-            circuit_file: 电路文件路径
-            
-        Returns:
-            List[str]: 缺失的模型名称列表
-            
-        Note:
-            此方法为阶段十预留接口，当前返回空列表
-        """
-        # TODO: 阶段十实现
-        return []
-    
-    def _resolve_model_path(self, model_name: str) -> Optional[str]:
-        """
-        解析模型文件路径
-        
-        Args:
-            model_name: 模型名称
-            
-        Returns:
-            Optional[str]: 模型文件路径，未找到返回 None
-            
-        Note:
-            此方法为阶段十预留接口，当前返回 None
-        """
-        # TODO: 阶段十实现
-        return None
+        # 匹配类似 "node 'xxx' is floating" 的模式
+        matches = re.findall(r"node\s+['\"]?(\w+)['\"]?\s+(?:is\s+)?floating", output, re.IGNORECASE)
+        nodes.extend(matches)
+        return nodes
 
 
 # ============================================================

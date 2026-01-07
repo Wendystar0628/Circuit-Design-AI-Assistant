@@ -227,12 +227,13 @@ class SimulationService:
             result.session_id = session_id
             
             # 保存结果到文件
+            saved_result_path = ""
             if project_root:
-                result_path = self.save_sim_result(project_root, result)
-                self._logger.info(f"仿真结果已保存: {result_path}")
+                saved_result_path = self.save_sim_result(project_root, result)
+                self._logger.info(f"仿真结果已保存: {saved_result_path}")
             
-            # 发布完成事件
-            self._publish_complete_event(result)
+            # 发布完成事件（传递保存的结果路径）
+            self._publish_complete_event(result, saved_result_path)
             
             return result
             
@@ -561,7 +562,7 @@ class SimulationService:
         """
         取消当前仿真
         
-        注意：由于 PySpice 使用共享库模式，无法真正中断正在执行的仿真。
+        注意：由于使用 ngspice 共享库模式，无法真正中断正在执行的仿真。
         此方法仅设置标志位，仿真会在下一个检查点停止。
         
         Returns:
@@ -815,12 +816,18 @@ class SimulationService:
                 "elapsed_seconds": elapsed_seconds,
             })
     
-    def _publish_complete_event(self, result: SimulationResult) -> None:
-        """发布仿真完成事件"""
+    def _publish_complete_event(self, result: SimulationResult, result_path: str = "") -> None:
+        """
+        发布仿真完成事件
+        
+        Args:
+            result: 仿真结果对象
+            result_path: 仿真结果文件的相对路径
+        """
         bus = _get_event_bus()
         if bus:
             bus.publish(EVENT_SIM_COMPLETE, {
-                "result_path": "",  # 由调用方填充
+                "result_path": result_path,
                 "metrics": result.metrics or {},
                 "duration_seconds": result.duration_seconds,
                 "success": result.success,

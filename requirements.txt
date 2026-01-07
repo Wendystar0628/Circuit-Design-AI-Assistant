@@ -5,7 +5,9 @@
 PyQt6>=6.5.0
 
 # Circuit Simulation
-PySpice>=1.5
+# NOTE: PySpice removed due to compatibility issues with ngspice 42
+# Using ctypes to directly call ngspice shared library instead
+# ngspice 42 DLL is bundled in vendor/ngspice/
 
 # Workflow Orchestration (LangGraph)
 # NOTE: Refer to local LangGraph/ project for latest API

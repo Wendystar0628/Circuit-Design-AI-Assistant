@@ -1,14 +1,11 @@
 """
 ngspice 运行时路径配置模块
 
-⚠️ 关键约束：此模块必须在任何 PySpice 导入之前执行，否则 PySpice 会使用默认路径导致加载失败
-
 职责：
 - 检测运行环境（开发环境 vs PyInstaller 打包环境）
 - 检测操作系统类型
 - 配置 ngspice 共享库路径
 - 设置必要的环境变量（PATH, SPICE_LIB_DIR, SPICE_SCRIPTS）
-- 覆盖 PySpice 默认路径配置
 
 调用时机：
 - 在 main.py 的最开始调用，位于所有其他导入之前
@@ -19,6 +16,10 @@ ngspice 运行时路径配置模块
     from infrastructure.utils.ngspice_config import configure_ngspice
     if not configure_ngspice():
         print("[WARNING] ngspice 配置失败，仿真功能可能不可用")
+    
+    # 获取 DLL 路径用于 ctypes 加载
+    from infrastructure.utils.ngspice_config import get_ngspice_dll_path
+    dll_path = get_ngspice_dll_path()
 """
 
 import os
@@ -208,6 +209,33 @@ def get_ngspice_path() -> Optional[Path]:
     return _ngspice_path
 
 
+def get_ngspice_dll_path() -> Optional[Path]:
+    """
+    获取 ngspice 共享库文件的完整路径
+    
+    此路径用于 ctypes 直接加载 ngspice DLL/SO 文件
+    
+    Returns:
+        Path: ngspice 共享库文件路径（如 ngspice.dll 或 libngspice.so），
+              不可用时返回 None
+    """
+    if not _ngspice_path:
+        return None
+    
+    platform_id = _get_platform()
+    config = PLATFORM_CONFIG.get(platform_id)
+    if not config:
+        return None
+    
+    # 构建共享库完整路径
+    if config["dll_dir"]:
+        dll_path = _ngspice_path / config["dll_dir"] / config["lib_name"]
+    else:
+        dll_path = _ngspice_path / config["lib_name"]
+    
+    return dll_path if dll_path.exists() else None
+
+
 def get_ngspice_lib_path() -> Optional[Path]:
     """
     获取 lib/ngspice 目录路径（codemodel 和 OSDI 文件）
@@ -310,67 +338,17 @@ def _setup_environment(ngspice_base: Path, platform_id: str) -> None:
     scripts_dir = ngspice_base / config["scripts_dir"]
     if scripts_dir.exists():
         os.environ["SPICE_SCRIPTS"] = str(scripts_dir).replace("\\", "/")
-    
-    # 4. 设置 NGSPICE_LIBRARY_PATH（某些版本的 ngspice 使用此变量）
-    if config["dll_dir"]:
-        dll_path = ngspice_base / config["dll_dir"] / config["lib_name"]
-    else:
-        dll_path = ngspice_base / config["lib_name"]
-    if dll_path.exists():
-        os.environ["NGSPICE_LIBRARY_PATH"] = str(dll_path).replace("\\", "/")
-
-
-def _configure_pyspice(ngspice_base: Path, platform_id: str) -> bool:
-    """
-    覆盖 PySpice 的默认 ngspice 路径配置
-    
-    注意：这必须在 PySpice 首次使用 NgSpiceShared 之前执行
-    
-    Args:
-        ngspice_base: ngspice 基础目录
-        platform_id: 平台标识
-        
-    Returns:
-        bool: 配置是否成功
-    """
-    try:
-        # 延迟导入，避免在配置前触发 PySpice 的路径检测
-        from PySpice.Spice.NgSpice.Shared import NgSpiceShared
-        
-        config = PLATFORM_CONFIG[platform_id]
-        
-        # 构建共享库完整路径
-        if config["dll_dir"]:
-            lib_path = ngspice_base / config["dll_dir"] / config["lib_name"]
-        else:
-            lib_path = ngspice_base / config["lib_name"]
-        
-        # 设置 PySpice 的库路径
-        # NgSpiceShared 会使用这个路径加载共享库
-        NgSpiceShared.LIBRARY_PATH = str(lib_path)
-        
-        return True
-        
-    except ImportError:
-        # PySpice 未安装，跳过配置
-        return True  # 不算失败，只是 PySpice 不可用
-    except Exception as e:
-        # 其他错误
-        global _configuration_error
-        _configuration_error = f"PySpice 配置失败: {e}"
-        return False
 
 
 def configure_ngspice() -> bool:
     """
-    配置 ngspice 路径，必须在导入 PySpice 之前调用
+    配置 ngspice 路径
     
     此函数执行以下步骤：
     1. 检测运行环境和平台
     2. 查找内嵌的 ngspice 共享库
     3. 设置环境变量
-    4. 配置 PySpice 路径
-    5. 如果内嵌版本不可用，尝试系统版本
+    4. 如果内嵌版本不可用，尝试系统版本
     
     Returns:
         bool: 配置是否成功
@@ -403,10 +381,8 @@ def configure_ngspice() -> bool:
         # 设置环境变量
         _setup_environment(ngspice_base, platform_id)
         
-        # 配置 PySpice
-        if _configure_pyspice(ngspice_base, platform_id):
-            _ngspice_available = True
-            return True
+        _ngspice_available = True
+        return True
     
     # 内嵌版本不可用，尝试系统版本
     system_path = _try_system_ngspice(platform_id)
@@ -543,6 +519,7 @@ def get_ngspice_info() -> dict:
 __all__ = [
     "configure_ngspice",
     "get_ngspice_path",
+    "get_ngspice_dll_path",
     "get_ngspice_lib_path",
     "get_ngspice_models_path",
     "get_ngspice_scripts_path",

@@ -67,12 +67,12 @@ from shared.event_types import (
     EVENT_STATE_PROJECT_OPENED,
     EVENT_STATE_PROJECT_CLOSED,
     EVENT_SIM_COMPLETE,
+    EVENT_SIM_STARTED,
+    EVENT_SIM_ERROR,
     EVENT_ALL_ANALYSES_COMPLETE,
     EVENT_LANGUAGE_CHANGED,
     EVENT_ITERATION_AWAITING_CONFIRMATION,
     EVENT_ITERATION_USER_CONFIRMED,
-    EVENT_WORKFLOW_LOCKED,
-    EVENT_WORKFLOW_UNLOCKED,
     EVENT_SIM_RESULT_FILE_CREATED,
     EVENT_SESSION_CHANGED,
 )
@@ -1282,13 +1282,13 @@ class SimulationTab(QWidget):
         subscriptions = [
             (EVENT_STATE_PROJECT_OPENED, self._on_project_opened),
             (EVENT_STATE_PROJECT_CLOSED, self._on_project_closed),
+            (EVENT_SIM_STARTED, self._on_simulation_started),
             (EVENT_SIM_COMPLETE, self._on_simulation_complete),
+            (EVENT_SIM_ERROR, self._on_simulation_error),
             (EVENT_ALL_ANALYSES_COMPLETE, self._on_all_analyses_complete),
             (EVENT_LANGUAGE_CHANGED, self._on_language_changed),
             (EVENT_ITERATION_AWAITING_CONFIRMATION, self._on_awaiting_confirmation),
             (EVENT_ITERATION_USER_CONFIRMED, self._on_user_confirmed),
-            (EVENT_WORKFLOW_LOCKED, self._on_workflow_locked),
-            (EVENT_WORKFLOW_UNLOCKED, self._on_workflow_unlocked),
             (EVENT_SIM_RESULT_FILE_CREATED, self._on_sim_result_file_created),
             (EVENT_SESSION_CHANGED, self._on_session_changed),
         ]
@@ -1342,7 +1342,9 @@ class SimulationTab(QWidget):
     
     def _on_project_opened(self, event_data: dict):
         """处理项目打开事件"""
-        self._project_root = event_data.get("path")
+        # 事件数据在 "data" 字段中
+        data = event_data.get("data", event_data)
+        self._project_root = data.get("path")
         self._logger.info(f"Project opened: {self._project_root}")
         
         # 清空当前显示
@@ -1367,22 +1369,39 @@ class SimulationTab(QWidget):
     
     def _on_simulation_complete(self, event_data: dict):
         """处理仿真完成事件"""
-        result_path = event_data.get("result_path")
-        metrics = event_data.get("metrics", {})
+        # 事件数据在 "data" 字段中
+        data = event_data.get("data", event_data)
+        result_path = data.get("result_path")
+        metrics = data.get("metrics", {})
+        success = data.get("success", False)
         
-        self._logger.info(f"Simulation complete: {result_path}")
+        self._logger.info(f"Simulation complete: result_path={result_path}, success={success}")
+        
+        # 隐藏运行状态
+        self._status_indicator.hide_status()
+        self._set_controls_enabled(True)
         
         # 加载仿真结果
         if result_path and self._project_root:
             self._load_simulation_result(result_path)
+        elif not result_path:
+            # 如果没有 result_path，尝试加载最新的仿真结果
+            self._logger.warning("No result_path in event, trying to load latest result")
+            self._load_project_simulation_result()
     
     def _on_all_analyses_complete(self, event_data: dict):
         """处理所有分析完成事件"""
-        results = event_data.get("results", {})
-        success_count = event_data.get("success_count", 0)
-        total_count = event_data.get("total_count", 0)
+        # 事件数据在 "data" 字段中
+        data = event_data.get("data", event_data)
+        results = data.get("results", {})
+        success_count = data.get("success_count", 0)
+        total_count = data.get("total_count", 0)
         
         self._logger.info(f"All analyses complete: {success_count}/{total_count}")
+        
+        # 隐藏运行状态
+        self._status_indicator.hide_status()
+        self._set_controls_enabled(True)
         
         # 更新综合评分
         if total_count > 0:
@@ -1401,15 +1420,23 @@ class SimulationTab(QWidget):
         """处理用户确认事件"""
         self._status_indicator.hide_status()
     
-    def _on_workflow_locked(self, event_data: dict):
-        """处理工作流锁定事件"""
-        self._is_workflow_running = True
-        self._status_indicator.show_running()
+    def _on_simulation_started(self, event_data: dict):
+        """处理仿真开始事件"""
+        # 事件数据在 "data" 字段中
+        data = event_data.get("data", event_data)
+        circuit_file = data.get("circuit_file", "")
+        self._logger.info(f"Simulation started: {circuit_file}")
+        self._status_indicator.show_running(
+            self._get_text("simulation.running", "仿真进行中，请等待...")
+        )
         self._set_controls_enabled(False)
     
-    def _on_workflow_unlocked(self, event_data: dict):
-        """处理工作流解锁事件"""
-        self._is_workflow_running = False
+    def _on_simulation_error(self, event_data: dict):
+        """处理仿真错误事件"""
+        # 事件数据在 "data" 字段中
+        data = event_data.get("data", event_data)
+        error_message = data.get("error_message", "")
+        self._logger.error(f"Simulation error: {error_message}")
         self._status_indicator.hide_status()
         self._set_controls_enabled(True)
     
@@ -1424,9 +1451,11 @@ class SimulationTab(QWidget):
         Args:
             event_data: 事件数据，包含 session_id, sim_result_path 等
         """
-        action = event_data.get("action", "")
-        sim_result_path = event_data.get("sim_result_path", "")
-        session_id = event_data.get("session_id", "")
+        # 事件数据在 "data" 字段中
+        data = event_data.get("data", event_data)
+        action = data.get("action", "")
+        sim_result_path = data.get("sim_result_path", "")
+        session_id = data.get("session_id", "")
         
         self._logger.info(
             f"Session changed: action={action}, session_id={session_id}, "
@@ -1488,8 +1517,10 @@ class SimulationTab(QWidget):
         Args:
             event_data: 事件数据，包含 file_path 和 project_root
         """
-        file_path = event_data.get("file_path", "")
-        event_project_root = event_data.get("project_root", "")
+        # 事件数据在 "data" 字段中
+        data = event_data.get("data", event_data)
+        file_path = data.get("file_path", "")
+        event_project_root = data.get("project_root", "")
         
         # 检查是否为当前项目
         if self._project_root and event_project_root:

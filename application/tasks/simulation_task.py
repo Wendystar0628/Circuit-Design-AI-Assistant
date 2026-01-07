@@ -122,14 +122,13 @@ class SimulationWorker(QObject):
         if self._cancelled:
             return
         
-        # 发送完成信号
-        if result.success:
-            self.completed.emit(result)
-        else:
-            error_msg = ""
-            if result.error:
-                error_msg = str(result.error.message) if hasattr(result.error, 'message') else str(result.error)
-            self.error.emit("SIMULATION_FAILED", error_msg)
+        # 发送完成信号 - 无论成功与否都发送 completed，让 UI 层处理
+        self.completed.emit(result)
+        
+        # 如果失败，额外记录日志
+        if not result.success and result.error:
+            error_msg = str(result.error.message) if hasattr(result.error, 'message') else str(result.error)
+            self._logger.warning(f"自动检测仿真失败: {error_msg}")
     
     def _run_file(self, service: "SimulationService") -> None:
         """执行指定文件模式"""
@@ -159,14 +158,13 @@ class SimulationWorker(QObject):
         if self._cancelled:
             return
         
-        # 发送完成信号
-        if result.success:
-            self.completed.emit(result)
-        else:
-            error_msg = ""
-            if result.error:
-                error_msg = str(result.error.message) if hasattr(result.error, 'message') else str(result.error)
-            self.error.emit("SIMULATION_FAILED", error_msg)
+        # 发送完成信号 - 无论成功与否都发送 completed，让 UI 层处理
+        self.completed.emit(result)
+        
+        # 如果失败，额外发送错误信号用于日志记录
+        if not result.success and result.error:
+            error_msg = str(result.error.message) if hasattr(result.error, 'message') else str(result.error)
+            self._logger.warning(f"仿真失败: {error_msg}")
     
     def _on_progress(self, progress: float, message: str) -> None:
         """进度回调"""

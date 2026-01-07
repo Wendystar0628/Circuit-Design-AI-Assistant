@@ -12,6 +12,7 @@
 - OutputLogViewer: 仿真输出日志查看器
 - TuningPanel: 快速调参面板
 - SimulationTab: 仿真结果标签页主类
+- PVTResultTab: PVT 角点分析结果标签页
 """
 
 from presentation.panels.simulation.simulation_view_model import (
@@ -32,6 +33,12 @@ from presentation.panels.simulation.simulation_tab import (
     MetricsSummaryPanel,
     ChartViewerPanel,
     StatusIndicator,
+)
+from presentation.panels.simulation.pvt_result_tab import (
+    PVTResultTab,
+    CornerSelectorBar,
+    MetricsComparisonTable,
+    CornerDetailPanel,
 )
 
 __all__ = [
@@ -55,4 +62,8 @@ __all__ = [
     "MetricsSummaryPanel",
     "ChartViewerPanel",
     "StatusIndicator",
+    "PVTResultTab",
+    "CornerSelectorBar",
+    "MetricsComparisonTable",
+    "CornerDetailPanel",
 ]

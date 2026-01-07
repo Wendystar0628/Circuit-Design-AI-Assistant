@@ -420,6 +420,18 @@ EVENT_CHART_SELECTION_CHANGED = "chart_selection_changed"
 # 高级仿真事件（PVT/蒙特卡洛/参数扫描）
 # ============================================================
 
+# PVT 分析完成（所有角点完成）
+# 携带数据：
+#   - circuit_file: str - 电路文件路径
+#   - analysis_type: str - 分析类型
+#   - all_passed: bool - 是否所有角点都通过
+#   - worst_corner: str - 最差角点名称
+#   - corner_count: int - 角点数量
+#   - passed_count: int - 通过的角点数量
+#   - duration_seconds: float - 总耗时
+#   - result: PVTAnalysisResult - 完整结果对象
+EVENT_PVT_COMPLETE = "sim_pvt_complete"
+
 # PVT 角点仿真完成
 # 携带数据：
 #   - corner_name: str - 角点名称（如 "TT", "FF", "SS"）
@@ -1079,6 +1091,7 @@ __all__ = [
     "EVENT_ALL_ANALYSES_COMPLETE",
     "EVENT_CHART_SELECTION_CHANGED",
     # 高级仿真事件
+    "EVENT_PVT_COMPLETE",
     "EVENT_PVT_CORNER_COMPLETE",
     "EVENT_MONTE_CARLO_RUN_COMPLETE",
     "EVENT_SWEEP_POINT_COMPLETE",

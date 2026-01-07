@@ -7,6 +7,7 @@
 - monte_carlo_analysis.py: 蒙特卡洛分析
 - parametric_sweep.py: 参数扫描分析
 - worst_case_analysis.py: 最坏情况分析
+- sensitivity_analysis.py: 敏感度分析
 
 设计说明：
 - 所有分析模块作为工具类按需实例化
@@ -44,6 +45,14 @@ from domain.simulation.analysis.worst_case_analysis import (
     ParameterSensitivity,
     WorstCaseResult,
 )
+from domain.simulation.analysis.sensitivity_analysis import (
+    SensitivityAnalyzer,
+    SensitivityParam,
+    ParamSensitivityData,
+    TornadoChartData,
+    OptimizationSuggestion,
+    SensitivityAnalysisResult,
+)
 
 __all__ = [
     # PVT 分析
@@ -72,4 +81,11 @@ __all__ = [
     "ToleranceSpec",
     "ParameterSensitivity",
     "WorstCaseResult",
+    # 敏感度分析
+    "SensitivityAnalyzer",
+    "SensitivityParam",
+    "ParamSensitivityData",
+    "TornadoChartData",
+    "OptimizationSuggestion",
+    "SensitivityAnalysisResult",
 ]

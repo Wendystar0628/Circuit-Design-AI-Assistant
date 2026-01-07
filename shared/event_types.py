@@ -464,6 +464,40 @@ EVENT_SWEEP_POINT_COMPLETE = "sim_sweep_point_complete"
 #   - simulation_count: int - 仿真次数
 EVENT_WORST_CASE_COMPLETE = "sim_worst_case_complete"
 
+# 收敛诊断完成
+# 携带数据：
+#   - diagnosis: ConvergenceDiagnosis - 诊断结果对象
+#   - file_path: str - 电路文件路径
+#   - issue_type: str - 问题类型（dc_convergence/tran_convergence/floating_node）
+#   - severity: str - 严重程度（low/medium/high/critical）
+#   - auto_fix_available: bool - 是否可自动修复
+EVENT_CONVERGENCE_DIAGNOSED = "sim_convergence_diagnosed"
+
+# 敏感度分析开始
+# 携带数据：
+#   - circuit_file: str - 电路文件路径
+#   - metric: str - 分析的指标名称
+#   - param_count: int - 参数数量
+#   - perturbation_percent: float - 扰动百分比
+EVENT_SENSITIVITY_STARTED = "sim_sensitivity_started"
+
+# 敏感度分析进度（每完成一个参数）
+# 携带数据：
+#   - param_name: str - 当前参数名称
+#   - param_index: int - 当前参数索引
+#   - total_params: int - 总参数数量
+#   - sensitivity: float - 该参数的敏感度值
+EVENT_SENSITIVITY_PROGRESS = "sim_sensitivity_progress"
+
+# 敏感度分析完成
+# 携带数据：
+#   - circuit_file: str - 电路文件路径
+#   - metric: str - 分析的指标名称
+#   - param_count: int - 参数数量
+#   - critical_params: list - 关键参数列表（按敏感度排序）
+#   - duration_seconds: float - 总耗时
+EVENT_SENSITIVITY_COMPLETE = "sim_sensitivity_complete"
+
 # ============================================================
 # 电路图事件
 # ============================================================
@@ -1024,6 +1058,10 @@ __all__ = [
     "EVENT_MONTE_CARLO_RUN_COMPLETE",
     "EVENT_SWEEP_POINT_COMPLETE",
     "EVENT_WORST_CASE_COMPLETE",
+    "EVENT_CONVERGENCE_DIAGNOSED",
+    "EVENT_SENSITIVITY_STARTED",
+    "EVENT_SENSITIVITY_PROGRESS",
+    "EVENT_SENSITIVITY_COMPLETE",
     # 电路图事件
     "EVENT_SCHEMATIC_LOADED",
     "EVENT_SCHEMATIC_ELEMENT_SELECTED",

@@ -66,6 +66,12 @@ from application.tasks.file_watch_task import (
     DEBOUNCE_INTERVAL_MS,
 )
 
+# 仿真任务
+from application.tasks.simulation_task import (
+    SimulationTask,
+    SimulationWorker,
+)
+
 __all__ = [
     # 任务类型常量
     "TASK_LLM",
@@ -83,4 +89,7 @@ __all__ = [
     "IGNORED_DIRS",
     "IGNORED_EXTENSIONS",
     "DEBOUNCE_INTERVAL_MS",
+    # 仿真任务
+    "SimulationTask",
+    "SimulationWorker",
 ]

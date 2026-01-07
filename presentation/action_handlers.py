@@ -545,67 +545,168 @@ class ActionHandlers:
     # 仿真操作回调
     # ============================================================
 
-    def on_run_auto_simulation(self):
-        """自动检测并运行仿真（阶段四实现中）"""
-        # 检查是否已打开项目
-        try:
-            from shared.service_locator import ServiceLocator
-            from shared.service_names import SVC_SESSION_STATE
-            
-            session_state = ServiceLocator.get_optional(SVC_SESSION_STATE)
-            if session_state and not session_state.project_root:
-                QMessageBox.warning(
-                    self._main_window,
-                    self._get_text("dialog.warning.title", "Warning"),
-                    self._get_text("status.open_workspace", "Please open a workspace folder")
-                )
-                return
-        except Exception:
-            pass
+    def _get_simulation_task(self):
+        """获取或创建仿真任务实例"""
+        if not hasattr(self, '_simulation_task') or self._simulation_task is None:
+            from application.tasks.simulation_task import SimulationTask
+            self._simulation_task = SimulationTask()
+            self._simulation_task.simulation_started.connect(self._on_simulation_started)
+            self._simulation_task.simulation_progress.connect(self._on_simulation_progress)
+            self._simulation_task.simulation_completed.connect(self._on_simulation_completed)
+            self._simulation_task.simulation_error.connect(self._on_simulation_error)
+        return self._simulation_task
+
+    def _on_simulation_started(self, file_path: str):
+        """仿真开始回调"""
+        if self.logger:
+            self.logger.info(f"仿真开始: {file_path}")
+
+    def _on_simulation_progress(self, progress: float, message: str):
+        """仿真进度回调"""
+        # 可通过状态栏显示进度
+        pass
+
+    def _on_simulation_completed(self, result):
+        """仿真完成回调"""
+        if self.logger:
+            self.logger.info(f"仿真完成: success={result.success}")
         
-        # TODO: 阶段四完整实现
-        # 调用 simulation_service.run_with_auto_detect()
-        QMessageBox.information(
+        if result.success:
+            QMessageBox.information(
+                self._main_window,
+                self._get_text("dialog.info.title", "Information"),
+                self._get_text(
+                    "simulation.completed",
+                    f"仿真完成\n分析类型: {result.analysis_type}\n耗时: {result.duration_seconds:.2f}s"
+                )
+            )
+        else:
+            error_msg = ""
+            if result.error:
+                error_msg = str(result.error.message) if hasattr(result.error, 'message') else str(result.error)
+            QMessageBox.warning(
+                self._main_window,
+                self._get_text("dialog.warning.title", "Warning"),
+                self._get_text(
+                    "simulation.failed",
+                    f"仿真失败\n{error_msg}"
+                )
+            )
+
+    def _on_simulation_error(self, error_type: str, error_message: str):
+        """仿真错误回调"""
+        if self.logger:
+            self.logger.error(f"仿真错误: {error_type} - {error_message}")
+        
+        QMessageBox.critical(
             self._main_window,
-            self._get_text("toolbar.run_auto", "Auto Run"),
-            "Auto-detect and run simulation\n\nThis feature is under development in Phase 4."
+            self._get_text("dialog.error.title", "Error"),
+            f"{error_type}\n{error_message}"
         )
+
+    def on_run_auto_simulation(self):
+        """自动检测并运行仿真"""
+        # 检查是否已打开项目
+        project_root = self._get_project_root()
+        if not project_root:
+            QMessageBox.warning(
+                self._main_window,
+                self._get_text("dialog.warning.title", "Warning"),
+                self._get_text("status.open_workspace", "Please open a workspace folder")
+            )
+            return
+        
+        # 检查是否有仿真正在运行
+        task = self._get_simulation_task()
+        if task.is_running:
+            QMessageBox.warning(
+                self._main_window,
+                self._get_text("dialog.warning.title", "Warning"),
+                self._get_text("simulation.already_running", "仿真正在运行中")
+            )
+            return
+        
+        # 启动自动检测仿真
+        if task.run_auto_detect(project_root):
+            if self.logger:
+                self.logger.info(f"启动自动检测仿真: {project_root}")
+        else:
+            QMessageBox.warning(
+                self._main_window,
+                self._get_text("dialog.warning.title", "Warning"),
+                self._get_text("simulation.start_failed", "无法启动仿真任务")
+            )
 
     def on_run_select_simulation(self):
-        """手动选择文件并运行仿真（阶段四实现中）"""
+        """手动选择文件并运行仿真"""
         # 检查是否已打开项目
-        try:
-            from shared.service_locator import ServiceLocator
-            from shared.service_names import SVC_SESSION_STATE
-            
-            session_state = ServiceLocator.get_optional(SVC_SESSION_STATE)
-            if session_state and not session_state.project_root:
-                QMessageBox.warning(
-                    self._main_window,
-                    self._get_text("dialog.warning.title", "Warning"),
-                    self._get_text("status.open_workspace", "Please open a workspace folder")
-                )
-                return
-        except Exception:
-            pass
+        project_root = self._get_project_root()
+        if not project_root:
+            QMessageBox.warning(
+                self._main_window,
+                self._get_text("dialog.warning.title", "Warning"),
+                self._get_text("status.open_workspace", "Please open a workspace folder")
+            )
+            return
         
-        # TODO: 阶段四完整实现
-        # 弹出文件选择对话框，调用 simulation_service.run_with_manual_select()
-        QMessageBox.information(
+        # 检查是否有仿真正在运行
+        task = self._get_simulation_task()
+        if task.is_running:
+            QMessageBox.warning(
+                self._main_window,
+                self._get_text("dialog.warning.title", "Warning"),
+                self._get_text("simulation.already_running", "仿真正在运行中")
+            )
+            return
+        
+        # 弹出文件选择对话框
+        file_path, _ = QFileDialog.getOpenFileName(
             self._main_window,
-            self._get_text("toolbar.run_select", "Select Run"),
-            "Select simulation file and run\n\nThis feature is under development in Phase 4."
+            self._get_text("dialog.select_simulation_file.title", "Select Simulation File"),
+            project_root,
+            "Circuit Files (*.cir *.sp *.spice *.net);;Python Scripts (*.py);;All Files (*.*)"
         )
+        
+        if not file_path:
+            return
+        
+        # 启动仿真
+        if task.run_file(file_path, project_root):
+            if self.logger:
+                self.logger.info(f"启动文件仿真: {file_path}")
+        else:
+            QMessageBox.warning(
+                self._main_window,
+                self._get_text("dialog.warning.title", "Warning"),
+                self._get_text("simulation.start_failed", "无法启动仿真任务")
+            )
 
     def on_stop_simulation(self):
-        """停止当前仿真（阶段四实现中）"""
-        # TODO: 阶段四完整实现
-        # 调用 simulation_service.stop_simulation()
-        QMessageBox.information(
-            self._main_window,
-            self._get_text("btn.stop", "Stop"),
-            "Stop simulation\n\nThis feature is under development in Phase 4."
-        )
+        """停止当前仿真"""
+        task = self._get_simulation_task()
+        
+        if not task.is_running:
+            QMessageBox.information(
+                self._main_window,
+                self._get_text("dialog.info.title", "Information"),
+                self._get_text("simulation.not_running", "没有正在运行的仿真")
+            )
+            return
+        
+        if task.cancel():
+            if self.logger:
+                self.logger.info("已请求取消仿真")
+            QMessageBox.information(
+                self._main_window,
+                self._get_text("dialog.info.title", "Information"),
+                self._get_text("simulation.cancel_requested", "已请求取消仿真")
+            )
+        else:
+            QMessageBox.warning(
+                self._main_window,
+                self._get_text("dialog.warning.title", "Warning"),
+                self._get_text("simulation.cancel_failed", "无法取消仿真")
+            )
 
     def on_simulation_settings(self):
         """打开仿真设置对话框（分析类型和图表选择）"""

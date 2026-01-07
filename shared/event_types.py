@@ -498,6 +498,17 @@ EVENT_SENSITIVITY_PROGRESS = "sim_sensitivity_progress"
 #   - duration_seconds: float - 总耗时
 EVENT_SENSITIVITY_COMPLETE = "sim_sensitivity_complete"
 
+# 拓扑识别完成
+# 携带数据：
+#   - circuit_file: str - 电路文件路径
+#   - topology_type: str - 拓扑类型（amplifier/filter/power/oscillator/comparator/converter）
+#   - sub_type: str - 子类型（如 common_source/differential_pair）
+#   - confidence: float - 置信度（0-1）
+#   - recommended_analyses: list - 推荐的分析类型
+#   - key_metrics: list - 关键性能指标
+#   - critical_nodes: list - 关键节点列表
+EVENT_TOPOLOGY_DETECTED = "sim_topology_detected"
+
 # ============================================================
 # 电路图事件
 # ============================================================
@@ -1062,6 +1073,7 @@ __all__ = [
     "EVENT_SENSITIVITY_STARTED",
     "EVENT_SENSITIVITY_PROGRESS",
     "EVENT_SENSITIVITY_COMPLETE",
+    "EVENT_TOPOLOGY_DETECTED",
     # 电路图事件
     "EVENT_SCHEMATIC_LOADED",
     "EVENT_SCHEMATIC_ELEMENT_SELECTED",

@@ -965,6 +965,20 @@ EVENT_PARAMETER_VALUE_CHANGED = "tuning.parameter_value_changed"
 #   - success: bool - 是否成功
 EVENT_PARAMETERS_APPLIED = "tuning.parameters_applied"
 
+# 调参应用完成（由 TuningService 发布）
+# 携带数据：
+#   - file_path: str - 电路文件路径
+#   - changes: dict - 应用的参数变更 {name: value}
+#   - modified_lines: list - 修改的行号列表
+#   - backup_path: str - 备份文件路径
+EVENT_TUNING_APPLIED = "tuning.applied"
+
+# 文件已恢复（由 TuningService 发布）
+# 携带数据：
+#   - file_path: str - 电路文件路径
+#   - backup_path: str - 备份文件路径
+EVENT_TUNING_RESTORED = "tuning.restored"
+
 # 请求自动仿真（参数变更后触发）
 # 携带数据：
 #   - changed_params: dict - 变更的参数字典
@@ -1161,6 +1175,8 @@ __all__ = [
     "EVENT_PARAMETERS_EXTRACTED",
     "EVENT_PARAMETER_VALUE_CHANGED",
     "EVENT_PARAMETERS_APPLIED",
+    "EVENT_TUNING_APPLIED",
+    "EVENT_TUNING_RESTORED",
     "EVENT_TUNING_REQUEST_SIMULATION",
     "EVENT_AUTO_SIMULATION_CHANGED",
     # 关键事件列表

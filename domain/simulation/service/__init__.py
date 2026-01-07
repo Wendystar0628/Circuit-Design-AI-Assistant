@@ -6,7 +6,8 @@
 - 提供仿真配置管理服务
 - 提供分析类型选择服务
 - 提供图表类型选择服务
-- 提供快速调参服务（可选）
+- 提供参数提取服务
+- 提供快速调参服务
 
 设计原则：
 - 服务层负责业务逻辑编排
@@ -36,6 +37,20 @@ from domain.simulation.service.chart_selector import (
     chart_selector,
 )
 
+from domain.simulation.service.parameter_extractor import (
+    ParameterExtractor,
+    ParameterType,
+    TunableParameter,
+    ParameterExtractionResult,
+    parameter_extractor,
+)
+
+from domain.simulation.service.tuning_service import (
+    TuningService,
+    TuningApplyResult,
+    tuning_service,
+)
+
 __all__ = [
     # 仿真配置服务
     "SimulationConfigService",
@@ -54,4 +69,14 @@ __all__ = [
     "ChartSelector",
     "ChartValidationResult",
     "chart_selector",
+    # 参数提取服务
+    "ParameterExtractor",
+    "ParameterType",
+    "TunableParameter",
+    "ParameterExtractionResult",
+    "parameter_extractor",
+    # 快速调参服务
+    "TuningService",
+    "TuningApplyResult",
+    "tuning_service",
 ]

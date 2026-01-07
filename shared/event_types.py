@@ -453,6 +453,18 @@ EVENT_PVT_CORNER_COMPLETE = "sim_pvt_corner_complete"
 #   - metrics: dict - 该次运行性能指标
 EVENT_MONTE_CARLO_RUN_COMPLETE = "sim_monte_carlo_run_complete"
 
+# 蒙特卡洛分析完成
+# 携带数据：
+#   - circuit_file: str - 电路文件路径
+#   - analysis_type: str - 分析类型
+#   - num_runs: int - 总运行次数
+#   - successful_runs: int - 成功运行次数
+#   - yield_percent: float - 良率百分比
+#   - statistics: dict - 各指标统计数据
+#   - sensitive_params: list - 敏感参数列表
+#   - duration_seconds: float - 总耗时
+EVENT_MC_COMPLETE = "sim_monte_carlo_complete"
+
 # 参数扫描点完成
 # 携带数据：
 #   - param_name: str - 参数名称
@@ -1094,6 +1106,7 @@ __all__ = [
     "EVENT_PVT_COMPLETE",
     "EVENT_PVT_CORNER_COMPLETE",
     "EVENT_MONTE_CARLO_RUN_COMPLETE",
+    "EVENT_MC_COMPLETE",
     "EVENT_SWEEP_POINT_COMPLETE",
     "EVENT_WORST_CASE_COMPLETE",
     "EVENT_CONVERGENCE_DIAGNOSED",

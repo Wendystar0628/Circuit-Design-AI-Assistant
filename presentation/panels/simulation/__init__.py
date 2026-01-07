@@ -12,7 +12,15 @@
 - OutputLogViewer: 仿真输出日志查看器
 - TuningPanel: 快速调参面板
 - SimulationTab: 仿真结果标签页主类
+- AdvancedAnalysisTabGroup: 高级分析标签页组
 - PVTResultTab: PVT 角点分析结果标签页
+- MonteCarloResultTab: 蒙特卡洛分析结果标签页
+- SweepResultTab: 参数扫描结果标签页
+- WorstCaseResultTab: 最坏情况分析结果标签页
+- SensitivityResultTab: 敏感度分析结果标签页
+- FFTResultTab: FFT 频谱分析结果标签页
+- TopologyInfoPanel: 拓扑识别信息面板
+- DiagnosisPanel: 收敛诊断面板
 """
 
 from presentation.panels.simulation.simulation_view_model import (
@@ -33,6 +41,7 @@ from presentation.panels.simulation.simulation_tab import (
     MetricsSummaryPanel,
     ChartViewerPanel,
     StatusIndicator,
+    AdvancedAnalysisTabGroup,
 )
 from presentation.panels.simulation.pvt_result_tab import (
     PVTResultTab,
@@ -40,6 +49,13 @@ from presentation.panels.simulation.pvt_result_tab import (
     MetricsComparisonTable,
     CornerDetailPanel,
 )
+from presentation.panels.simulation.monte_carlo_result_tab import MonteCarloResultTab
+from presentation.panels.simulation.sweep_result_tab import SweepResultTab
+from presentation.panels.simulation.worst_case_result_tab import WorstCaseResultTab
+from presentation.panels.simulation.sensitivity_result_tab import SensitivityResultTab
+from presentation.panels.simulation.fft_result_tab import FFTResultTab
+from presentation.panels.simulation.topology_info_panel import TopologyInfoPanel
+from presentation.panels.simulation.diagnosis_panel import DiagnosisPanel
 
 __all__ = [
     "SimulationViewModel",
@@ -62,8 +78,16 @@ __all__ = [
     "MetricsSummaryPanel",
     "ChartViewerPanel",
     "StatusIndicator",
+    "AdvancedAnalysisTabGroup",
     "PVTResultTab",
     "CornerSelectorBar",
     "MetricsComparisonTable",
     "CornerDetailPanel",
+    "MonteCarloResultTab",
+    "SweepResultTab",
+    "WorstCaseResultTab",
+    "SensitivityResultTab",
+    "FFTResultTab",
+    "TopologyInfoPanel",
+    "DiagnosisPanel",
 ]

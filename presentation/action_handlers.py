@@ -136,6 +136,15 @@ class ActionHandlers:
             "on_export_json": self.on_export_json,
             "on_export_matlab": self.on_export_matlab,
             "on_export_numpy": self.on_export_numpy,
+            # 高级分析回调
+            "on_show_pvt": self.on_show_pvt,
+            "on_show_monte_carlo": self.on_show_monte_carlo,
+            "on_show_sweep": self.on_show_sweep,
+            "on_show_worst_case": self.on_show_worst_case,
+            "on_show_sensitivity": self.on_show_sensitivity,
+            "on_show_fft": self.on_show_fft,
+            "on_show_topology": self.on_show_topology,
+            "on_show_diagnosis": self.on_show_diagnosis,
         }
 
     # ============================================================
@@ -713,6 +722,76 @@ class ActionHandlers:
         sim_tab = self._get_simulation_tab()
         if sim_tab:
             sim_tab.export_waveform_data("npz")
+
+    # ============================================================
+    # 高级分析回调
+    # ============================================================
+
+    def _switch_to_advanced_analysis(self, tab_name: str):
+        """切换到高级分析的指定标签页"""
+        sim_tab = self._get_simulation_tab()
+        if not sim_tab:
+            return
+        
+        # 获取图表查看面板
+        chart_panel = getattr(sim_tab, '_chart_viewer_panel', None)
+        if not chart_panel:
+            return
+        
+        # 切换到高级分析标签页
+        chart_panel.switch_to_advanced()
+        
+        # 获取高级分析标签页组
+        advanced = getattr(chart_panel, '_advanced_analysis_widget', None)
+        if not advanced:
+            return
+        
+        # 切换到指定的子标签页
+        switch_methods = {
+            "pvt": advanced.switch_to_pvt,
+            "monte_carlo": advanced.switch_to_monte_carlo,
+            "sweep": advanced.switch_to_sweep,
+            "worst_case": advanced.switch_to_worst_case,
+            "sensitivity": advanced.switch_to_sensitivity,
+            "fft": advanced.switch_to_fft,
+            "topology": advanced.switch_to_topology,
+            "diagnosis": advanced.switch_to_diagnosis,
+        }
+        
+        if tab_name in switch_methods:
+            switch_methods[tab_name]()
+
+    def on_show_pvt(self):
+        """显示 PVT 角点分析标签页"""
+        self._switch_to_advanced_analysis("pvt")
+
+    def on_show_monte_carlo(self):
+        """显示蒙特卡洛分析标签页"""
+        self._switch_to_advanced_analysis("monte_carlo")
+
+    def on_show_sweep(self):
+        """显示参数扫描标签页"""
+        self._switch_to_advanced_analysis("sweep")
+
+    def on_show_worst_case(self):
+        """显示最坏情况分析标签页"""
+        self._switch_to_advanced_analysis("worst_case")
+
+    def on_show_sensitivity(self):
+        """显示敏感度分析标签页"""
+        self._switch_to_advanced_analysis("sensitivity")
+
+    def on_show_fft(self):
+        """显示 FFT 频谱分析标签页"""
+        self._switch_to_advanced_analysis("fft")
+
+    def on_show_topology(self):
+        """显示拓扑识别标签页"""
+        self._switch_to_advanced_analysis("topology")
+
+    def on_show_diagnosis(self):
+        """显示收敛诊断标签页"""
+        self._switch_to_advanced_analysis("diagnosis")
 
 
 __all__ = ["ActionHandlers"]

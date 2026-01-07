@@ -287,6 +287,61 @@ class MenuManager:
         
         menu.addSeparator()
         
+        # 高级分析子菜单
+        self._menus["advanced_analysis"] = menu.addMenu("")
+        
+        # PVT 角点分析
+        self._actions["analysis_pvt"] = QAction(self._main_window)
+        if "on_show_pvt" in self._callbacks:
+            self._actions["analysis_pvt"].triggered.connect(self._callbacks["on_show_pvt"])
+        self._menus["advanced_analysis"].addAction(self._actions["analysis_pvt"])
+        
+        # 蒙特卡洛分析
+        self._actions["analysis_monte_carlo"] = QAction(self._main_window)
+        if "on_show_monte_carlo" in self._callbacks:
+            self._actions["analysis_monte_carlo"].triggered.connect(self._callbacks["on_show_monte_carlo"])
+        self._menus["advanced_analysis"].addAction(self._actions["analysis_monte_carlo"])
+        
+        # 参数扫描
+        self._actions["analysis_sweep"] = QAction(self._main_window)
+        if "on_show_sweep" in self._callbacks:
+            self._actions["analysis_sweep"].triggered.connect(self._callbacks["on_show_sweep"])
+        self._menus["advanced_analysis"].addAction(self._actions["analysis_sweep"])
+        
+        # 最坏情况分析
+        self._actions["analysis_worst_case"] = QAction(self._main_window)
+        if "on_show_worst_case" in self._callbacks:
+            self._actions["analysis_worst_case"].triggered.connect(self._callbacks["on_show_worst_case"])
+        self._menus["advanced_analysis"].addAction(self._actions["analysis_worst_case"])
+        
+        # 敏感度分析
+        self._actions["analysis_sensitivity"] = QAction(self._main_window)
+        if "on_show_sensitivity" in self._callbacks:
+            self._actions["analysis_sensitivity"].triggered.connect(self._callbacks["on_show_sensitivity"])
+        self._menus["advanced_analysis"].addAction(self._actions["analysis_sensitivity"])
+        
+        self._menus["advanced_analysis"].addSeparator()
+        
+        # FFT 频谱分析
+        self._actions["analysis_fft"] = QAction(self._main_window)
+        if "on_show_fft" in self._callbacks:
+            self._actions["analysis_fft"].triggered.connect(self._callbacks["on_show_fft"])
+        self._menus["advanced_analysis"].addAction(self._actions["analysis_fft"])
+        
+        # 拓扑识别
+        self._actions["analysis_topology"] = QAction(self._main_window)
+        if "on_show_topology" in self._callbacks:
+            self._actions["analysis_topology"].triggered.connect(self._callbacks["on_show_topology"])
+        self._menus["advanced_analysis"].addAction(self._actions["analysis_topology"])
+        
+        # 收敛诊断
+        self._actions["analysis_diagnosis"] = QAction(self._main_window)
+        if "on_show_diagnosis" in self._callbacks:
+            self._actions["analysis_diagnosis"].triggered.connect(self._callbacks["on_show_diagnosis"])
+        self._menus["advanced_analysis"].addAction(self._actions["analysis_diagnosis"])
+        
+        menu.addSeparator()
+        
         # 导出波形数据子菜单
         self._menus["export_data"] = menu.addMenu("")
         
@@ -524,6 +579,35 @@ class MenuManager:
         # 仿真菜单项
         self._actions["sim_run"].setText(self._get_text("menu.simulation.run", "Run Simulation"))
         self._actions["sim_stop"].setText(self._get_text("menu.simulation.stop", "Stop Simulation"))
+        
+        # 高级分析子菜单
+        self._menus["advanced_analysis"].setTitle(
+            self._get_text("menu.simulation.advanced_analysis", "Advanced Analysis")
+        )
+        self._actions["analysis_pvt"].setText(
+            self._get_text("menu.simulation.analysis_pvt", "PVT Corner Analysis")
+        )
+        self._actions["analysis_monte_carlo"].setText(
+            self._get_text("menu.simulation.analysis_monte_carlo", "Monte Carlo Analysis")
+        )
+        self._actions["analysis_sweep"].setText(
+            self._get_text("menu.simulation.analysis_sweep", "Parametric Sweep")
+        )
+        self._actions["analysis_worst_case"].setText(
+            self._get_text("menu.simulation.analysis_worst_case", "Worst Case Analysis")
+        )
+        self._actions["analysis_sensitivity"].setText(
+            self._get_text("menu.simulation.analysis_sensitivity", "Sensitivity Analysis")
+        )
+        self._actions["analysis_fft"].setText(
+            self._get_text("menu.simulation.analysis_fft", "FFT Spectrum Analysis")
+        )
+        self._actions["analysis_topology"].setText(
+            self._get_text("menu.simulation.analysis_topology", "Topology Recognition")
+        )
+        self._actions["analysis_diagnosis"].setText(
+            self._get_text("menu.simulation.analysis_diagnosis", "Convergence Diagnosis")
+        )
         
         # 导出数据子菜单
         self._menus["export_data"].setTitle(

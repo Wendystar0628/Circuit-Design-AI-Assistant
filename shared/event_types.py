@@ -475,6 +475,16 @@ EVENT_MC_COMPLETE = "sim_monte_carlo_complete"
 #   - metrics: dict - 该扫描点性能指标
 EVENT_SWEEP_POINT_COMPLETE = "sim_sweep_point_complete"
 
+# 参数扫描完成
+# 携带数据：
+#   - result: SweepAnalysisResult - 扫描分析结果对象
+#   - circuit_file: str - 电路文件路径
+#   - total_points: int - 总扫描点数
+#   - successful_points: int - 成功扫描点数
+#   - optimal_point: dict - 最优点参数和指标
+#   - duration_seconds: float - 总耗时
+EVENT_SWEEP_COMPLETE = "sim_sweep_complete"
+
 # 最坏情况分析完成
 # 携带数据：
 #   - circuit_file: str - 电路文件路径
@@ -532,6 +542,17 @@ EVENT_SENSITIVITY_COMPLETE = "sim_sensitivity_complete"
 #   - key_metrics: list - 关键性能指标
 #   - critical_nodes: list - 关键节点列表
 EVENT_TOPOLOGY_DETECTED = "sim_topology_detected"
+
+# FFT 频谱分析完成
+# 携带数据：
+#   - result: FFTResult - FFT 分析结果对象
+#   - signal_name: str - 信号名称
+#   - fundamental_frequency: float - 基波频率
+#   - thd_db: float - 总谐波失真（dB）
+#   - sfdr_db: float - 无杂散动态范围（dB）
+#   - sndr_db: float - 信噪失真比（dB）
+#   - enob: float - 有效位数
+EVENT_FFT_COMPLETE = "sim_fft_complete"
 
 # ============================================================
 # 电路图事件
@@ -1108,12 +1129,14 @@ __all__ = [
     "EVENT_MONTE_CARLO_RUN_COMPLETE",
     "EVENT_MC_COMPLETE",
     "EVENT_SWEEP_POINT_COMPLETE",
+    "EVENT_SWEEP_COMPLETE",
     "EVENT_WORST_CASE_COMPLETE",
     "EVENT_CONVERGENCE_DIAGNOSED",
     "EVENT_SENSITIVITY_STARTED",
     "EVENT_SENSITIVITY_PROGRESS",
     "EVENT_SENSITIVITY_COMPLETE",
     "EVENT_TOPOLOGY_DETECTED",
+    "EVENT_FFT_COMPLETE",
     # 电路图事件
     "EVENT_SCHEMATIC_LOADED",
     "EVENT_SCHEMATIC_ELEMENT_SELECTED",

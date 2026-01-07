@@ -8,6 +8,7 @@
 - parametric_sweep.py: 参数扫描分析
 - worst_case_analysis.py: 最坏情况分析
 - sensitivity_analysis.py: 敏感度分析
+- post_processor.py: 仿真数据后处理
 
 设计说明：
 - 所有分析模块作为工具类按需实例化
@@ -53,6 +54,12 @@ from domain.simulation.analysis.sensitivity_analysis import (
     OptimizationSuggestion,
     SensitivityAnalysisResult,
 )
+from domain.simulation.analysis.post_processor import (
+    PostProcessor,
+    PoleZeroResult,
+    GroupDelayResult,
+    PhaseMarginResult,
+)
 
 __all__ = [
     # PVT 分析
@@ -88,4 +95,9 @@ __all__ = [
     "TornadoChartData",
     "OptimizationSuggestion",
     "SensitivityAnalysisResult",
+    # 后处理
+    "PostProcessor",
+    "PoleZeroResult",
+    "GroupDelayResult",
+    "PhaseMarginResult",
 ]

@@ -392,23 +392,54 @@ class SpiceExecutor(SimulationExecutor):
         netlist_lines = modified_netlist.splitlines()
         if not self._ngspice.load_netlist(netlist_lines):
             stdout = self._ngspice.get_stdout()
+            stderr = self._ngspice.get_stderr()
+            combined_output = stdout + "\n" + stderr
+            
+            # 检查是否是严重错误，需要重新初始化
+            if self._is_critical_error(combined_output):
+                self._logger.warning("检测到 ngspice 严重错误，尝试重新初始化...")
+                if self._ngspice.reinitialize():
+                    # 重新初始化成功，返回错误让用户重试
+                    return create_error_result(
+                        executor=self.get_name(),
+                        file_path=file_path,
+                        analysis_type=analysis_type,
+                        error=SimulationError(
+                            code="E010",
+                            type=SimulationErrorType.NGSPICE_CRASH,
+                            severity=ErrorSeverity.HIGH,
+                            message="ngspice 遇到严重错误并已重置，请检查网表语法后重试",
+                            file_path=file_path,
+                            recovery_suggestion="请检查网表中的 .MEASURE 语句语法是否正确",
+                        ),
+                        raw_output=combined_output,
+                    )
+            
             return create_error_result(
                 executor=self.get_name(),
                 file_path=file_path,
                 analysis_type=analysis_type,
-                error=self._parse_ngspice_output(stdout, file_path),
-                raw_output=stdout,
+                error=self._parse_ngspice_output(combined_output, file_path),
+                raw_output=combined_output,
             )
         
         # 执行仿真
         if not self._ngspice.run():
             stdout = self._ngspice.get_stdout()
+            stderr = self._ngspice.get_stderr()
+            combined_output = stdout + "\n" + stderr
+            
+            # 检查是否是严重错误
+            if self._is_critical_error(combined_output):
+                self._logger.warning("检测到 ngspice 严重错误，尝试重新初始化...")
+                self._ngspice.reinitialize()
+            
             return create_error_result(
                 executor=self.get_name(),
                 file_path=file_path,
                 analysis_type=analysis_type,
-                error=self._parse_ngspice_output(stdout, file_path),
-                raw_output=stdout,
+                error=self._parse_ngspice_output(combined_output, file_path),
+                raw_output=combined_output,
             )
         
         # 提取仿真数据
@@ -422,6 +453,27 @@ class SpiceExecutor(SimulationExecutor):
             data=sim_data,
             raw_output=raw_output,
         )
+    
+    def _is_critical_error(self, output: str) -> bool:
+        """
+        检查是否是需要重新初始化的严重错误
+        
+        Args:
+            output: ngspice 输出
+            
+        Returns:
+            bool: 是否是严重错误
+        """
+        critical_patterns = [
+            "cannot recover",
+            "awaits to be detached",
+            "fatal error",
+            "segmentation fault",
+            "access violation",
+            "internal error",
+        ]
+        output_lower = output.lower()
+        return any(pattern in output_lower for pattern in critical_patterns)
     
     def _generate_analysis_command(
         self,

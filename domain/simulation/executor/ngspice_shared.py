@@ -724,13 +724,67 @@ class NgSpiceWrapper:
     
     def destroy(self) -> bool:
         """
-        销毁当前电路
+        销毁当前电路，重置 ngspice 状态
         
         Returns:
             bool: 是否成功
         """
         self._clear_output()
-        return self.execute_command("destroy all")
+        # 先停止任何正在运行的仿真
+        try:
+            if self.is_running():
+                self.execute_command("bg_halt")
+        except Exception:
+            pass
+        
+        # 销毁所有 plot
+        result = self.execute_command("destroy all")
+        
+        # 重置内部状态
+        self.execute_command("reset")
+        
+        return result
+    
+    def reinitialize(self) -> bool:
+        """
+        重新初始化 ngspice（用于从严重错误中恢复）
+        
+        当 ngspice 进入不可恢复状态时，需要重新初始化。
+        
+        Returns:
+            bool: 是否成功
+        """
+        self._logger.info("正在重新初始化 ngspice...")
+        self._clear_output()
+        
+        try:
+            # 尝试销毁当前状态
+            try:
+                self.execute_command("destroy all")
+            except Exception:
+                pass
+            
+            # 重新调用 ngSpice_Init
+            result = self._ngspice.ngSpice_Init(
+                self._callbacks['send_char'],
+                self._callbacks['send_stat'],
+                self._callbacks['controlled_exit'],
+                self._callbacks['send_data'],
+                self._callbacks['send_init_data'],
+                self._callbacks['bg_thread_running'],
+                None,
+            )
+            
+            if result != 0:
+                self._logger.error(f"ngSpice_Init 重新初始化返回错误码: {result}")
+                return False
+            
+            self._logger.info("ngspice 重新初始化成功")
+            return True
+            
+        except Exception as e:
+            self._logger.exception(f"ngspice 重新初始化失败: {e}")
+            return False
     
     def is_running(self) -> bool:
         """

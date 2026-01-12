@@ -15,11 +15,17 @@
 - 语法错误直接返回给用户修改，不自动修正
 - 结果存储在 SimulationResult.measurements 字段
 
-ngspice .MEASURE 语法注意事项：
-- 引用其他测量结果时使用 par('expr')，如 WHEN VDB(out)=par('gain_db-3')
-- 不要使用引号直接包裹表达式，如 VDB(out)='gain_db-3' 是错误的
+ngspice 共享库模式下的 .MEASURE 语法限制：
+- 不能引用其他 .MEASURE 的结果（如 WHEN VDB(out)=gain_max-3 会失败）
+- 不能使用 par() 函数
+- 不能使用 .PARAM 定义的参数
+- 只能使用固定数值（如 WHEN VDB(out)=-3）
 - 幂运算使用 pwr(base, exp) 而不是 ^
 - PARAM 表达式需要用引号包裹，如 PARAM='f_3db*pwr(10,gain_db/20)'
+
+解决方案：
+- 使用固定阈值代替动态引用
+- 复杂的指标计算在仿真后通过后处理实现
 """
 
 from domain.simulation.measure.measure_result import (

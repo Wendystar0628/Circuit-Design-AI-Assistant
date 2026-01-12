@@ -502,6 +502,7 @@ def create_success_result(
     analysis_type: str,
     data: SimulationData,
     metrics: Optional[Dict[str, Any]] = None,
+    measurements: Optional[list] = None,
     raw_output: Optional[str] = None,
     duration_seconds: float = 0.0,
     version: int = 1,
@@ -515,7 +516,8 @@ def create_success_result(
         file_path: 仿真文件路径
         analysis_type: 分析类型
         data: 仿真数据
-        metrics: 性能指标（可选）
+        metrics: 性能指标（可选，旧格式）
+        measurements: .MEASURE 测量结果列表（可选，新格式）
         raw_output: 原始输出（可选）
         duration_seconds: 执行耗时
         version: 版本号（应从 GraphState.iteration_count + 1 计算）
@@ -531,6 +533,7 @@ def create_success_result(
         success=True,
         data=data,
         metrics=metrics,
+        measurements=measurements,
         error=None,
         raw_output=raw_output,
         timestamp=datetime.now().isoformat(),

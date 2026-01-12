@@ -94,8 +94,11 @@ class MeasureParser:
         results = []
         parsed_names = set()
         
+        # 预处理：移除 ngspice 输出中的前缀（如 "stdout "）
+        cleaned_output = self._clean_output(output)
+        
         # 解析成功的测量
-        for match in self.MEASURE_SUCCESS_PATTERN.finditer(output):
+        for match in self.MEASURE_SUCCESS_PATTERN.finditer(cleaned_output):
             name = match.group(1)
             value_str = match.group(2)
             full_match = match.group(0).strip()
@@ -140,7 +143,7 @@ class MeasureParser:
                 parsed_names.add(name)
         
         # 解析失败的测量
-        for match in self.MEASURE_FAILED_PATTERN.finditer(output):
+        for match in self.MEASURE_FAILED_PATTERN.finditer(cleaned_output):
             name = match.group(1)
             
             # 跳过已解析的名称
@@ -159,6 +162,28 @@ class MeasureParser:
             self._logger.debug(f"Measure failed: {name}")
         
         return results
+    
+    def _clean_output(self, output: str) -> str:
+        """
+        清理 ngspice 输出，移除前缀
+        
+        ngspice 共享库模式下，输出行可能带有 "stdout " 或 "stderr " 前缀
+        
+        Args:
+            output: 原始输出
+            
+        Returns:
+            str: 清理后的输出
+        """
+        lines = []
+        for line in output.splitlines():
+            # 移除 "stdout " 或 "stderr " 前缀
+            if line.startswith("stdout "):
+                line = line[7:]
+            elif line.startswith("stderr "):
+                line = line[7:]
+            lines.append(line)
+        return "\n".join(lines)
     
     def _extract_details(self, line: str) -> Dict[str, float]:
         """

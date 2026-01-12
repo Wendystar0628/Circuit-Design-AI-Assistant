@@ -446,11 +446,15 @@ class SpiceExecutor(SimulationExecutor):
         sim_data = self._extract_simulation_data(analysis_type)
         raw_output = self._ngspice.get_stdout()
         
+        # 解析 .MEASURE 结果
+        measurements = self._parse_measure_results(raw_output)
+        
         return create_success_result(
             executor=self.get_name(),
             file_path=file_path,
             analysis_type=analysis_type,
             data=sim_data,
+            measurements=measurements,
             raw_output=raw_output,
         )
     
@@ -656,6 +660,32 @@ class SpiceExecutor(SimulationExecutor):
                 return f'I({parts[0].upper()})'
         
         return name
+    
+    def _parse_measure_results(self, raw_output: str) -> list:
+        """
+        从 ngspice 输出中解析 .MEASURE 结果
+        
+        Args:
+            raw_output: ngspice 原始输出
+            
+        Returns:
+            list: MeasureResult 对象列表
+        """
+        try:
+            from domain.simulation.measure.measure_parser import measure_parser
+            
+            results = measure_parser.parse_measure_output(raw_output)
+            
+            if results:
+                self._logger.info(f"解析到 {len(results)} 个 .MEASURE 结果")
+                for r in results:
+                    self._logger.debug(f"  {r.name} = {r.value} {r.unit}")
+            
+            return results
+            
+        except Exception as e:
+            self._logger.warning(f"解析 .MEASURE 结果失败: {e}")
+            return []
     
     def _parse_ngspice_output(
         self,

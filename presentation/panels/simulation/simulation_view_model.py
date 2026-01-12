@@ -408,17 +408,28 @@ class SimulationViewModel(BaseViewModel):
                 name = measure.name
                 value = getattr(measure, 'value', None)
                 unit = getattr(measure, 'unit', '')
-                status = getattr(measure, 'status', 'OK')
+                status = getattr(measure, 'status', None)
+                # 检查是否有效（使用 is_valid 属性或检查状态）
+                is_valid = getattr(measure, 'is_valid', None)
+                if is_valid is None:
+                    # 没有 is_valid 属性，检查状态
+                    if hasattr(status, 'value'):
+                        # MeasureStatus 枚举
+                        is_valid = status.value == 'OK' and value is not None
+                    else:
+                        # 字符串状态
+                        is_valid = status == 'OK' and value is not None
             elif isinstance(measure, dict):
                 name = measure.get('name', 'unknown')
                 value = measure.get('value')
                 unit = measure.get('unit', '')
                 status = measure.get('status', 'OK')
+                is_valid = status == 'OK' and value is not None
             else:
                 continue
             
-            # 跳过失败的测量
-            if status != 'OK' or value is None:
+            # 跳过无效的测量
+            if not is_valid:
                 continue
             
             display_metrics.append(self._create_simple_display_metric(name, value, unit))

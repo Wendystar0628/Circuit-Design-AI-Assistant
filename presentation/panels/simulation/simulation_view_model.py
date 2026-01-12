@@ -10,7 +10,7 @@
 
 设计原则：
 - 继承 BaseViewModel，使用统一的事件订阅和属性通知机制
-- 将 MetricResult 转换为 DisplayMetric（UI 友好格式）
+- 将 .MEASURE 结果转换为 DisplayMetric（UI 友好格式）
 - 通过 property_changed 信号通知 UI 更新
 
 被调用方：
@@ -39,7 +39,6 @@ from typing import Any, Callable, Dict, List, Optional
 
 from presentation.core.base_view_model import BaseViewModel
 from domain.simulation.models.simulation_result import SimulationResult
-from domain.simulation.metrics.metric_result import MetricResult, MetricCategory
 from shared.event_types import (
     EVENT_SIM_STARTED,
     EVENT_SIM_PROGRESS,
@@ -166,6 +165,7 @@ class SimulationViewModel(BaseViewModel):
         self._progress: float = 0.0
         self._error_message: str = ""
         self._tuning_parameters: List[TuningParameter] = []
+        self._has_goals: bool = False  # 是否有设计目标
         
         # 版本校验字段
         self._current_result_id: Optional[str] = None
@@ -176,7 +176,6 @@ class SimulationViewModel(BaseViewModel):
         
         # 服务引用（延迟获取）
         self._simulation_service = None
-        self._metrics_extractor = None
     
     # ============================================================
     # 属性访问器
@@ -199,8 +198,13 @@ class SimulationViewModel(BaseViewModel):
     
     @property
     def overall_score(self) -> float:
-        """综合评分（0-100）"""
+        """综合评分（0-100，-1.0 表示无目标模式无评分）"""
         return self._overall_score
+    
+    @property
+    def has_goals(self) -> bool:
+        """是否有设计目标"""
+        return self._has_goals
     
     @property
     def simulation_status(self) -> SimulationStatus:
@@ -236,17 +240,6 @@ class SimulationViewModel(BaseViewModel):
             except ImportError:
                 self._logger.warning("SimulationService not available")
         return self._simulation_service
-    
-    @property
-    def metrics_extractor(self):
-        """延迟获取指标提取器"""
-        if self._metrics_extractor is None:
-            try:
-                from domain.simulation.metrics.metrics_extractor import metrics_extractor
-                self._metrics_extractor = metrics_extractor
-            except ImportError:
-                self._logger.warning("MetricsExtractor not available")
-        return self._metrics_extractor
     
     # ============================================================
     # 生命周期
@@ -360,15 +353,12 @@ class SimulationViewModel(BaseViewModel):
         self._current_result_timestamp = getattr(result, 'timestamp', None)
         
         if result.success and result.data is not None:
-            # 优先使用已有的 metrics 数据
-            if result.metrics:
+            # 优先使用 measurements 字段（.MEASURE 结果）
+            if hasattr(result, 'measurements') and result.measurements:
+                self._metrics_list = self._load_metrics_from_measurements(result.measurements)
+            # 其次使用已有的 metrics 数据
+            elif result.metrics:
                 self._metrics_list = self._load_metrics_from_dict(result.metrics)
-            elif self.metrics_extractor:
-                # 从仿真数据中提取指标
-                raw_metrics = self.metrics_extractor.extract_all_metrics(result.data)
-                self._metrics_list = [
-                    self.format_metric(m) for m in raw_metrics.values()
-                ]
             else:
                 self._metrics_list = []
             
@@ -395,9 +385,100 @@ class SimulationViewModel(BaseViewModel):
             "current_result": self._current_result,
             "metrics_list": self._metrics_list,
             "overall_score": self._overall_score,
+            "has_goals": self._has_goals,
             "simulation_status": self._simulation_status,
             "error_message": self._error_message,
         })
+    
+    def _load_metrics_from_measurements(self, measurements: List[Any]) -> List[DisplayMetric]:
+        """
+        从 .MEASURE 结果创建 DisplayMetric 列表
+        
+        Args:
+            measurements: MeasureResult 列表
+            
+        Returns:
+            List[DisplayMetric]: DisplayMetric 列表
+        """
+        display_metrics = []
+        
+        for measure in measurements:
+            # 支持 MeasureResult 对象或字典格式
+            if hasattr(measure, 'name'):
+                name = measure.name
+                value = getattr(measure, 'value', None)
+                unit = getattr(measure, 'unit', '')
+                status = getattr(measure, 'status', 'OK')
+            elif isinstance(measure, dict):
+                name = measure.get('name', 'unknown')
+                value = measure.get('value')
+                unit = measure.get('unit', '')
+                status = measure.get('status', 'OK')
+            else:
+                continue
+            
+            # 跳过失败的测量
+            if status != 'OK' or value is None:
+                continue
+            
+            display_metrics.append(self._create_simple_display_metric(name, value, unit))
+        
+        return display_metrics
+    
+    def _detect_output_signal(self, sim_data: 'SimulationData') -> Optional[str]:
+        """
+        自动检测输出信号名称
+        
+        检测规则：
+        1. 优先匹配标准格式的输出信号（如 V(out)）
+        2. 其次匹配包含 "out" 的信号（如 V(vout), V(output)）
+        3. 若无匹配，使用第一个电压信号（V(...) 格式）
+        4. 若仍无匹配，返回 None
+        
+        注意：跳过带后缀的信号（如 _mag, _phase），优先使用原始复数信号
+        
+        Args:
+            sim_data: 仿真数据
+            
+        Returns:
+            Optional[str]: 检测到的输出信号名称，或 None
+        """
+        if not sim_data or not sim_data.signals:
+            return None
+        
+        signal_names = list(sim_data.signals.keys())
+        
+        # 过滤掉带后缀的信号，只保留原始信号名
+        base_signals = [
+            name for name in signal_names 
+            if not any(name.endswith(suffix) for suffix in ['_mag', '_phase', '_real', '_imag'])
+        ]
+        
+        # 规则1：优先匹配标准格式的输出信号 V(out)
+        for name in base_signals:
+            if name.upper() == 'V(OUT)':
+                return name
+        
+        # 规则2：匹配包含 "out" 的电压信号
+        for name in base_signals:
+            name_lower = name.lower()
+            if name_lower.startswith('v(') and 'out' in name_lower:
+                return name
+        
+        # 规则3：使用第一个电压信号
+        for name in base_signals:
+            if name.upper().startswith('V('):
+                return name
+        
+        # 规则4：如果没有基础信号，尝试使用 _mag 后缀的信号
+        for name in signal_names:
+            name_lower = name.lower()
+            if "out" in name_lower and "_mag" in name_lower:
+                # 返回去掉 _mag 后缀的名称
+                return name.replace('_mag', '')
+        
+        # 规则5：无匹配
+        return None
     
     def check_for_updates(self, project_root: str) -> bool:
         """
@@ -434,40 +515,6 @@ class SimulationViewModel(BaseViewModel):
             self._logger.warning(f"Failed to check for updates: {e}")
             return False
     
-    def format_metric(self, metric: MetricResult) -> DisplayMetric:
-        """
-        将原始指标转换为 UI 友好的 DisplayMetric
-        
-        Args:
-            metric: 原始指标结果
-            
-        Returns:
-            DisplayMetric: UI 友好格式的指标
-        """
-        # 计算趋势
-        trend = self._calculate_trend(metric.name, metric.raw_value)
-        
-        # 格式化目标值描述
-        target_desc = self._format_target_description(metric)
-        
-        # 更新历史记录
-        if metric.raw_value is not None:
-            self._previous_metrics[metric.name] = metric.raw_value
-        
-        return DisplayMetric(
-            name=metric.name,
-            display_name=metric.display_name,
-            value=metric.formatted_value,
-            unit=metric.unit,
-            target=target_desc,
-            is_met=metric.is_met,
-            trend=trend,
-            category=metric.category.value,
-            raw_value=metric.raw_value,
-            confidence=metric.confidence,
-            error_message=metric.error_message,
-        )
-    
     def _load_metrics_from_dict(self, metrics_dict: Dict[str, Any]) -> List[DisplayMetric]:
         """
         从字典格式的 metrics 数据创建 DisplayMetric 列表
@@ -486,16 +533,10 @@ class SimulationViewModel(BaseViewModel):
         
         for name, data in metrics_dict.items():
             if isinstance(data, dict):
-                # 完整格式：从字典创建 MetricResult 然后转换
-                try:
-                    metric = MetricResult.from_dict(data)
-                    display_metrics.append(self.format_metric(metric))
-                except Exception as e:
-                    self._logger.warning(f"Failed to parse metric {name}: {e}")
-                    # 尝试简单解析
-                    display_metrics.append(self._create_simple_display_metric(
-                        name, data.get("value"), data.get("unit", "")
-                    ))
+                # 完整格式：直接从字典创建 DisplayMetric
+                display_metrics.append(self._create_simple_display_metric(
+                    name, data.get("value"), data.get("unit", "")
+                ))
             else:
                 # 简单格式：字符串值
                 display_metrics.append(self._create_simple_display_metric(name, data))
@@ -621,35 +662,6 @@ class SimulationViewModel(BaseViewModel):
             return "down"
         return "stable"
     
-    def _format_target_description(self, metric: MetricResult) -> str:
-        """
-        格式化目标值描述
-        
-        Args:
-            metric: 指标结果
-            
-        Returns:
-            str: 目标值描述（如 "≥ 20 dB"）
-        """
-        if metric.target is None:
-            return ""
-        
-        target_str = self._format_value_with_unit(metric.target, metric.unit)
-        
-        if metric.target_type == "min":
-            return f"≥ {target_str}"
-        elif metric.target_type == "max":
-            return f"≤ {target_str}"
-        elif metric.target_type == "range":
-            if metric.target_max is not None:
-                max_str = self._format_value_with_unit(metric.target_max, metric.unit)
-                return f"{target_str} ~ {max_str}"
-            return f"≥ {target_str}"
-        elif metric.target_type == "exact":
-            return f"= {target_str}"
-        
-        return f"≥ {target_str}"
-    
     def _format_value_with_unit(self, value: float, unit: str) -> str:
         """格式化数值（带单位）"""
         abs_value = abs(value)
@@ -678,9 +690,15 @@ class SimulationViewModel(BaseViewModel):
         return formatted
     
     def _calculate_overall_score(self):
-        """计算综合评分"""
+        """
+        计算综合评分
+        
+        有目标模式：返回达标指标比例（0-100）
+        无目标模式：返回 -1.0 表示无评分
+        """
         if not self._metrics_list:
             self._overall_score = 0.0
+            self._has_goals = False
             return
         
         # 统计达标指标数量
@@ -694,17 +712,13 @@ class SimulationViewModel(BaseViewModel):
         )
         
         if total_with_target > 0:
+            # 有目标模式：计算达标比例
             self._overall_score = (met_count / total_with_target) * 100
+            self._has_goals = True
         else:
-            # 无目标时，根据有效指标数量给分
-            valid_count = sum(
-                1 for m in self._metrics_list
-                if m.error_message is None
-            )
-            if self._metrics_list:
-                self._overall_score = (valid_count / len(self._metrics_list)) * 100
-            else:
-                self._overall_score = 0.0
+            # 无目标模式：返回 -1.0 表示无评分
+            self._has_goals = False
+            self._overall_score = -1.0
 
     # ============================================================
     # 仿真控制方法
@@ -805,16 +819,19 @@ class SimulationViewModel(BaseViewModel):
                 project_root=project_root,
             )
             
-            # 加载最后一个成功的结果
+            # 加载最后一个成功的基础分析结果
+            # 高级分析结果由各自的结果标签页通过事件处理
             for analysis_type, result in reversed(list(results.items())):
-                if result.success:
+                # 检查是否为基础分析结果（SimulationResult 类型）
+                if hasattr(result, 'success') and result.success:
                     self.load_result(result)
                     break
             else:
-                # 所有分析都失败
-                if results:
-                    first_result = next(iter(results.values()))
-                    self.load_result(first_result)
+                # 所有基础分析都失败，尝试加载第一个基础分析结果
+                for analysis_type, result in results.items():
+                    if hasattr(result, 'success'):
+                        self.load_result(result)
+                        break
                     
         except Exception as e:
             self._logger.exception(f"Batch simulation failed: {e}")

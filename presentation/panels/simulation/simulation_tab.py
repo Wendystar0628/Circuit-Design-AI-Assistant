@@ -105,8 +105,7 @@ class AdvancedAnalysisTabGroup(QWidget):
     TAB_WORST_CASE = 3
     TAB_SENSITIVITY = 4
     TAB_FFT = 5
-    TAB_TOPOLOGY = 6
-    TAB_DIAGNOSIS = 7
+    TAB_DIAGNOSIS = 6
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -162,11 +161,6 @@ class AdvancedAnalysisTabGroup(QWidget):
         from presentation.panels.simulation.fft_result_tab import FFTResultTab
         self._fft_tab = FFTResultTab()
         self._tab_widget.addTab(self._fft_tab, "")
-        
-        # 拓扑识别
-        from presentation.panels.simulation.topology_info_panel import TopologyInfoPanel
-        self._topology_tab = TopologyInfoPanel()
-        self._tab_widget.addTab(self._topology_tab, "")
         
         # 收敛诊断
         from presentation.panels.simulation.diagnosis_panel import DiagnosisPanel
@@ -235,9 +229,6 @@ class AdvancedAnalysisTabGroup(QWidget):
         self._tab_widget.setTabText(self.TAB_FFT, self._get_text(
             "advanced.tab.fft", "FFT"
         ))
-        self._tab_widget.setTabText(self.TAB_TOPOLOGY, self._get_text(
-            "advanced.tab.topology", "拓扑"
-        ))
         self._tab_widget.setTabText(self.TAB_DIAGNOSIS, self._get_text(
             "advanced.tab.diagnosis", "诊断"
         ))
@@ -255,7 +246,6 @@ class AdvancedAnalysisTabGroup(QWidget):
             EVENT_WORST_CASE_COMPLETE,
             EVENT_SENSITIVITY_COMPLETE,
             EVENT_FFT_COMPLETE,
-            EVENT_TOPOLOGY_DETECTED,
             EVENT_CONVERGENCE_DIAGNOSED,
         )
         
@@ -266,7 +256,6 @@ class AdvancedAnalysisTabGroup(QWidget):
             (EVENT_WORST_CASE_COMPLETE, self._on_wc_complete),
             (EVENT_SENSITIVITY_COMPLETE, self._on_sens_complete),
             (EVENT_FFT_COMPLETE, self._on_fft_complete),
-            (EVENT_TOPOLOGY_DETECTED, self._on_topology_detected),
             (EVENT_CONVERGENCE_DIAGNOSED, self._on_convergence_diagnosed),
         ]
         
@@ -330,10 +319,6 @@ class AdvancedAnalysisTabGroup(QWidget):
         """FFT 分析完成"""
         self._tab_widget.setCurrentIndex(self.TAB_FFT)
     
-    def _on_topology_detected(self, event_data: dict):
-        """拓扑识别完成"""
-        self._tab_widget.setCurrentIndex(self.TAB_TOPOLOGY)
-    
     def _on_convergence_diagnosed(self, event_data: dict):
         """收敛诊断完成"""
         self._tab_widget.setCurrentIndex(self.TAB_DIAGNOSIS)
@@ -365,10 +350,6 @@ class AdvancedAnalysisTabGroup(QWidget):
     def switch_to_fft(self):
         """切换到 FFT 标签页"""
         self._tab_widget.setCurrentIndex(self.TAB_FFT)
-    
-    def switch_to_topology(self):
-        """切换到拓扑识别标签页"""
-        self._tab_widget.setCurrentIndex(self.TAB_TOPOLOGY)
     
     def switch_to_diagnosis(self):
         """切换到收敛诊断标签页"""
@@ -405,11 +386,6 @@ class AdvancedAnalysisTabGroup(QWidget):
         return self._fft_tab
     
     @property
-    def topology_tab(self):
-        """获取拓扑识别标签页"""
-        return self._topology_tab
-    
-    @property
     def diagnosis_tab(self):
         """获取收敛诊断标签页"""
         return self._diagnosis_tab
@@ -422,7 +398,6 @@ class AdvancedAnalysisTabGroup(QWidget):
         self._worst_case_tab.clear()
         self._sensitivity_tab.clear()
         self._fft_tab.clear()
-        self._topology_tab.clear()
         self._diagnosis_tab.clear()
     
     def retranslate_ui(self):
@@ -434,7 +409,6 @@ class AdvancedAnalysisTabGroup(QWidget):
         self._worst_case_tab.retranslate_ui()
         self._sensitivity_tab.retranslate_ui()
         self._fft_tab.retranslate_ui()
-        self._topology_tab.retranslate_ui()
         self._diagnosis_tab.retranslate_ui()
     
     def _get_text(self, key: str, default: str) -> str:
@@ -780,10 +754,24 @@ class MetricsSummaryPanel(QFrame):
         self._metrics_panel.update_metrics(metrics_list)
     
     def set_overall_score(self, score: float):
-        """设置综合评分"""
-        self._overall_score = max(0.0, min(100.0, score))
-        self._score_value.setText(f"{self._overall_score:.1f}%")
-        self._score_bar.setValue(int(self._overall_score))
+        """
+        设置综合评分
+        
+        Args:
+            score: 评分值（0-100，-1.0 表示无目标模式无评分）
+        """
+        if score < 0:
+            # 无目标模式：显示 N/A
+            self._overall_score = -1.0
+            self._score_value.setText("N/A")
+            self._score_bar.setValue(0)
+            self._score_bar.setEnabled(False)
+        else:
+            # 有目标模式：显示百分比
+            self._overall_score = max(0.0, min(100.0, score))
+            self._score_value.setText(f"{self._overall_score:.1f}%")
+            self._score_bar.setValue(int(self._overall_score))
+            self._score_bar.setEnabled(True)
         # 同时更新 MetricsPanel 内部的分数（保持数据一致性）
         self._metrics_panel.set_overall_score(score)
     
@@ -846,6 +834,7 @@ class MetricsSummaryPanel(QFrame):
         self._overall_score = 0.0
         self._score_value.setText("0%")
         self._score_bar.setValue(0)
+        self._score_bar.setEnabled(True)
     
     def retranslate_ui(self):
         """重新翻译 UI 文本"""

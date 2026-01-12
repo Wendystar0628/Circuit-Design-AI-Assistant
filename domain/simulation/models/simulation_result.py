@@ -91,10 +91,35 @@ class SimulationData:
             "frequency": self.frequency.tolist() if self.frequency is not None else None,
             "time": self.time.tolist() if self.time is not None else None,
             "signals": {
-                name: data.tolist() if isinstance(data, np.ndarray) else data
+                name: self._serialize_array(data)
                 for name, data in self.signals.items()
             },
         }
+    
+    def _serialize_array(self, data: Any) -> Any:
+        """
+        序列化数组数据，处理复数类型
+        
+        Args:
+            data: 数组数据（可能是实数或复数）
+            
+        Returns:
+            可 JSON 序列化的数据
+        """
+        if not isinstance(data, np.ndarray):
+            return data
+        
+        # 检查是否为复数数组
+        if np.iscomplexobj(data):
+            # 复数数组：分别存储实部和虚部
+            return {
+                "_complex": True,
+                "real": np.real(data).tolist(),
+                "imag": np.imag(data).tolist()
+            }
+        else:
+            # 实数数组：直接转换为列表
+            return data.tolist()
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "SimulationData":
@@ -111,10 +136,32 @@ class SimulationData:
             frequency=np.array(data["frequency"]) if data.get("frequency") is not None else None,
             time=np.array(data["time"]) if data.get("time") is not None else None,
             signals={
-                name: np.array(signal_data) if isinstance(signal_data, list) else signal_data
+                name: cls._deserialize_array(signal_data)
                 for name, signal_data in data.get("signals", {}).items()
             },
         )
+    
+    @classmethod
+    def _deserialize_array(cls, data: Any) -> Any:
+        """
+        反序列化数组数据，处理复数类型
+        
+        Args:
+            data: 序列化的数据
+            
+        Returns:
+            numpy 数组（实数或复数）
+        """
+        if isinstance(data, dict) and data.get("_complex"):
+            # 复数数组：从实部和虚部重建
+            real = np.array(data["real"])
+            imag = np.array(data["imag"])
+            return real + 1j * imag
+        elif isinstance(data, list):
+            # 实数数组
+            return np.array(data)
+        else:
+            return data
     
     # ============================================================
     # 辅助方法
@@ -194,7 +241,21 @@ class SimulationResult:
     """仿真数据（成功时有值）"""
     
     metrics: Optional[Dict[str, Any]] = None
-    """性能指标字典（可选）"""
+    """性能指标字典（可选，旧格式兼容）"""
+    
+    measurements: Optional[list] = None
+    """
+    .MEASURE 测量结果列表（新格式）
+    
+    存储 ngspice .MEASURE 语句的执行结果。
+    列表元素为 MeasureResult 对象或等效字典。
+    
+    示例：
+        [
+            MeasureResult(name="gain_db", value=20.5, unit="dB", status=OK),
+            MeasureResult(name="f_3db", value=1e6, unit="Hz", status=OK),
+        ]
+    """
     
     error: Optional[Any] = None
     """错误信息（失败时有值，类型为 SimulationError）"""
@@ -244,6 +305,14 @@ class SimulationResult:
         Returns:
             Dict: 序列化后的字典
         """
+        # 序列化 measurements
+        measurements_data = None
+        if self.measurements is not None:
+            measurements_data = [
+                m.to_dict() if hasattr(m, 'to_dict') else m
+                for m in self.measurements
+            ]
+        
         return {
             "executor": self.executor,
             "file_path": self.file_path,
@@ -251,6 +320,7 @@ class SimulationResult:
             "success": self.success,
             "data": self.data.to_dict() if self.data is not None else None,
             "metrics": self.metrics,
+            "measurements": measurements_data,
             "error": self.error.to_dict() if self.error is not None and hasattr(self.error, "to_dict") else str(self.error) if self.error is not None else None,
             "raw_output": self.raw_output,
             "timestamp": self.timestamp,
@@ -275,6 +345,19 @@ class SimulationResult:
         if data.get("data") is not None:
             sim_data = SimulationData.from_dict(data["data"])
         
+        # 反序列化 measurements
+        measurements = None
+        if data.get("measurements") is not None:
+            try:
+                from domain.simulation.measure.measure_result import MeasureResult
+                measurements = [
+                    MeasureResult.from_dict(m) if isinstance(m, dict) else m
+                    for m in data["measurements"]
+                ]
+            except ImportError:
+                # MeasureResult 不可用，保留原始字典
+                measurements = data["measurements"]
+        
         # 反序列化错误信息
         error = None
         error_data = data.get("error")
@@ -298,6 +381,7 @@ class SimulationResult:
             success=data["success"],
             data=sim_data,
             metrics=data.get("metrics"),
+            measurements=measurements,
             error=error,
             raw_output=data.get("raw_output"),
             timestamp=data.get("timestamp", datetime.now().isoformat()),

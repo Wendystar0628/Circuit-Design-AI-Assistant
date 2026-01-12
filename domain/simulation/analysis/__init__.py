@@ -60,16 +60,6 @@ from domain.simulation.analysis.post_processor import (
     GroupDelayResult,
     PhaseMarginResult,
 )
-from domain.simulation.analysis.topology_recognizer import (
-    TopologyRecognizer,
-    TopologyType,
-    AmplifierSubType,
-    FilterSubType,
-    PowerSubType,
-    OscillatorSubType,
-    DeviceStats,
-    NodeInfo,
-)
 
 __all__ = [
     # PVT 分析
@@ -110,13 +100,4 @@ __all__ = [
     "PoleZeroResult",
     "GroupDelayResult",
     "PhaseMarginResult",
-    # 拓扑识别
-    "TopologyRecognizer",
-    "TopologyType",
-    "AmplifierSubType",
-    "FilterSubType",
-    "PowerSubType",
-    "OscillatorSubType",
-    "DeviceStats",
-    "NodeInfo",
 ]

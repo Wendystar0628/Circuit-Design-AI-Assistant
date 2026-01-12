@@ -376,7 +376,7 @@ class SimulationService:
         version: int = 1,
         session_id: str = "",
         on_progress: Optional[Callable[[float, str], None]] = None,
-    ) -> Dict[str, SimulationResult]:
+    ) -> Dict[str, Any]:
         """
         执行用户选中的所有分析类型
         
@@ -384,7 +384,9 @@ class SimulationService:
         1. 从 AnalysisSelector 获取启用的分析列表（按优先级排序）
         2. 从 SimulationConfigService 获取各分析的配置
         3. 依次执行每个分析，收集结果
-        4. 每完成一个分析发布 EVENT_ANALYSIS_COMPLETE 事件
+           - 基础分析（AC/DC/TRAN/NOISE/OP）调用 run_simulation
+           - 高级分析（PVT/MC/SWEEP/WC/SENS）调用对应的分析模块
+        4. 每完成一个分析发布对应的完成事件
         5. 全部完成后发布 EVENT_ALL_ANALYSES_COMPLETE 事件
         
         Args:
@@ -395,13 +397,13 @@ class SimulationService:
             on_progress: 进度回调函数
             
         Returns:
-            Dict[str, SimulationResult]: 分析类型到结果的映射
+            Dict[str, Any]: 分析类型到结果的映射（SimulationResult 或高级分析结果）
         """
         from domain.simulation.service.analysis_selector import analysis_selector, AnalysisType
         from domain.simulation.service.simulation_config_service import simulation_config_service
         
         start_time = time.time()
-        results: Dict[str, SimulationResult] = {}
+        results: Dict[str, Any] = {}
         
         # 获取按优先级排序的执行顺序
         execution_order = analysis_selector.get_execution_order()
@@ -423,30 +425,42 @@ class SimulationService:
             analysis_start_time = time.time()
             analysis_type_str = analysis_type.value
             
-            # 构建该分析类型的配置
-            analysis_config = self._build_analysis_config(analysis_type, config)
-            
             self._logger.info(f"执行分析 [{index + 1}/{total_count}]: {analysis_type_str}")
             
-            # 执行仿真
-            result = self.run_simulation(
-                file_path=file_path,
-                analysis_config=analysis_config,
-                project_root=project_root,
-                version=version,
-                session_id=session_id,
-                on_progress=on_progress,
-            )
+            # 根据分析类型选择执行方式
+            if AnalysisType.is_basic(analysis_type):
+                # 基础分析：调用 run_simulation
+                analysis_config = self._build_analysis_config(analysis_type, config)
+                result = self.run_simulation(
+                    file_path=file_path,
+                    analysis_config=analysis_config,
+                    project_root=project_root,
+                    version=version,
+                    session_id=session_id,
+                    on_progress=on_progress,
+                )
+                results[analysis_type_str] = result
+                success = result.success
+            else:
+                # 高级分析：调用对应的分析模块
+                result = self._run_advanced_analysis(
+                    analysis_type=analysis_type,
+                    file_path=file_path,
+                    project_root=project_root,
+                    config=config,
+                    on_progress=on_progress,
+                )
+                results[analysis_type_str] = result
+                success = getattr(result, 'success', False) if result else False
             
-            results[analysis_type_str] = result
             analysis_duration = time.time() - analysis_start_time
             
-            if result.success:
+            if success:
                 success_count += 1
             else:
                 failed_count += 1
             
-            # 发布单个分析完成事件
+            # 发布分析完成事件
             self._publish_analysis_complete_event(
                 analysis_type=analysis_type_str,
                 result=result,
@@ -508,9 +522,289 @@ class SimulationService:
         elif analysis_type == AnalysisType.OP:
             # OP 分析无额外配置
             pass
-        # 高级分析类型暂不处理，由各自的分析模块负责
+        # 高级分析类型由 _run_advanced_analysis 方法处理
         
         return base_config
+
+    def _run_advanced_analysis(
+        self,
+        analysis_type: "AnalysisType",
+        file_path: str,
+        project_root: str,
+        config: "FullSimulationConfig",
+        on_progress: Optional[Callable[[float, str], None]] = None,
+    ) -> Any:
+        """
+        执行高级分析
+        
+        根据分析类型调用对应的分析模块，并发布完成事件。
+        
+        Args:
+            analysis_type: 分析类型枚举
+            file_path: 电路文件路径
+            project_root: 项目根目录路径
+            config: 完整仿真配置
+            on_progress: 进度回调函数
+            
+        Returns:
+            Any: 分析结果对象（PVTAnalysisResult/MonteCarloResult 等）
+        """
+        from domain.simulation.service.analysis_selector import AnalysisType
+        
+        analysis_config = {
+            "analysis_type": "ac",  # 默认使用 AC 分析作为基础
+            "timeout_seconds": config.global_config.timeout_seconds,
+            "temperature": config.global_config.temperature,
+        }
+        
+        result = None
+        
+        try:
+            if analysis_type == AnalysisType.PVT:
+                result = self._run_pvt_analysis(file_path, analysis_config, project_root)
+            elif analysis_type == AnalysisType.MONTE_CARLO:
+                result = self._run_monte_carlo_analysis(file_path, analysis_config, project_root)
+            elif analysis_type == AnalysisType.PARAMETRIC:
+                result = self._run_parametric_sweep(file_path, analysis_config, project_root)
+            elif analysis_type == AnalysisType.WORST_CASE:
+                result = self._run_worst_case_analysis(file_path, analysis_config, project_root)
+            elif analysis_type == AnalysisType.SENSITIVITY:
+                result = self._run_sensitivity_analysis(file_path, analysis_config, project_root)
+            else:
+                self._logger.warning(f"未知的高级分析类型: {analysis_type}")
+                
+        except Exception as e:
+            self._logger.exception(f"高级分析执行失败: {analysis_type.value}, 错误: {e}")
+            
+        return result
+
+    def _run_pvt_analysis(
+        self,
+        file_path: str,
+        analysis_config: Dict[str, Any],
+        project_root: str,
+    ) -> Any:
+        """执行 PVT 角点分析"""
+        from domain.simulation.analysis.pvt_analysis import PVTAnalyzer
+        
+        analyzer = PVTAnalyzer()
+        result = analyzer.run_pvt_corners(
+            circuit_file=file_path,
+            analysis_config=analysis_config,
+        )
+        
+        # 发布 PVT 完成事件
+        self._publish_pvt_complete_event(result, project_root)
+        
+        return result
+
+    def _run_monte_carlo_analysis(
+        self,
+        file_path: str,
+        analysis_config: Dict[str, Any],
+        project_root: str,
+    ) -> Any:
+        """执行蒙特卡洛分析"""
+        from domain.simulation.analysis.monte_carlo_analysis import MonteCarloAnalyzer
+        
+        analyzer = MonteCarloAnalyzer()
+        result = analyzer.run_monte_carlo(
+            circuit_file=file_path,
+            analysis_config=analysis_config,
+            num_runs=100,  # 默认运行次数
+        )
+        
+        # 发布蒙特卡洛完成事件
+        self._publish_mc_complete_event(result, project_root)
+        
+        return result
+
+    def _run_parametric_sweep(
+        self,
+        file_path: str,
+        analysis_config: Dict[str, Any],
+        project_root: str,
+    ) -> Any:
+        """执行参数扫描"""
+        from domain.simulation.analysis.parametric_sweep import (
+            ParametricSweepAnalyzer,
+            SweepParameter,
+            SweepType,
+        )
+        
+        sweeper = ParametricSweepAnalyzer()
+        
+        # 尝试从电路文件提取参数，或使用默认配置
+        sweep_config = self._get_sweep_config_from_circuit(file_path)
+        
+        result = sweeper.run_sweep(
+            circuit_file=file_path,
+            analysis_config=analysis_config,
+            sweep_config=sweep_config,
+        )
+        
+        # 发布参数扫描完成事件
+        self._publish_sweep_complete_event(result, project_root)
+        
+        return result
+    
+    def _get_sweep_config_from_circuit(self, file_path: str) -> Any:
+        """
+        从电路文件提取扫描配置
+        
+        尝试从电路文件中识别可扫描的参数，如果失败则返回默认配置。
+        """
+        from domain.simulation.analysis.parametric_sweep import (
+            SweepParameter,
+            SweepType,
+        )
+        
+        # 默认扫描配置：扫描电阻值
+        # 实际应用中应该从电路分析或用户配置获取
+        default_sweep = SweepParameter(
+            component="R1",
+            param="resistance",
+            sweep_type=SweepType.LOG,
+            start=100.0,
+            stop=10000.0,
+            step=10,  # 对数扫描中 step 表示点数
+        )
+        
+        return default_sweep
+
+    def _run_worst_case_analysis(
+        self,
+        file_path: str,
+        analysis_config: Dict[str, Any],
+        project_root: str,
+    ) -> Any:
+        """执行最坏情况分析"""
+        from domain.simulation.analysis.worst_case_analysis import (
+            WorstCaseAnalyzer,
+            ToleranceSpec,
+            WorstCaseMethod,
+        )
+        
+        analyzer = WorstCaseAnalyzer()
+        
+        # 使用默认容差配置（如果没有指定）
+        # 实际应用中应该从配置或用户输入获取
+        default_tolerances = [
+            ToleranceSpec(component="R1", param="resistance", tolerance_percent=5.0),
+            ToleranceSpec(component="C1", param="capacitance", tolerance_percent=10.0),
+        ]
+        
+        result = analyzer.run_worst_case(
+            circuit_file=file_path,
+            tolerances=default_tolerances,
+            method=WorstCaseMethod.RSS,
+            metric="gain",
+            analysis_config=analysis_config,
+        )
+        
+        # 发布最坏情况完成事件
+        self._publish_worst_case_complete_event(result, project_root)
+        
+        return result
+
+    def _run_sensitivity_analysis(
+        self,
+        file_path: str,
+        analysis_config: Dict[str, Any],
+        project_root: str,
+    ) -> Any:
+        """执行敏感度分析"""
+        from domain.simulation.analysis.sensitivity_analysis import SensitivityAnalyzer
+        
+        analyzer = SensitivityAnalyzer()
+        
+        # 使用默认参数配置（如果没有指定）
+        # 实际应用中应该从配置或用户输入获取
+        default_params = [
+            {"component": "R1", "param": "resistance", "nominal_value": 1000.0},
+            {"component": "C1", "param": "capacitance", "nominal_value": 1e-9},
+        ]
+        
+        result = analyzer.run_sensitivity(
+            circuit_file=file_path,
+            params=default_params,
+            metric="gain",
+            analysis_config=analysis_config,
+        )
+        
+        # 发布敏感度完成事件
+        self._publish_sensitivity_complete_event(result, project_root)
+        
+        return result
+
+    def _publish_pvt_complete_event(self, result: Any, project_root: str) -> None:
+        """发布 PVT 分析完成事件"""
+        bus = _get_event_bus()
+        if bus and result:
+            from shared.event_types import EVENT_PVT_COMPLETE
+            bus.publish(EVENT_PVT_COMPLETE, {
+                "data": {
+                    "result": result,  # 传递完整的结果对象，而非字典
+                    "all_passed": getattr(result, 'all_passed', False),
+                    "worst_corner": getattr(result, 'worst_corner', ''),
+                    "duration_seconds": getattr(result, 'duration_seconds', 0.0),
+                    "project_root": project_root,
+                }
+            })
+
+    def _publish_mc_complete_event(self, result: Any, project_root: str) -> None:
+        """发布蒙特卡洛分析完成事件"""
+        bus = _get_event_bus()
+        if bus and result:
+            from shared.event_types import EVENT_MC_COMPLETE
+            bus.publish(EVENT_MC_COMPLETE, {
+                "data": {
+                    "result": result,  # 传递完整的结果对象
+                    "num_runs": getattr(result, 'num_runs', 0),
+                    "yield_percent": getattr(result, 'yield_percent', 0.0),
+                    "duration_seconds": getattr(result, 'duration_seconds', 0.0),
+                    "project_root": project_root,
+                }
+            })
+
+    def _publish_sweep_complete_event(self, result: Any, project_root: str) -> None:
+        """发布参数扫描完成事件"""
+        bus = _get_event_bus()
+        if bus and result:
+            from shared.event_types import EVENT_SWEEP_COMPLETE
+            bus.publish(EVENT_SWEEP_COMPLETE, {
+                "data": {
+                    "result": result,  # 传递完整的结果对象
+                    "duration_seconds": getattr(result, 'duration_seconds', 0.0),
+                    "project_root": project_root,
+                }
+            })
+
+    def _publish_worst_case_complete_event(self, result: Any, project_root: str) -> None:
+        """发布最坏情况分析完成事件"""
+        bus = _get_event_bus()
+        if bus and result:
+            from shared.event_types import EVENT_WORST_CASE_COMPLETE
+            bus.publish(EVENT_WORST_CASE_COMPLETE, {
+                "data": {
+                    "result": result,  # 传递完整的结果对象
+                    "duration_seconds": getattr(result, 'duration_seconds', 0.0),
+                    "project_root": project_root,
+                }
+            })
+
+    def _publish_sensitivity_complete_event(self, result: Any, project_root: str) -> None:
+        """发布敏感度分析完成事件"""
+        bus = _get_event_bus()
+        if bus and result:
+            from shared.event_types import EVENT_SENSITIVITY_COMPLETE
+            bus.publish(EVENT_SENSITIVITY_COMPLETE, {
+                "data": {
+                    "result": result,  # 传递完整的结果对象
+                    "duration_seconds": getattr(result, 'duration_seconds', 0.0),
+                    "project_root": project_root,
+                }
+            })
     
     # ============================================================
     # 文件扫描方法
@@ -857,7 +1151,7 @@ class SimulationService:
     def _publish_analysis_complete_event(
         self,
         analysis_type: str,
-        result: SimulationResult,
+        result: Any,
         index: int,
         total: int,
         duration: float,
@@ -865,11 +1159,21 @@ class SimulationService:
         """发布单个分析完成事件"""
         bus = _get_event_bus()
         if bus:
+            # 处理不同类型的结果对象
+            if hasattr(result, 'success'):
+                success = result.success
+            elif hasattr(result, 'all_passed'):
+                success = result.all_passed
+            else:
+                success = result is not None
+            
+            metrics = getattr(result, 'metrics', {}) or {}
+            
             bus.publish(EVENT_ANALYSIS_COMPLETE, {
                 "analysis_type": analysis_type,
-                "success": result.success,
+                "success": success,
                 "result_path": "",  # 由 run_simulation 内部保存
-                "metrics": result.metrics or {},
+                "metrics": metrics,
                 "duration_seconds": duration,
                 "index": index,
                 "total": total,
@@ -877,7 +1181,7 @@ class SimulationService:
 
     def _publish_all_analyses_complete_event(
         self,
-        results: Dict[str, SimulationResult],
+        results: Dict[str, Any],
         total_count: int,
         success_count: int,
         failed_count: int,
@@ -888,10 +1192,20 @@ class SimulationService:
         if bus:
             results_summary = {}
             for analysis_type, result in results.items():
+                # 处理不同类型的结果对象
+                if hasattr(result, 'success'):
+                    success = result.success
+                elif hasattr(result, 'all_passed'):
+                    success = result.all_passed
+                else:
+                    success = result is not None
+                
+                metrics = getattr(result, 'metrics', {}) or {}
+                
                 results_summary[analysis_type] = {
-                    "success": result.success,
+                    "success": success,
                     "result_path": "",
-                    "metrics": result.metrics or {},
+                    "metrics": metrics,
                 }
             
             bus.publish(EVENT_ALL_ANALYSES_COMPLETE, {

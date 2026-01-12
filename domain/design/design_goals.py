@@ -649,7 +649,7 @@ class DesignGoalsManager:
         return iter(self.collection.goals)
 
 
-# 支持的指标类别（与 MetricsExtractor 对应）
+# 支持的指标类别（与 .MEASURE 结果对应）
 SUPPORTED_METRICS = {
     # 放大器指标
     "gain": {"name": "增益", "unit": "dB", "default_constraint": "minimum"},

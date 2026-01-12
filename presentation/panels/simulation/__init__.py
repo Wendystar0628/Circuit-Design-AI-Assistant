@@ -19,7 +19,6 @@
 - WorstCaseResultTab: 最坏情况分析结果标签页
 - SensitivityResultTab: 敏感度分析结果标签页
 - FFTResultTab: FFT 频谱分析结果标签页
-- TopologyInfoPanel: 拓扑识别信息面板
 - DiagnosisPanel: 收敛诊断面板
 """
 
@@ -54,7 +53,6 @@ from presentation.panels.simulation.sweep_result_tab import SweepResultTab
 from presentation.panels.simulation.worst_case_result_tab import WorstCaseResultTab
 from presentation.panels.simulation.sensitivity_result_tab import SensitivityResultTab
 from presentation.panels.simulation.fft_result_tab import FFTResultTab
-from presentation.panels.simulation.topology_info_panel import TopologyInfoPanel
 from presentation.panels.simulation.diagnosis_panel import DiagnosisPanel
 
 __all__ = [
@@ -88,6 +86,5 @@ __all__ = [
     "WorstCaseResultTab",
     "SensitivityResultTab",
     "FFTResultTab",
-    "TopologyInfoPanel",
     "DiagnosisPanel",
 ]

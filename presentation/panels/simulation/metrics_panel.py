@@ -315,11 +315,20 @@ class MetricsPanel(QWidget):
         设置综合评分
         
         Args:
-            score: 评分值（0-100）
+            score: 评分值（0-100，-1.0 表示无目标模式无评分）
         """
-        self._overall_score = max(0.0, min(100.0, score))
-        self._score_value.setText(f"{self._overall_score:.1f}%")
-        self._score_bar.setValue(int(self._overall_score))
+        if score < 0:
+            # 无目标模式：显示 N/A
+            self._overall_score = -1.0
+            self._score_value.setText("N/A")
+            self._score_bar.setValue(0)
+            self._score_bar.setEnabled(False)
+        else:
+            # 有目标模式：显示百分比
+            self._overall_score = max(0.0, min(100.0, score))
+            self._score_value.setText(f"{self._overall_score:.1f}%")
+            self._score_bar.setValue(int(self._overall_score))
+            self._score_bar.setEnabled(True)
     
     def clear(self):
         """清空所有指标"""
@@ -329,6 +338,7 @@ class MetricsPanel(QWidget):
         self._overall_score = 0.0
         self._score_value.setText("0%")
         self._score_bar.setValue(0)
+        self._score_bar.setEnabled(True)
         self._show_empty_state()
     
     def highlight_metric(self, metric_name: str, enabled: bool = True):

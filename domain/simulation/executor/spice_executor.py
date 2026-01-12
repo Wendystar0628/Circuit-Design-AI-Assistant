@@ -538,6 +538,9 @@ class SpiceExecutor(SimulationExecutor):
             if not vec_info:
                 continue
             
+            # 标准化信号名称（ngspice 返回小写，统一转为大写 V/I 开头）
+            normalized_name = self._normalize_signal_name(vec_name)
+            
             # 根据向量类型处理
             if vec_info.type == VectorType.SV_FREQUENCY:
                 # 频率数据：优先使用实数数据，如果没有则从复数数据提取实部
@@ -555,19 +558,52 @@ class SpiceExecutor(SimulationExecutor):
                 # 其他向量作为信号
                 if vec_info.cdata is not None and len(vec_info.cdata) > 0:
                     # 复数数据（AC 分析）
-                    signals[f"{vec_name}_mag"] = np.abs(vec_info.cdata)
-                    signals[f"{vec_name}_phase"] = np.angle(vec_info.cdata, deg=True)
-                    signals[f"{vec_name}_real"] = np.real(vec_info.cdata)
-                    signals[f"{vec_name}_imag"] = np.imag(vec_info.cdata)
+                    # 保存原始复数数据，供指标提取器使用
+                    signals[normalized_name] = vec_info.cdata
+                    # 同时保存分解后的数据，供 UI 显示使用
+                    signals[f"{normalized_name}_mag"] = np.abs(vec_info.cdata)
+                    signals[f"{normalized_name}_phase"] = np.angle(vec_info.cdata, deg=True)
+                    signals[f"{normalized_name}_real"] = np.real(vec_info.cdata)
+                    signals[f"{normalized_name}_imag"] = np.imag(vec_info.cdata)
                 elif vec_info.data is not None and len(vec_info.data) > 0:
                     # 实数数据
-                    signals[vec_name] = vec_info.data
+                    signals[normalized_name] = vec_info.data
         
         return SimulationData(
             frequency=frequency,
             time=time_data,
             signals=signals,
         )
+    
+    def _normalize_signal_name(self, name: str) -> str:
+        """
+        标准化信号名称
+        
+        ngspice 返回的向量名称是小写的（如 v(out)），
+        将其转换为标准格式（如 V(out)）以便与指标提取器匹配。
+        
+        Args:
+            name: 原始信号名称
+            
+        Returns:
+            str: 标准化后的信号名称
+        """
+        # 处理电压信号 v(...) -> V(...)
+        if name.startswith('v(') and name.endswith(')'):
+            return 'V(' + name[2:-1] + ')'
+        
+        # 处理电流信号 i(...) -> I(...)
+        if name.startswith('i(') and name.endswith(')'):
+            return 'I(' + name[2:-1] + ')'
+        
+        # 处理带 #branch 的电流信号
+        if '#branch' in name.lower():
+            # 如 v1#branch -> I(V1)
+            parts = name.lower().split('#branch')
+            if parts[0]:
+                return f'I({parts[0].upper()})'
+        
+        return name
     
     def _parse_ngspice_output(
         self,

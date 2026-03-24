@@ -16,11 +16,11 @@ Agent 工具调用模块
 
 模块结构：
 - types.py        : 基础类型定义（BaseTool、ToolResult、ToolContext、ToolCallInfo）
-- tool_registry.py : 工具注册表（后续实现）
+- tool_registry.py : 工具注册表
 - agent_loop.py   : ReAct 循环控制器（后续实现）
 - agent_prompt_builder.py : Agent 系统提示词构建器（后续实现）
-- tools/          : 具体工具实现（后续实现）
-- utils/          : 工具函数（截断、路径、diff 等，后续实现）
+- tools/          : 具体工具实现（read_file 已实现）
+- utils/          : 工具函数（path_utils、truncate 已实现）
 """
 
 from domain.llm.agent.types import (
@@ -41,8 +41,19 @@ from domain.llm.agent.types import (
     create_success_result,
 )
 
+from domain.llm.agent.tool_registry import (
+    ToolRegistry,
+    GROUP_FILE_OPS,
+    GROUP_SEARCH,
+    GROUP_SIMULATION,
+    GROUP_ALL,
+)
+
+from domain.llm.agent.tools import ReadFileTool
+
 
 __all__ = [
+    # 基础类型
     "ToolResult",
     "ToolSchema",
     "ToolContext",
@@ -51,4 +62,12 @@ __all__ = [
     "BaseTool",
     "create_error_result",
     "create_success_result",
+    # 注册表
+    "ToolRegistry",
+    "GROUP_FILE_OPS",
+    "GROUP_SEARCH",
+    "GROUP_SIMULATION",
+    "GROUP_ALL",
+    # 工具
+    "ReadFileTool",
 ]

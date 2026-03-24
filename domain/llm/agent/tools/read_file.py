@@ -24,11 +24,10 @@
     )
 """
 
-import os
 from typing import Any, Dict, List, Optional
 
 from domain.llm.agent.types import BaseTool, ToolContext, ToolResult
-from domain.llm.agent.utils.path_utils import resolve_read_path, is_path_within
+from domain.llm.agent.utils.path_utils import validate_file_path
 from domain.llm.agent.utils.truncate import (
     truncate_head,
     format_size,
@@ -139,31 +138,10 @@ class ReadFileTool(BaseTool):
                 is_error=True,
             )
         
-        # 1. 路径解析
-        abs_path = resolve_read_path(path, context.project_root)
-        
-        # 2. 安全校验
-        if not is_path_within(abs_path, context.project_root):
-            return ToolResult(
-                content=(
-                    f"Error: Access denied. Path '{path}' resolves to '{abs_path}' "
-                    f"which is outside the project directory."
-                ),
-                is_error=True,
-            )
-        
-        # 3. 文件存在性检查
-        if not os.path.exists(abs_path):
-            return ToolResult(
-                content=f"Error: File not found: '{abs_path}'",
-                is_error=True,
-            )
-        
-        if not os.path.isfile(abs_path):
-            return ToolResult(
-                content=f"Error: Path is not a file: '{abs_path}'",
-                is_error=True,
-            )
+        # 1. 路径解析 + 安全校验 + 存在性检查
+        abs_path, error = validate_file_path(path, context.project_root)
+        if error:
+            return ToolResult(content=f"Error: {error}", is_error=True)
         
         # 4. 读取文件
         try:

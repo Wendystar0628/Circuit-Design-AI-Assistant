@@ -26,7 +26,7 @@ import os
 import re
 import unicodedata
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 
 # Unicode 空格字符正则（与 pi-mono 一致）
@@ -162,7 +162,7 @@ def validate_file_path(
     file_path: str,
     project_root: str,
     must_exist: bool = True,
-) -> Optional[str]:
+) -> Tuple[Optional[str], Optional[str]]:
     """
     完整的文件路径校验流程（供工具 execute 方法调用）
     
@@ -177,26 +177,27 @@ def validate_file_path(
         must_exist: 是否要求文件必须存在
         
     Returns:
-        None: 校验通过
-        str: 错误描述（校验失败时）
+        (abs_path, error) 元组：
+        - 校验通过：(绝对路径, None)
+        - 校验失败：(None, 错误描述)
     """
     abs_path = resolve_read_path(file_path, project_root)
     
     # 安全校验
     if not is_path_within(abs_path, project_root):
-        return (
+        return None, (
             f"Access denied: path '{file_path}' resolves to '{abs_path}' "
-            f"which is outside the project directory '{project_root}'"
+            f"which is outside the project directory"
         )
     
     # 存在性检查
     if must_exist and not os.path.exists(abs_path):
-        return f"File not found: '{abs_path}'"
+        return None, f"File not found: '{abs_path}'"
     
     if must_exist and not os.path.isfile(abs_path):
-        return f"Path is not a file: '{abs_path}'"
+        return None, f"Path is not a file: '{abs_path}'"
     
-    return None
+    return abs_path, None
 
 
 # ============================================================

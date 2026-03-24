@@ -15,7 +15,7 @@
 - 厂商专属搜索与通用搜索只能启用其一
 - 由 ConfigManager 和 UI 层保证互斥
 
-被调用方：prompt_builder.py（构建 Prompt 时注入搜索结果）
+被调用方：agent_prompt_builder.py（构建 Prompt 时注入搜索结果）
 """
 
 from typing import Any, Dict, List, Optional, Literal

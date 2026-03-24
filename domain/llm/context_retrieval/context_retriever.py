@@ -30,7 +30,7 @@
 - DependencyAnalyzer - 依赖图分析
 - ContextAssembler - 上下文组装器
 
-被调用方：prompt_builder.py
+被调用方：agent_prompt_builder.py
 """
 
 import asyncio

@@ -24,9 +24,8 @@ LLM 交互域
 - conversation.py: 对话格式化辅助
 - context_retriever.py: 智能上下文检索
 
-Prompt 管理模块：
-- prompt_template_manager.py: Prompt 模板统一管理
-- prompt_builder.py: 提示词构建器
+Agent 工具调用模块：
+- agent/: Agent 工具调用核心（AgentLoop、ToolRegistry、提示词构建）
 
 外部服务管理：
 - external_service_manager.py: 外部服务统一管理（重试/熔断）

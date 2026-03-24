@@ -27,7 +27,7 @@
 设计说明：
 - SPICE 执行器采用工作目录切换策略，利用 ngspice 原生的相对路径解析能力
 - Python 执行器采用基础进程隔离，不实现完整沙箱
-- CircuitAnalyzer 整合了文件扫描和主电路检测功能
+- CircuitAnalyzer 提供电路文件扫描和依赖关系分析功能
 - SimulationService 作为仿真域的统一入口，协调执行器和配置
 - SimulationConfigService 管理配置的读写、校验、持久化，发布配置变更事件
 - PVTAnalyzer 执行多角点仿真，验证电路在极端条件下的性能

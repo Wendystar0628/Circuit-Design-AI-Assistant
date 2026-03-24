@@ -25,15 +25,6 @@
     # 构建依赖关系图
     dep_graph = analyzer.build_dependency_graph(project_path)
     
-    # 检测主电路文件
-    result = analyzer.detect_main_circuit(project_path)
-    if result["main_circuit"]:
-        print(f"主电路: {result['main_circuit']}")
-        print(f"置信度: {result['confidence']}")
-    
-    # 扫描可仿真文件（使用 ExecutorRegistry 的扩展名）
-    scan_result = analyzer.scan_simulatable_files(project_path)
-    print(f"发现 {len(scan_result.files)} 个可仿真文件")
 """
 
 import logging
@@ -64,38 +55,6 @@ _logger = logging.getLogger(__name__)
 # ============================================================
 
 @dataclass
-class ScanResult:
-    """
-    文件扫描结果
-    
-    Attributes:
-        files: 发现的可仿真文件列表（相对路径）
-        main_circuit_candidates: 主电路候选列表（相对路径）
-        dependency_graph: 文件依赖关系图
-    """
-    files: List[Path] = field(default_factory=list)
-    """发现的可仿真文件列表"""
-    
-    main_circuit_candidates: List[Path] = field(default_factory=list)
-    """主电路候选列表（可能为 0、1 或多个）"""
-    
-    dependency_graph: Dict[str, List[str]] = field(default_factory=dict)
-    """文件依赖关系图"""
-    
-    def has_single_main_circuit(self) -> bool:
-        """是否只有一个主电路候选"""
-        return len(self.main_circuit_candidates) == 1
-    
-    def has_multiple_candidates(self) -> bool:
-        """是否有多个主电路候选"""
-        return len(self.main_circuit_candidates) > 1
-    
-    def has_no_candidates(self) -> bool:
-        """是否没有主电路候选"""
-        return len(self.main_circuit_candidates) == 0
-
-
-@dataclass
 class CircuitFileInfo:
     """电路文件信息"""
     path: str  # 相对于项目根目录的路径
@@ -108,17 +67,6 @@ class CircuitFileInfo:
     has_only_params: bool  # 是否仅包含参数定义
     referenced_by: List[str] = field(default_factory=list)  # 被哪些文件引用
     references: List[ParsedInclude] = field(default_factory=list)  # 引用了哪些文件
-
-
-@dataclass
-class MainCircuitDetectionResult:
-    """主电路检测结果"""
-    main_circuit: Optional[str]  # 主电路路径（相对路径），未检测到则为 None
-    confidence: float  # 置信度（0-1）
-    candidates: List[Dict[str, any]]  # 其他候选主电路列表
-    subcircuits: List[str]  # 子电路文件列表
-    parameters: List[str]  # 参数文件列表
-    dependency_graph: Dict[str, List[str]]  # 依赖关系图
 
 
 # ============================================================
@@ -225,48 +173,6 @@ class CircuitAnalyzer:
         
         return circuit_files
     
-    def scan_simulatable_files(self, project_path: str) -> ScanResult:
-        """
-        扫描项目目录中的可仿真文件
-        
-        返回扫描结果，包含文件列表、主电路候选和依赖关系图。
-        
-        Args:
-            project_path: 项目根目录路径
-            
-        Returns:
-            ScanResult: 扫描结果数据结构
-        """
-        project_root = Path(project_path).resolve()
-        
-        # 扫描所有电路文件
-        circuit_files = self.scan_circuit_files(project_path)
-        
-        if not circuit_files:
-            return ScanResult()
-        
-        # 构建依赖关系图
-        dep_graph = self.build_dependency_graph(project_path)
-        
-        # 检测主电路
-        detection_result = self.detect_main_circuit(project_path)
-        
-        # 构建文件路径列表
-        files = [Path(f.path) for f in circuit_files]
-        
-        # 构建主电路候选列表
-        candidates = []
-        if detection_result.main_circuit:
-            candidates.append(Path(detection_result.main_circuit))
-        for candidate in detection_result.candidates:
-            candidates.append(Path(candidate["path"]))
-        
-        return ScanResult(
-            files=files,
-            main_circuit_candidates=candidates,
-            dependency_graph=dep_graph,
-        )
-    
     def parse_includes(self, file_path: str) -> List[ParsedInclude]:
         """
         解析文件中的 .include 和 .lib 语句
@@ -321,101 +227,6 @@ class CircuitAnalyzer:
             dep_graph[file_info.path] = referenced_files
         
         return dep_graph
-    
-    def detect_main_circuit(self, project_path: str) -> MainCircuitDetectionResult:
-        """
-        自动检测主电路文件
-        
-        使用被引用分析法：
-        1. 扫描所有电路文件
-        2. 构建引用关系图
-        3. 计算每个文件的被引用次数
-        4. 被引用次数为 0 且包含仿真控制语句的文件为主电路候选
-        5. 按优先级规则排序候选文件
-        
-        Args:
-            project_path: 项目根目录路径
-            
-        Returns:
-            MainCircuitDetectionResult: 检测结果
-        """
-        project_root = Path(project_path).resolve()
-        
-        # 扫描所有电路文件
-        circuit_files = self.scan_circuit_files(project_path)
-        
-        if not circuit_files:
-            return MainCircuitDetectionResult(
-                main_circuit=None,
-                confidence=0.0,
-                candidates=[],
-                subcircuits=[],
-                parameters=[],
-                dependency_graph={},
-            )
-        
-        # 构建依赖关系图
-        dep_graph = self.build_dependency_graph(project_path)
-        
-        # 计算被引用次数
-        referenced_count = {}
-        for file_path in dep_graph:
-            referenced_count[file_path] = 0
-        
-        for file_path, refs in dep_graph.items():
-            for ref in refs:
-                if ref in referenced_count:
-                    referenced_count[ref] += 1
-        
-        # 找出主电路候选（被引用次数为 0 且包含仿真控制语句）
-        candidates = []
-        subcircuits = []
-        parameters = []
-        
-        for file_info in circuit_files:
-            ref_count = referenced_count.get(file_info.path, 0)
-            
-            # 分类文件
-            if file_info.has_only_params:
-                parameters.append(file_info.path)
-            elif file_info.has_subcircuit_defs and not file_info.has_simulation_commands:
-                subcircuits.append(file_info.path)
-            elif ref_count == 0 and file_info.has_simulation_commands:
-                # 主电路候选
-                priority = self._calculate_priority(file_info, project_root)
-                candidates.append({
-                    "path": file_info.path,
-                    "priority": priority,
-                    "size": file_info.size_bytes,
-                    "modified_time": file_info.modified_time,
-                })
-        
-        # 按优先级排序候选文件
-        candidates.sort(key=lambda x: x["priority"], reverse=True)
-        
-        # 确定主电路和置信度
-        if not candidates:
-            main_circuit = None
-            confidence = 0.0
-        elif len(candidates) == 1:
-            main_circuit = candidates[0]["path"]
-            confidence = 1.0
-        else:
-            # 多个候选，选择优先级最高的
-            main_circuit = candidates[0]["path"]
-            # 置信度基于优先级差距
-            top_priority = candidates[0]["priority"]
-            second_priority = candidates[1]["priority"] if len(candidates) > 1 else 0
-            confidence = min(1.0, top_priority / (second_priority + 1))
-        
-        return MainCircuitDetectionResult(
-            main_circuit=main_circuit,
-            confidence=confidence,
-            candidates=candidates[1:] if len(candidates) > 1 else [],
-            subcircuits=subcircuits,
-            parameters=parameters,
-            dependency_graph=dep_graph,
-        )
     
     def get_circuit_type(self, file_path: str) -> str:
         """
@@ -636,50 +447,6 @@ class CircuitAnalyzer:
         
         return "unknown"
     
-    def _calculate_priority(self, file_info: CircuitFileInfo, project_root: Path) -> float:
-        """
-        计算主电路候选的优先级
-        
-        优先级规则：
-        1. 名为 main.cir 的文件优先级最高（+100）
-        2. 包含仿真控制语句（+50）
-        3. 文件大小较大（+0-20，按比例）
-        4. 最近修改时间较新（+0-10，按比例）
-        
-        Args:
-            file_info: 文件信息
-            project_root: 项目根目录
-            
-        Returns:
-            float: 优先级分数
-        """
-        priority = 0.0
-        
-        # 文件名优先级
-        if file_info.abs_path.name.lower() == "main.cir":
-            priority += 100.0
-        
-        # 仿真控制语句
-        if file_info.has_simulation_commands:
-            priority += 50.0
-        
-        # 文件大小（归一化到 0-20）
-        # 假设 10KB 以上的文件为大文件
-        size_score = min(20.0, (file_info.size_bytes / 10240) * 20)
-        priority += size_score
-        
-        # 修改时间（归一化到 0-10）
-        # 最近 7 天内修改的文件优先级更高
-        import time
-        current_time = time.time()
-        age_days = (current_time - file_info.modified_time) / 86400
-        if age_days < 7:
-            time_score = 10.0 * (1 - age_days / 7)
-            priority += time_score
-        
-        return priority
-
-
 # ============================================================
 # 模块导出
 # ============================================================
@@ -687,6 +454,4 @@ class CircuitAnalyzer:
 __all__ = [
     "CircuitAnalyzer",
     "CircuitFileInfo",
-    "MainCircuitDetectionResult",
-    "ScanResult",
 ]

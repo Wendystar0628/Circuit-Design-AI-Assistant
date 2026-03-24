@@ -137,12 +137,9 @@ class ToolbarManager:
         # - 工作流锁定时（workflow_locked = True）两个运行按钮均禁用
         # ============================================================
         
-        # [▶ 自动运行] 按钮（阶段四实现中）
-        # 点击时调用 simulation_service.run_with_auto_detect()
-        # - 使用被引用分析法扫描项目中的可仿真文件
-        # - 检测到唯一主电路时，直接启动仿真
-        # - 检测到多个主电路时，自动弹出选择对话框让用户选择
-        # - 适用场景：常规仿真运行，自动模式工作流中使用此方式
+        # [▶ 运行仿真] 按钮
+        # 点击时对当前编辑器打开的电路文件执行仿真
+        # - 若编辑器未打开文件或当前文件非电路文件，提示用户切换
         self._actions["toolbar_run_auto"] = QAction(self._main_window)
         self._actions["toolbar_run_auto"].setIcon(self._load_icon("play"))
         # 保持启用状态以响应悬停和点击，点击时显示提示

@@ -128,13 +128,116 @@ class ZhipuStreamHandler:
             state.reasoning_buffer += chunk.reasoning_content
             state.total_reasoning_length += len(chunk.reasoning_content)
         
+        # 累积工具调用增量
+        # _delta_tool_calls 是 ZhipuResponseParser 暂存的原始增量数据
+        delta_tool_calls = getattr(chunk, '_delta_tool_calls', None)
+        if delta_tool_calls:
+            self._accumulate_tool_calls(delta_tool_calls, state)
+        
         if chunk.is_finished:
             state.is_finished = True
+            state.finish_reason = chunk.finish_reason
+            
+            # 如果 finish_reason 为 "tool_calls"，将累积完成的工具调用附加到此 chunk
+            if chunk.finish_reason == "tool_calls" and state.tool_calls:
+                chunk.tool_calls = self._finalize_tool_calls(state)
         
         if chunk.usage:
             state.usage = chunk.usage
         
         return chunk
+    
+    def _accumulate_tool_calls(
+        self,
+        delta_tool_calls: List[Dict[str, Any]],
+        state: StreamState
+    ) -> None:
+        """
+        累积流式工具调用增量数据
+        
+        智谱 API / OpenAI 流式工具调用格式：
+        - delta.tool_calls 数组中每个元素包含 index（标识第几个并行调用）
+        - 首次出现某 index 时携带 id 和 function.name
+        - 后续 chunk 携带 function.arguments 增量字符串片段
+        - 需要按 index 累积，跨 chunk 拼接 arguments
+        
+        Args:
+            delta_tool_calls: 本次 chunk 中的工具调用增量数组
+            state: 流式状态
+        """
+        for delta_tc in delta_tool_calls:
+            index = delta_tc.get("index", 0)
+            
+            # 确保 state.tool_calls 列表有足够的槽位
+            while len(state.tool_calls) <= index:
+                state.tool_calls.append({
+                    "id": "",
+                    "type": "function",
+                    "function": {
+                        "name": "",
+                        "arguments": ""
+                    }
+                })
+            
+            tc = state.tool_calls[index]
+            
+            # 累积 id（首个 chunk 携带）
+            if delta_tc.get("id"):
+                tc["id"] = delta_tc["id"]
+            
+            # 累积 type
+            if delta_tc.get("type"):
+                tc["type"] = delta_tc["type"]
+            
+            # 累积 function 信息
+            delta_func = delta_tc.get("function", {})
+            if delta_func.get("name"):
+                tc["function"]["name"] = delta_func["name"]
+            if delta_func.get("arguments"):
+                tc["function"]["arguments"] += delta_func["arguments"]
+    
+    def _finalize_tool_calls(
+        self,
+        state: StreamState
+    ) -> List[Dict[str, Any]]:
+        """
+        最终化累积的工具调用，解析 arguments JSON 字符串
+        
+        Args:
+            state: 流式状态
+            
+        Returns:
+            完整的工具调用列表，arguments 已从字符串解析为字典
+        """
+        import json
+        
+        finalized = []
+        for tc in state.tool_calls:
+            finalized_tc = {
+                "id": tc["id"],
+                "type": tc["type"],
+                "function": {
+                    "name": tc["function"]["name"],
+                    "arguments": tc["function"]["arguments"]
+                }
+            }
+            
+            # 尝试将 arguments 字符串解析为字典
+            args_str = tc["function"]["arguments"]
+            if args_str:
+                try:
+                    finalized_tc["function"]["arguments"] = json.loads(args_str)
+                except json.JSONDecodeError:
+                    self._logger.warning(
+                        f"Failed to parse tool call arguments for "
+                        f"{tc['function']['name']}: {args_str[:100]}"
+                    )
+                    # 保留原始字符串，让上层处理
+                    finalized_tc["function"]["arguments"] = args_str
+            
+            finalized.append(finalized_tc)
+        
+        return finalized
     
     def create_stream_iterator(
         self,
@@ -248,7 +351,7 @@ class ZhipuStreamHandler:
 
 async def collect_stream(
     stream: AsyncIterator[StreamChunk]
-) -> tuple[str, str, Optional[Dict[str, int]]]:
+) -> tuple[str, str, Optional[Dict[str, int]], Optional[List[Dict[str, Any]]], Optional[str]]:
     """
     收集流式输出的完整内容
     
@@ -256,11 +359,15 @@ async def collect_stream(
         stream: StreamChunk 异步迭代器
         
     Returns:
-        (content, reasoning_content, usage) 元组
+        (content, reasoning_content, usage, tool_calls, finish_reason) 元组
+        - tool_calls: 累积完成的工具调用列表，无工具调用时为 None
+        - finish_reason: 完成原因（"stop" | "tool_calls" 等）
     """
     content_parts = []
     reasoning_parts = []
     usage = None
+    tool_calls = None
+    finish_reason = None
     
     async for chunk in stream:
         if chunk.content:
@@ -269,8 +376,12 @@ async def collect_stream(
             reasoning_parts.append(chunk.reasoning_content)
         if chunk.usage:
             usage = chunk.usage
+        if chunk.tool_calls:
+            tool_calls = chunk.tool_calls
+        if chunk.finish_reason:
+            finish_reason = chunk.finish_reason
     
-    return "".join(content_parts), "".join(reasoning_parts), usage
+    return "".join(content_parts), "".join(reasoning_parts), usage, tool_calls, finish_reason
 
 
 # ============================================================

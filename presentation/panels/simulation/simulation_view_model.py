@@ -745,7 +745,7 @@ class SimulationViewModel(BaseViewModel):
         请求执行仿真
         
         Args:
-            file_path: 电路文件路径（可选，None 时自动检测）
+            file_path: 电路文件路径
             project_root: 项目根目录
             analysis_config: 仿真配置
         """
@@ -753,6 +753,13 @@ class SimulationViewModel(BaseViewModel):
             self._logger.error("SimulationService not available")
             self._set_status(SimulationStatus.ERROR)
             self._error_message = "仿真服务不可用"
+            self.notify_property_changed("error_message", self._error_message)
+            return
+        
+        if not file_path or not project_root:
+            self._logger.error("file_path and project_root are required")
+            self._set_status(SimulationStatus.ERROR)
+            self._error_message = "未指定电路文件或项目路径"
             self.notify_property_changed("error_message", self._error_message)
             return
         
@@ -768,23 +775,11 @@ class SimulationViewModel(BaseViewModel):
         })
         
         try:
-            if file_path and project_root:
-                result = self.simulation_service.run_simulation(
-                    file_path=file_path,
-                    analysis_config=analysis_config,
-                    project_root=project_root,
-                )
-            elif project_root:
-                result = self.simulation_service.run_with_auto_detect(
-                    project_path=project_root,
-                    analysis_config=analysis_config,
-                )
-            else:
-                self._logger.error("No project root specified")
-                self._set_status(SimulationStatus.ERROR)
-                self._error_message = "未指定项目路径"
-                self.notify_property_changed("error_message", self._error_message)
-                return
+            result = self.simulation_service.run_simulation(
+                file_path=file_path,
+                analysis_config=analysis_config,
+                project_root=project_root,
+            )
             
             # 加载结果
             self.load_result(result)

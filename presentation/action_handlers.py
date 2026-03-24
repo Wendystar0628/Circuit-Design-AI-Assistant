@@ -604,8 +604,11 @@ class ActionHandlers:
             f"{error_type}\n{error_message}"
         )
 
+    # 支持仿真的电路文件扩展名
+    CIRCUIT_EXTENSIONS = {'.cir', '.sp', '.spice', '.net', '.ckt'}
+
     def on_run_auto_simulation(self):
-        """自动检测并运行仿真"""
+        """对当前编辑器打开的电路文件运行仿真"""
         # 检查是否已打开项目
         project_root = self._get_project_root()
         if not project_root:
@@ -626,16 +629,44 @@ class ActionHandlers:
             )
             return
         
-        # 启动自动检测仿真
-        if task.run_auto_detect(project_root):
+        # 从编辑器获取当前活动文件
+        file_path = self._get_active_editor_file()
+        if not file_path:
+            QMessageBox.warning(
+                self._main_window,
+                self._get_text("dialog.warning.title", "Warning"),
+                "请先在编辑器中打开一个电路文件（.cir / .sp / .spice / .net / .ckt）"
+            )
+            return
+        
+        # 检查是否为电路文件
+        ext = os.path.splitext(file_path)[1].lower()
+        if ext not in self.CIRCUIT_EXTENSIONS:
+            QMessageBox.warning(
+                self._main_window,
+                self._get_text("dialog.warning.title", "Warning"),
+                f"当前文件不是电路文件：{os.path.basename(file_path)}\n"
+                f"请切换到电路文件（.cir / .sp / .spice / .net / .ckt）后再运行仿真"
+            )
+            return
+        
+        # 启动仿真
+        if task.run_file(file_path, project_root):
             if self.logger:
-                self.logger.info(f"启动自动检测仿真: {project_root}")
+                self.logger.info(f"启动仿真: {file_path}")
         else:
             QMessageBox.warning(
                 self._main_window,
                 self._get_text("dialog.warning.title", "Warning"),
                 self._get_text("simulation.start_failed", "无法启动仿真任务")
             )
+
+    def _get_active_editor_file(self) -> Optional[str]:
+        """获取当前编辑器活动文件路径"""
+        editor_panel = self._panels.get("code_editor")
+        if editor_panel and hasattr(editor_panel, 'get_current_file'):
+            return editor_panel.get_current_file()
+        return None
 
     def on_run_select_simulation(self):
         """手动选择文件并运行仿真"""

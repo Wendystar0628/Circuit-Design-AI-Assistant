@@ -338,6 +338,81 @@ class WaveformDataService:
             return []
         return result.data.get_signal_names()
     
+    def get_classified_signals(self, result: SimulationResult) -> Dict[str, List[str]]:
+        """
+        获取分类后的信号列表
+        
+        将信号按类型分组，优先使用 SimulationData.signal_types 中的类型信息，
+        回退时通过信号名称前缀推断。
+        
+        Args:
+            result: 仿真结果对象
+            
+        Returns:
+            Dict[str, List[str]]: {"电压": [...], "电流": [...], "其他": [...]}
+        """
+        classified: Dict[str, List[str]] = {
+            "voltage": [],
+            "current": [],
+            "other": [],
+        }
+        
+        if not result.success or result.data is None:
+            return classified
+        
+        signal_types = getattr(result.data, 'signal_types', {})
+        
+        for name in result.data.get_signal_names():
+            sig_type = self.get_signal_type(name, signal_types)
+            classified[sig_type].append(name)
+        
+        return classified
+    
+    @staticmethod
+    def get_signal_type(
+        name: str,
+        signal_types: Optional[Dict[str, str]] = None,
+    ) -> str:
+        """
+        判断单个信号的类型
+        
+        优先使用 signal_types 字典，回退时根据名称前缀推断。
+        
+        Args:
+            name: 信号名称
+            signal_types: 信号类型字典（可选）
+            
+        Returns:
+            str: "voltage" / "current" / "other"
+        """
+        if signal_types and name in signal_types:
+            return signal_types[name]
+        
+        upper = name.upper()
+        if upper.startswith('V(') or upper.endswith(('_MAG', '_PHASE', '_REAL', '_IMAG')):
+            base = name.rsplit('_', 1)[0] if '_' in name else name
+            if signal_types and base in signal_types:
+                return signal_types[base]
+            if base.upper().startswith('V('):
+                return "voltage"
+            if base.upper().startswith('I('):
+                return "current"
+        if upper.startswith('I('):
+            return "current"
+        if upper.startswith('V('):
+            return "voltage"
+        return "other"
+    
+    @staticmethod
+    def is_voltage_signal(name: str, signal_types: Optional[Dict[str, str]] = None) -> bool:
+        """判断是否为电压信号"""
+        return WaveformDataService.get_signal_type(name, signal_types) == "voltage"
+    
+    @staticmethod
+    def is_current_signal(name: str, signal_types: Optional[Dict[str, str]] = None) -> bool:
+        """判断是否为电流信号"""
+        return WaveformDataService.get_signal_type(name, signal_types) == "current"
+    
     def get_x_axis_label(self, result: SimulationResult) -> str:
         """
         获取 X 轴标签

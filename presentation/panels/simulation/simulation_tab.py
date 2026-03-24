@@ -75,6 +75,7 @@ from shared.event_types import (
     EVENT_ITERATION_USER_CONFIRMED,
     EVENT_SIM_RESULT_FILE_CREATED,
     EVENT_SESSION_CHANGED,
+    EVENT_CHART_SELECTION_CHANGED,
 )
 
 
@@ -1280,6 +1281,7 @@ class SimulationTab(QWidget):
             (EVENT_ITERATION_USER_CONFIRMED, self._on_user_confirmed),
             (EVENT_SIM_RESULT_FILE_CREATED, self._on_sim_result_file_created),
             (EVENT_SESSION_CHANGED, self._on_session_changed),
+            (EVENT_CHART_SELECTION_CHANGED, self._on_chart_selection_changed),
         ]
         
         for event_type, handler in subscriptions:
@@ -1461,6 +1463,26 @@ class SimulationTab(QWidget):
         if self._project_root and sim_result_path:
             self._load_from_path(sim_result_path)
     
+    def _on_chart_selection_changed(self, event_data: dict):
+        """
+        处理图表选择变更事件
+        
+        当用户在仿真设置对话框中变更图表选择后，
+        根据当前已加载的仿真结果重新生成图表。
+        
+        Args:
+            event_data: 事件数据，包含 enabled_charts, source 等
+        """
+        data = event_data.get("data", event_data)
+        source = data.get("source", "")
+        self._logger.debug(f"Chart selection changed (source={source})")
+        
+        # 获取当前已加载的仿真结果
+        current_result = self._view_model.current_result
+        
+        if current_result is not None:
+            self._generate_and_load_charts(current_result)
+    
     def _load_from_path(self, sim_result_path: str):
         """
         从路径加载仿真结果
@@ -1628,6 +1650,8 @@ class SimulationTab(QWidget):
         """
         加载波形数据到各组件
         
+        默认选择第一个电压信号显示；若无电压信号则选第一个可用信号。
+        
         Args:
             result: SimulationResult 对象
         """
@@ -1641,9 +1665,26 @@ class SimulationTab(QWidget):
         
         signal_names = data.get_signal_names() if hasattr(data, 'get_signal_names') else []
         
-        # 加载第一个信号到波形查看器
+        # 选择默认信号：优先电压信号
+        default_signal = None
         if signal_names:
-            self._chart_viewer_panel.waveform_widget.load_waveform(result, signal_names[0])
+            try:
+                from domain.simulation.data.waveform_data_service import waveform_data_service
+                classified = waveform_data_service.get_classified_signals(result)
+                voltage_signals = classified.get("voltage", [])
+                if voltage_signals:
+                    default_signal = voltage_signals[0]
+                else:
+                    default_signal = signal_names[0]
+            except Exception:
+                default_signal = signal_names[0]
+        
+        # 加载到波形查看器
+        if default_signal:
+            self._chart_viewer_panel.waveform_widget.load_waveform(result, default_signal)
+        
+        # 生成图表并加载到图表查看器
+        self._generate_and_load_charts(result)
         
         # 加载原始数据表格
         self._chart_viewer_panel.raw_data_table.load_data(result)
@@ -1652,6 +1693,45 @@ class SimulationTab(QWidget):
         raw_output = getattr(result, 'raw_output', None)
         if raw_output:
             self._chart_viewer_panel.output_log_viewer.load_log_from_text(raw_output)
+    
+    def _generate_and_load_charts(self, result):
+        """
+        根据仿真结果和用户图表选择生成图表，并加载到 ChartViewer
+        
+        流程：
+        1. 从 ChartSelector 获取用户启用的图表类型
+        2. ChartGeneratorService 根据 analysis_type 判断适用的图表
+        3. 取交集后批量生成 matplotlib 图表
+        4. 将生成的图表路径传给 ChartViewer 显示
+        
+        Args:
+            result: SimulationResult 对象
+        """
+        if result is None or result.data is None:
+            return
+        
+        try:
+            from domain.simulation.data.chart_generator import chart_generator
+            from domain.simulation.service.chart_selector import chart_selector, ChartType
+            
+            # 获取用户启用的图表类型
+            enabled_selections = chart_selector.get_selected_charts()
+            enabled_types = [s.chart_type for s in enabled_selections]
+            
+            # 批量生成（只生成适用且启用的图表）
+            chart_paths = chart_generator.generate_for_result(result, enabled_types)
+            
+            if chart_paths:
+                self._chart_viewer_panel.load_charts(chart_paths)
+                self._logger.info(
+                    f"Loaded {len(chart_paths)} charts: "
+                    f"{', '.join(chart_paths.keys())}"
+                )
+            else:
+                self._logger.debug("No applicable charts generated")
+                
+        except Exception as e:
+            self._logger.warning(f"Chart generation failed: {e}")
     
     def update_metrics(self, metrics_list: List[DisplayMetric]):
         """

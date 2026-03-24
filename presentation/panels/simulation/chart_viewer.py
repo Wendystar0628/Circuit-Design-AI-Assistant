@@ -43,7 +43,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
-from PyQt6.QtCore import Qt, QPoint, QSize, pyqtSignal
+from PyQt6.QtCore import Qt, QPoint, QPointF, QRectF, QSize, pyqtSignal
 from PyQt6.QtGui import (
     QAction,
     QClipboard,
@@ -62,7 +62,6 @@ from PyQt6.QtWidgets import (
     QTabBar,
     QToolBar,
     QToolButton,
-    QScrollArea,
     QFrame,
     QMenu,
     QFileDialog,
@@ -98,8 +97,8 @@ ZOOM_MAX = 10.0
 ZOOM_STEP = 0.1
 ZOOM_WHEEL_FACTOR = 0.001
 
-# 图表背景色（深色，便于查看图表）
-CHART_BG_COLOR = "#2d2d2d"
+# 图表背景色（白色，与 matplotlib 白色主题图表一致）
+CHART_BG_COLOR = "#ffffff"
 
 # 测量信息栏高度
 MEASUREMENT_BAR_HEIGHT = 60
@@ -145,13 +144,13 @@ class MeasurementResult:
         return self.cursor1 is not None and self.cursor2 is not None
 
 
-class ZoomableImageLabel(QLabel):
+class ZoomableImageLabel(QWidget):
     """
-    可缩放的图片标签
+    可缩放可拖拽的图表显示组件
     
-    支持：
-    - 鼠标滚轮缩放
-    - 拖拽平移
+    使用 QPainter 在 paintEvent 中直接绘制，确保：
+    - 缩放后依然清晰（GPU 加速高质量缩放）
+    - 拖拽平移流畅（不依赖 ScrollArea 滚动条）
     - 双击重置视图
     - 光标位置追踪（供测量工具使用）
     """
@@ -166,16 +165,16 @@ class ZoomableImageLabel(QLabel):
         self._original_pixmap: Optional[QPixmap] = None
         self._zoom_level: float = 1.0
         self._pan_start: Optional[QPoint] = None
-        self._pan_offset: QPoint = QPoint(0, 0)
+        self._pan_offset: QPointF = QPointF(0.0, 0.0)
         self._measurement_mode: MeasurementMode = MeasurementMode.NONE
         
-        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setMinimumSize(100, 100)
         self.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Expanding
         )
         self.setMouseTracking(True)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
     
     def set_measurement_mode(self, mode: MeasurementMode):
         """设置测量模式"""
@@ -183,41 +182,43 @@ class ZoomableImageLabel(QLabel):
         if mode != MeasurementMode.NONE:
             self.setCursor(Qt.CursorShape.CrossCursor)
         else:
-            self.setCursor(Qt.CursorShape.ArrowCursor)
+            self.setCursor(Qt.CursorShape.OpenHandCursor
+                           if self._original_pixmap else Qt.CursorShape.ArrowCursor)
     
     def get_measurement_mode(self) -> MeasurementMode:
         """获取当前测量模式"""
         return self._measurement_mode
     
     def _screen_to_image_coords(self, pos: QPoint) -> Tuple[float, float]:
-        """将屏幕坐标转换为图片坐标"""
+        """将屏幕坐标转换为原始图片坐标"""
         if self._original_pixmap is None:
             return (0.0, 0.0)
         
-        # 获取当前显示的 pixmap
-        current_pixmap = self.pixmap()
-        if current_pixmap is None or current_pixmap.isNull():
-            return (0.0, 0.0)
+        pw = self._original_pixmap.width() * self._zoom_level
+        ph = self._original_pixmap.height() * self._zoom_level
         
-        # 计算图片在 label 中的偏移（居中显示）
-        label_size = self.size()
-        pixmap_size = current_pixmap.size()
+        x0 = (self.width() - pw) / 2 + self._pan_offset.x()
+        y0 = (self.height() - ph) / 2 + self._pan_offset.y()
         
-        offset_x = (label_size.width() - pixmap_size.width()) / 2
-        offset_y = (label_size.height() - pixmap_size.height()) / 2
-        
-        # 转换到图片坐标
-        img_x = (pos.x() - offset_x) / self._zoom_level
-        img_y = (pos.y() - offset_y) / self._zoom_level
+        img_x = (pos.x() - x0) / self._zoom_level
+        img_y = (pos.y() - y0) / self._zoom_level
         
         return (img_x, img_y)
     
     def set_pixmap(self, pixmap: Optional[QPixmap]):
-        """设置图片"""
+        """设置图片并自动适应视图"""
         self._original_pixmap = pixmap
-        self._zoom_level = 1.0
-        self._pan_offset = QPoint(0, 0)
-        self._update_display()
+        self._pan_offset = QPointF(0.0, 0.0)
+        if pixmap is not None and not pixmap.isNull():
+            # 自动 fit-to-view
+            self._auto_fit()
+        else:
+            self._zoom_level = 1.0
+        self.update()
+    
+    def get_original_pixmap(self) -> Optional[QPixmap]:
+        """获取原始 pixmap（供导出/复制使用）"""
+        return self._original_pixmap
     
     def get_zoom_level(self) -> float:
         """获取当前缩放级别"""
@@ -226,7 +227,7 @@ class ZoomableImageLabel(QLabel):
     def set_zoom_level(self, level: float):
         """设置缩放级别"""
         self._zoom_level = max(ZOOM_MIN, min(ZOOM_MAX, level))
-        self._update_display()
+        self.update()
         self.zoom_changed.emit(self._zoom_level)
     
     def zoom_in(self):
@@ -238,55 +239,125 @@ class ZoomableImageLabel(QLabel):
         self.set_zoom_level(self._zoom_level - ZOOM_STEP)
     
     def reset_view(self):
-        """重置视图"""
-        self._zoom_level = 1.0
-        self._pan_offset = QPoint(0, 0)
-        self._update_display()
+        """重置视图（自动适应）"""
+        self._pan_offset = QPointF(0.0, 0.0)
+        self._auto_fit()
+        self.update()
         self.zoom_changed.emit(self._zoom_level)
     
     def fit_to_view(self):
         """适应视图大小"""
-        if self._original_pixmap is None:
-            return
-        
-        view_size = self.size()
-        img_size = self._original_pixmap.size()
-        
-        if img_size.width() == 0 or img_size.height() == 0:
-            return
-        
-        scale_x = view_size.width() / img_size.width()
-        scale_y = view_size.height() / img_size.height()
-        
-        self._zoom_level = min(scale_x, scale_y) * 0.95
-        self._pan_offset = QPoint(0, 0)
-        self._update_display()
+        self._pan_offset = QPointF(0.0, 0.0)
+        self._auto_fit()
+        self.update()
         self.zoom_changed.emit(self._zoom_level)
     
-    def _update_display(self):
-        """更新显示"""
-        if self._original_pixmap is None:
-            self.clear()
+    def _auto_fit(self):
+        """计算适应视图的缩放级别"""
+        if self._original_pixmap is None or self._original_pixmap.isNull():
+            self._zoom_level = 1.0
             return
         
-        original_size = self._original_pixmap.size()
-        scaled_width = int(original_size.width() * self._zoom_level)
-        scaled_height = int(original_size.height() * self._zoom_level)
-        scaled_size = QSize(scaled_width, scaled_height)
+        img_w = self._original_pixmap.width()
+        img_h = self._original_pixmap.height()
+        if img_w == 0 or img_h == 0:
+            self._zoom_level = 1.0
+            return
         
-        scaled_pixmap = self._original_pixmap.scaled(
-            scaled_size,
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation
-        )
+        view_w = max(self.width(), 100)
+        view_h = max(self.height(), 100)
         
-        super().setPixmap(scaled_pixmap)
+        scale_x = view_w / img_w
+        scale_y = view_h / img_h
+        self._zoom_level = min(scale_x, scale_y) * 0.95
+    
+    # ============================================================
+    # 绘制（核心：使用 QPainter 高质量渲染）
+    # ============================================================
+    
+    def paintEvent(self, event):
+        """使用 QPainter 高质量绘制缩放+平移后的图片"""
+        super().paintEvent(event)
+        
+        if self._original_pixmap is None or self._original_pixmap.isNull():
+            return
+        
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        
+        # 缩放后的图片尺寸
+        pw = self._original_pixmap.width() * self._zoom_level
+        ph = self._original_pixmap.height() * self._zoom_level
+        
+        # 居中 + 平移偏移
+        x = (self.width() - pw) / 2 + self._pan_offset.x()
+        y = (self.height() - ph) / 2 + self._pan_offset.y()
+        
+        target = QRectF(x, y, pw, ph)
+        source = QRectF(0, 0,
+                        self._original_pixmap.width(),
+                        self._original_pixmap.height())
+        
+        painter.drawPixmap(target, self._original_pixmap, source)
+        painter.end()
+    
+    def resizeEvent(self, event):
+        """窗口大小变化时自动重新适应"""
+        super().resizeEvent(event)
+        if self._original_pixmap is not None and self._pan_offset == QPointF(0.0, 0.0):
+            self._auto_fit()
+            self.update()
+    
+    # ============================================================
+    # 鼠标事件
+    # ============================================================
     
     def wheelEvent(self, event: QWheelEvent):
-        """鼠标滚轮缩放"""
+        """鼠标滚轮缩放（以鼠标位置为中心）"""
+        if self._original_pixmap is None:
+            return
+        
+        old_zoom = self._zoom_level
         delta = event.angleDelta().y()
         zoom_delta = delta * ZOOM_WHEEL_FACTOR
-        self.set_zoom_level(self._zoom_level + zoom_delta)
+        new_zoom = max(ZOOM_MIN, min(ZOOM_MAX, self._zoom_level + zoom_delta))
+        
+        if new_zoom == old_zoom:
+            event.accept()
+            return
+        
+        # 以鼠标位置为中心缩放
+        mouse_pos = event.position()
+        # 鼠标相对于图片中心的偏移
+        pw_old = self._original_pixmap.width() * old_zoom
+        ph_old = self._original_pixmap.height() * old_zoom
+        cx_old = (self.width() - pw_old) / 2 + self._pan_offset.x()
+        cy_old = (self.height() - ph_old) / 2 + self._pan_offset.y()
+        
+        # 鼠标在旧图片上的相对位置
+        rel_x = (mouse_pos.x() - cx_old) / old_zoom
+        rel_y = (mouse_pos.y() - cy_old) / old_zoom
+        
+        self._zoom_level = new_zoom
+        
+        # 新图片中同一点的屏幕位置
+        pw_new = self._original_pixmap.width() * new_zoom
+        ph_new = self._original_pixmap.height() * new_zoom
+        cx_new = (self.width() - pw_new) / 2 + self._pan_offset.x()
+        cy_new = (self.height() - ph_new) / 2 + self._pan_offset.y()
+        
+        new_screen_x = cx_new + rel_x * new_zoom
+        new_screen_y = cy_new + rel_y * new_zoom
+        
+        # 调整 pan_offset 使鼠标位置保持不变
+        self._pan_offset += QPointF(
+            mouse_pos.x() - new_screen_x,
+            mouse_pos.y() - new_screen_y
+        )
+        
+        self.update()
+        self.zoom_changed.emit(self._zoom_level)
         event.accept()
     
     def mousePressEvent(self, event: QMouseEvent):
@@ -311,13 +382,8 @@ class ZoomableImageLabel(QLabel):
         if self._pan_start is not None:
             delta = event.pos() - self._pan_start
             self._pan_start = event.pos()
-            # 简化实现：通过滚动区域实现平移
-            parent = self.parent()
-            if isinstance(parent, QScrollArea):
-                h_bar = parent.horizontalScrollBar()
-                v_bar = parent.verticalScrollBar()
-                h_bar.setValue(h_bar.value() - delta.x())
-                v_bar.setValue(v_bar.value() - delta.y())
+            self._pan_offset += QPointF(delta.x(), delta.y())
+            self.update()
         super().mouseMoveEvent(event)
     
     def mouseReleaseEvent(self, event: QMouseEvent):
@@ -327,7 +393,7 @@ class ZoomableImageLabel(QLabel):
             if self._measurement_mode != MeasurementMode.NONE:
                 self.setCursor(Qt.CursorShape.CrossCursor)
             else:
-                self.setCursor(Qt.CursorShape.ArrowCursor)
+                self.setCursor(Qt.CursorShape.OpenHandCursor)
         super().mouseReleaseEvent(event)
     
     def mouseDoubleClickEvent(self, event: QMouseEvent):
@@ -573,27 +639,14 @@ class ChartViewer(QWidget):
         chart_layout.setContentsMargins(0, 0, 0, 0)
         chart_layout.setSpacing(0)
         
-        # 滚动区域
-        self._scroll_area = QScrollArea()
-        self._scroll_area.setObjectName("chartScrollArea")
-        self._scroll_area.setWidgetResizable(True)
-        self._scroll_area.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAsNeeded
-        )
-        self._scroll_area.setVerticalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAsNeeded
-        )
-        self._scroll_area.setFrameShape(QFrame.Shape.NoFrame)
-        
-        # 图片标签
+        # 图表显示组件（自绘 widget，不依赖 ScrollArea）
         self._image_label = ZoomableImageLabel()
         self._image_label.setObjectName("chartImageLabel")
         self._image_label.zoom_changed.connect(self._on_zoom_changed)
         self._image_label.cursor_clicked.connect(self._on_cursor_clicked)
         self._image_label.cursor_position_changed.connect(self._on_cursor_position_changed)
-        self._scroll_area.setWidget(self._image_label)
         
-        chart_layout.addWidget(self._scroll_area, 1)
+        chart_layout.addWidget(self._image_label, 1)
         
         # 空状态提示
         self._empty_label = QLabel()
@@ -749,11 +802,6 @@ class ChartViewer(QWidget):
             }}
             
             #chartFrame {{
-                background-color: {CHART_BG_COLOR};
-                border: none;
-            }}
-            
-            #chartScrollArea {{
                 background-color: {CHART_BG_COLOR};
                 border: none;
             }}
@@ -946,7 +994,7 @@ class ChartViewer(QWidget):
         Returns:
             bool: 是否成功
         """
-        pixmap = self._image_label.pixmap()
+        pixmap = self._image_label.get_original_pixmap()
         if pixmap is None or pixmap.isNull():
             return False
         
@@ -1247,13 +1295,13 @@ class ChartViewer(QWidget):
     
     def _show_empty_state(self):
         """显示空状态"""
-        self._scroll_area.hide()
+        self._image_label.hide()
         self._empty_label.show()
     
     def _hide_empty_state(self):
         """隐藏空状态"""
         self._empty_label.hide()
-        self._scroll_area.show()
+        self._image_label.show()
     
     def _update_zoom_label(self):
         """更新缩放标签"""

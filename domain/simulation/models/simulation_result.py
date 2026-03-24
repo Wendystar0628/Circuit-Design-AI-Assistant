@@ -76,6 +76,9 @@ class SimulationData:
     signals: Dict[str, np.ndarray] = field(default_factory=dict)
     """信号数据字典，键为信号名称（如 "V(out)"），值为 numpy 数组"""
     
+    signal_types: Dict[str, str] = field(default_factory=dict)
+    """信号类型字典，键为信号名称，值为 voltage / current / other"""
+    
     # ============================================================
     # 序列化方法
     # ============================================================
@@ -94,6 +97,7 @@ class SimulationData:
                 name: self._serialize_array(data)
                 for name, data in self.signals.items()
             },
+            "signal_types": dict(self.signal_types) if self.signal_types else {},
         }
     
     def _serialize_array(self, data: Any) -> Any:
@@ -139,6 +143,7 @@ class SimulationData:
                 name: cls._deserialize_array(signal_data)
                 for name, signal_data in data.get("signals", {}).items()
             },
+            signal_types=data.get("signal_types", {}),
         )
     
     @classmethod

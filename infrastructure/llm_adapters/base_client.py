@@ -100,6 +100,8 @@ class StreamChunk:
     reasoning_content: Optional[str] = None  # 思考增量
     is_finished: bool = False          # 是否结束
     usage: Optional[Dict[str, int]] = None  # token 使用统计（最后一块）
+    tool_calls: Optional[List[Dict[str, Any]]] = None  # 工具调用（流式累积完成后填充）
+    finish_reason: Optional[str] = None  # 完成原因（"stop" | "tool_calls" | None）
 
 
 # ============================================================

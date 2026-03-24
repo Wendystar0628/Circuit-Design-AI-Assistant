@@ -367,6 +367,13 @@ class ZhipuResponseParser:
         content = delta.get("content")
         reasoning_content = delta.get("reasoning_content")
         
+        # 提取工具调用增量（delta.tool_calls）
+        # 智谱 API 流式工具调用格式（与 OpenAI 一致）：
+        # - 每个 chunk 的 delta.tool_calls 是数组，元素含 index 标识第几个并行调用
+        # - 首个含该 index 的 chunk 携带 function.name
+        # - 后续 chunk 携带 function.arguments 增量字符串
+        delta_tool_calls = delta.get("tool_calls")
+        
         # 检查是否结束
         finish_reason = choice.get("finish_reason")
         is_finished = finish_reason is not None
@@ -376,12 +383,21 @@ class ZhipuResponseParser:
         if "usage" in data:
             usage = self._parse_usage(data["usage"])
         
-        return StreamChunk(
+        chunk = StreamChunk(
             content=content,
             reasoning_content=reasoning_content,
             is_finished=is_finished,
-            usage=usage
+            usage=usage,
+            finish_reason=finish_reason,
         )
+        
+        # 将原始 delta_tool_calls 暂存到 chunk 中，供 StreamHandler 累积
+        # 这里不直接设置 chunk.tool_calls（那是累积完成后的完整结果），
+        # 而是通过一个临时属性传递增量数据
+        if delta_tool_calls:
+            chunk._delta_tool_calls = delta_tool_calls
+        
+        return chunk
     
     # ============================================================
     # 错误处理

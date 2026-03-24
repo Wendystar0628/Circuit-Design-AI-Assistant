@@ -388,6 +388,16 @@ class SpiceExecutor(SimulationExecutor):
         # 注入分析命令到网表
         modified_netlist = self._inject_analysis_command(netlist_content, analysis_command)
         
+        # 注入仿真选项（收敛参数和温度）
+        modified_netlist = self._inject_simulation_options(modified_netlist, analysis_config)
+        
+        # 注入 .MEASURE 语句
+        modified_netlist, measure_errors = self._inject_measures(modified_netlist, analysis_config)
+        if measure_errors:
+            self._logger.warning(
+                f"部分 .MEASURE 语句注入失败 ({len(measure_errors)} 个错误)，仿真继续执行"
+            )
+        
         # 加载网表
         netlist_lines = modified_netlist.splitlines()
         if not self._ngspice.load_netlist(netlist_lines):
@@ -558,7 +568,7 @@ class SpiceExecutor(SimulationExecutor):
         
         for line in lines:
             stripped = line.strip().lower()
-            if stripped.startswith(analysis_type):
+            if stripped == analysis_type or (stripped.startswith(analysis_type) and len(stripped) > len(analysis_type) and stripped[len(analysis_type)] in (' ', '\t')):
                 # 替换现有的分析命令
                 result_lines.append(analysis_command)
                 has_analysis = True
@@ -579,11 +589,105 @@ class SpiceExecutor(SimulationExecutor):
         
         return '\n'.join(result_lines)
 
+    def _inject_simulation_options(
+        self,
+        netlist: str,
+        analysis_config: Optional[Dict[str, Any]]
+    ) -> str:
+        """
+        注入仿真选项（收敛参数、温度）到网表
+        
+        在 .end 之前插入 .options 和 .temp 语句，覆盖网表中已有的同名选项。
+        """
+        if not analysis_config:
+            return netlist
+        
+        inject_lines = []
+        
+        # 收敛参数
+        convergence = analysis_config.get("convergence")
+        if convergence and isinstance(convergence, dict):
+            param_map = {
+                "gmin": "GMIN",
+                "abstol": "ABSTOL",
+                "reltol": "RELTOL",
+                "vntol": "VNTOL",
+                "itl1": "ITL1",
+                "itl4": "ITL4",
+            }
+            options_parts = []
+            for key, spice_key in param_map.items():
+                value = convergence.get(key)
+                if value is not None:
+                    options_parts.append(f"{spice_key}={value}")
+            if options_parts:
+                inject_lines.append(f".options {' '.join(options_parts)}")
+        
+        # 温度
+        temperature = analysis_config.get("temperature")
+        if temperature is not None:
+            inject_lines.append(f".temp {temperature}")
+        
+        if not inject_lines:
+            return netlist
+        
+        # 在 .end 之前注入（使注入的选项覆盖网表中已有的同名选项）
+        lines = netlist.splitlines()
+        result_lines = []
+        injected = False
+        for line in lines:
+            if line.strip().lower() == ".end" and not injected:
+                for inject_line in inject_lines:
+                    result_lines.append(inject_line)
+                injected = True
+            result_lines.append(line)
+        if not injected:
+            for inject_line in inject_lines:
+                result_lines.append(inject_line)
+        
+        return '\n'.join(result_lines)
+    
+    def _inject_measures(
+        self,
+        netlist: str,
+        analysis_config: Optional[Dict[str, Any]]
+    ) -> Tuple[str, list]:
+        """
+        从 analysis_config["measures"] 提取 .MEASURE 语句并注入到网表
+        
+        Args:
+            netlist: 原始网表内容
+            analysis_config: 仿真配置字典，"measures" 键为 .MEASURE 语句列表
+        
+        Returns:
+            Tuple[str, list]: (修改后的网表, 验证错误列表)
+        """
+        if not analysis_config:
+            return netlist, []
+        
+        measures = analysis_config.get("measures")
+        if not measures:
+            return netlist, []
+        
+        try:
+            from domain.simulation.measure.measure_injector import measure_injector
+            modified, errors = measure_injector.inject_measures(netlist, measures)
+            if errors:
+                for err in errors:
+                    self._logger.warning(
+                        f".MEASURE 验证失败 [{err.error_type}]: {err.message} | 语句: {err.statement}"
+                    )
+            return modified, errors
+        except Exception as e:
+            self._logger.warning(f"注入 .MEASURE 语句异常: {e}")
+            return netlist, []
+    
     def _extract_simulation_data(self, analysis_type: str) -> SimulationData:
         """从 ngspice 提取仿真数据"""
         frequency = None
         time_data = None
         signals = {}
+        signal_types = {}
         
         # 获取所有向量
         vectors = self._ngspice.get_all_vectors()
@@ -595,7 +699,10 @@ class SpiceExecutor(SimulationExecutor):
                 continue
             
             # 标准化信号名称（ngspice 返回小写，统一转为大写 V/I 开头）
-            normalized_name = self._normalize_signal_name(vec_name)
+            normalized_name = self._normalize_signal_name(vec_name, vec_info.type)
+            
+            # 确定信号类型标签
+            type_label = self._get_signal_type_label(vec_info.type)
             
             # 根据向量类型处理
             if vec_info.type == VectorType.SV_FREQUENCY:
@@ -616,22 +723,29 @@ class SpiceExecutor(SimulationExecutor):
                     # 复数数据（AC 分析）
                     # 保存原始复数数据，供指标提取器使用
                     signals[normalized_name] = vec_info.cdata
-                    # 同时保存分解后的数据，供 UI 显示使用
+                    signal_types[normalized_name] = type_label
+                    # 同时保存分解后的数据，供 UI 显示使用，继承父信号类型
                     signals[f"{normalized_name}_mag"] = np.abs(vec_info.cdata)
+                    signal_types[f"{normalized_name}_mag"] = type_label
                     signals[f"{normalized_name}_phase"] = np.angle(vec_info.cdata, deg=True)
+                    signal_types[f"{normalized_name}_phase"] = type_label
                     signals[f"{normalized_name}_real"] = np.real(vec_info.cdata)
+                    signal_types[f"{normalized_name}_real"] = type_label
                     signals[f"{normalized_name}_imag"] = np.imag(vec_info.cdata)
+                    signal_types[f"{normalized_name}_imag"] = type_label
                 elif vec_info.data is not None and len(vec_info.data) > 0:
                     # 实数数据
                     signals[normalized_name] = vec_info.data
+                    signal_types[normalized_name] = type_label
         
         return SimulationData(
             frequency=frequency,
             time=time_data,
             signals=signals,
+            signal_types=signal_types,
         )
     
-    def _normalize_signal_name(self, name: str) -> str:
+    def _normalize_signal_name(self, name: str, vec_type: int = 0) -> str:
         """
         标准化信号名称
         
@@ -640,6 +754,7 @@ class SpiceExecutor(SimulationExecutor):
         
         Args:
             name: 原始信号名称
+            vec_type: ngspice 向量类型（VectorType 常量）
             
         Returns:
             str: 标准化后的信号名称
@@ -659,7 +774,22 @@ class SpiceExecutor(SimulationExecutor):
             if parts[0]:
                 return f'I({parts[0].upper()})'
         
+        # 处理裸节点名：根据 ngspice 向量类型添加 V()/I() 前缀
+        if vec_type == VectorType.SV_VOLTAGE and not name.upper().startswith(('V(', 'I(')):
+            return f'V({name})'
+        if vec_type == VectorType.SV_CURRENT and not name.upper().startswith(('V(', 'I(')):
+            return f'I({name})'
+        
         return name
+    
+    def _get_signal_type_label(self, vec_type: int) -> str:
+        """将 ngspice 向量类型映射为可读分类标签"""
+        if vec_type == VectorType.SV_VOLTAGE:
+            return "voltage"
+        elif vec_type == VectorType.SV_CURRENT:
+            return "current"
+        else:
+            return "other"
     
     def _parse_measure_results(self, raw_output: str) -> list:
         """

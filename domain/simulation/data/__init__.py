@@ -48,6 +48,10 @@ from domain.simulation.data.simulation_output_reader import (
     SimulationOutputReader,
     simulation_output_reader,
 )
+from domain.simulation.data.chart_generator import (
+    ChartGeneratorService,
+    chart_generator,
+)
 
 __all__ = [
     # Downsampler
@@ -78,4 +82,7 @@ __all__ = [
     "SimulationSummary",
     "SimulationOutputReader",
     "simulation_output_reader",
+    # Chart Generator
+    "ChartGeneratorService",
+    "chart_generator",
 ]

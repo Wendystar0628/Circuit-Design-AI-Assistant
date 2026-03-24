@@ -33,14 +33,6 @@
         analysis_config={"analysis_type": "ac"}
     )
     
-    # 自动检测主电路并执行仿真
-    result = service.run_with_auto_detect(
-        project_path="/path/to/project",
-        analysis_config={"analysis_type": "ac"}
-    )
-    
-    # 获取可仿真文件列表
-    files = service.get_simulatable_files("/path/to/project")
 """
 
 import json
@@ -52,11 +44,6 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from domain.simulation.executor.executor_registry import ExecutorRegistry, executor_registry
-from domain.simulation.executor.circuit_analyzer import (
-    CircuitAnalyzer,
-    MainCircuitDetectionResult,
-    ScanResult,
-)
 from domain.simulation.models.simulation_result import (
     SimulationResult,
     SimulationData,
@@ -74,9 +61,6 @@ from shared.event_types import (
     EVENT_SIM_COMPLETE,
     EVENT_SIM_PROGRESS,
     EVENT_SIM_ERROR,
-    EVENT_MAIN_CIRCUIT_DETECTED,
-    EVENT_SIMULATION_NEED_SELECTION,
-    EVENT_SIMULATION_NO_MAIN_CIRCUIT,
     EVENT_ANALYSIS_COMPLETE,
     EVENT_ALL_ANALYSES_COMPLETE,
 )
@@ -137,23 +121,19 @@ class SimulationService:
     def __init__(
         self,
         registry: Optional[ExecutorRegistry] = None,
-        analyzer: Optional[CircuitAnalyzer] = None,
     ):
         """
         初始化仿真服务
         
         Args:
             registry: 执行器注册表（可选，默认使用全局单例）
-            analyzer: 电路分析器（可选，默认创建新实例）
         """
         self._logger = logging.getLogger(__name__)
         self._registry = registry or executor_registry
-        self._analyzer = analyzer or CircuitAnalyzer(self._registry)
         
         # 内部状态
         self._is_running = False
         self._last_simulation_file: Optional[Path] = None
-        self._main_circuit_candidates: List[Path] = []
         self._last_progress_time = 0.0
     
     # ============================================================
@@ -260,113 +240,6 @@ class SimulationService:
             
         finally:
             self._is_running = False
-
-    def run_with_auto_detect(
-        self,
-        project_path: str,
-        analysis_config: Optional[Dict[str, Any]] = None,
-        *,
-        version: int = 1,
-        session_id: str = "",
-        on_progress: Optional[Callable[[float, str], None]] = None,
-    ) -> SimulationResult:
-        """
-        自动检测主电路并执行仿真
-        
-        流程：
-        1. 扫描项目目录，检测主电路候选
-        2. 如果只有一个候选，直接执行仿真
-        3. 如果有多个候选，发布 EVENT_SIMULATION_NEED_SELECTION 事件
-        4. 如果没有候选，发布 EVENT_SIMULATION_NO_MAIN_CIRCUIT 事件
-        
-        Args:
-            project_path: 项目根目录路径
-            analysis_config: 仿真配置字典
-            version: 版本号
-            session_id: 会话 ID
-            on_progress: 进度回调函数
-            
-        Returns:
-            SimulationResult: 仿真结果
-        """
-        analysis_type = self._get_analysis_type(analysis_config)
-        
-        # 检测主电路
-        detection_result = self._analyzer.detect_main_circuit(project_path)
-        
-        # 更新候选列表
-        self._main_circuit_candidates = []
-        if detection_result.main_circuit:
-            self._main_circuit_candidates.append(Path(detection_result.main_circuit))
-        for candidate in detection_result.candidates:
-            self._main_circuit_candidates.append(Path(candidate["path"]))
-        
-        # 发布检测完成事件
-        bus = _get_event_bus()
-        if bus:
-            bus.publish(EVENT_MAIN_CIRCUIT_DETECTED, {
-                "candidates": [str(p) for p in self._main_circuit_candidates],
-                "count": len(self._main_circuit_candidates),
-            })
-        
-        # 根据候选数量决定下一步
-        if not self._main_circuit_candidates:
-            # 没有候选
-            bus = _get_event_bus()
-            if bus:
-                bus.publish(EVENT_SIMULATION_NO_MAIN_CIRCUIT, {
-                    "reason": "no_main_circuit",
-                })
-            return create_error_result(
-                executor="unknown",
-                file_path="",
-                analysis_type=analysis_type,
-                error=SimulationError(
-                    code="E012",
-                    type=SimulationErrorType.FILE_ACCESS,
-                    severity=ErrorSeverity.HIGH,
-                    message="未找到主电路文件",
-                    recovery_suggestion="请确保项目中包含带有仿真控制语句的电路文件",
-                ),
-                version=version,
-                session_id=session_id,
-            )
-        
-        if len(self._main_circuit_candidates) > 1:
-            # 多个候选，需要用户选择
-            bus = _get_event_bus()
-            if bus:
-                bus.publish(EVENT_SIMULATION_NEED_SELECTION, {
-                    "candidates": [str(p) for p in self._main_circuit_candidates],
-                    "reason": "multiple_main_circuits",
-                })
-            return create_error_result(
-                executor="unknown",
-                file_path="",
-                analysis_type=analysis_type,
-                error=SimulationError(
-                    code="E013",
-                    type=SimulationErrorType.PARAMETER_INVALID,
-                    severity=ErrorSeverity.MEDIUM,
-                    message=f"检测到 {len(self._main_circuit_candidates)} 个主电路候选，请选择一个",
-                    recovery_suggestion="请从候选列表中选择要仿真的主电路文件",
-                ),
-                version=version,
-                session_id=session_id,
-            )
-        
-        # 只有一个候选，直接执行
-        main_circuit = self._main_circuit_candidates[0]
-        file_path = str(Path(project_path) / main_circuit)
-        
-        return self.run_simulation(
-            file_path=file_path,
-            analysis_config=analysis_config,
-            project_root=project_path,
-            version=version,
-            session_id=session_id,
-            on_progress=on_progress,
-        )
 
     def run_selected_analyses(
         self,
@@ -805,48 +678,6 @@ class SimulationService:
                     "project_root": project_root,
                 }
             })
-    
-    # ============================================================
-    # 文件扫描方法
-    # ============================================================
-    
-    def get_simulatable_files(self, project_path: str) -> List[Path]:
-        """
-        获取可仿真文件列表
-        
-        Args:
-            project_path: 项目根目录路径
-            
-        Returns:
-            List[Path]: 可仿真文件路径列表（相对路径）
-        """
-        scan_result = self._analyzer.scan_simulatable_files(project_path)
-        return scan_result.files
-    
-    def get_main_circuit_candidates(self, project_path: str) -> List[Path]:
-        """
-        获取主电路候选列表
-        
-        Args:
-            project_path: 项目根目录路径
-            
-        Returns:
-            List[Path]: 主电路候选路径列表（相对路径）
-        """
-        scan_result = self._analyzer.scan_simulatable_files(project_path)
-        return scan_result.main_circuit_candidates
-    
-    def scan_project(self, project_path: str) -> ScanResult:
-        """
-        扫描项目目录
-        
-        Args:
-            project_path: 项目根目录路径
-            
-        Returns:
-            ScanResult: 扫描结果
-        """
-        return self._analyzer.scan_simulatable_files(project_path)
     
     # ============================================================
     # 仿真控制方法

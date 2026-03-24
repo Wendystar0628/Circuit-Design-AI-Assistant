@@ -21,8 +21,6 @@
     task.simulation_completed.connect(on_completed)
     task.simulation_error.connect(on_error)
     
-    task.run_auto_detect(project_root)
-    # 或
     task.run_file(file_path, project_root)
 """
 
@@ -53,27 +51,14 @@ class SimulationWorker(QObject):
         self._file_path: Optional[str] = None
         self._project_root: Optional[str] = None
         self._analysis_config: Optional[Dict[str, Any]] = None
-        self._mode: str = "auto"  # "auto" or "file"
     
-    def setup_auto_detect(
-        self,
-        project_root: str,
-        analysis_config: Optional[Dict[str, Any]] = None,
-    ) -> None:
-        """设置自动检测模式参数"""
-        self._mode = "auto"
-        self._project_root = project_root
-        self._analysis_config = analysis_config
-        self._file_path = None
-    
-    def setup_file(
+    def setup(
         self,
         file_path: str,
         project_root: str,
         analysis_config: Optional[Dict[str, Any]] = None,
     ) -> None:
-        """设置指定文件模式参数"""
-        self._mode = "file"
+        """设置仿真参数"""
         self._file_path = file_path
         self._project_root = project_root
         self._analysis_config = analysis_config
@@ -90,48 +75,14 @@ class SimulationWorker(QObject):
             from domain.services.simulation_service import SimulationService
             
             service = SimulationService()
-            
-            if self._mode == "auto":
-                self._run_auto_detect(service)
-            else:
-                self._run_file(service)
+            self._run_simulation(service)
                 
         except Exception as e:
             self._logger.exception(f"仿真执行异常: {e}")
             self.error.emit("EXECUTION_ERROR", str(e))
     
-    def _run_auto_detect(self, service: "SimulationService") -> None:
-        """执行自动检测模式"""
-        if not self._project_root:
-            self.error.emit("INVALID_PARAM", "项目根目录未设置")
-            return
-        
-        # 发送进度：开始检测
-        self.progress.emit(0.1, "正在检测主电路...")
-        
-        if self._cancelled:
-            return
-        
-        # 执行自动检测仿真
-        result = service.run_with_auto_detect(
-            project_path=self._project_root,
-            analysis_config=self._analysis_config,
-            on_progress=self._on_progress,
-        )
-        
-        if self._cancelled:
-            return
-        
-        # 发送完成信号 - 无论成功与否都发送 completed，让 UI 层处理
-        self.completed.emit(result)
-        
-        # 如果失败，额外记录日志
-        if not result.success and result.error:
-            error_msg = str(result.error.message) if hasattr(result.error, 'message') else str(result.error)
-            self._logger.warning(f"自动检测仿真失败: {error_msg}")
-    
-    def _run_file(self, service: "SimulationService") -> None:
-        """执行指定文件模式"""
+    def _run_simulation(self, service: "SimulationService") -> None:
+        """执行仿真"""
         if not self._file_path:
             self.error.emit("INVALID_PARAM", "仿真文件未指定")
             return
@@ -198,30 +149,6 @@ class SimulationTask(QObject):
         """检查是否有仿真正在运行"""
         return self._thread is not None and self._thread.isRunning()
     
-    def run_auto_detect(
-        self,
-        project_root: str,
-        analysis_config: Optional[Dict[str, Any]] = None,
-    ) -> bool:
-        """
-        自动检测主电路并执行仿真
-        
-        Args:
-            project_root: 项目根目录
-            analysis_config: 仿真配置（可选）
-            
-        Returns:
-            bool: 是否成功启动任务
-        """
-        if self.is_running:
-            self._logger.warning("已有仿真任务正在运行")
-            return False
-        
-        self._setup_worker()
-        self._worker.setup_auto_detect(project_root, analysis_config)
-        self._start_thread()
-        return True
-    
     def run_file(
         self,
         file_path: str,
@@ -244,7 +171,7 @@ class SimulationTask(QObject):
             return False
         
         self._setup_worker()
-        self._worker.setup_file(file_path, project_root, analysis_config)
+        self._worker.setup(file_path, project_root, analysis_config)
         self._start_thread()
         return True
     

@@ -304,17 +304,6 @@ EVENT_MAIN_CIRCUIT_CHANGED = "main_circuit_changed"
 #   - topology: str - 拓扑类型（若识别）
 EVENT_CIRCUIT_ANALYSIS_COMPLETE = "circuit_analysis_complete"
 
-# 仿真需要用户选择主电路（检测到多个候选）
-# 携带数据：
-#   - candidates: list - 候选主电路文件路径列表
-#   - reason: str - 触发原因（"multiple_main_circuits"）
-EVENT_SIMULATION_NEED_SELECTION = "simulation_need_selection"
-
-# 仿真未找到主电路
-# 携带数据：
-#   - reason: str - 触发原因（"no_main_circuit"）
-EVENT_SIMULATION_NO_MAIN_CIRCUIT = "simulation_no_main_circuit"
-
 # 仿真执行失败（错误已收集，准备下一轮修复）
 # 携带数据：
 #   - error_type: str - 错误类型
@@ -336,12 +325,6 @@ EVENT_SIM_RESULT_FILE_CREATED = "sim_result_file_created"
 #   - x_range: tuple - X 轴范围
 #   - y_range: tuple - Y 轴范围
 EVENT_WAVEFORM_MATH_COMPLETE = "waveform_math_complete"
-
-# 主电路检测完成（项目打开或文件变更后）
-# 携带数据：
-#   - candidates: list - 主电路候选文件路径列表
-#   - count: int - 候选数量
-EVENT_MAIN_CIRCUIT_DETECTED = "main_circuit_detected"
 
 # 仿真执行器注册
 # 携带数据：
@@ -1107,12 +1090,9 @@ __all__ = [
     "EVENT_SIM_CONFIG_CHANGED",
     "EVENT_MAIN_CIRCUIT_CHANGED",
     "EVENT_CIRCUIT_ANALYSIS_COMPLETE",
-    "EVENT_SIMULATION_NEED_SELECTION",
-    "EVENT_SIMULATION_NO_MAIN_CIRCUIT",
     "EVENT_SIMULATION_ERROR_COLLECTED",
     "EVENT_SIM_RESULT_FILE_CREATED",
     "EVENT_WAVEFORM_MATH_COMPLETE",
-    "EVENT_MAIN_CIRCUIT_DETECTED",
     "EVENT_EXECUTOR_REGISTERED",
     "EVENT_EXECUTOR_UNREGISTERED",
     "EVENT_WAVEFORM_DATA_REQUESTED",

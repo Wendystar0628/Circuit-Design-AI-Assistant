@@ -336,36 +336,35 @@ def _build_chart_analysis_mapping() -> Dict[str, List[ChartType]]:
 def _get_default_selections() -> List[ChartSelection]:
     """获取默认选择配置"""
     return [
-        # 基础波形图 - 默认启用
+        # 核心图表 - 默认启用（每种分析类型对应一个主图表）
         ChartSelection(ChartType.WAVEFORM_TIME, enabled=True, display_order=1),
-        ChartSelection(ChartType.WAVEFORM_FREQ, enabled=False, display_order=2),
-        # Bode 图 - 组合图默认启用
-        ChartSelection(ChartType.BODE_COMBINED, enabled=True, display_order=3),
-        ChartSelection(ChartType.BODE_MAGNITUDE, enabled=False, display_order=4),
-        ChartSelection(ChartType.BODE_PHASE, enabled=False, display_order=5),
-        # DC 图表
-        ChartSelection(ChartType.DC_TRANSFER, enabled=True, display_order=6),
-        ChartSelection(ChartType.DC_SWEEP, enabled=False, display_order=7),
+        ChartSelection(ChartType.BODE_COMBINED, enabled=True, display_order=2),
+        ChartSelection(ChartType.DC_SWEEP, enabled=True, display_order=3),
+        ChartSelection(ChartType.FFT_SPECTRUM, enabled=True, display_order=4),
+        ChartSelection(ChartType.NOISE_SPECTRUM, enabled=True, display_order=5),
+        # 已合并到核心图表的冗余类型 - 默认禁用
+        # （chart_generator 会透明重定向到对应的核心图表）
+        ChartSelection(ChartType.WAVEFORM_FREQ, enabled=False, display_order=6),
+        ChartSelection(ChartType.BODE_MAGNITUDE, enabled=False, display_order=7),
+        ChartSelection(ChartType.BODE_PHASE, enabled=False, display_order=8),
+        ChartSelection(ChartType.DC_TRANSFER, enabled=False, display_order=9),
+        ChartSelection(ChartType.NOISE_DENSITY, enabled=False, display_order=10),
         # 频谱分析
-        ChartSelection(ChartType.FFT_SPECTRUM, enabled=False, display_order=8),
-        ChartSelection(ChartType.HARMONIC_BAR, enabled=False, display_order=9),
+        ChartSelection(ChartType.HARMONIC_BAR, enabled=False, display_order=11),
         # 统计图表 - 默认禁用
-        ChartSelection(ChartType.HISTOGRAM, enabled=False, display_order=10),
-        ChartSelection(ChartType.SCATTER, enabled=False, display_order=11),
-        ChartSelection(ChartType.BOX_PLOT, enabled=False, display_order=12),
+        ChartSelection(ChartType.HISTOGRAM, enabled=False, display_order=12),
+        ChartSelection(ChartType.SCATTER, enabled=False, display_order=13),
+        ChartSelection(ChartType.BOX_PLOT, enabled=False, display_order=14),
         # 参数扫描图表 - 默认禁用
-        ChartSelection(ChartType.CONTOUR, enabled=False, display_order=13),
-        ChartSelection(ChartType.HEATMAP, enabled=False, display_order=14),
-        ChartSelection(ChartType.SURFACE_3D, enabled=False, display_order=15),
+        ChartSelection(ChartType.CONTOUR, enabled=False, display_order=15),
+        ChartSelection(ChartType.HEATMAP, enabled=False, display_order=16),
+        ChartSelection(ChartType.SURFACE_3D, enabled=False, display_order=17),
         # 敏感度图表 - 默认禁用
-        ChartSelection(ChartType.TORNADO, enabled=False, display_order=16),
-        ChartSelection(ChartType.SENSITIVITY_BAR, enabled=False, display_order=17),
+        ChartSelection(ChartType.TORNADO, enabled=False, display_order=18),
+        ChartSelection(ChartType.SENSITIVITY_BAR, enabled=False, display_order=19),
         # PVT 图表 - 默认禁用
-        ChartSelection(ChartType.CORNER_COMPARISON, enabled=False, display_order=18),
-        ChartSelection(ChartType.CORNER_TABLE, enabled=False, display_order=19),
-        # 噪声图表 - 默认禁用
-        ChartSelection(ChartType.NOISE_SPECTRUM, enabled=False, display_order=20),
-        ChartSelection(ChartType.NOISE_DENSITY, enabled=False, display_order=21),
+        ChartSelection(ChartType.CORNER_COMPARISON, enabled=False, display_order=20),
+        ChartSelection(ChartType.CORNER_TABLE, enabled=False, display_order=21),
     ]
 
 

@@ -34,8 +34,6 @@ from domain.simulation.executor.python_executor import PythonExecutor
 from domain.simulation.executor.circuit_analyzer import (
     CircuitAnalyzer,
     CircuitFileInfo,
-    MainCircuitDetectionResult,
-    ScanResult,
 )
 
 __all__ = [
@@ -51,6 +49,4 @@ __all__ = [
     "PythonExecutor",
     "CircuitAnalyzer",
     "CircuitFileInfo",
-    "MainCircuitDetectionResult",
-    "ScanResult",
 ]

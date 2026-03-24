@@ -19,8 +19,8 @@ Agent 工具调用模块
 - tool_registry.py : 工具注册表
 - agent_loop.py   : ReAct 循环控制器（后续实现）
 - agent_prompt_builder.py : Agent 系统提示词构建器（后续实现）
-- tools/          : 具体工具实现（read_file 已实现）
-- utils/          : 工具函数（path_utils、truncate 已实现）
+- tools/          : 具体工具实现（read_file、patch_file 已实现）
+- utils/          : 工具函数（path_utils、truncate、edit_diff、file_mutex 已实现）
 """
 
 from domain.llm.agent.types import (
@@ -49,7 +49,7 @@ from domain.llm.agent.tool_registry import (
     GROUP_ALL,
 )
 
-from domain.llm.agent.tools import ReadFileTool
+from domain.llm.agent.tools import ReadFileTool, PatchFileTool
 
 
 __all__ = [
@@ -70,4 +70,5 @@ __all__ = [
     "GROUP_ALL",
     # 工具
     "ReadFileTool",
+    "PatchFileTool",
 ]

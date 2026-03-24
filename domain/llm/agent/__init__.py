@@ -6,7 +6,7 @@ Agent 工具调用模块
 - 定义 Agent 工具调用的基础类型体系（BaseTool、ToolResult、ToolContext 等）
 - 提供工具注册表（ToolRegistry）
 - 实现 ReAct 循环控制器（AgentLoop）
-- 构建 Agent 系统提示词（AgentPromptBuilder）
+- 构建 Agent 系统提示词（build_agent_system_prompt）
 
 架构位置：
 - domain/llm/agent/ 是 Agent 功能的模块根
@@ -17,9 +17,9 @@ Agent 工具调用模块
 模块结构：
 - types.py        : 基础类型定义（BaseTool、ToolResult、ToolContext、ToolCallInfo）
 - tool_registry.py : 工具注册表
-- agent_loop.py   : ReAct 循环控制器（后续实现）
-- agent_prompt_builder.py : Agent 系统提示词构建器（后续实现）
-- tools/          : 具体工具实现（read_file、patch_file 已实现）
+- agent_loop.py   : ReAct 循环控制器
+- agent_prompt_builder.py : Agent 系统提示词构建器
+- tools/          : 具体工具实现（read_file、patch_file、rewrite_file）
 - utils/          : 工具函数（path_utils、truncate、edit_diff、file_mutex 已实现）
 """
 
@@ -49,7 +49,15 @@ from domain.llm.agent.tool_registry import (
     GROUP_ALL,
 )
 
-from domain.llm.agent.tools import ReadFileTool, PatchFileTool
+from domain.llm.agent.tools import ReadFileTool, PatchFileTool, RewriteFileTool
+
+from domain.llm.agent.agent_loop import (
+    AgentLoop,
+    AgentResult,
+    AgentEventCallback,
+)
+
+from domain.llm.agent.agent_prompt_builder import build_agent_system_prompt
 
 
 __all__ = [
@@ -71,4 +79,11 @@ __all__ = [
     # 工具
     "ReadFileTool",
     "PatchFileTool",
+    "RewriteFileTool",
+    # Agent 循环
+    "AgentLoop",
+    "AgentResult",
+    "AgentEventCallback",
+    # 提示词构建
+    "build_agent_system_prompt",
 ]

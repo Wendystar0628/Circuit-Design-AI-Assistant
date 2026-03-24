@@ -41,8 +41,6 @@ from typing import Any, Callable, Dict, List, Optional
 
 from shared.event_types import (
     EVENT_SESSION_CHANGED,
-    EVENT_WORKFLOW_LOCKED,
-    EVENT_WORKFLOW_UNLOCKED,
 )
 
 
@@ -56,7 +54,6 @@ SESSION_PROJECT_INITIALIZED = "project_initialized"
 
 # 会话状态（从 GraphState 投影）
 SESSION_ID = "session_id"
-SESSION_WORK_MODE = "work_mode"
 
 # 工作流状态（从 GraphState 投影）
 SESSION_WORKFLOW_LOCKED = "workflow_locked"
@@ -121,7 +118,6 @@ class SessionState:
             SESSION_PROJECT_INITIALIZED: False,
             # 会话状态
             SESSION_ID: "",
-            SESSION_WORK_MODE: "free_chat",
             # 工作流状态
             SESSION_WORKFLOW_LOCKED: False,
             SESSION_CURRENT_NODE: "",
@@ -354,23 +350,9 @@ class SessionState:
         if self.event_bus is None:
             return
         
-        # 特殊处理：工作流锁定
-        if key == SESSION_WORKFLOW_LOCKED:
-            event_type = EVENT_WORKFLOW_LOCKED if new_value else EVENT_WORKFLOW_UNLOCKED
-            try:
-                self.event_bus.publish_critical(
-                    event_type,
-                    {"locked": new_value},
-                    source="session_state"
-                )
-            except Exception as e:
-                if self.logger:
-                    self.logger.warning(f"Failed to publish workflow lock event: {e}")
-            return
-        
         # 会话相关字段变更发布 EVENT_SESSION_CHANGED
         session_fields = [
-            SESSION_ID, SESSION_WORK_MODE, SESSION_CURRENT_NODE,
+            SESSION_ID, SESSION_CURRENT_NODE,
             SESSION_ITERATION_COUNT, SESSION_CHECKPOINT_COUNT
         ]
         if key in session_fields:
@@ -408,11 +390,6 @@ class SessionState:
     def session_id(self) -> str:
         """当前会话 ID"""
         return self.get(SESSION_ID, "")
-
-    @property
-    def work_mode(self) -> str:
-        """工作模式（workflow | free_chat）"""
-        return self.get(SESSION_WORK_MODE, "free_chat")
 
     @property
     def workflow_locked(self) -> bool:
@@ -470,7 +447,7 @@ class SessionState:
     def get_status_summary(self) -> str:
         """获取状态摘要（用于日志和调试）"""
         return (
-            f"SessionState(session={self.session_id}, mode={self.work_mode}, "
+            f"SessionState(session={self.session_id}, "
             f"node={self.current_node}, iter={self.iteration_count}, "
             f"locked={self.workflow_locked}, completed={self.is_completed})"
         )
@@ -487,7 +464,6 @@ __all__ = [
     "SESSION_PROJECT_ROOT",
     "SESSION_PROJECT_INITIALIZED",
     "SESSION_ID",
-    "SESSION_WORK_MODE",
     "SESSION_WORKFLOW_LOCKED",
     "SESSION_CURRENT_NODE",
     "SESSION_PREVIOUS_NODE",

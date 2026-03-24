@@ -25,7 +25,6 @@ from application.session_state import (
     SessionStateChangeHandler,
     SESSION_PROJECT_ROOT,
     SESSION_ID,
-    SESSION_WORK_MODE,
     SESSION_WORKFLOW_LOCKED,
     SESSION_CURRENT_NODE,
     SESSION_ITERATION_COUNT,
@@ -48,7 +47,6 @@ from application.snapshot_service import (
 )
 from application.graph import (
     GraphState,
-    WorkMode,
     create_initial_state,
 )
 
@@ -59,7 +57,6 @@ __all__ = [
     "SessionStateChangeHandler",
     "SESSION_PROJECT_ROOT",
     "SESSION_ID",
-    "SESSION_WORK_MODE",
     "SESSION_WORKFLOW_LOCKED",
     "SESSION_CURRENT_NODE",
     "SESSION_ITERATION_COUNT",
@@ -78,6 +75,5 @@ __all__ = [
     "SnapshotInfo",
     # GraphState
     "GraphState",
-    "WorkMode",
     "create_initial_state",
 ]

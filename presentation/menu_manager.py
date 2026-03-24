@@ -416,21 +416,6 @@ class MenuManager:
             )
         menu.addAction(self._actions["settings_simulation_config"])
         
-        menu.addSeparator()
-        
-        # Prompt 模板管理
-        self._actions["settings_prompt_editor"] = QAction(self._main_window)
-        self._actions["settings_prompt_editor"].setToolTip(
-            self._get_text(
-                "menu.settings.prompt_editor_tip",
-                "管理和编辑 LLM 提示词模板"
-            )
-        )
-        if "on_prompt_editor" in self._callbacks:
-            self._actions["settings_prompt_editor"].triggered.connect(
-                self._callbacks["on_prompt_editor"]
-            )
-        menu.addAction(self._actions["settings_prompt_editor"])
 
     def _setup_tools_menu(self) -> None:
         """设置工具菜单"""
@@ -646,10 +631,6 @@ class MenuManager:
         self._actions["settings_simulation_config"].setText(
             self._get_text("menu.settings.simulation_config", "Simulation Parameters...")
         )
-        self._actions["settings_prompt_editor"].setText(
-            self._get_text("menu.settings.prompt_editor", "Prompt Template Manager...")
-        )
-        
         # 工具菜单项
         self._actions["tools_compress"].setText(
             self._get_text("menu.tools.compress_context", "Compress Context")

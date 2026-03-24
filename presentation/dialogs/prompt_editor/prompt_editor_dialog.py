@@ -22,7 +22,6 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import pyqtSignal
 
 from .workflow_prompt_tab import WorkflowPromptTab
-from .identity_prompt_tab import IdentityPromptTab
 
 
 class PromptEditorDialog(QDialog):
@@ -30,7 +29,7 @@ class PromptEditorDialog(QDialog):
     Prompt 设置对话框
     
     布局：
-    - 标签页容器：工作流模式 | 自由工作模式
+    - 标签页容器：工作流模式
     - 底部：操作按钮
     
     Signals:
@@ -72,13 +71,6 @@ class PromptEditorDialog(QDialog):
             self._get_text("dialog.prompt_settings.workflow_tab", "工作流模式")
         )
         
-        # 自由工作模式标签页
-        self._identity_tab = IdentityPromptTab()
-        self._tab_widget.addTab(
-            self._identity_tab,
-            self._get_text("dialog.prompt_settings.identity_tab", "自由工作模式")
-        )
-        
         # 底部按钮
         button_layout = self._create_buttons()
         main_layout.addLayout(button_layout)
@@ -112,7 +104,6 @@ class PromptEditorDialog(QDialog):
         """连接信号"""
         # 标签页脏状态变化
         self._workflow_tab.dirty_state_changed.connect(self._on_dirty_state_changed)
-        self._identity_tab.dirty_state_changed.connect(self._on_dirty_state_changed)
         
         # 标签页切换
         self._tab_widget.currentChanged.connect(self._on_tab_changed)
@@ -122,10 +113,6 @@ class PromptEditorDialog(QDialog):
         # 初始化工作流模式标签页
         if not self._workflow_tab.initialize():
             self._logger.warning("工作流模式标签页初始化失败")
-        
-        # 初始化身份提示词标签页
-        if not self._identity_tab.initialize():
-            self._logger.warning("身份提示词标签页初始化失败")
         
         # 更新按钮状态
         self._update_button_states()
@@ -148,10 +135,7 @@ class PromptEditorDialog(QDialog):
     
     def _has_any_unsaved_changes(self) -> bool:
         """检查是否有任何未保存的修改"""
-        return (
-            self._workflow_tab.has_unsaved_changes() or
-            self._identity_tab.has_unsaved_changes()
-        )
+        return self._workflow_tab.has_unsaved_changes()
     
     def _on_dirty_state_changed(self, is_dirty: bool) -> None:
         """脏状态变化处理"""
@@ -165,7 +149,6 @@ class PromptEditorDialog(QDialog):
     
     def _update_tab_titles(self) -> None:
         """更新标签页标题（显示修改标记）"""
-        # 工作流模式标签页
         workflow_title = self._get_text(
             "dialog.prompt_settings.workflow_tab",
             "工作流模式"
@@ -173,15 +156,6 @@ class PromptEditorDialog(QDialog):
         if self._workflow_tab.has_unsaved_changes():
             workflow_title += " *"
         self._tab_widget.setTabText(0, workflow_title)
-        
-        # 身份提示词标签页
-        identity_title = self._get_text(
-            "dialog.prompt_settings.identity_tab",
-            "自由工作模式"
-        )
-        if self._identity_tab.has_unsaved_changes():
-            identity_title += " *"
-        self._tab_widget.setTabText(1, identity_title)
     
     def _update_button_states(self) -> None:
         """更新按钮状态"""
@@ -211,7 +185,6 @@ class PromptEditorDialog(QDialog):
             
             # 放弃所有修改
             self._workflow_tab.discard_all_changes()
-            self._identity_tab.discard_changes()
         
         self.reject()
     
@@ -239,11 +212,6 @@ class PromptEditorDialog(QDialog):
         # 保存工作流模式修改
         if self._workflow_tab.has_unsaved_changes():
             if not self._workflow_tab.save_all():
-                success = False
-        
-        # 保存身份提示词修改
-        if self._identity_tab.has_unsaved_changes():
-            if not self._identity_tab.save_content():
                 success = False
         
         if success:

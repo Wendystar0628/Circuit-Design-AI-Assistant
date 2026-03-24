@@ -816,6 +816,264 @@ class LLMExecutor(QObject):
         self._last_result = None
     
     # ============================================================
+    # Agent 模式执行
+    # ============================================================
+
+    @asyncSlot()
+    async def execute_agent(
+        self,
+        task_id: str,
+        messages: List[Dict[str, Any]],
+        model: str,
+        thinking: bool = False,
+        **kwargs
+    ) -> Optional[Dict[str, Any]]:
+        """
+        以 Agent 模式执行 LLM 调用（带工具自动调用循环）
+
+        流程：
+        1. 获取 LLM 客户端
+        2. 创建 ToolRegistry 并注册所有可用工具
+        3. 构建 Agent 系统提示词（含工具列表和指南）
+        4. 运行 AgentLoop 的 ReAct 循环
+        5. 通过信号通知 UI 流式更新和工具执行事件
+
+        LLM 在每轮回复中自行决定是否调用工具。
+        若不调用工具，循环结束，行为等同普通对话。
+
+        Args:
+            task_id: 任务标识
+            messages: 消息列表（不含 Agent 系统提示词，由本方法注入）
+            model: 模型名称
+            thinking: 是否启用深度思考
+            **kwargs: 其他参数
+
+        Returns:
+            dict: 生成结果，失败返回 None
+        """
+        if self.logger:
+            self.logger.info(
+                f"Starting Agent execution: task_id={task_id}, model={model}"
+            )
+
+        try:
+            # 获取 LLM 客户端
+            client = self._get_llm_client(model)
+            if not client:
+                error_msg = f"LLM client not available for model: {model}"
+                self.generation_error.emit(task_id, error_msg)
+                return None
+
+            # 停止检查点
+            if self._check_stop_requested():
+                if self.logger:
+                    self.logger.info(
+                        f"Stop requested before Agent loop: task_id={task_id}"
+                    )
+                raise asyncio.CancelledError()
+
+            # 获取项目根目录
+            project_root = self._get_project_root()
+
+            # 创建工具上下文和注册表
+            from domain.llm.agent.types import ToolContext
+            from domain.llm.agent.tool_registry import ToolRegistry, GROUP_FILE_OPS
+            from domain.llm.agent.tools import (
+                ReadFileTool, PatchFileTool, RewriteFileTool,
+            )
+            from domain.llm.agent.agent_loop import AgentLoop
+            from domain.llm.agent.agent_prompt_builder import (
+                build_agent_system_prompt,
+            )
+
+            context = ToolContext(project_root=project_root)
+            registry = ToolRegistry(context)
+            registry.register(ReadFileTool(), [GROUP_FILE_OPS])
+            registry.register(PatchFileTool(), [GROUP_FILE_OPS])
+            registry.register(RewriteFileTool(), [GROUP_FILE_OPS])
+
+            if self.logger:
+                self.logger.info(f"Agent tools registered: {registry.get_names()}")
+
+            # 构建 Agent 系统提示词（自包含，不依赖旧的身份提示词系统）
+            system_prompt = build_agent_system_prompt(
+                registry=registry,
+                project_root=project_root,
+            )
+
+            # 注入系统提示词到消息列表
+            if messages and messages[0].get("role") == "system":
+                messages[0]["content"] = system_prompt
+            else:
+                messages.insert(0, {
+                    "role": "system",
+                    "content": system_prompt,
+                })
+
+            # 发布 Agent 循环开始事件
+            self._publish_event("agent.loop_started", {
+                "task_id": task_id,
+                "model": model,
+                "tool_count": registry.count,
+            })
+
+            # 创建并运行 Agent 循环
+            loop = AgentLoop(
+                client=client,
+                registry=registry,
+                context=context,
+                model=model,
+                thinking=thinking,
+            )
+
+            agent_result = await loop.run(
+                messages=messages,
+                on_event=lambda evt, data: self._handle_agent_event(
+                    task_id, evt, data
+                ),
+            )
+
+            # 构建最终结果
+            result = {
+                "content": agent_result.content,
+                "reasoning_content": (
+                    agent_result.reasoning_content
+                    if agent_result.reasoning_content else None
+                ),
+                "usage": agent_result.usage,
+                "total_turns": agent_result.total_turns,
+                "tool_calls_count": agent_result.tool_calls_count,
+            }
+
+            # 保存结果
+            self._last_result = result
+
+            # 发射完成信号
+            self.generation_complete.emit(task_id, result)
+
+            if self.logger:
+                self.logger.info(
+                    f"Agent execution completed: task_id={task_id}, "
+                    f"turns={agent_result.total_turns}, "
+                    f"tool_calls={agent_result.tool_calls_count}, "
+                    f"content_len={len(agent_result.content)}"
+                )
+
+            return result
+
+        except asyncio.CancelledError:
+            if self.logger:
+                self.logger.info(
+                    f"Agent execution cancelled: task_id={task_id}"
+                )
+
+            if self.stop_controller:
+                self.stop_controller.mark_stopping()
+                self.stop_controller.mark_stopped({
+                    "is_partial": True,
+                    "cleanup_success": True,
+                })
+
+            raise
+
+        except Exception as e:
+            error_msg = self._format_error_message(e)
+            if self.logger:
+                self.logger.error(
+                    f"Agent execution failed: task_id={task_id}, error={error_msg}"
+                )
+            self.generation_error.emit(task_id, error_msg)
+            return None
+
+    def _handle_agent_event(
+        self, task_id: str, event_type: str, data: Dict[str, Any]
+    ) -> None:
+        """
+        处理 AgentLoop 的事件回调，转发为 Qt 信号和 EventBus 事件
+
+        Args:
+            task_id: 任务标识
+            event_type: 事件类型
+            data: 事件数据
+        """
+        if event_type == "stream_chunk":
+            chunk_type = data.get("chunk_type", "content")
+            text = data.get("text", "")
+            if text:
+                self.stream_chunk.emit(task_id, chunk_type, {
+                    "type": chunk_type,
+                    "text": text,
+                })
+
+        elif event_type == "tool_execution_start":
+            self._publish_event("agent.tool_start", {
+                "task_id": task_id,
+                **data,
+            })
+
+        elif event_type == "tool_execution_end":
+            self._publish_event("agent.tool_end", {
+                "task_id": task_id,
+                **data,
+            })
+
+        elif event_type == "turn_end":
+            self._publish_event("agent.turn_end", {
+                "task_id": task_id,
+                **data,
+            })
+
+        elif event_type == "agent_end":
+            self._publish_event("agent.loop_end", {
+                "task_id": task_id,
+                **data,
+            })
+
+        elif event_type == "agent_error":
+            self._publish_event("agent.loop_error", {
+                "task_id": task_id,
+                **data,
+            })
+
+    def _get_project_root(self) -> str:
+        """
+        获取当前项目根目录
+
+        Returns:
+            str: 项目根目录路径，未打开项目时返回当前工作目录
+        """
+        try:
+            from shared.service_locator import ServiceLocator
+            from shared.service_names import SVC_PROJECT_SERVICE
+            project_service = ServiceLocator.get_optional(SVC_PROJECT_SERVICE)
+            if project_service:
+                path = project_service.get_current_project_path()
+                if path:
+                    return path
+        except Exception:
+            pass
+
+        import os
+        return os.getcwd()
+
+    def _publish_event(self, event_name: str, data: Dict[str, Any]) -> None:
+        """
+        通过 EventBus 发布事件
+
+        Args:
+            event_name: 事件名称
+            data: 事件数据
+        """
+        try:
+            from shared.service_locator import ServiceLocator
+            from shared.service_names import SVC_EVENT_BUS
+            event_bus = ServiceLocator.get_optional(SVC_EVENT_BUS)
+            if event_bus:
+                event_bus.publish(event_name, data)
+        except Exception:
+            pass
+
+    # ============================================================
     # 任务取消
     # ============================================================
     

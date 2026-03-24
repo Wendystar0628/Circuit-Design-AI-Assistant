@@ -37,7 +37,7 @@
     state = manager.on_app_startup(project_root, initial_state)
     
     # 创建新会话
-    session_id = manager.create_session(project_root, "free_chat")
+    session_id = manager.create_session(project_root)
     
     # 切换会话
     state = manager.switch_session(project_root, session_id, state)
@@ -134,7 +134,6 @@ class SessionStateManager:
     def create_session(
         self,
         project_root: str,
-        work_mode: str = "free_chat"
     ) -> str:
         """
         创建新会话
@@ -149,7 +148,6 @@ class SessionStateManager:
         
         Args:
             project_root: 项目根目录路径
-            work_mode: 工作模式（"workflow" | "free_chat"）
             
         Returns:
             str: 新会话 ID
@@ -176,7 +174,6 @@ class SessionStateManager:
                     "created_at": datetime.now().isoformat(),
                     "updated_at": datetime.now().isoformat(),
                     "message_count": 0,
-                    "work_mode": work_mode,
                 },
                 set_current=True
             )

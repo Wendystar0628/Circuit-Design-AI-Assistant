@@ -467,8 +467,6 @@ class CommonEventBridges:
     @staticmethod
     def bridge_workflow_events(
         bridge: UIEventBridge,
-        on_workflow_locked: Optional[Callable] = None,
-        on_workflow_unlocked: Optional[Callable] = None,
         on_iteration_awaiting: Optional[Callable] = None,
     ):
         """
@@ -476,20 +474,12 @@ class CommonEventBridges:
         
         Args:
             bridge: UIEventBridge 实例
-            on_workflow_locked: 工作流锁定处理器
-            on_workflow_unlocked: 工作流解锁处理器
             on_iteration_awaiting: 等待确认处理器
         """
         from shared.event_types import (
-            EVENT_WORKFLOW_LOCKED,
-            EVENT_WORKFLOW_UNLOCKED,
             EVENT_ITERATION_AWAITING_CONFIRMATION,
         )
         
-        if on_workflow_locked:
-            bridge.bridge_event(EVENT_WORKFLOW_LOCKED, on_workflow_locked)
-        if on_workflow_unlocked:
-            bridge.bridge_event(EVENT_WORKFLOW_UNLOCKED, on_workflow_unlocked)
         if on_iteration_awaiting:
             bridge.bridge_event(EVENT_ITERATION_AWAITING_CONFIRMATION, on_iteration_awaiting)
     

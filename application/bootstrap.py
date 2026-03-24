@@ -52,8 +52,7 @@
   - 3.5.2 GraphStateProjector 初始化（自动投影 GraphState 到 SessionState）
   - 3.5.5 TracingLogger 初始化（可观测性基础设施）
   - 3.6 LLM 客户端初始化
-  - 3.7 PromptTemplateManager 初始化
-  - 3.8 发布 EVENT_INIT_COMPLETE 事件
+  - 3.7 发布 EVENT_INIT_COMPLETE 事件
 - 应用关闭时：
   - 异步运行时关闭（取消待处理任务）
   - TracingLogger 关闭（最后一次刷新）
@@ -620,45 +619,7 @@ def _delayed_init():
         _init_llm_client()
 
         # --------------------------------------------------------
-        # 3.7 PromptTemplateManager 初始化
-        # 依赖：Logger
-        # 职责：加载和管理 Prompt 模板
-        # --------------------------------------------------------
-        from domain.llm.prompt_template_manager import PromptTemplateManager
-        from shared.service_names import SVC_PROMPT_TEMPLATE_MANAGER
-        prompt_template_manager = PromptTemplateManager()
-        ServiceLocator.register(SVC_PROMPT_TEMPLATE_MANAGER, prompt_template_manager)
-        if _logger:
-            _logger.info("Phase 3.7 PromptTemplateManager 初始化完成")
-
-        # --------------------------------------------------------
-        # 3.7.1 IdentityPromptManager 初始化
-        # 依赖：Logger
-        # 职责：管理自由工作模式身份提示词
-        # --------------------------------------------------------
-        from domain.llm.identity_prompt_manager import IdentityPromptManager
-        from shared.service_names import SVC_IDENTITY_PROMPT_MANAGER
-        from infrastructure.config.settings import GLOBAL_CONFIG_DIR
-        identity_prompt_manager = IdentityPromptManager()
-        identity_prompt_manager.initialize(str(GLOBAL_CONFIG_DIR))
-        ServiceLocator.register(SVC_IDENTITY_PROMPT_MANAGER, identity_prompt_manager)
-        if _logger:
-            _logger.info(f"Phase 3.7.1 IdentityPromptManager 初始化完成，来源: {identity_prompt_manager.get_source()}")
-
-        # --------------------------------------------------------
-        # 3.7.2 SystemPromptInjector 初始化
-        # 依赖：IdentityPromptManager、PromptTemplateManager
-        # 职责：系统提示词的唯一注入点，协调各层级提示词组装
-        # --------------------------------------------------------
-        from domain.llm.system_prompt_injector import SystemPromptInjector
-        from shared.service_names import SVC_SYSTEM_PROMPT_INJECTOR
-        system_prompt_injector = SystemPromptInjector()
-        ServiceLocator.register(SVC_SYSTEM_PROMPT_INJECTOR, system_prompt_injector)
-        if _logger:
-            _logger.info("Phase 3.7.2 SystemPromptInjector 初始化完成")
-
-        # --------------------------------------------------------
-        # 3.8 发布 EVENT_INIT_COMPLETE 事件
+        # 3.7 发布 EVENT_INIT_COMPLETE 事件
         # 通知所有订阅者初始化完成
         # --------------------------------------------------------
         from shared.service_locator import ServiceLocator

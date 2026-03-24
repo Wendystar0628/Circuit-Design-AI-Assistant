@@ -12,14 +12,12 @@ LangGraph编排模块
 
 from application.graph.state import (
     GraphState,
-    WorkMode,
     create_initial_state,
     merge_state_update,
 )
 
 __all__ = [
     "GraphState",
-    "WorkMode",
     "create_initial_state",
     "merge_state_update",
 ]

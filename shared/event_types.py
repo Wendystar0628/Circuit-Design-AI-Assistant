@@ -813,22 +813,6 @@ EVENT_ITERATION_USER_CONFIRMED = "iteration_user_confirmed"
 # 用户停止
 EVENT_ITERATION_USER_STOPPED = "iteration_user_stopped"
 
-# ============================================================
-# 工作流锁定事件
-# ============================================================
-
-# 工作流锁定
-EVENT_WORKFLOW_LOCKED = "workflow_locked"
-
-# 工作流解锁
-EVENT_WORKFLOW_UNLOCKED = "workflow_unlocked"
-
-# 工作模式变更
-# 携带数据：
-#   - old_mode: str - 旧模式（"workflow" | "free_chat"）
-#   - new_mode: str - 新模式
-EVENT_WORK_MODE_CHANGED = "work_mode_changed"
-
 # 当前激活文件变更
 # 携带数据：
 #   - old_path: str - 旧文件路径
@@ -1019,13 +1003,60 @@ EVENT_TUNING_REQUEST_SIMULATION = "tuning.request_simulation"
 EVENT_AUTO_SIMULATION_CHANGED = "tuning.auto_simulation_changed"
 
 # ============================================================
+# Agent 循环事件
+# ============================================================
+
+# Agent 循环开始
+# 携带数据：
+#   - task_id: str - 任务 ID
+#   - model: str - 模型名称
+#   - tool_count: int - 可用工具数量
+EVENT_AGENT_LOOP_STARTED = "agent.loop_started"
+
+# Agent 工具执行开始
+# 携带数据：
+#   - task_id: str - 任务 ID
+#   - tool_call_id: str - 工具调用 ID
+#   - tool_name: str - 工具名称
+#   - arguments: dict - 工具参数
+EVENT_AGENT_TOOL_START = "agent.tool_start"
+
+# Agent 工具执行结束
+# 携带数据：
+#   - task_id: str - 任务 ID
+#   - tool_call_id: str - 工具调用 ID
+#   - tool_name: str - 工具名称
+#   - is_error: bool - 是否出错
+#   - result_preview: str - 结果预览（截断）
+EVENT_AGENT_TOOL_END = "agent.tool_end"
+
+# Agent 单轮结束
+# 携带数据：
+#   - task_id: str - 任务 ID
+#   - turn: int - 轮次号
+#   - tool_calls_count: int - 本轮工具调用数
+EVENT_AGENT_TURN_END = "agent.turn_end"
+
+# Agent 循环结束
+# 携带数据：
+#   - task_id: str - 任务 ID
+#   - total_turns: int - 总轮次数
+#   - tool_calls_count: int - 总工具调用数
+#   - content_length: int - 最终内容长度
+EVENT_AGENT_LOOP_END = "agent.loop_end"
+
+# Agent 循环错误
+# 携带数据：
+#   - task_id: str - 任务 ID
+#   - error: str - 错误信息
+EVENT_AGENT_LOOP_ERROR = "agent.loop_error"
+
+# ============================================================
 # 关键事件列表（需要特殊保护）
 # ============================================================
 
 CRITICAL_EVENTS = [
     EVENT_ITERATION_AWAITING_CONFIRMATION,
-    EVENT_WORKFLOW_LOCKED,
-    EVENT_WORKFLOW_UNLOCKED,
     EVENT_ERROR_OCCURRED,
     EVENT_STOP_REQUESTED,
 ]
@@ -1172,10 +1203,6 @@ __all__ = [
     "EVENT_ITERATION_AWAITING_CONFIRMATION",
     "EVENT_ITERATION_USER_CONFIRMED",
     "EVENT_ITERATION_USER_STOPPED",
-    # 工作流锁定事件
-    "EVENT_WORKFLOW_LOCKED",
-    "EVENT_WORKFLOW_UNLOCKED",
-    "EVENT_WORK_MODE_CHANGED",
     "EVENT_ACTIVE_FILE_CHANGED",
     # 停止控制事件
     "EVENT_STOP_REQUESTED",
@@ -1208,6 +1235,13 @@ __all__ = [
     "EVENT_TUNING_RESTORED",
     "EVENT_TUNING_REQUEST_SIMULATION",
     "EVENT_AUTO_SIMULATION_CHANGED",
+    # Agent 循环事件
+    "EVENT_AGENT_LOOP_STARTED",
+    "EVENT_AGENT_TOOL_START",
+    "EVENT_AGENT_TOOL_END",
+    "EVENT_AGENT_TURN_END",
+    "EVENT_AGENT_LOOP_END",
+    "EVENT_AGENT_LOOP_ERROR",
     # 关键事件列表
     "CRITICAL_EVENTS",
 ]

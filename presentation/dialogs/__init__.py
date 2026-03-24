@@ -12,7 +12,6 @@
 - design_goals_dialog.py: 设计目标编辑对话框
 - select_simulation_file_dialog.py: 选择仿真文件对话框
 - simulation_settings_dialog.py: 仿真设置对话框
-- prompt_editor/: Prompt 模板编辑器模块
 """
 
 from .model_config_dialog import ModelConfigDialog, PROVIDER_DISPLAY_NAMES
@@ -24,8 +23,6 @@ from .iteration_history_dialog import IterationHistoryDialog, IterationRecord
 from .design_goals_dialog import DesignGoalsDialog, GoalEditDialog
 from .select_simulation_file_dialog import SelectSimulationFileDialog
 from .simulation_settings_dialog import SimulationSettingsDialog
-from .prompt_editor import PromptEditorDialog
-
 __all__ = [
     # 新版模型配置对话框
     "ModelConfigDialog",
@@ -52,6 +49,4 @@ __all__ = [
     "SelectSimulationFileDialog",
     # 仿真设置对话框
     "SimulationSettingsDialog",
-    # Prompt 模板编辑器
-    "PromptEditorDialog",
 ]

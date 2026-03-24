@@ -67,9 +67,6 @@ class IterationRecord:
     node_name: str = ""
     """当时执行的节点名称"""
     
-    work_mode: str = "workflow"
-    """工作模式"""
-    
     is_completed: bool = False
     """是否完成"""
     
@@ -85,7 +82,6 @@ class IterationRecord:
             "goals_summary": self.goals_summary,
             "timestamp": self.timestamp,
             "node_name": self.node_name,
-            "work_mode": self.work_mode,
             "is_completed": self.is_completed,
             "termination_reason": self.termination_reason,
         }
@@ -115,7 +111,6 @@ class IterationRecord:
             goals_summary=state.get("design_goals_summary", {}),
             timestamp=timestamp,
             node_name=state.get("current_node", ""),
-            work_mode=state.get("work_mode", "workflow"),
             is_completed=state.get("is_completed", False),
             termination_reason=state.get("termination_reason", ""),
         )

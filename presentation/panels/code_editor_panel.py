@@ -742,13 +742,11 @@ class CodeEditorPanel(QWidget):
         if self.event_bus:
             from shared.event_types import (
                 EVENT_LANGUAGE_CHANGED, EVENT_STATE_PROJECT_OPENED,
-                EVENT_STATE_PROJECT_CLOSED, EVENT_WORKFLOW_LOCKED, EVENT_WORKFLOW_UNLOCKED
+                EVENT_STATE_PROJECT_CLOSED
             )
             self.event_bus.subscribe(EVENT_LANGUAGE_CHANGED, self._on_language_changed)
             self.event_bus.subscribe(EVENT_STATE_PROJECT_OPENED, self._on_project_opened)
             self.event_bus.subscribe(EVENT_STATE_PROJECT_CLOSED, self._on_project_closed)
-            self.event_bus.subscribe(EVENT_WORKFLOW_LOCKED, self._on_workflow_locked)
-            self.event_bus.subscribe(EVENT_WORKFLOW_UNLOCKED, self._on_workflow_unlocked)
 
     def _on_language_changed(self, event_data: Dict[str, Any]):
         self.retranslate_ui()
@@ -761,11 +759,6 @@ class CodeEditorPanel(QWidget):
         self.close_all_tabs()
         self._update_empty_state()
 
-    def _on_workflow_locked(self, event_data: Dict[str, Any]):
-        self.set_readonly(True)
-
-    def _on_workflow_unlocked(self, event_data: Dict[str, Any]):
-        self.set_readonly(False)
 
 
 # ============================================================

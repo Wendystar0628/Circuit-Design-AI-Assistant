@@ -113,8 +113,8 @@ class ToolRegistry:
         
         self._tools[name] = tool
         
-        # 注册到分组
-        actual_groups = groups or []
+        # 注册到分组（复制一份，避免修改调用方传入的列表）
+        actual_groups = list(groups) if groups else []
         # 所有工具自动加入 GROUP_ALL
         actual_groups.append(GROUP_ALL)
         

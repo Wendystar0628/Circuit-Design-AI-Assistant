@@ -22,7 +22,7 @@ GraphState 定义 - LangGraph 工作流的状态结构
 """
 
 from dataclasses import dataclass, field
-from typing import Annotated, Any, Dict, List, Literal, Optional
+from typing import Annotated, Any, Dict, List, Optional
 
 from langgraph.graph.message import add_messages
 
@@ -32,18 +32,6 @@ try:
 except ImportError:
     # 如果未安装 langchain，使用 Any 类型
     AnyMessage = Any
-
-
-# ============================================================
-# 工作模式枚举
-# ============================================================
-
-WorkMode = Literal["workflow", "free_chat"]
-"""
-工作模式：
-- workflow: 工作流模式，执行设计优化迭代
-- free_chat: 自由对话模式，纯对话不执行工作流
-"""
 
 
 # ============================================================
@@ -58,9 +46,8 @@ class GraphState:
     核心原则：存储指针和摘要，不存储重数据
     
     Attributes:
-        # 会话与模式控制
+        # 会话
         session_id: 会话标识，格式 YYYYMMDD_HHMMSS
-        work_mode: 工作模式（workflow | free_chat）
         project_root: 项目根目录路径
         
         # 流转控制
@@ -91,14 +78,11 @@ class GraphState:
     """
     
     # ============================================================
-    # 会话与模式控制
+    # 会话
     # ============================================================
     
     session_id: str = ""
     """会话标识，格式 YYYYMMDD_HHMMSS"""
-    
-    work_mode: WorkMode = "free_chat"
-    """工作模式：workflow（工作流）| free_chat（自由对话）"""
     
     project_root: str = ""
     """项目根目录路径"""
@@ -238,9 +222,8 @@ class GraphState:
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典（用于序列化）"""
         return {
-            # 会话与模式控制
+            # 会话
             "session_id": self.session_id,
-            "work_mode": self.work_mode,
             "project_root": self.project_root,
             # 流转控制
             "current_node": self.current_node,
@@ -276,7 +259,6 @@ class GraphState:
         """从字典创建（用于反序列化）"""
         return cls(
             session_id=data.get("session_id", ""),
-            work_mode=data.get("work_mode", "free_chat"),
             project_root=data.get("project_root", ""),
             current_node=data.get("current_node", ""),
             previous_node=data.get("previous_node", ""),
@@ -303,7 +285,7 @@ class GraphState:
     def get_status_summary(self) -> str:
         """获取状态摘要（用于日志和调试）"""
         return (
-            f"GraphState(session={self.session_id}, mode={self.work_mode}, "
+            f"GraphState(session={self.session_id}, "
             f"node={self.current_node}, iter={self.iteration_count}, "
             f"completed={self.is_completed})"
         )
@@ -316,7 +298,6 @@ class GraphState:
 def create_initial_state(
     session_id: str,
     project_root: str,
-    work_mode: WorkMode = "free_chat"
 ) -> GraphState:
     """
     创建初始状态
@@ -324,7 +305,6 @@ def create_initial_state(
     Args:
         session_id: 会话标识
         project_root: 项目根目录
-        work_mode: 工作模式
         
     Returns:
         GraphState: 初始状态
@@ -332,7 +312,6 @@ def create_initial_state(
     return GraphState(
         session_id=session_id,
         project_root=project_root,
-        work_mode=work_mode,
         current_node="start",
         design_goals_path=".circuit_ai/design_goals.json",
     )
@@ -363,7 +342,6 @@ def merge_state_update(
 
 __all__ = [
     "GraphState",
-    "WorkMode",
     "create_initial_state",
     "merge_state_update",
 ]

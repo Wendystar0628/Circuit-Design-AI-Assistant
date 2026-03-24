@@ -332,8 +332,6 @@ class ConversationViewModel(QObject):
                 EVENT_LLM_CHUNK,
                 EVENT_LLM_COMPLETE,
                 EVENT_ITERATION_AWAITING_CONFIRMATION,
-                EVENT_WORKFLOW_LOCKED,
-                EVENT_WORKFLOW_UNLOCKED,
                 EVENT_CONTEXT_COMPRESS_COMPLETE,
                 EVENT_SESSION_CHANGED,
                 EVENT_STOP_REQUESTED,
@@ -346,8 +344,6 @@ class ConversationViewModel(QObject):
                 EVENT_ITERATION_AWAITING_CONFIRMATION,
                 self._on_iteration_awaiting
             )
-            self.event_bus.subscribe(EVENT_WORKFLOW_LOCKED, self._on_workflow_locked)
-            self.event_bus.subscribe(EVENT_WORKFLOW_UNLOCKED, self._on_workflow_unlocked)
             self.event_bus.subscribe(
                 EVENT_CONTEXT_COMPRESS_COMPLETE,
                 self._on_compress_complete
@@ -370,8 +366,6 @@ class ConversationViewModel(QObject):
                 EVENT_LLM_CHUNK,
                 EVENT_LLM_COMPLETE,
                 EVENT_ITERATION_AWAITING_CONFIRMATION,
-                EVENT_WORKFLOW_LOCKED,
-                EVENT_WORKFLOW_UNLOCKED,
                 EVENT_CONTEXT_COMPRESS_COMPLETE,
                 EVENT_SESSION_CHANGED,
                 EVENT_STOP_REQUESTED,
@@ -384,8 +378,6 @@ class ConversationViewModel(QObject):
                 EVENT_ITERATION_AWAITING_CONFIRMATION,
                 self._on_iteration_awaiting
             )
-            self.event_bus.unsubscribe(EVENT_WORKFLOW_LOCKED, self._on_workflow_locked)
-            self.event_bus.unsubscribe(EVENT_WORKFLOW_UNLOCKED, self._on_workflow_unlocked)
             self.event_bus.unsubscribe(
                 EVENT_CONTEXT_COMPRESS_COMPLETE,
                 self._on_compress_complete
@@ -741,10 +733,12 @@ class ConversationViewModel(QObject):
     
     def _trigger_llm_call(self) -> None:
         """
-        触发 LLM 调用
+        触发 LLM 调用（默认 Agent 模式）
         
-        获取消息历史，调用 LLMExecutor 进行流式生成。
-        LLMExecutor.generate() 使用 @asyncSlot() 装饰器，会自动在 qasync 事件循环中执行。
+        获取消息历史，调用 LLMExecutor.execute_agent() 进入 Agent 循环。
+        Agent 模式下 LLM 自行决定是否调用工具：
+        - 若不需要工具，行为与普通对话完全一致
+        - 若需要工具，自动执行 ReAct 循环
         """
         try:
             from shared.service_locator import ServiceLocator
@@ -772,9 +766,6 @@ class ConversationViewModel(QObject):
             # 获取消息历史（用于 LLM 调用）
             messages = self.context_manager.get_messages_for_llm()
             
-            # 注入系统提示词
-            messages = self._inject_system_prompt(messages)
-            
             # 使用 start_streaming() 中生成的任务 ID
             task_id = self._current_task_id or f"llm_{uuid.uuid4().hex[:8]}"
             
@@ -783,60 +774,24 @@ class ConversationViewModel(QObject):
             llm_executor.generation_complete.connect(self._on_llm_generation_complete)
             llm_executor.generation_error.connect(self._on_llm_generation_error)
             
-            # 直接调用 generate() 方法
+            # 默认使用 Agent 模式
             # @asyncSlot() 装饰器会自动将协程调度到 qasync 事件循环中执行
-            llm_executor.generate(
+            llm_executor.execute_agent(
                 task_id=task_id,
                 messages=messages,
                 model=model,
-                streaming=True,
                 thinking=enable_thinking,
             )
             
             if self.logger:
-                self.logger.info(f"LLM call triggered: task_id={task_id}, model={model}")
+                self.logger.info(
+                    f"Agent call triggered: task_id={task_id}, model={model}"
+                )
                 
         except Exception as e:
             if self.logger:
                 self.logger.error(f"Failed to trigger LLM call: {e}")
             self._handle_llm_error(f"调用 LLM 失败: {e}")
-    
-    def _inject_system_prompt(
-        self,
-        messages: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
-        """
-        注入系统提示词
-        
-        Args:
-            messages: 原始消息列表
-            
-        Returns:
-            注入系统提示词后的消息列表
-        """
-        try:
-            from shared.service_locator import ServiceLocator
-            from shared.service_names import SVC_SYSTEM_PROMPT_INJECTOR
-            
-            injector = ServiceLocator.get_optional(SVC_SYSTEM_PROMPT_INJECTOR)
-            if injector:
-                system_prompt = injector.get_system_prompt()
-                if system_prompt:
-                    # 检查是否已有系统消息
-                    if messages and messages[0].get("role") == "system":
-                        # 替换现有系统消息
-                        messages[0]["content"] = system_prompt
-                    else:
-                        # 插入系统消息到开头
-                        messages.insert(0, {
-                            "role": "system",
-                            "content": system_prompt
-                        })
-        except Exception as e:
-            if self.logger:
-                self.logger.warning(f"Failed to inject system prompt: {e}")
-        
-        return messages
     
     def _on_llm_stream_chunk(
         self,
@@ -1410,17 +1365,6 @@ class ConversationViewModel(QObject):
         
         if suggestions:
             self.append_suggestion_message(suggestions, status_summary)
-    
-    def _on_workflow_locked(self, event_data: Dict[str, Any]) -> None:
-        """处理工作流锁定事件"""
-        self._can_send = False
-        self.can_send_changed.emit(False)
-    
-    def _on_workflow_unlocked(self, event_data: Dict[str, Any]) -> None:
-        """处理工作流解锁事件"""
-        self._can_send = True
-        if not self._is_loading:
-            self.can_send_changed.emit(True)
     
     def _on_compress_complete(self, event_data: Dict[str, Any]) -> None:
         """处理压缩完成事件"""

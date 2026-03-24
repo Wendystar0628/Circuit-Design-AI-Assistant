@@ -299,8 +299,6 @@ class ConversationPanel(QWidget):
                 EVENT_STATE_PROJECT_OPENED,
                 EVENT_STATE_PROJECT_CLOSED,
                 EVENT_LANGUAGE_CHANGED,
-                EVENT_WORKFLOW_LOCKED,
-                EVENT_WORKFLOW_UNLOCKED,
                 EVENT_ITERATION_AWAITING_CONFIRMATION,
                 EVENT_SESSION_CHANGED,
             )
@@ -314,14 +312,6 @@ class ConversationPanel(QWidget):
             self.event_bus.subscribe(
                 EVENT_LANGUAGE_CHANGED, self._on_language_changed
             )
-            self.event_bus.subscribe(
-                EVENT_WORKFLOW_LOCKED, self._on_workflow_locked
-            )
-            self.event_bus.subscribe(
-                EVENT_WORKFLOW_UNLOCKED, self._on_workflow_unlocked
-            )
-            # 注意：EVENT_LLM_CHUNK 和 EVENT_LLM_COMPLETE 由 ViewModel 处理
-            # ConversationPanel 通过 ViewModel 的信号（stream_updated, stream_finished）响应
             self.event_bus.subscribe(
                 EVENT_ITERATION_AWAITING_CONFIRMATION,
                 self._on_iteration_awaiting
@@ -351,8 +341,6 @@ class ConversationPanel(QWidget):
                 EVENT_STATE_PROJECT_OPENED,
                 EVENT_STATE_PROJECT_CLOSED,
                 EVENT_LANGUAGE_CHANGED,
-                EVENT_WORKFLOW_LOCKED,
-                EVENT_WORKFLOW_UNLOCKED,
                 EVENT_ITERATION_AWAITING_CONFIRMATION,
                 EVENT_SESSION_CHANGED,
             )
@@ -365,12 +353,6 @@ class ConversationPanel(QWidget):
             )
             self.event_bus.unsubscribe(
                 EVENT_LANGUAGE_CHANGED, self._on_language_changed
-            )
-            self.event_bus.unsubscribe(
-                EVENT_WORKFLOW_LOCKED, self._on_workflow_locked
-            )
-            self.event_bus.unsubscribe(
-                EVENT_WORKFLOW_UNLOCKED, self._on_workflow_unlocked
             )
             self.event_bus.unsubscribe(
                 EVENT_ITERATION_AWAITING_CONFIRMATION,
@@ -438,15 +420,6 @@ class ConversationPanel(QWidget):
         """处理语言变更事件"""
         self.retranslate_ui()
     
-    def _on_workflow_locked(self, event_data: Dict[str, Any]) -> None:
-        """处理工作流锁定事件"""
-        if self._input_area:
-            self._input_area.set_send_enabled(False)
-    
-    def _on_workflow_unlocked(self, event_data: Dict[str, Any]) -> None:
-        """处理工作流解锁事件"""
-        if self._input_area:
-            self._input_area.set_send_enabled(True)
     
     def _on_iteration_awaiting(self, event_data: Dict[str, Any]) -> None:
         """处理迭代等待确认事件"""

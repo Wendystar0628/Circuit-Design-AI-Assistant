@@ -35,8 +35,6 @@ from typing import Any, Dict, Optional
 
 from shared.event_types import (
     EVENT_SESSION_CHANGED,
-    EVENT_WORKFLOW_LOCKED,
-    EVENT_WORKFLOW_UNLOCKED,
     EVENT_FILE_CHANGED,
 )
 
@@ -44,7 +42,6 @@ from application.session_state import (
     SessionState,
     SESSION_PROJECT_ROOT,
     SESSION_ID,
-    SESSION_WORK_MODE,
     SESSION_WORKFLOW_LOCKED,
     SESSION_CURRENT_NODE,
     SESSION_PREVIOUS_NODE,
@@ -185,13 +182,6 @@ class GraphStateProjector:
         if new_session_id != old_session_id:
             updates[SESSION_ID] = new_session_id
 
-        # work_mode
-        new_work_mode = getattr(new_state, 'work_mode', 'free_chat')
-        old_work_mode = getattr(old_state, 'work_mode', 'free_chat') if old_state else 'free_chat'
-        if new_work_mode != old_work_mode:
-            updates[SESSION_WORK_MODE] = new_work_mode
-            self._publish_work_mode_changed(old_work_mode, new_work_mode)
-
         # project_root
         new_project_root = getattr(new_state, 'project_root', '')
         old_project_root = getattr(old_state, 'project_root', '') if old_state else ''
@@ -302,25 +292,6 @@ class GraphStateProjector:
     # ============================================================
     # 事件发布
     # ============================================================
-
-    def _publish_work_mode_changed(self, old_mode: str, new_mode: str) -> None:
-        """发布工作模式变更事件"""
-        if self.event_bus is None:
-            return
-        
-        try:
-            self.event_bus.publish(
-                EVENT_SESSION_CHANGED,
-                {
-                    "action": "work_mode_changed",
-                    "old_mode": old_mode,
-                    "new_mode": new_mode,
-                },
-                source="graph_state_projector"
-            )
-        except Exception as e:
-            if self.logger:
-                self.logger.warning(f"Failed to publish work mode changed event: {e}")
 
     def _publish_active_file_changed(self, old_path: str, new_path: str) -> None:
         """发布当前文件变更事件"""

@@ -265,6 +265,8 @@ class ConversationPanel(QWidget):
         )
         self._view_model.stop_requested.connect(self._on_stop_requested)
         self._view_model.stop_completed.connect(self._on_stop_completed)
+        self._view_model.tool_call_started.connect(self._on_tool_call_started)
+        self._view_model.tool_call_ended.connect(self._on_tool_call_ended)
 
     # ============================================================
     # 初始化和清理
@@ -548,6 +550,24 @@ class ConversationPanel(QWidget):
                 "上下文已接近上限，建议开启新对话以获得更好的体验。"
             )
         )
+
+    @pyqtSlot(str, str, dict)
+    def _on_tool_call_started(
+        self, tool_call_id: str, tool_name: str, arguments: dict
+    ) -> None:
+        """处理工具调用开始（插入工具卡片到消息区域）"""
+        if self._message_area:
+            self._message_area.add_tool_card(tool_call_id, tool_name, arguments)
+
+    @pyqtSlot(str, str, bool)
+    def _on_tool_call_ended(
+        self, tool_call_id: str, result_content: str, is_error: bool
+    ) -> None:
+        """处理工具调用结束（更新工具卡片显示结果）"""
+        if self._message_area:
+            self._message_area.update_tool_card(
+                tool_call_id, result_content, is_error
+            )
 
     # ============================================================
     # 事件处理 - 子组件信号

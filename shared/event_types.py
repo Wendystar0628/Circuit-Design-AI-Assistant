@@ -1027,7 +1027,7 @@ EVENT_AGENT_TOOL_START = "agent.tool_start"
 #   - tool_call_id: str - 工具调用 ID
 #   - tool_name: str - 工具名称
 #   - is_error: bool - 是否出错
-#   - result_preview: str - 结果预览（截断）
+#   - result_content: str - 结果内容（截断至 200 字符）
 EVENT_AGENT_TOOL_END = "agent.tool_end"
 
 # Agent 单轮结束

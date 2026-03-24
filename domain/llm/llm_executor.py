@@ -911,7 +911,15 @@ class LLMExecutor(QObject):
                 })
 
             # 发布 Agent 循环开始事件
-            self._publish_event("agent.loop_started", {
+            from shared.event_types import (
+                EVENT_AGENT_LOOP_STARTED,
+                EVENT_AGENT_TOOL_START,
+                EVENT_AGENT_TOOL_END,
+                EVENT_AGENT_TURN_END,
+                EVENT_AGENT_LOOP_END,
+                EVENT_AGENT_LOOP_ERROR,
+            )
+            self._publish_event(EVENT_AGENT_LOOP_STARTED, {
                 "task_id": task_id,
                 "model": model,
                 "tool_count": registry.count,
@@ -1006,31 +1014,36 @@ class LLMExecutor(QObject):
                 })
 
         elif event_type == "tool_execution_start":
-            self._publish_event("agent.tool_start", {
+            from shared.event_types import EVENT_AGENT_TOOL_START
+            self._publish_event(EVENT_AGENT_TOOL_START, {
                 "task_id": task_id,
                 **data,
             })
 
         elif event_type == "tool_execution_end":
-            self._publish_event("agent.tool_end", {
+            from shared.event_types import EVENT_AGENT_TOOL_END
+            self._publish_event(EVENT_AGENT_TOOL_END, {
                 "task_id": task_id,
                 **data,
             })
 
         elif event_type == "turn_end":
-            self._publish_event("agent.turn_end", {
+            from shared.event_types import EVENT_AGENT_TURN_END
+            self._publish_event(EVENT_AGENT_TURN_END, {
                 "task_id": task_id,
                 **data,
             })
 
         elif event_type == "agent_end":
-            self._publish_event("agent.loop_end", {
+            from shared.event_types import EVENT_AGENT_LOOP_END
+            self._publish_event(EVENT_AGENT_LOOP_END, {
                 "task_id": task_id,
                 **data,
             })
 
         elif event_type == "agent_error":
-            self._publish_event("agent.loop_error", {
+            from shared.event_types import EVENT_AGENT_LOOP_ERROR
+            self._publish_event(EVENT_AGENT_LOOP_ERROR, {
                 "task_id": task_id,
                 **data,
             })

@@ -120,6 +120,8 @@ class ConversationViewModel(QObject):
     session_name_updated = pyqtSignal(str)       # 会话名称更新 (name)
     stop_requested = pyqtSignal()                # 停止请求已发出
     stop_completed = pyqtSignal(dict)            # 停止完成 (result)
+    tool_call_started = pyqtSignal(str, str, dict)   # 工具调用开始 (tool_call_id, tool_name, arguments)
+    tool_call_ended = pyqtSignal(str, str, bool)     # 工具调用结束 (tool_call_id, result_preview, is_error)
     
     def __init__(self, parent: Optional[QObject] = None):
         """初始化 ViewModel"""
@@ -336,6 +338,8 @@ class ConversationViewModel(QObject):
                 EVENT_SESSION_CHANGED,
                 EVENT_STOP_REQUESTED,
                 EVENT_STOP_COMPLETED,
+                EVENT_AGENT_TOOL_START,
+                EVENT_AGENT_TOOL_END,
             )
             
             self.event_bus.subscribe(EVENT_LLM_CHUNK, self._on_llm_chunk)
@@ -351,6 +355,8 @@ class ConversationViewModel(QObject):
             self.event_bus.subscribe(EVENT_SESSION_CHANGED, self._on_session_changed)
             self.event_bus.subscribe(EVENT_STOP_REQUESTED, self._on_stop_requested_event)
             self.event_bus.subscribe(EVENT_STOP_COMPLETED, self._on_stop_completed_event)
+            self.event_bus.subscribe(EVENT_AGENT_TOOL_START, self._on_agent_tool_start)
+            self.event_bus.subscribe(EVENT_AGENT_TOOL_END, self._on_agent_tool_end)
             
         except ImportError:
             if self.logger:
@@ -370,6 +376,8 @@ class ConversationViewModel(QObject):
                 EVENT_SESSION_CHANGED,
                 EVENT_STOP_REQUESTED,
                 EVENT_STOP_COMPLETED,
+                EVENT_AGENT_TOOL_START,
+                EVENT_AGENT_TOOL_END,
             )
             
             self.event_bus.unsubscribe(EVENT_LLM_CHUNK, self._on_llm_chunk)
@@ -385,6 +393,8 @@ class ConversationViewModel(QObject):
             self.event_bus.unsubscribe(EVENT_SESSION_CHANGED, self._on_session_changed)
             self.event_bus.unsubscribe(EVENT_STOP_REQUESTED, self._on_stop_requested_event)
             self.event_bus.unsubscribe(EVENT_STOP_COMPLETED, self._on_stop_completed_event)
+            self.event_bus.unsubscribe(EVENT_AGENT_TOOL_START, self._on_agent_tool_start)
+            self.event_bus.unsubscribe(EVENT_AGENT_TOOL_END, self._on_agent_tool_end)
             
         except ImportError:
             pass
@@ -934,6 +944,39 @@ class ConversationViewModel(QObject):
             except ImportError:
                 pass
     
+    # ============================================================
+    # Agent 工具事件处理
+    # ============================================================
+
+    def _on_agent_tool_start(self, event_data: Dict[str, Any]) -> None:
+        """
+        处理 Agent 工具开始执行事件（来自 EventBus）
+
+        EventBus 数据格式: {"type": ..., "data": {payload}, ...}
+        payload: {"task_id", "tool_call_id", "tool_name", "arguments"}
+        """
+        data = event_data.get("data", {}) or {}
+        tool_call_id = data.get("tool_call_id", "")
+        tool_name = data.get("tool_name", "")
+        arguments = data.get("arguments", {})
+
+        if tool_call_id and tool_name:
+            self.tool_call_started.emit(tool_call_id, tool_name, arguments)
+
+    def _on_agent_tool_end(self, event_data: Dict[str, Any]) -> None:
+        """
+        处理 Agent 工具执行结束事件（来自 EventBus）
+
+        payload: {"task_id", "tool_call_id", "tool_name", "result_content", "is_error"}
+        """
+        data = event_data.get("data", {}) or {}
+        tool_call_id = data.get("tool_call_id", "")
+        result_content = data.get("result_content", "")
+        is_error = data.get("is_error", False)
+
+        if tool_call_id:
+            self.tool_call_ended.emit(tool_call_id, result_content, is_error)
+
     def add_assistant_message(
         self,
         content: str,

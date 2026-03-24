@@ -86,6 +86,9 @@ SVG_ERROR = _load_svg_icon("status/error.svg", _FALLBACK_ERROR)
 SVG_IMAGE = _load_svg_icon("panel/image.svg", _FALLBACK_IMAGE)
 SVG_FILE = _load_svg_icon("file/file.svg", _FALLBACK_FILE)
 
+_FALLBACK_TOOL = '''<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ff9800" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>'''
+SVG_TOOL = _load_svg_icon("panel/tool.svg", _FALLBACK_TOOL)
+
 
 class WebMessageView(QWidget):
     """
@@ -275,6 +278,21 @@ a:hover { text-decoration: underline; }
 .att-icon { display: flex; align-items: center; }
 .att-name { color: #333; max-width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .att-more { background: #e0e0e0; border-radius: 4px; padding: 4px 8px; font-size: 12px; color: #666; }
+.tool-card { background: #fff8e1; border-left: 3px solid #ff9800; border-radius: 4px; padding: 8px 12px; margin: 8px 0; }
+.tool-header { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.tool-header svg { flex-shrink: 0; }
+.tool-name { font-weight: 600; color: #e65100; }
+.tool-status { margin-left: auto; font-size: 11px; padding: 1px 6px; border-radius: 3px; white-space: nowrap; }
+.tool-status.running { color: #ff9800; background: #fff3e0; }
+.tool-status.running::after { content: "..."; animation: dots 1.5s infinite; }
+.tool-status.done { color: #4caf50; background: #e8f5e9; }
+.tool-status.error { color: #f44336; background: #ffebee; }
+.tool-args { font-size: 11px; color: #666; margin-top: 4px; font-family: "JetBrains Mono","Cascadia Code","Consolas",monospace; line-height: 1.4; }
+.tool-result { display: none; margin-top: 6px; padding-top: 6px; border-top: 1px solid #ffe0b2; }
+.tool-result.show { display: block; }
+.tool-result-content { font-size: 11px; color: #555; background: #f5f5f5; border-radius: 4px; padding: 6px 8px;
+    max-height: 120px; overflow-y: auto; white-space: pre-wrap; word-break: break-all;
+    font-family: "JetBrains Mono","Cascadia Code","Consolas",monospace; }
 '''
 
     def _get_scripts(self) -> str:
@@ -380,6 +398,27 @@ function toggleThink(id) {
     } 
 }
 function onFileClick(path) { window.location.href = 'file://' + path; }
+function addToolCard(html) {
+    var streaming = document.querySelector('.msg.streaming');
+    if (!streaming) { document.getElementById('msgs').insertAdjacentHTML('beforeend', html); }
+    else { streaming.insertAdjacentHTML('beforeend', html); }
+    scrollBottom();
+}
+function updateToolCard(id, resultHtml, isError) {
+    var card = document.getElementById('tool-' + id);
+    if (!card) return;
+    var status = card.querySelector('.tool-status');
+    if (status) {
+        status.classList.remove('running');
+        status.classList.add(isError ? 'error' : 'done');
+        status.textContent = isError ? '\u5931\u8d25' : '\u5b8c\u6210';
+    }
+    if (resultHtml) {
+        var result = card.querySelector('.tool-result');
+        if (result) { result.innerHTML = resultHtml; result.classList.add('show'); }
+    }
+    scrollBottom();
+}
 '''
 
     def render_messages(self, messages: List[Any]) -> None:
@@ -661,6 +700,68 @@ function onFileClick(path) { window.location.href = 'file://' + path; }
         html = "".join(items_html)
         self._run_js(f"updateSearchResults(`{self._esc(html)}`)")
     
+    def add_tool_card(self, tool_call_id: str, tool_name: str, arguments: dict) -> None:
+        """
+        在流式消息中插入工具调用卡片
+
+        Args:
+            tool_call_id: 工具调用 ID
+            tool_name: 工具名称
+            arguments: 工具参数字典
+        """
+        import html as html_mod
+
+        safe_id = html_mod.escape(tool_call_id)
+        safe_name = html_mod.escape(tool_name)
+
+        args_lines = []
+        for k, v in arguments.items():
+            val_str = str(v)
+            if len(val_str) > 80:
+                val_str = val_str[:77] + "..."
+            args_lines.append(
+                f"{html_mod.escape(str(k))}: {html_mod.escape(val_str)}"
+            )
+        args_html = "<br>".join(args_lines) if args_lines else ""
+
+        card_html = (
+            f'<div class="tool-card" id="tool-{safe_id}">'
+            f'<div class="tool-header">{SVG_TOOL} '
+            f'<span class="tool-name">{safe_name}</span>'
+            f'<span class="tool-status running">\u6267\u884c\u4e2d</span></div>'
+            f'<div class="tool-args">{args_html}</div>'
+            f'<div class="tool-result"></div>'
+            f'</div>'
+        )
+        self._run_js(f"addToolCard(`{self._esc(card_html)}`)")
+
+    def update_tool_card(
+        self, tool_call_id: str, result_content: str, is_error: bool
+    ) -> None:
+        """
+        更新工具调用卡片（显示执行结果）
+
+        Args:
+            tool_call_id: 工具调用 ID
+            result_content: 结果内容（已截断）
+            is_error: 是否出错
+        """
+        import html as html_mod
+
+        display = result_content
+        if len(display) > 300:
+            display = display[:297] + "..."
+
+        safe_content = html_mod.escape(display)
+        result_html = f'<div class="tool-result-content">{safe_content}</div>'
+
+        safe_id = self._esc(tool_call_id)
+        escaped_result = self._esc(result_html)
+        is_error_js = "true" if is_error else "false"
+        self._run_js(
+            f"updateToolCard(`{safe_id}`, `{escaped_result}`, {is_error_js})"
+        )
+
     def _esc_html(self, text: str) -> str:
         """转义 HTML 特殊字符"""
         import html

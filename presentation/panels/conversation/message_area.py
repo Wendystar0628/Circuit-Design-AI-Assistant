@@ -181,6 +181,20 @@ class MessageArea(QWidget):
         if self._web_view:
             self._web_view.update_search_results(results)
     
+    def add_tool_card(
+        self, tool_call_id: str, tool_name: str, arguments: dict
+    ) -> None:
+        """在流式消息中插入工具调用卡片"""
+        if self._web_view:
+            self._web_view.add_tool_card(tool_call_id, tool_name, arguments)
+
+    def update_tool_card(
+        self, tool_call_id: str, result_content: str, is_error: bool
+    ) -> None:
+        """更新工具调用卡片的执行结果"""
+        if self._web_view:
+            self._web_view.update_tool_card(tool_call_id, result_content, is_error)
+
     def is_streaming(self) -> bool:
         """获取流式输出状态"""
         return self._is_streaming

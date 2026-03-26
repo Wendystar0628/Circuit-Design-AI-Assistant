@@ -105,6 +105,7 @@ class RetrievalContext:
     retrieval_results: List[RetrievalResult] = field(default_factory=list)
     keywords: Optional[ExtractedKeywords] = None
     total_tokens: int = 0
+    rag_references: List[Dict[str, Any]] = field(default_factory=list)
 
     @property
     def items(self) -> List[RetrievalResult]:
@@ -242,6 +243,16 @@ class ContextRetriever:
         )
         if rag_results:
             search_results.extend(rag_results)
+            # 单独记录 RAG 来源，供消息 metadata 持久化
+            context.rag_references = [
+                {
+                    "file_path": r.path,
+                    "snippet": r.content[:200],
+                    "score": r.relevance,
+                }
+                for r in rag_results
+                if r.source == "rag"
+            ]
 
         # Step 6: 使用 ContextAssembler 组装所有结果
         assembled = self._assemble_context(
@@ -527,7 +538,7 @@ class ContextRetriever:
             from shared.service_names import SVC_RAG_MANAGER
 
             rag_manager = ServiceLocator.get_optional(SVC_RAG_MANAGER)
-            if not rag_manager or not rag_manager.enabled:
+            if not rag_manager or not rag_manager.is_available:
                 return results
 
             query_result = await rag_manager.query(message)

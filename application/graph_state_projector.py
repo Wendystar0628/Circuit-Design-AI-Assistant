@@ -36,7 +36,6 @@ from typing import Any, Dict, Optional
 from shared.event_types import (
     EVENT_SESSION_CHANGED,
     EVENT_FILE_CHANGED,
-    EVENT_RAG_MODE_CHANGED,
     EVENT_RAG_INDEX_STARTED,
     EVENT_RAG_INDEX_PROGRESS,
     EVENT_RAG_INDEX_COMPLETE,
@@ -61,7 +60,6 @@ from application.session_state import (
     SESSION_DESIGN_GOALS_SUMMARY,
     SESSION_LAST_METRICS,
     SESSION_ERROR_CONTEXT,
-    SESSION_RAG_ENABLED,
     SESSION_RAG_INDEXING,
     SESSION_RAG_INDEX_STATUS,
 )
@@ -402,7 +400,6 @@ class GraphStateProjector:
             SESSION_TERMINATION_REASON: "",
             SESSION_LAST_METRICS: {},
             SESSION_ERROR_CONTEXT: "",
-            SESSION_RAG_ENABLED: False,
             SESSION_RAG_INDEXING: False,
             SESSION_RAG_INDEX_STATUS: {},
         }
@@ -429,7 +426,6 @@ class GraphStateProjector:
             return
 
         try:
-            self.event_bus.subscribe(EVENT_RAG_MODE_CHANGED, self._on_rag_mode_changed)
             self.event_bus.subscribe(EVENT_RAG_INDEX_STARTED, self._on_rag_index_started)
             self.event_bus.subscribe(EVENT_RAG_INDEX_COMPLETE, self._on_rag_index_complete)
             self.event_bus.subscribe(EVENT_RAG_INDEX_PROGRESS, self._on_rag_index_progress)
@@ -442,13 +438,9 @@ class GraphStateProjector:
             if self.logger:
                 self.logger.warning(f"Failed to subscribe RAG events: {e}")
 
-    def _on_rag_mode_changed(self, data) -> None:
-        """处理 RAG 模式变更事件"""
-        enabled = data.get("enabled", False) if isinstance(data, dict) else False
-        self._session_state._internal_set(SESSION_RAG_ENABLED, enabled)
-
-    def _on_rag_index_started(self, data) -> None:
+    def _on_rag_index_started(self, event_data) -> None:
         """处理索引开始事件"""
+        data = event_data.get("data", event_data) if isinstance(event_data, dict) else event_data
         self._session_state._internal_set(SESSION_RAG_INDEXING, True)
         if isinstance(data, dict):
             self._session_state._internal_set(SESSION_RAG_INDEX_STATUS, {
@@ -458,8 +450,9 @@ class GraphStateProjector:
                 "track_id": data.get("track_id", ""),
             })
 
-    def _on_rag_index_progress(self, data) -> None:
+    def _on_rag_index_progress(self, event_data) -> None:
         """处理索引进度事件"""
+        data = event_data.get("data", event_data) if isinstance(event_data, dict) else event_data
         if isinstance(data, dict):
             self._session_state._internal_set(SESSION_RAG_INDEX_STATUS, {
                 "status": "indexing",
@@ -468,8 +461,9 @@ class GraphStateProjector:
                 "current_file": data.get("current_file", ""),
             })
 
-    def _on_rag_index_complete(self, data) -> None:
+    def _on_rag_index_complete(self, event_data) -> None:
         """处理索引完成事件"""
+        data = event_data.get("data", event_data) if isinstance(event_data, dict) else event_data
         self._session_state._internal_set(SESSION_RAG_INDEXING, False)
         if isinstance(data, dict):
             self._session_state._internal_set(SESSION_RAG_INDEX_STATUS, {
@@ -479,8 +473,9 @@ class GraphStateProjector:
                 "duration_s": data.get("duration_s", 0),
             })
 
-    def _on_rag_index_error(self, data) -> None:
+    def _on_rag_index_error(self, event_data) -> None:
         """处理索引错误事件"""
+        data = event_data.get("data", event_data) if isinstance(event_data, dict) else event_data
         if isinstance(data, dict):
             self._session_state._internal_set(SESSION_RAG_INDEX_STATUS, {
                 "status": "error",

@@ -379,20 +379,12 @@ class ConfigManager:
         """
         from .settings import (
             RAG_CONFIG_FILE,
-            DEFAULT_RAG_ENABLED,
-            DEFAULT_RAG_AUTO_INDEX,
             DEFAULT_RAG_QUERY_MODE,
-            CONFIG_RAG_ENABLED,
-            CONFIG_RAG_AUTO_INDEX,
             CONFIG_RAG_QUERY_MODE,
-            CONFIG_RAG_REMEMBER_STATE,
         )
 
         defaults = {
-            CONFIG_RAG_ENABLED: DEFAULT_RAG_ENABLED,
-            CONFIG_RAG_AUTO_INDEX: DEFAULT_RAG_AUTO_INDEX,
             CONFIG_RAG_QUERY_MODE: DEFAULT_RAG_QUERY_MODE,
-            CONFIG_RAG_REMEMBER_STATE: True,
         }
 
         config_path = Path(project_root) / ".circuit_ai" / RAG_CONFIG_FILE

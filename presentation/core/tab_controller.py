@@ -32,6 +32,7 @@ TAB_CONVERSATION = "TAB_CONVERSATION"
 TAB_INFO = "TAB_INFO"
 TAB_DEVTOOLS = "TAB_DEVTOOLS"
 TAB_COMPONENT = "TAB_COMPONENT"
+TAB_RAG = "TAB_RAG"
 
 
 # ============================================================
@@ -533,4 +534,5 @@ __all__ = [
     "TAB_INFO",
     "TAB_DEVTOOLS",
     "TAB_COMPONENT",
+    "TAB_RAG",
 ]

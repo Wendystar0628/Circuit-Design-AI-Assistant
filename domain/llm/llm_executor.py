@@ -901,6 +901,33 @@ class LLMExecutor(QObject):
                 project_root=project_root,
             )
 
+            # 通过 ContextRetriever 注入 RAG 上下文（统一注入点）
+            rag_references = []
+            try:
+                from domain.llm.context_retrieval import ContextRetriever
+                retriever = ContextRetriever()
+                # 提取最后一条用户消息作为检索查询
+                user_query = ""
+                for m in reversed(messages):
+                    if m.get("role") == "user":
+                        user_query = m.get("content", "")
+                        break
+                if user_query:
+                    retrieval_ctx = await retriever.retrieve_async(
+                        message=user_query,
+                        project_path=project_root,
+                    )
+                    rag_references = retrieval_ctx.rag_references or []
+                    # 将检索上下文追加到系统提示词
+                    if retrieval_ctx.retrieval_results:
+                        ctx_lines = ["\n\n## Retrieved Context"]
+                        for r in retrieval_ctx.retrieval_results[:10]:
+                            ctx_lines.append(f"### {r.path}\n{r.content}")
+                        system_prompt += "\n".join(ctx_lines)
+            except Exception as e:
+                if self.logger:
+                    self.logger.debug(f"Context retrieval skipped: {e}")
+
             # 注入系统提示词到消息列表
             if messages and messages[0].get("role") == "system":
                 messages[0]["content"] = system_prompt
@@ -951,6 +978,7 @@ class LLMExecutor(QObject):
                 "usage": agent_result.usage,
                 "total_turns": agent_result.total_turns,
                 "tool_calls_count": agent_result.tool_calls_count,
+                "rag_references": rag_references,
             }
 
             # 保存结果

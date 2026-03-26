@@ -108,6 +108,7 @@ class MessageStore:
         reasoning_content: str = "",
         usage: Optional[Dict[str, int]] = None,
         web_search_results: Optional[List[Dict[str, Any]]] = None,
+        rag_references: Optional[List[Dict[str, Any]]] = None,
         is_partial: bool = False,
         stop_reason: str = "",
         tool_calls_pending: Optional[List[Dict[str, Any]]] = None,
@@ -124,6 +125,7 @@ class MessageStore:
             reasoning_content: 思考内容（仅助手消息）
             usage: Token 使用统计（仅助手消息）
             web_search_results: 联网搜索结果（仅助手消息）
+            rag_references: RAG 知识库检索来源（仅助手消息）
             is_partial: 是否为部分响应
             stop_reason: 停止原因
             tool_calls_pending: 中断时未完成的工具调用
@@ -148,6 +150,7 @@ class MessageStore:
                     stop_reason=stop_reason,
                     tool_calls_pending=tool_calls_pending,
                     web_search_results=web_search_results,
+                    rag_references=rag_references,
                 )
             elif role == ROLE_SYSTEM:
                 msg = create_system_message(content=content)

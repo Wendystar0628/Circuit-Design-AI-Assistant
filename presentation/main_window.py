@@ -44,7 +44,7 @@ from presentation.session_manager import SessionManager
 from presentation.action_handlers import ActionHandlers
 from presentation.core.panel_manager import PanelManager, PanelRegion
 from presentation.core.tab_controller import (
-    TabController, TAB_CONVERSATION, TAB_DEVTOOLS
+    TabController, TAB_CONVERSATION, TAB_DEVTOOLS, TAB_RAG
 )
 
 
@@ -286,6 +286,21 @@ class MainWindow(QMainWindow):
             title_key="panel.chat"
         )
         
+        # 注册知识库面板（RAG Tab）
+        from presentation.panels.rag_panel import RAGPanel
+        rag_panel = RAGPanel()
+        self._tab_controller.register_tab(
+            TAB_RAG,
+            rag_panel,
+            self._get_text("panel.rag", "知识库"),
+            "resources/icons/panel/knowledge.svg"
+        )
+        self._panels["rag"] = rag_panel
+        self._panel_manager.register_panel(
+            "rag", rag_panel, PanelRegion.RIGHT,
+            title_key="panel.rag"
+        )
+        
         # 注册调试面板（根据配置）
         if self._should_show_devtools():
             from presentation.panels.devtools_panel import DevToolsPanel
@@ -452,6 +467,13 @@ class MainWindow(QMainWindow):
             TAB_CONVERSATION,
             self._get_text("panel.conversation", "对话")
         )
+        
+        # 更新知识库标签页标题
+        if "rag" in self._panels:
+            self._tab_controller.update_tab_title(
+                TAB_RAG,
+                self._get_text("panel.rag", "知识库")
+            )
         
         # 更新调试标签页标题（如果存在）
         if "devtools" in self._panels:

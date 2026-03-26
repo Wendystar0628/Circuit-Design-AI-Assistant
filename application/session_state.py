@@ -76,7 +76,6 @@ SESSION_LAST_METRICS = "last_metrics"
 SESSION_ERROR_CONTEXT = "error_context"
 
 # RAG 状态（由 RAGManager 通过 EventBus 投影更新）
-SESSION_RAG_ENABLED = "rag_enabled"
 SESSION_RAG_INDEXING = "rag_indexing"
 SESSION_RAG_INDEX_STATUS = "rag_index_status"
 
@@ -141,7 +140,6 @@ class SessionState:
             SESSION_LAST_METRICS: {},
             SESSION_ERROR_CONTEXT: "",
             # RAG 状态
-            SESSION_RAG_ENABLED: False,
             SESSION_RAG_INDEXING: False,
             SESSION_RAG_INDEX_STATUS: {},
         }
@@ -450,11 +448,6 @@ class SessionState:
         return self.get(SESSION_ERROR_CONTEXT, "")
 
     @property
-    def rag_enabled(self) -> bool:
-        """RAG 是否开启"""
-        return self.get(SESSION_RAG_ENABLED, False)
-
-    @property
     def rag_indexing(self) -> bool:
         """RAG 是否正在索引"""
         return self.get(SESSION_RAG_INDEXING, False)
@@ -502,7 +495,6 @@ __all__ = [
     "SESSION_DESIGN_GOALS_SUMMARY",
     "SESSION_LAST_METRICS",
     "SESSION_ERROR_CONTEXT",
-    "SESSION_RAG_ENABLED",
     "SESSION_RAG_INDEXING",
     "SESSION_RAG_INDEX_STATUS",
 ]

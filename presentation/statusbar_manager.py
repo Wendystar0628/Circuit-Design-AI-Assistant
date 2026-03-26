@@ -39,8 +39,12 @@ class StatusbarManager:
         # 状态栏组件
         self._status_label: Optional[QLabel] = None      # 左侧：任务状态
         self._iteration_label: Optional[QLabel] = None   # 中间：迭代信息
+        self._rag_label: Optional[QLabel] = None         # RAG 状态指示
         self._worker_label: Optional[QLabel] = None      # 右侧：Worker 状态
         self._project_label: Optional[QLabel] = None     # 项目路径信息
+        
+        # 事件订阅
+        self._subscriptions = []
 
     # ============================================================
     # 服务访问（通过主窗口）
@@ -81,11 +85,23 @@ class StatusbarManager:
         self._iteration_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._statusbar.addWidget(self._iteration_label)
         
+        # RAG 状态指示（点击可切换到知识库 Tab）
+        self._rag_label = QLabel()
+        self._rag_label.setMinimumWidth(80)
+        self._rag_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._rag_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._rag_label.setVisible(False)  # 默认隐藏，RAG 开启后显示
+        self._rag_label.mousePressEvent = self._on_rag_label_clicked
+        self._statusbar.addPermanentWidget(self._rag_label)
+        
         # 右侧：Worker 状态指示器（阶段三显示）
         self._worker_label = QLabel()
         self._worker_label.setMinimumWidth(100)
         self._worker_label.setAlignment(Qt.AlignmentFlag.AlignRight)
         self._statusbar.addPermanentWidget(self._worker_label)
+        
+        # 订阅 RAG 事件
+        self._subscribe_rag_events()
         
         return self._statusbar
 
@@ -165,6 +181,111 @@ class StatusbarManager:
         if self._worker_label:
             self._worker_label.setText("")
             self._worker_label.setStyleSheet("")
+
+    # ============================================================
+    # RAG 状态指示
+    # ============================================================
+
+    def _subscribe_rag_events(self):
+        """订阅 RAG 相关事件（RAG 是项目原生能力，无开关）"""
+        try:
+            from shared.service_locator import ServiceLocator
+            from shared.service_names import SVC_EVENT_BUS
+            from shared.event_types import (
+                EVENT_RAG_INIT_COMPLETE,
+                EVENT_RAG_INDEX_STARTED,
+                EVENT_RAG_INDEX_PROGRESS,
+                EVENT_RAG_INDEX_COMPLETE,
+                EVENT_STATE_PROJECT_OPENED,
+                EVENT_STATE_PROJECT_CLOSED,
+            )
+            eb = ServiceLocator.get_optional(SVC_EVENT_BUS)
+            if not eb:
+                return
+            for evt, handler in [
+                (EVENT_STATE_PROJECT_OPENED, self._on_rag_project_opened),
+                (EVENT_STATE_PROJECT_CLOSED, self._on_rag_project_closed),
+                (EVENT_RAG_INIT_COMPLETE, self._on_rag_init_complete),
+                (EVENT_RAG_INDEX_STARTED, self._on_rag_index_started),
+                (EVENT_RAG_INDEX_PROGRESS, self._on_rag_index_progress),
+                (EVENT_RAG_INDEX_COMPLETE, self._on_rag_index_complete),
+            ]:
+                eb.subscribe(evt, handler)
+                self._subscriptions.append((evt, handler))
+        except Exception:
+            pass
+
+    def _on_rag_project_opened(self, data):
+        """项目打开 → 显示 RAG 标签（RAG 自动激活）"""
+        if self._rag_label:
+            self._rag_label.setVisible(True)
+            self._rag_label.setText("RAG")
+            self._rag_label.setStyleSheet(
+                "color: #1565c0; font-size: 11px; padding: 1px 6px; "
+                "background: #e3f2fd; border-radius: 3px;"
+            )
+
+    def _on_rag_init_complete(self, event_data):
+        """RAG 初始化完成 → 显示就绪或错误"""
+        data = event_data.get("data", event_data) if isinstance(event_data, dict) else event_data
+        status = data.get("status", "") if isinstance(data, dict) else ""
+        if self._rag_label:
+            if status == "ready":
+                self._rag_label.setText("RAG")
+                self._rag_label.setStyleSheet(
+                    "color: #2e7d32; font-size: 11px; padding: 1px 6px; "
+                    "background: #e8f5e9; border-radius: 3px;"
+                )
+            elif status == "error":
+                self._rag_label.setText("RAG ✗")
+                self._rag_label.setStyleSheet(
+                    "color: #c62828; font-size: 11px; padding: 1px 6px; "
+                    "background: #ffebee; border-radius: 3px;"
+                )
+
+    def _on_rag_project_closed(self, data):
+        """项目关闭 → 隐藏 RAG 标签"""
+        if self._rag_label:
+            self._rag_label.setVisible(False)
+
+    def _on_rag_index_started(self, event_data):
+        """RAG 索引开始"""
+        data = event_data.get("data", event_data) if isinstance(event_data, dict) else event_data
+        if self._rag_label:
+            self._rag_label.setVisible(True)
+            total = data.get("total_files", 0) if isinstance(data, dict) else 0
+            self._rag_label.setText(f"索引中 0/{total}")
+            self._rag_label.setStyleSheet(
+                "color: #1565c0; font-size: 11px; padding: 1px 6px; "
+                "background: #e3f2fd; border-radius: 3px;"
+            )
+
+    def _on_rag_index_progress(self, event_data):
+        """RAG 索引进度"""
+        data = event_data.get("data", event_data) if isinstance(event_data, dict) else event_data
+        if self._rag_label and isinstance(data, dict):
+            p = data.get("processed", 0)
+            t = data.get("total", 0)
+            self._rag_label.setText(f"索引中 {p}/{t}")
+
+    def _on_rag_index_complete(self, event_data):
+        """RAG 索引完成"""
+        if self._rag_label:
+            self._rag_label.setText("RAG")
+            self._rag_label.setStyleSheet(
+                "color: #2e7d32; font-size: 11px; padding: 1px 6px; "
+                "background: #e8f5e9; border-radius: 3px;"
+            )
+
+    def _on_rag_label_clicked(self, event):
+        """点击 RAG 标签切换到知识库 Tab"""
+        try:
+            from presentation.core.tab_controller import TAB_RAG
+            tc = getattr(self._main_window, 'tab_controller', None)
+            if tc:
+                tc.switch_to_tab(TAB_RAG)
+        except Exception:
+            pass
 
     def set_project_info(self, path: Optional[str]) -> None:
         """

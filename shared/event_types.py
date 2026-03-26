@@ -584,10 +584,12 @@ EVENT_SCHEMATIC_ZOOM_CHANGED = "schematic_zoom_changed"
 # RAG 事件（基于 LightRAG 架构）
 # ============================================================
 
-# RAG 模式切换
+# RAG 初始化完成（服务就绪，可能还未索引）
 # 携带数据：
-#   - enabled: bool - 是否启用
-EVENT_RAG_MODE_CHANGED = "rag.mode_changed"
+#   - project_root: str - 项目根目录
+#   - status: str - "ready" | "error"
+#   - error: str - 错误信息（仅 status=error 时）
+EVENT_RAG_INIT_COMPLETE = "rag.init_complete"
 
 # RAG 索引开始
 # 携带数据：
@@ -1158,7 +1160,7 @@ __all__ = [
     "EVENT_SCHEMATIC_JUMP_TO_SOURCE",
     "EVENT_SCHEMATIC_ZOOM_CHANGED",
     # RAG 事件（基于 LightRAG 架构）
-    "EVENT_RAG_MODE_CHANGED",
+    "EVENT_RAG_INIT_COMPLETE",
     "EVENT_RAG_INDEX_STARTED",
     "EVENT_RAG_INDEX_PROGRESS",
     "EVENT_RAG_INDEX_COMPLETE",

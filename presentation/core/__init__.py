@@ -20,6 +20,7 @@ from presentation.core.tab_controller import (
     TAB_CONVERSATION,
     TAB_INFO,
     TAB_COMPONENT,
+    TAB_RAG,
 )
 from presentation.core.ui_event_bridge import (
     UIEventBridge,

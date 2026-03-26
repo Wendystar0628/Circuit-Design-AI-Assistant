@@ -110,6 +110,7 @@ def create_ai_message(
     stop_reason: str = "",
     tool_calls_pending: Optional[List[Dict[str, Any]]] = None,
     web_search_results: Optional[List[Dict[str, Any]]] = None,
+    rag_references: Optional[List[Dict[str, Any]]] = None,
     timestamp: Optional[str] = None,
 ) -> AIMessage:
     """
@@ -124,6 +125,7 @@ def create_ai_message(
         stop_reason: 停止原因
         tool_calls_pending: 中断时未完成的工具调用
         web_search_results: 联网搜索结果
+        rag_references: RAG 知识库检索来源 [{"file_path", "snippet", "score"}]
         timestamp: ISO 时间戳，默认为当前时间
         
     Returns:
@@ -144,6 +146,8 @@ def create_ai_message(
         additional_kwargs["tool_calls_pending"] = tool_calls_pending
     if web_search_results:
         additional_kwargs["web_search_results"] = web_search_results
+    if rag_references:
+        additional_kwargs["rag_references"] = rag_references
     
     return AIMessage(
         content=content,
@@ -253,6 +257,11 @@ def get_tool_calls_pending(msg: BaseMessage) -> List[Dict[str, Any]]:
 def get_web_search_results(msg: BaseMessage) -> List[Dict[str, Any]]:
     """获取联网搜索结果"""
     return _get_additional_kwargs(msg).get("web_search_results", [])
+
+
+def get_rag_references(msg: BaseMessage) -> List[Dict[str, Any]]:
+    """获取 RAG 知识库检索来源"""
+    return _get_additional_kwargs(msg).get("rag_references", [])
 
 
 # ============================================================
@@ -421,6 +430,8 @@ def message_to_dict(msg: BaseMessage) -> Dict[str, Any]:
             result["additional_kwargs"]["tool_calls_pending"] = kwargs["tool_calls_pending"]
         if kwargs.get("web_search_results"):
             result["additional_kwargs"]["web_search_results"] = kwargs["web_search_results"]
+        if kwargs.get("rag_references"):
+            result["additional_kwargs"]["rag_references"] = kwargs["rag_references"]
     
     # 工具消息特有字段
     elif role == ROLE_TOOL:
@@ -512,6 +523,7 @@ __all__ = [
     "get_stop_reason",
     "get_tool_calls_pending",
     "get_web_search_results",
+    "get_rag_references",
     # 扩展字段写入
     "set_reasoning_content",
     "set_operations",

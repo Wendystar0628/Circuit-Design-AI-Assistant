@@ -7,9 +7,8 @@
 
 1. 协程任务（通过 AsyncTaskRegistry 管理）：
    - LLM 生成任务
-   - RAG 索引/检索任务
+   - RAG 索引/检索任务（基于 LightRAG）
    - 仿真任务
-   - 代码索引任务
 
 2. 长期运行任务（独立线程管理）：
    - 文件监听任务（使用 watchdog 库）
@@ -48,11 +47,10 @@
 from shared.async_task_registry import (
     TASK_LLM,
     TASK_RAG_INDEX,
-    TASK_RAG_SEARCH,
+    TASK_RAG_QUERY,
     TASK_FILE_WATCH,
     TASK_SIMULATION,
     TASK_SCHEMATIC,
-    TASK_CODE_INDEX,
 )
 
 # 文件监听任务
@@ -76,11 +74,10 @@ __all__ = [
     # 任务类型常量
     "TASK_LLM",
     "TASK_RAG_INDEX",
-    "TASK_RAG_SEARCH",
+    "TASK_RAG_QUERY",
     "TASK_FILE_WATCH",
     "TASK_SIMULATION",
     "TASK_SCHEMATIC",
-    "TASK_CODE_INDEX",
     # 文件监听任务
     "FileWatchTask",
     "FileWatchReceiver",

@@ -278,6 +278,8 @@ a:hover { text-decoration: underline; }
 .att-icon { display: flex; align-items: center; }
 .att-name { color: #333; max-width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .att-more { background: #e0e0e0; border-radius: 4px; padding: 4px 8px; font-size: 12px; color: #666; }
+.ops-card.tool-ops { background: #fff8e1; border-left-color: #ff9800; }
+.ops-card.tool-ops .ops-title { color: #e65100; }
 .tool-card { background: #fff8e1; border-left: 3px solid #ff9800; border-radius: 4px; padding: 8px 12px; margin: 8px 0; }
 .tool-header { display: flex; align-items: center; gap: 6px; font-size: 12px; }
 .tool-header svg { flex-shrink: 0; }
@@ -470,7 +472,12 @@ function updateToolCard(id, resultHtml, isError) {
         if not operations:
             return ""
         
-        max_display = 5
+        # 检测是否为 Agent 工具调用（工具名称开头，含括号）
+        is_tool_ops = any("(" in op and ")" in op for op in operations)
+        title_icon = SVG_TOOL if is_tool_ops else SVG_CLIPBOARD
+        title_text = "工具调用" if is_tool_ops else "操作记录"
+        
+        max_display = 10
         items = []
         for op in operations[:max_display]:
             if "进行中" in op or "running" in op.lower():
@@ -487,8 +494,9 @@ function updateToolCard(id, resultHtml, isError) {
         if len(operations) > max_display:
             more = f'<div class="ops-more">... 还有 {len(operations) - max_display} 条操作</div>'
         
-        return f'''<div class="ops-card">
-<div class="ops-title">{SVG_CLIPBOARD} 操作记录</div>
+        card_class = "ops-card tool-ops" if is_tool_ops else "ops-card"
+        return f'''<div class="{card_class}">
+<div class="ops-title">{title_icon} {title_text}</div>
 {''.join(items)}
 {more}
 </div>'''

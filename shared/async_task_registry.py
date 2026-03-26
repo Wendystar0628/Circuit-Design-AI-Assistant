@@ -53,12 +53,11 @@ from PyQt6.QtCore import QObject, pyqtSignal
 # ============================================================
 
 TASK_LLM = "llm"                    # LLM 生成任务
-TASK_RAG_INDEX = "rag_index"        # RAG 索引任务
-TASK_RAG_SEARCH = "rag_search"      # RAG 检索任务
+TASK_RAG_INDEX = "rag_index"        # RAG 索引任务（LightRAG 文档摄入）
+TASK_RAG_QUERY = "rag_query"        # RAG 检索任务（LightRAG 多模式查询）
 TASK_FILE_WATCH = "file_watch"      # 文件监听任务
 TASK_SIMULATION = "simulation"      # 仿真任务（子进程）
 TASK_SCHEMATIC = "schematic"        # 原理图生成任务
-TASK_CODE_INDEX = "code_index"      # 代码索引任务
 
 
 # ============================================================
@@ -478,7 +477,7 @@ class AsyncTaskRegistry(QObject):
                     if self.logger:
                         self.logger.debug(f"Flushed stream buffer for task '{task_id}'")
             
-            elif task_type in (TASK_RAG_INDEX, TASK_CODE_INDEX):
+            elif task_type == TASK_RAG_INDEX:
                 # 索引任务：保存已索引的进度
                 if self.logger:
                     self.logger.debug(f"Saving partial index progress for task '{task_id}'")
@@ -741,9 +740,8 @@ __all__ = [
     # 任务类型常量
     "TASK_LLM",
     "TASK_RAG_INDEX",
-    "TASK_RAG_SEARCH",
+    "TASK_RAG_QUERY",
     "TASK_FILE_WATCH",
     "TASK_SIMULATION",
     "TASK_SCHEMATIC",
-    "TASK_CODE_INDEX",
 ]

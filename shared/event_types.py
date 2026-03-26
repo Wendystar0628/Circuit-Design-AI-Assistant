@@ -581,56 +581,53 @@ EVENT_SCHEMATIC_JUMP_TO_SOURCE = "schematic_jump_to_source"
 EVENT_SCHEMATIC_ZOOM_CHANGED = "schematic_zoom_changed"
 
 # ============================================================
-# RAG 事件
+# RAG 事件（基于 LightRAG 架构）
 # ============================================================
+
+# RAG 模式切换
+# 携带数据：
+#   - enabled: bool - 是否启用
+EVENT_RAG_MODE_CHANGED = "rag.mode_changed"
 
 # RAG 索引开始
-EVENT_RAG_INDEX_STARTED = "rag_index_started"
+# 携带数据：
+#   - total_files: int - 总文件数
+#   - track_id: str - 追踪 ID（LightRAG track_id）
+EVENT_RAG_INDEX_STARTED = "rag.index_started"
 
 # RAG 索引进度
-EVENT_RAG_INDEX_PROGRESS = "rag_index_progress"
-
-# RAG 索引完成
-EVENT_RAG_INDEX_COMPLETE = "rag_index_complete"
-
-# RAG 检索完成
-EVENT_RAG_SEARCH_COMPLETE = "rag_search_complete"
-
-# ============================================================
-# 代码索引事件（阶段五）
-# ============================================================
-
-# 代码索引开始
 # 携带数据：
-#   - project_path: str - 项目路径
-#   - total_files: int - 总文件数
-EVENT_CODE_INDEX_STARTED = "knowledge.code_index_started"
-
-# 代码索引进度
-# 携带数据：
-#   - current_file: str - 当前处理的文件
 #   - processed: int - 已处理文件数
 #   - total: int - 总文件数
-#   - percent: float - 完成百分比
-EVENT_CODE_INDEX_PROGRESS = "knowledge.code_index_progress"
+#   - current_file: str - 当前处理的文件（相对路径）
+#   - track_id: str - 追踪 ID
+EVENT_RAG_INDEX_PROGRESS = "rag.index_progress"
 
-# 代码索引完成
+# RAG 索引完成
 # 携带数据：
-#   - project_path: str - 项目路径
-#   - indexed_files: int - 已索引文件数
-#   - duration_seconds: float - 耗时（秒）
-EVENT_CODE_INDEX_COMPLETE = "knowledge.code_index_complete"
+#   - total_indexed: int - 已索引文件总数
+#   - failed: int - 失败文件数
+#   - duration_s: float - 耗时（秒）
+#   - entities_count: int - 提取的实体数
+#   - relations_count: int - 提取的关系数
+EVENT_RAG_INDEX_COMPLETE = "rag.index_complete"
 
-# 代码索引错误
+# RAG 索引错误（单文件级别）
 # 携带数据：
-#   - project_path: str - 项目路径
-#   - error_message: str - 错误信息
-EVENT_CODE_INDEX_ERROR = "knowledge.code_index_error"
+#   - file_path: str - 失败文件路径（相对路径）
+#   - error: str - 错误信息
+#   - track_id: str - 追踪 ID
+EVENT_RAG_INDEX_ERROR = "rag.index_error"
 
-# 代码索引取消
+# RAG 检索完成
 # 携带数据：
-#   - project_path: str - 项目路径
-EVENT_CODE_INDEX_CANCELLED = "knowledge.code_index_cancelled"
+#   - query: str - 查询文本
+#   - mode: str - 检索模式（naive/local/global/hybrid/mix）
+#   - results_count: int - 检索结果数
+#   - entities_found: int - 匹配实体数
+#   - relations_found: int - 匹配关系数
+#   - chunks_found: int - 匹配分块数
+EVENT_RAG_QUERY_COMPLETE = "rag.query_complete"
 
 # ============================================================
 # 上下文压缩事件
@@ -1051,6 +1048,12 @@ EVENT_AGENT_LOOP_END = "agent.loop_end"
 #   - error: str - 错误信息
 EVENT_AGENT_LOOP_ERROR = "agent.loop_error"
 
+# Agent 工具修改了文件（通知编辑器刷新）
+# 携带数据：
+#   - path: str - 被修改文件的绝对路径
+#   - tool_name: str - 修改文件的工具名称
+EVENT_FILE_EXTERNALLY_MODIFIED = "agent.file_modified"
+
 # ============================================================
 # 关键事件列表（需要特殊保护）
 # ============================================================
@@ -1154,17 +1157,13 @@ __all__ = [
     "EVENT_SCHEMATIC_ELEMENT_HOVERED",
     "EVENT_SCHEMATIC_JUMP_TO_SOURCE",
     "EVENT_SCHEMATIC_ZOOM_CHANGED",
-    # RAG 事件
+    # RAG 事件（基于 LightRAG 架构）
+    "EVENT_RAG_MODE_CHANGED",
     "EVENT_RAG_INDEX_STARTED",
     "EVENT_RAG_INDEX_PROGRESS",
     "EVENT_RAG_INDEX_COMPLETE",
-    "EVENT_RAG_SEARCH_COMPLETE",
-    # 代码索引事件
-    "EVENT_CODE_INDEX_STARTED",
-    "EVENT_CODE_INDEX_PROGRESS",
-    "EVENT_CODE_INDEX_COMPLETE",
-    "EVENT_CODE_INDEX_ERROR",
-    "EVENT_CODE_INDEX_CANCELLED",
+    "EVENT_RAG_INDEX_ERROR",
+    "EVENT_RAG_QUERY_COMPLETE",
     # 上下文压缩事件
     "EVENT_CONTEXT_COMPRESS_REQUESTED",
     "EVENT_CONTEXT_COMPRESS_PREVIEW_READY",
@@ -1242,6 +1241,7 @@ __all__ = [
     "EVENT_AGENT_TURN_END",
     "EVENT_AGENT_LOOP_END",
     "EVENT_AGENT_LOOP_ERROR",
+    "EVENT_FILE_EXTERNALLY_MODIFIED",
     # 关键事件列表
     "CRITICAL_EVENTS",
 ]

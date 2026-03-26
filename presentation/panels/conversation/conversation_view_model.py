@@ -144,6 +144,9 @@ class ConversationViewModel(QObject):
         self._stop_controller = None
         self._current_task_id: Optional[str] = None  # 当前 LLM 任务 ID
         
+        # Agent 工具调用记录（流式期间累积，完成时写入 ContextManager）
+        self._current_tool_records: List[Dict[str, Any]] = []
+        
         # 延迟获取的服务
         self._context_manager = None
         self._event_bus = None
@@ -852,12 +855,16 @@ class ConversationViewModel(QObject):
         usage = result.get("usage")
         is_partial = result.get("is_partial", False)
         
+        # 构建工具操作摘要（在清空前）
+        tool_operations = self._build_tool_operations()
+
         # 添加助手消息到 ContextManager
         if self.context_manager and content:
             self.context_manager.add_assistant_message(
                 content=content,
                 reasoning_content=reasoning_content,
                 usage=usage,
+                operations=tool_operations if tool_operations else None,
             )
         
         # 更新状态
@@ -865,6 +872,7 @@ class ConversationViewModel(QObject):
         self._current_stream_content = ""
         self._current_reasoning_content = ""
         self._current_task_id = None  # 清除任务 ID
+        self._current_tool_records = []  # 清空工具记录
         
         # 重置 StopController 状态为 IDLE
         if self.stop_controller:
@@ -924,6 +932,7 @@ class ConversationViewModel(QObject):
         self._current_stream_content = ""
         self._current_reasoning_content = ""
         self._current_task_id = None  # 清除任务 ID
+        self._current_tool_records = []  # 清空工具记录
         
         # 重置 StopController
         if self.stop_controller:
@@ -961,6 +970,14 @@ class ConversationViewModel(QObject):
         arguments = data.get("arguments", {})
 
         if tool_call_id and tool_name:
+            # 累积工具记录
+            self._current_tool_records.append({
+                "tool_call_id": tool_call_id,
+                "tool_name": tool_name,
+                "arguments": arguments,
+                "is_error": False,
+                "result_content": "",
+            })
             self.tool_call_started.emit(tool_call_id, tool_name, arguments)
 
     def _on_agent_tool_end(self, event_data: Dict[str, Any]) -> None:
@@ -975,7 +992,44 @@ class ConversationViewModel(QObject):
         is_error = data.get("is_error", False)
 
         if tool_call_id:
+            # 更新累积的工具记录
+            for rec in self._current_tool_records:
+                if rec["tool_call_id"] == tool_call_id:
+                    rec["is_error"] = is_error
+                    rec["result_content"] = result_content
+                    break
             self.tool_call_ended.emit(tool_call_id, result_content, is_error)
+
+    def _build_tool_operations(self) -> List[str]:
+        """
+        将累积的工具调用记录转换为 operations 字符串列表
+
+        Returns:
+            操作摘要列表，供 ContextManager 持久化和 UI 渲染
+        """
+        operations = []
+        for rec in self._current_tool_records:
+            name = rec["tool_name"]
+            args = rec.get("arguments", {})
+            is_error = rec.get("is_error", False)
+
+            # 提取关键参数摘要（路径用反引号包裹以支持点击链接）
+            arg_summary = ""
+            if "path" in args:
+                arg_summary = f"(`{args['path']}`)"
+            elif args:
+                first_key = next(iter(args))
+                val = str(args[first_key])
+                if len(val) > 40:
+                    val = val[:37] + "..."
+                arg_summary = f"({first_key}={val})"
+
+            if is_error:
+                preview = rec.get("result_content", "")[:60]
+                operations.append(f"{name}{arg_summary} 失败: {preview}")
+            else:
+                operations.append(f"{name}{arg_summary}")
+        return operations
 
     def add_assistant_message(
         self,
@@ -1550,6 +1604,7 @@ class ConversationViewModel(QObject):
         self._current_reasoning_content = ""
         self._is_loading = False
         self._current_task_id = None  # 清除任务 ID
+        self._current_tool_records = []  # 清空工具记录
         
         # 重置 StopController 状态为 IDLE，允许新任务注册
         if self.stop_controller:

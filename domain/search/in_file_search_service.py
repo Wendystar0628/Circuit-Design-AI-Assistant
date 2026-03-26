@@ -5,7 +5,7 @@
 架构定位：
 - 在单个文件内执行搜索，支持分层降级策略
 - 被 FileContentLocator（阶段六）调用
-- 协调 FileSearchService（精确搜索）和 RAGService（语义搜索）
+- 协调 FileSearchService（精确搜索）和 RAG 服务（语义搜索，待 LightRAG 集成）
 
 核心设计：分层降级策略
 - 精确搜索：始终执行（基础能力）
@@ -63,7 +63,8 @@ class InFileSearchService:
         """初始化单文件搜索服务"""
         # 延迟获取的服务
         self._file_search_service = None
-        self._rag_service = None
+        # RAG 服务已清空，待 LightRAG 集成后重新对接
+        # self._rag_service = None
         self._logger = None
     
     # ============================================================
@@ -86,14 +87,10 @@ class InFileSearchService:
     
     @property
     def rag_service(self):
-        """延迟获取 RAG 服务"""
-        if self._rag_service is None:
-            try:
-                from domain.services import rag_service
-                self._rag_service = rag_service
-            except Exception:
-                pass
-        return self._rag_service
+        """延迟获取 RAG 服务（待 LightRAG 集成后重新实现）"""
+        # 原有基于 ChromaDB 的 rag_service 已清空
+        # LightRAG 集成后将改为获取 SVC_RAG_MANAGER
+        return None
     
     @property
     def logger(self):
@@ -195,15 +192,8 @@ class InFileSearchService:
         Returns:
             bool: 文件是否已被索引
         """
-        if not self.rag_service:
-            return False
-        
-        try:
-            return self.rag_service.has_indexed_file(file_path)
-        except Exception as e:
-            if self.logger:
-                self.logger.warning(f"检查文件索引状态失败: {e}")
-            return False
+        # 待 LightRAG 集成后重新实现
+        return False
     
     # ============================================================
     # 内部搜索方法
@@ -248,38 +238,14 @@ class InFileSearchService:
         """
         执行语义搜索
         
-        调用 RAGService 在单个文件的已索引分块中搜索。
+        调用 RAG 服务在单个文件中搜索（待 LightRAG 集成后重新实现）。
         
         Returns:
             List[InFileMatch]: 匹配结果列表
         """
-        if not self.rag_service:
-            return []
-        
-        results: List[InFileMatch] = []
-        
-        try:
-            rag_results = self.rag_service.retrieve_from_file(
-                file_path,
-                query,
-                top_k=options.max_results,
-            )
-            
-            for r in rag_results:
-                if r.score >= options.min_score:
-                    results.append(InFileMatch(
-                        start_line=r.start_line,
-                        end_line=r.end_line,
-                        score=r.score,
-                        match_type="semantic",
-                        matched_text=r.content,
-                    ))
-            
-        except Exception as e:
-            if self.logger:
-                self.logger.warning(f"语义搜索失败: {e}")
-        
-        return results
+        # 待 LightRAG 集成后重新实现语义搜索
+        # 将通过 RAGManager 调用 LightRAG 多模式检索
+        return []
     
     def _merge_matches(
         self,

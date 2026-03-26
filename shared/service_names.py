@@ -152,11 +152,11 @@ SVC_EXTERNAL_SERVICE_MANAGER = "external_service_manager"
 # 迭代历史服务 - 从 SqliteSaver 查询迭代历史视图
 SVC_ITERATION_HISTORY_SERVICE = "iteration_history_service"
 
-# 向量存储 - RAG 知识库
-SVC_VECTOR_STORE = "vector_store"
+# RAG 服务 - LightRAG 封装层（KV + Vector + Graph 三层存储）
+SVC_RAG_SERVICE = "rag_service"
 
-# 代码索引器 - 工作区代码索引
-SVC_CODE_INDEXER = "code_indexer"
+# RAG 管理器 - RAG 业务逻辑（索引、查询、模式管理）
+SVC_RAG_MANAGER = "rag_manager"
 
 # 仿真服务 - 电路仿真协调
 SVC_SIMULATION_SERVICE = "simulation_service"
@@ -214,8 +214,8 @@ __all__ = [
     "SVC_SESSION_STATE_MANAGER",
     "SVC_EXTERNAL_SERVICE_MANAGER",
     "SVC_ITERATION_HISTORY_SERVICE",
-    "SVC_VECTOR_STORE",
-    "SVC_CODE_INDEXER",
+    "SVC_RAG_SERVICE",
+    "SVC_RAG_MANAGER",
     "SVC_SIMULATION_SERVICE",
     "SVC_EXECUTOR_REGISTRY",
     "SVC_WAVEFORM_DATA_SERVICE",

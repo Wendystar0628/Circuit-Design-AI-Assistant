@@ -1026,6 +1026,18 @@ class LLMExecutor(QObject):
                 "task_id": task_id,
                 **data,
             })
+            # 文件修改工具成功时，通知编辑器刷新
+            tool_name = data.get("tool_name", "")
+            is_error = data.get("is_error", False)
+            if not is_error and tool_name in ("patch_file", "rewrite_file"):
+                details = data.get("details") or {}
+                file_path = details.get("path", "")
+                if file_path:
+                    from shared.event_types import EVENT_FILE_EXTERNALLY_MODIFIED
+                    self._publish_event(EVENT_FILE_EXTERNALLY_MODIFIED, {
+                        "path": file_path,
+                        "tool_name": tool_name,
+                    })
 
         elif event_type == "turn_end":
             from shared.event_types import EVENT_AGENT_TURN_END

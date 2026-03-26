@@ -528,6 +528,74 @@ class CodeEditorPanel(QWidget):
     def open_tab(self, path: str) -> bool:
         return self.load_file(path)
 
+    def reload_file(self, path: str) -> bool:
+        """
+        从磁盘重新加载已打开文件的内容
+        
+        当外部工具（如 Agent 的 patch_file / rewrite_file）修改了文件时调用，
+        确保编辑器显示最新内容。
+        
+        Args:
+            path: 文件绝对路径
+            
+        Returns:
+            True 如果重新加载成功
+        """
+        # 规范化路径以匹配 _tabs 中的 key
+        norm_path = os.path.normpath(path)
+        
+        # 尝试精确匹配和大小写不敏感匹配（Windows）
+        tab = self._tabs.get(norm_path)
+        if tab is None:
+            for tab_path, t in self._tabs.items():
+                if os.path.normpath(tab_path).lower() == norm_path.lower():
+                    tab = t
+                    break
+        
+        if tab is None:
+            # 文件未打开，无需刷新
+            return False
+        
+        if not os.path.isfile(path):
+            return False
+        
+        try:
+            # 读取磁盘最新内容
+            if self.file_manager:
+                content = self.file_manager.read_file(path)
+            else:
+                with open(path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+            
+            # 更新编辑器内容
+            from presentation.panels.editor.code_editor import CodeEditor
+            if isinstance(tab.widget, CodeEditor):
+                editor = tab.widget
+                editor.blockSignals(True)
+                editor.document().blockSignals(True)
+                editor.setPlainText(content)
+                editor.document().blockSignals(False)
+                editor.blockSignals(False)
+                editor.document().setModified(False)
+                editor.set_modified(False)
+                tab.is_modified = False
+                
+                # 更新标签页标题（移除修改标记）
+                index = self._tab_widget.indexOf(tab.widget)
+                if index >= 0:
+                    file_name = os.path.basename(path)
+                    self._tab_widget.setTabText(index, file_name)
+                
+                if self.logger:
+                    self.logger.info(f"File reloaded from disk: {path}")
+                return True
+            
+        except Exception as e:
+            if self.logger:
+                self.logger.error(f"Failed to reload file: {path}, error: {e}")
+        
+        return False
+
     def close_tab(self, index: int) -> bool:
         """关闭指定标签页"""
         if index < 0 or index >= self._tab_widget.count():
@@ -742,11 +810,12 @@ class CodeEditorPanel(QWidget):
         if self.event_bus:
             from shared.event_types import (
                 EVENT_LANGUAGE_CHANGED, EVENT_STATE_PROJECT_OPENED,
-                EVENT_STATE_PROJECT_CLOSED
+                EVENT_STATE_PROJECT_CLOSED, EVENT_FILE_EXTERNALLY_MODIFIED,
             )
             self.event_bus.subscribe(EVENT_LANGUAGE_CHANGED, self._on_language_changed)
             self.event_bus.subscribe(EVENT_STATE_PROJECT_OPENED, self._on_project_opened)
             self.event_bus.subscribe(EVENT_STATE_PROJECT_CLOSED, self._on_project_closed)
+            self.event_bus.subscribe(EVENT_FILE_EXTERNALLY_MODIFIED, self._on_file_externally_modified)
 
     def _on_language_changed(self, event_data: Dict[str, Any]):
         self.retranslate_ui()
@@ -758,6 +827,13 @@ class CodeEditorPanel(QWidget):
     def _on_project_closed(self, event_data: Dict[str, Any]):
         self.close_all_tabs()
         self._update_empty_state()
+
+    def _on_file_externally_modified(self, event_data: Dict[str, Any]):
+        """处理文件被外部工具修改的事件，自动刷新编辑器内容"""
+        data = event_data.get("data", event_data)
+        file_path = data.get("path", "")
+        if file_path:
+            self.reload_file(file_path)
 
 
 

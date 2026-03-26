@@ -12,7 +12,7 @@
 - design_service: 设计目标读写服务
 - simulation_service: 仿真执行服务（阶段四实现）
 - context_service: 对话历史读写服务（阶段三实现）
-- rag_service: RAG 语义检索服务（阶段五实现）
+- rag_service: RAG 语义检索服务（已清空，待 LightRAG 集成）
 - iteration_history_service: 迭代历史视图服务（从 SqliteSaver 查询）
 - snapshot_service: 全量快照服务（项目文件备份与恢复，线性快照栈）
 - recovery_log_service: WAL 恢复日志服务（崩溃恢复）
@@ -20,7 +20,7 @@
 搜索系统架构：
 - UnifiedSearchService: 统一搜索门面（domain/search/）
 - FileSearchService: 精确搜索引擎（infrastructure/file_intelligence/search/）
-- RAGService: 语义搜索引擎（domain/services/rag_service.py）
+- RAGService: 语义搜索引擎（已清空，待 domain/rag/ 基于 LightRAG 重建）
 """
 
 from domain.services.design_service import (
@@ -53,10 +53,8 @@ from domain.services.context_service import (
     remove_from_session_index,
 )
 
-from domain.services.rag_service import (
-    retrieve,
-    get_index_status,
-)
+# RAG 检索服务已清空，等待 LightRAG 集成实现
+# 参见：设计借鉴文档/LightRAG集成设计方案.md
 
 from domain.services.iteration_history_service import (
     IterationRecord,
@@ -120,9 +118,7 @@ __all__ = [
     "get_session_metadata",
     "update_session_index",
     "remove_from_session_index",
-    # RAG Service
-    "retrieve",
-    "get_index_status",
+    # RAG Service (cleared, pending LightRAG integration)
     # Iteration History Service
     "IterationRecord",
     "get_iteration_history",

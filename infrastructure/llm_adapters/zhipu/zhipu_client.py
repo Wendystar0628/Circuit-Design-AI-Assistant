@@ -12,8 +12,9 @@ API 端点：https://open.bigmodel.cn/api/paas/v4/chat/completions
 认证方式：HTTP Bearer Token（Authorization: Bearer YOUR_API_KEY）
 
 SDK 选择说明：
-- 本项目使用 httpx 直接调用 REST API
-- 不依赖官方 SDK（zai 或 zhipuai），以减少依赖并保持灵活性
+- 本项目 Chat 客户端使用 httpx 直接调用 REST API，便于深度思考模式、视觉模型自动切换、
+  ModelRegistry 集成、ExternalServiceManager 集成等自定义功能的实现
+- zhipuai 官方 SDK 仅供 LightRAG 的 Embedding/LLM 函数使用，两者独立互不干扰
 
 API 文档参考：
 - https://open.bigmodel.cn/dev/api

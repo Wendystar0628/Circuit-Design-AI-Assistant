@@ -77,7 +77,8 @@ class UnifiedSearchService:
         
         # 延迟获取的服务
         self._file_search_service = None
-        self._rag_service = None
+        # RAG 服务已清空，待 LightRAG 集成后重新对接
+        # self._rag_service = None
         self._logger = None
     
     # ============================================================
@@ -100,14 +101,10 @@ class UnifiedSearchService:
     
     @property
     def rag_service(self):
-        """延迟获取 RAG 服务"""
-        if self._rag_service is None:
-            try:
-                from domain.services import rag_service
-                self._rag_service = rag_service
-            except Exception:
-                pass
-        return self._rag_service
+        """延迟获取 RAG 服务（待 LightRAG 集成后重新实现）"""
+        # 原有基于 ChromaDB 的 rag_service 已清空
+        # LightRAG 集成后将改为获取 SVC_RAG_MANAGER
+        return None
     
     @property
     def logger(self):
@@ -300,42 +297,14 @@ class UnifiedSearchService:
         """
         执行语义搜索
         
-        调用 RAGService 进行向量检索。
+        调用 RAG 服务进行语义检索（待 LightRAG 集成后重新实现）。
         
         Returns:
             Tuple[List[SemanticMatchResult], int]: (结果列表, 总数)
         """
-        if not self.rag_service:
-            return [], 0
-        
+        # 待 LightRAG 集成后重新实现语义搜索
+        # 将通过 RAGManager.query() 调用 LightRAG 多模式检索
         results: List[SemanticMatchResult] = []
-        
-        try:
-            # 检查索引是否就绪
-            if not self.rag_service.is_index_ready():
-                return [], 0
-            
-            # 执行检索
-            rag_results = self.rag_service.retrieve(
-                query,
-                top_k=max_results,
-            )
-            
-            for r in rag_results:
-                results.append(SemanticMatchResult(
-                    content=r.content,
-                    source=r.source,
-                    score=r.score,
-                    chunk_id=r.chunk_id,
-                    metadata=r.metadata,
-                ))
-            
-        except Exception as e:
-            if self.logger:
-                self.logger.warning(f"语义搜索失败: {e}")
-        
-        # 去重
-        results = self._merger.merge_semantic_results(results)
         total = len(results)
         
         return results[:max_results], total
@@ -420,14 +389,11 @@ class UnifiedSearchService:
                 "semantic_ratio": self._token_config.semantic_ratio,
             },
             "file_search_available": self.file_search_service is not None,
-            "rag_available": self.rag_service is not None,
+            "rag_available": False,  # 待 LightRAG 集成
         }
         
         if self.file_search_service:
             stats["file_index"] = self.file_search_service.get_index_stats()
-        
-        if self.rag_service:
-            stats["rag_index"] = self.rag_service.get_index_status()
         
         return stats
 

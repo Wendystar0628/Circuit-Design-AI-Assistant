@@ -531,6 +531,7 @@ class ContextManager:
         web_search_results: Optional[List[Dict[str, Any]]] = None,
         is_partial: bool = False,
         stop_reason: str = "",
+        operations: Optional[List[str]] = None,
     ) -> None:
         """
         添加助手消息（有状态版本，供 UI 层使用）
@@ -543,22 +544,23 @@ class ContextManager:
             web_search_results: 联网搜索结果
             is_partial: 是否为部分响应
             stop_reason: 停止原因
+            operations: 操作摘要列表（直接传入，优先于 tool_calls 自动生成）
         """
         state = self._get_internal_state()
         
-        # 提取 operations（如果有 tool_calls）
-        operations = []
+        # 合并 operations：直接传入的优先，tool_calls 自动生成的追加
+        final_operations = list(operations) if operations else []
         if tool_calls:
             for tc in tool_calls:
                 func_name = tc.get("function", {}).get("name", "unknown")
-                operations.append(f"Called: {func_name}")
+                final_operations.append(f"Called: {func_name}")
         
         new_state = self.add_message(
             state=state,
             role="assistant",
             content=content,
             reasoning_content=reasoning_content,
-            operations=operations if operations else None,
+            operations=final_operations if final_operations else None,
             usage=usage,
             web_search_results=web_search_results,
             is_partial=is_partial,

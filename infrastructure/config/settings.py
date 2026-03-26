@@ -212,26 +212,30 @@ LOCAL_LLM_REQUEST_TIMEOUT = 300                    # 本地模型请求超时秒
 LOCAL_LLM_HEALTH_CHECK_INTERVAL = 30               # 健康检查间隔秒数
 
 # ============================================================
-# RAG 相关默认值
+# RAG 相关默认值（基于 LightRAG 架构）
 # ============================================================
 
-DEFAULT_CHUNK_SIZE = 1500            # RAG 分块大小（tokens，利用 ModernBERT 8192 长上下文优势）
-DEFAULT_CHUNK_OVERLAP = 0.1          # 分块重叠比例（10%）
-DEFAULT_RAG_TOP_K = 5                # RAG 检索返回数量
-DEFAULT_HYBRID_SEARCH = True         # 默认启用混合检索
-DEFAULT_ENABLE_RERANKING = True      # 默认开启重排序
+DEFAULT_RAG_ENABLED = False                      # 默认不开启 RAG
+DEFAULT_RAG_STORAGE_DIR = ".circuit_ai/rag_storage"  # 相对于项目根目录
+DEFAULT_RAG_CHUNK_SIZE = 1200                    # 分块 token 数（LightRAG 默认）
+DEFAULT_RAG_CHUNK_OVERLAP = 100                  # 分块重叠 token 数
+DEFAULT_RAG_QUERY_MODE = "mix"                    # 默认检索模式（mix = KG + 向量双路）
+DEFAULT_RAG_TOP_K = 10                           # 检索返回数量
+DEFAULT_RAG_CONTEXT_TOKEN_BUDGET = 2000          # 注入上下文的 Token 预算
+DEFAULT_RAG_AUTO_INDEX = True                    # 项目打开时是否自动索引
+DEFAULT_RAG_ENTITY_TYPES = [                     # 电路设计领域实体类型
+    "Component", "Circuit", "Parameter", "Specification",
+    "Topology", "Signal", "Tool", "Standard", "Material", "Method",
+]
+DEFAULT_RAG_LANGUAGE = "Chinese"                  # 实体提取语言
 
 # ============================================================
-# AI 模型相关常量
+# Embedding 相关默认值
 # ============================================================
 
-DEFAULT_EMBEDDING_MODEL = "Alibaba-NLP/gte-modernbert-base"  # 默认嵌入模型（英文）
-DEFAULT_RERANKER_MODEL = "mixedbread-ai/mxbai-rerank-base-v1"  # 默认重排序模型
-
-# 内嵌模型目录
-VENDOR_MODELS_DIR = "vendor/models/"
-EMBEDDINGS_MODEL_DIR = "vendor/models/embeddings/"
-RERANKERS_MODEL_DIR = "vendor/models/rerankers/"
+DEFAULT_EMBEDDING_MODEL = "embedding-3"           # 智谱 embedding 模型
+DEFAULT_EMBEDDING_DIM = 1024                      # embedding 维度
+DEFAULT_EMBEDDING_MAX_TOKEN_SIZE = 8192           # embedding 最大 token 数
 
 # ============================================================
 # 嵌入模型厂商相关常量

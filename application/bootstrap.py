@@ -52,6 +52,7 @@
   - 3.5.2 GraphStateProjector 初始化（自动投影 GraphState 到 SessionState）
   - 3.5.5 TracingLogger 初始化（可观测性基础设施）
   - 3.6 LLM 客户端初始化
+  - 3.8 RAG 服务初始化（RAGService + RAGManager + DocumentWatcher）
   - 3.7 发布 EVENT_INIT_COMPLETE 事件
 - 应用关闭时：
   - 异步运行时关闭（取消待处理任务）
@@ -619,6 +620,20 @@ def _delayed_init():
         _init_llm_client()
 
         # --------------------------------------------------------
+        # 3.8 RAG 服务初始化
+        # 依赖：EventBus、ConfigManager、CredentialManager
+        # 职责：创建 RAGService + RAGManager，订阅项目生命周期
+        # --------------------------------------------------------
+        _init_rag_services()
+
+        # GraphStateProjector 订阅 RAG 事件（投影到 SessionState）
+        graph_state_projector = ServiceLocator.get_optional(SVC_GRAPH_STATE_PROJECTOR)
+        if graph_state_projector:
+            graph_state_projector.subscribe_rag_events()
+            if _logger:
+                _logger.info("Phase 3.8.4 GraphStateProjector 已订阅 RAG 事件")
+
+        # --------------------------------------------------------
         # 3.7 发布 EVENT_INIT_COMPLETE 事件
         # 通知所有订阅者初始化完成
         # --------------------------------------------------------
@@ -829,6 +844,47 @@ def _init_llm_client():
             _logger.warning(f"Phase 3.6 LLM 客户端初始化失败（非致命）: {e}")
         # LLM 客户端初始化失败不是致命错误，用户可以稍后在设置中配置
 
+
+def _init_rag_services():
+    """
+    初始化 RAG 服务（Phase 3.8）
+    
+    3.8.1 创建 RAGService → 注册 SVC_RAG_SERVICE（仅创建，不初始化存储）
+    3.8.2 创建 RAGManager（注入 RAGService）→ 注册 SVC_RAG_MANAGER
+          → 订阅 EVENT_STATE_PROJECT_OPENED / EVENT_STATE_PROJECT_CLOSED
+    3.8.3 创建 DocumentWatcher → 启动监听
+    """
+    try:
+        from domain.rag.rag_service import RAGService
+        from domain.rag.rag_manager import RAGManager
+        from domain.rag.document_watcher import DocumentWatcher
+        from shared.service_locator import ServiceLocator
+        from shared.service_names import SVC_RAG_SERVICE, SVC_RAG_MANAGER
+
+        # 3.8.1 RAGService（仅创建实例，不初始化 LightRAG 存储）
+        rag_service = RAGService()
+        ServiceLocator.register(SVC_RAG_SERVICE, rag_service)
+        if _logger:
+            _logger.info("Phase 3.8.1 RAGService 创建完成（存储未初始化）")
+
+        # 3.8.2 RAGManager + 订阅生命周期事件
+        rag_manager = RAGManager(rag_service)
+        rag_manager.subscribe_lifecycle_events()
+        ServiceLocator.register(SVC_RAG_MANAGER, rag_manager)
+        if _logger:
+            _logger.info("Phase 3.8.2 RAGManager 创建完成，已订阅项目生命周期事件")
+
+        # 3.8.3 DocumentWatcher
+        doc_watcher = DocumentWatcher()
+        doc_watcher.start()
+        if _logger:
+            _logger.info("Phase 3.8.3 DocumentWatcher 启动完成")
+
+    except Exception as e:
+        if _logger:
+            _logger.warning(f"Phase 3.8 RAG 服务初始化失败（非致命）: {e}")
+        else:
+            print(f"[Phase 3.8] RAG 服务初始化失败: {e}")
 
 
 def _show_fatal_error(message: str):

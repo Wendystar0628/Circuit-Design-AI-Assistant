@@ -361,6 +361,78 @@ class ConfigManager:
 
     
     # ============================================================
+    # RAG 配置（per-project）
+    # ============================================================
+
+    def get_rag_config(self, project_root: str) -> Dict[str, Any]:
+        """
+        获取项目级 RAG 配置
+
+        从 {project_root}/.circuit_ai/rag_config.json 读取。
+        不存在时返回默认值。
+
+        Args:
+            project_root: 项目根目录
+
+        Returns:
+            RAG 配置字典
+        """
+        from .settings import (
+            RAG_CONFIG_FILE,
+            DEFAULT_RAG_ENABLED,
+            DEFAULT_RAG_AUTO_INDEX,
+            DEFAULT_RAG_QUERY_MODE,
+            CONFIG_RAG_ENABLED,
+            CONFIG_RAG_AUTO_INDEX,
+            CONFIG_RAG_QUERY_MODE,
+            CONFIG_RAG_REMEMBER_STATE,
+        )
+
+        defaults = {
+            CONFIG_RAG_ENABLED: DEFAULT_RAG_ENABLED,
+            CONFIG_RAG_AUTO_INDEX: DEFAULT_RAG_AUTO_INDEX,
+            CONFIG_RAG_QUERY_MODE: DEFAULT_RAG_QUERY_MODE,
+            CONFIG_RAG_REMEMBER_STATE: True,
+        }
+
+        config_path = Path(project_root) / ".circuit_ai" / RAG_CONFIG_FILE
+        try:
+            if config_path.is_file():
+                with open(config_path, "r", encoding="utf-8") as f:
+                    loaded = json.load(f)
+                return {**defaults, **loaded}
+        except Exception as e:
+            self._log_warning(f"RAG 配置读取失败: {e}")
+
+        return defaults
+
+    def set_rag_config(self, project_root: str, config: Dict[str, Any]) -> bool:
+        """
+        保存项目级 RAG 配置
+
+        持久化到 {project_root}/.circuit_ai/rag_config.json
+
+        Args:
+            project_root: 项目根目录
+            config: RAG 配置字典
+
+        Returns:
+            是否保存成功
+        """
+        from .settings import RAG_CONFIG_FILE
+
+        config_dir = Path(project_root) / ".circuit_ai"
+        config_path = config_dir / RAG_CONFIG_FILE
+        try:
+            config_dir.mkdir(parents=True, exist_ok=True)
+            with open(config_path, "w", encoding="utf-8") as f:
+                json.dump(config, f, indent=2, ensure_ascii=False)
+            return True
+        except Exception as e:
+            self._log_error(f"RAG 配置保存失败: {e}")
+            return False
+
+    # ============================================================
     # 配置校验
     # ============================================================
     

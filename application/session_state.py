@@ -75,6 +75,11 @@ SESSION_DESIGN_GOALS_SUMMARY = "design_goals_summary"
 SESSION_LAST_METRICS = "last_metrics"
 SESSION_ERROR_CONTEXT = "error_context"
 
+# RAG 状态（由 RAGManager 通过 EventBus 投影更新）
+SESSION_RAG_ENABLED = "rag_enabled"
+SESSION_RAG_INDEXING = "rag_indexing"
+SESSION_RAG_INDEX_STATUS = "rag_index_status"
+
 
 # 状态变更处理器类型
 SessionStateChangeHandler = Callable[[str, Any, Any], None]  # (key, old_value, new_value)
@@ -135,6 +140,10 @@ class SessionState:
             SESSION_DESIGN_GOALS_SUMMARY: {},
             SESSION_LAST_METRICS: {},
             SESSION_ERROR_CONTEXT: "",
+            # RAG 状态
+            SESSION_RAG_ENABLED: False,
+            SESSION_RAG_INDEXING: False,
+            SESSION_RAG_INDEX_STATUS: {},
         }
 
     # ============================================================
@@ -440,6 +449,21 @@ class SessionState:
         """错误上下文"""
         return self.get(SESSION_ERROR_CONTEXT, "")
 
+    @property
+    def rag_enabled(self) -> bool:
+        """RAG 是否开启"""
+        return self.get(SESSION_RAG_ENABLED, False)
+
+    @property
+    def rag_indexing(self) -> bool:
+        """RAG 是否正在索引"""
+        return self.get(SESSION_RAG_INDEXING, False)
+
+    @property
+    def rag_index_status(self) -> Dict[str, Any]:
+        """RAG 索引状态详情"""
+        return self.get(SESSION_RAG_INDEX_STATUS, {})
+
     # ============================================================
     # 状态摘要
     # ============================================================
@@ -478,4 +502,7 @@ __all__ = [
     "SESSION_DESIGN_GOALS_SUMMARY",
     "SESSION_LAST_METRICS",
     "SESSION_ERROR_CONTEXT",
+    "SESSION_RAG_ENABLED",
+    "SESSION_RAG_INDEXING",
+    "SESSION_RAG_INDEX_STATUS",
 ]

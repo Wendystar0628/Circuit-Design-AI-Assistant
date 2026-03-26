@@ -235,7 +235,15 @@ class ContextRetriever:
             token_budget=token_budget,
         )
 
-        # Step 5: 使用 ContextAssembler 组装所有结果
+        # Step 5.5: RAG 检索（条件：RAG 开启且 RAGService 可用）
+        rag_results = await self._collect_rag_results_async(
+            message=message,
+            token_budget=token_budget // 4,
+        )
+        if rag_results:
+            search_results.extend(rag_results)
+
+        # Step 6: 使用 ContextAssembler 组装所有结果
         assembled = self._assemble_context(
             search_results=search_results,
             implicit_contexts=context.implicit_results,
@@ -487,6 +495,100 @@ class ContextRetriever:
                 token_count=token_count,
             ))
             total_tokens += token_count
+
+        return results
+
+    # ============================================================
+    # RAG 检索
+    # ============================================================
+
+    async def _collect_rag_results_async(
+        self,
+        message: str,
+        token_budget: int,
+    ) -> List[RetrievalResult]:
+        """
+        通过 RAGManager 执行知识图谱检索
+
+        条件：RAG 开启且 RAGService 可用。
+        结果转为 RetrievalResult 列表，source="rag"。
+
+        Args:
+            message: 用户消息
+            token_budget: 分配给 RAG 结果的 Token 预算
+
+        Returns:
+            List[RetrievalResult]: RAG 检索结果
+        """
+        results: List[RetrievalResult] = []
+
+        try:
+            from shared.service_locator import ServiceLocator
+            from shared.service_names import SVC_RAG_MANAGER
+
+            rag_manager = ServiceLocator.get_optional(SVC_RAG_MANAGER)
+            if not rag_manager or not rag_manager.enabled:
+                return results
+
+            query_result = await rag_manager.query(message)
+
+            if query_result.is_empty:
+                return results
+
+            # 将 chunks 转为 RetrievalResult
+            total_tokens = 0
+            for chunk in query_result.chunks:
+                content = chunk.get("content", "")
+                if not content:
+                    continue
+
+                token_count = self._estimate_tokens(content)
+                if total_tokens + token_count > token_budget:
+                    break
+
+                results.append(RetrievalResult(
+                    path=chunk.get("file_path", "rag"),
+                    content=content,
+                    relevance=0.85,
+                    source="rag",
+                    token_count=token_count,
+                ))
+                total_tokens += token_count
+
+            # 将实体摘要作为额外上下文
+            if query_result.entities and total_tokens < token_budget:
+                entity_lines = []
+                for e in query_result.entities[:10]:
+                    name = e.get("entity_name", "")
+                    etype = e.get("entity_type", "")
+                    desc = e.get("description", "")[:150]
+                    if name:
+                        entity_lines.append(f"{name} ({etype}): {desc}")
+
+                if entity_lines:
+                    entity_text = "\n".join(entity_lines)
+                    token_count = self._estimate_tokens(entity_text)
+                    if total_tokens + token_count <= token_budget:
+                        results.append(RetrievalResult(
+                            path="rag_entities",
+                            content=entity_text,
+                            relevance=0.80,
+                            source="rag",
+                            token_count=token_count,
+                        ))
+
+            if self.logger:
+                self.logger.debug(
+                    f"RAG retrieval: {len(results)} results, "
+                    f"entities={query_result.entities_count}, "
+                    f"chunks={query_result.chunks_count}"
+                )
+
+        except ImportError:
+            pass
+        except Exception as e:
+            if self.logger:
+                self.logger.warning(f"RAG retrieval failed: {e}")
 
         return results
 

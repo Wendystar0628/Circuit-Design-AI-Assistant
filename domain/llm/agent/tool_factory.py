@@ -27,7 +27,6 @@ Agent 工具工厂
 """
 
 import logging
-from typing import Optional
 
 from domain.llm.agent.types import ToolContext
 from domain.llm.agent.tool_registry import (

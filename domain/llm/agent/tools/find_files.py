@@ -21,7 +21,6 @@
     )
 """
 
-import asyncio
 import fnmatch
 import os
 from typing import Any, Dict, List, Optional, Set
@@ -149,10 +148,9 @@ class FindFilesTool(BaseTool):
         else:
             abs_search = context.project_root
 
-        # ---- 在线程池中执行阻塞查找 ----
+        # ---- 执行查找 ----
         try:
-            results = await asyncio.to_thread(
-                _run_find,
+            results = _run_find(
                 abs_search,
                 context.project_root,
                 pattern,
@@ -182,7 +180,7 @@ class FindFilesTool(BaseTool):
 
 
 # ============================================================
-# 内部阻塞查找实现（在线程池中执行）
+# 内部查找实现
 # ============================================================
 
 def _run_find(
@@ -192,8 +190,6 @@ def _run_find(
     limit: int,
 ) -> Dict[str, Any]:
     """
-    阻塞式文件查找，运行在 asyncio.to_thread() 中。
-
     遍历目录树，按 fnmatch 模式匹配文件名。
     """
     paths: List[str] = []

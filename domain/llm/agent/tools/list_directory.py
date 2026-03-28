@@ -21,7 +21,6 @@
     )
 """
 
-import asyncio
 import os
 from typing import Any, Dict, List, Optional
 
@@ -129,9 +128,9 @@ class ListDirectoryTool(BaseTool):
                 is_error=True,
             )
 
-        # ---- 在线程池中执行阻塞列目录 ----
+        # ---- 执行列目录 ----
         try:
-            result = await asyncio.to_thread(_list_dir, abs_path, limit)
+            result = _list_dir(abs_path, limit)
         except Exception as e:
             return ToolResult(content=f"Error listing directory: {e}", is_error=True)
 
@@ -155,13 +154,11 @@ class ListDirectoryTool(BaseTool):
 
 
 # ============================================================
-# 内部阻塞实现（在线程池中执行）
+# 内部实现
 # ============================================================
 
 def _list_dir(abs_path: str, limit: int) -> Dict[str, Any]:
-    """
-    阻塞式目录列表，运行在 asyncio.to_thread() 中。
-    """
+    """列出目录内容，返回排序后的条目列表。"""
     try:
         raw_entries = os.listdir(abs_path)
     except PermissionError:

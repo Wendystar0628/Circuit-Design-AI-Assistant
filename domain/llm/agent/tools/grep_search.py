@@ -22,7 +22,6 @@
     )
 """
 
-import asyncio
 import fnmatch
 import os
 import re
@@ -192,10 +191,9 @@ class GrepSearchTool(BaseTool):
                 is_error=True,
             )
 
-        # ---- 在线程池中执行阻塞搜索 ----
+        # ---- 执行搜索 ----
         try:
-            results = await asyncio.to_thread(
-                _run_grep,
+            results = _run_grep(
                 abs_search,
                 context.project_root,
                 compiled,
@@ -241,7 +239,7 @@ class GrepSearchTool(BaseTool):
 
 
 # ============================================================
-# 内部阻塞搜索实现（在线程池中执行）
+# 内部搜索实现
 # ============================================================
 
 def _run_grep(
@@ -253,8 +251,6 @@ def _run_grep(
     limit: int,
 ) -> Dict[str, Any]:
     """
-    阻塞式 grep 实现，运行在 asyncio.to_thread() 中。
-
     遍历文件树，对每个文本文件的每行进行正则匹配。
     """
     output_lines: List[str] = []

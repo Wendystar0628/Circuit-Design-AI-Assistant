@@ -4,12 +4,12 @@ RAG 业务逻辑管理器
 
 设计理念：
     RAG 是项目的原生能力，不需要手动开关。
-    打开项目 → 自动初始化 LightRAG → 自动增量索引 → AI 智能检索。
-    切换项目 → 自动 finalize 旧索引 → 为新项目重新初始化。
+    打开项目 → 初始化 VectorStore → 自动增量索引 → AI 智能检索。
+    切换项目 → 为新项目初始化新实例。
 
 职责：
 - 项目生命周期联动（订阅 PROJECT_OPENED / PROJECT_CLOSED）
-- 项目打开时自动初始化 LightRAG 并增量索引
+- 项目打开时初始化 VectorStore + Embedder 并增量索引
 - 项目文件扫描与索引（全量/增量/单文件）
 - 查询接口（供 rag_search 工具调用）
 - 索引状态管理（index_meta.json）
@@ -18,8 +18,8 @@ RAG 业务逻辑管理器
 
 架构位置：
 - 被 Application 层 bootstrap 创建并注册到 ServiceLocator
-- 依赖 RAGService（LightRAG 封装层）
-- 依赖 EventBus（事件发布）
+- 依赖 Embedder（本地 sentence-transformers）
+- 依赖 VectorStore（ChromaDB 持久化向量库）
 - 订阅 EVENT_STATE_PROJECT_OPENED / EVENT_STATE_PROJECT_CLOSED
 """
 
@@ -34,15 +34,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
+from domain.rag.chunker import chunk_file
+from domain.rag.embedder import Embedder
 from domain.rag.file_extractor import extract_content, is_indexable, INDEXABLE_EXTENSIONS_SET
-from domain.rag.rag_service import RAGService, RAGQueryResult
 from domain.rag.rag_worker import RAGWorkerThread
+from domain.rag.vector_store import RAGQueryResult, VectorStore
 from infrastructure.config.settings import (
-    DEFAULT_RAG_QUERY_MODE,
     DEFAULT_RAG_TOP_K,
     DEFAULT_RAG_STORAGE_DIR,
     DEFAULT_RAG_CONTEXT_TOKEN_BUDGET,
-    CONFIG_RAG_QUERY_MODE,
+    DEFAULT_EMBEDDING_MODEL_NAME,
+    DEFAULT_VECTOR_STORE_DIR,
 )
 from shared.event_types import (
     EVENT_RAG_INIT_COMPLETE,
@@ -145,18 +147,19 @@ class RAGManager:
     RAG 业务逻辑管理器
 
     RAG 是项目的原生能力：
-    - 打开项目 → 自动初始化 LightRAG + 自动增量索引
-    - 关闭项目 → 自动 finalize 刷盘
+    - 打开项目 → 初始化 VectorStore + Embedder → 自动增量索引
+    - 关闭项目 → 清除状态（ChromaDB 自动持久化）
     - AI 对话时 → rag_search 工具按需调用 query() 检索
 
     持久化策略：
-    - LightRAG 存储（KV/Vector/Graph）：{project}/.circuit_ai/rag_storage/
+    - ChromaDB 向量库：{project}/.circuit_ai/vector_store/
     - index_meta.json：文件索引元数据，随索引操作更新
-    → 每个项目有独立的索引存储，项目隔离
+    → 每个项目有独立的存储，项目隔离
     """
 
-    def __init__(self, rag_service: RAGService):
-        self._service = rag_service
+    def __init__(self):
+        self._embedder: Optional[Embedder] = None
+        self._vector_store: Optional[VectorStore] = None
         self._indexing = False
         self._current_track_id: Optional[str] = None
         self._project_root: Optional[str] = None
@@ -164,14 +167,17 @@ class RAGManager:
         self._meta_lock = threading.RLock()  # 保护 _index_meta 跨线程读写
         self._init_error: Optional[str] = None  # 初始化失败的错误信息
         self._subscribed = False
-        # 后台工作线程：所有 LightRAG 操作在此独立 asyncio 循环中执行
-        # 避免 CPU 密集操作（分块、图计算）饿死 Qt 主线程（qasync 融合循环）
+        # 后台工作线程：索引和查询在此线程运行，避免阻塞 Qt UI
         self._worker = RAGWorkerThread()
 
     @property
     def is_available(self) -> bool:
-        """RAG 是否可用（项目已打开且服务已初始化）"""
-        return bool(self._project_root and self._service.is_initialized)
+        """星 RAG 是否可用（项目已打开且 VectorStore 已初始化）"""
+        return bool(
+            self._project_root
+            and self._vector_store is not None
+            and self._vector_store.is_initialized
+        )
 
     @property
     def is_indexing(self) -> bool:
@@ -186,10 +192,6 @@ class RAGManager:
     def init_error(self) -> Optional[str]:
         """最近一次初始化错误（None 表示无错误）"""
         return self._init_error
-
-    @property
-    def service(self) -> RAGService:
-        return self._service
 
     # ============================================================
     # 生命周期事件订阅
@@ -257,34 +259,35 @@ class RAGManager:
         logger.info(f"Project opened, RAG project root set: {project_root}")
 
         # ── 提交到后台工作线程：finalize 旧服务 → 初始化新服务 → 自动索引 ──
-        self._worker.submit(self._async_init_for_project(old_root))
+        self._worker.submit(self._init_for_project, old_root)
 
-    async def _async_init_for_project(self, old_root: Optional[str]) -> None:
-        """异步：finalize 旧服务 → 初始化 LightRAG → 自动索引"""
+    def _init_for_project(self, old_root: Optional[str]) -> None:
+        """初始化 VectorStore + Embedder → 自动索引（在工作线程中运行）"""
         try:
-            if old_root and self._service.is_initialized:
-                await self._service.finalize()
-
             if not self._project_root:
                 return
 
-            await self._service.create(self._project_root)
-            await self._service.initialize()
+            # 初始化 Embedder（懒加载，首次调用才真正加载模型）
+            if self._embedder is None:
+                self._embedder = Embedder(model_name=DEFAULT_EMBEDDING_MODEL_NAME)
+
+            # 初始化 VectorStore（ChromaDB，同步，~100ms）
+            self._vector_store = VectorStore(
+                project_root=self._project_root,
+                storage_subdir=DEFAULT_VECTOR_STORE_DIR,
+            )
+            self._vector_store.initialize()
             self._init_error = None
 
-            logger.info("RAG service initialized, starting auto-index")
+            logger.info("RAG VectorStore initialized, starting auto-index")
 
-            # 4. 通知 UI：服务已就绪
             self._publish_event(EVENT_RAG_INIT_COMPLETE, {
                 "project_root": self._project_root,
                 "status": "ready",
             })
 
-            # 5. 加载已有索引元数据（用于 UI 显示）
             self._load_index_meta()
-
-            # 6. 自动增量索引
-            await self._safe_index_project()
+            self._safe_index_project()
 
         except Exception as e:
             self._init_error = str(e)
@@ -299,37 +302,26 @@ class RAGManager:
         """
         项目关闭事件处理（同步入口）
 
-        同步清除 project_root → 异步刷盘。
+        清除项目状态；ChromaDB 数据已自动持久化，无需显式刷盘。
         """
-        logger.info("Project closing, finalizing RAG")
-
+        logger.info("Project closing, clearing RAG state")
         self._project_root = None
+        self._vector_store = None
         self._index_meta = {}
         self._init_error = None
-
-        # 提交到后台工作线程异步刷盘
-        self._worker.submit(self._async_finalize_service())
-
-    async def _async_finalize_service(self) -> None:
-        """异步销毁 LightRAG 存储（刷盘持久化）"""
-        try:
-            if self._service.is_initialized:
-                await self._service.finalize()
-        except Exception as e:
-            logger.error(f"Failed to finalize RAG service: {e}")
 
     # ============================================================
     # 索引操作
     # ============================================================
 
-    async def index_project_files(self) -> None:
+    def index_project_files(self) -> None:
         """
         扫描项目目录，全量/增量索引
 
         对比 index_meta.json 中的 mtime 与磁盘 mtime，
         仅索引新增或变更的文件。
         """
-        if not self._project_root or not self._service.is_initialized:
+        if not self._project_root or not self.is_available:
             logger.debug("RAG not available, skipping index")
             return
 
@@ -381,7 +373,7 @@ class RAGManager:
                         "track_id": self._current_track_id,
                     })
 
-                    await self._index_single_file_internal(rel_path, abs_path)
+                    self._index_single_file_internal(rel_path, abs_path)
                     processed += 1
 
                 except Exception as e:
@@ -419,7 +411,7 @@ class RAGManager:
             self._indexing = False
             self._current_track_id = None
 
-    async def index_single_file(self, file_path: str) -> None:
+    def index_single_file(self, file_path: str) -> None:
         """
         单文件增量索引（先删后插）
 
@@ -434,31 +426,18 @@ class RAGManager:
             return
 
         try:
-            # 先删除旧文档
-            old_meta = self._index_meta.get("files", {}).get(rel_path, {})
-            old_doc_id = old_meta.get("doc_id")
-            if old_doc_id:
-                try:
-                    await self._service.delete_document(old_doc_id)
-                except Exception:
-                    pass  # 删除失败不阻塞重新索引
-
-            await self._index_single_file_internal(rel_path, abs_path)
+            self._index_single_file_internal(rel_path, abs_path)
             self._save_index_meta()
 
         except Exception as e:
             logger.error(f"Failed to index single file {rel_path}: {e}")
 
-    async def _index_single_file_internal(
+    def _index_single_file_internal(
         self, rel_path: str, abs_path: str
     ) -> None:
         """内部索引单文件
 
-        正确使用 LightRAG doc_status 机制：
-        1. ainsert() 返回 track_id（监控用，非文档 ID）
-        2. 插入完成后查询 doc_status.get_docs_by_track_id(track_id)
-           → 获取真实 doc_id（MD5）和 chunks_count
-        3. 将真实 doc_id 写入 meta（供 adelete_by_doc_id 删除时使用）
+        流程：读取内容 → 分块 → Embedding → upsert 到 VectorStore
         """
         content = extract_content(abs_path)
         if not content.strip():
@@ -466,17 +445,15 @@ class RAGManager:
 
         stat = os.stat(abs_path)
 
-        track_id = await self._service.insert(
-            texts=[content],
-            file_paths=[rel_path],
-        )
+        chunks = chunk_file(content, rel_path)
+        if not chunks:
+            return
 
-        # 从 LightRAG doc_status 查询真实 doc_id 和 chunks_count
-        doc_id, chunks_count = await self._service.get_doc_info_by_track_id(track_id)
+        vectors = self._embedder.embed_texts([c.content for c in chunks])
+        self._vector_store.upsert_file(rel_path, chunks, vectors)
 
         self._update_file_meta(rel_path, {
-            "doc_id": doc_id or track_id,  # doc_id 为空时回退到 track_id
-            "chunks_count": chunks_count,
+            "chunks_count": len(chunks),
             "mtime": stat.st_mtime,
             "size": stat.st_size,
             "status": "processed",
@@ -487,35 +464,33 @@ class RAGManager:
     # 查询
     # ============================================================
 
-    async def query(
+    def query(
         self,
         query_text: str,
-        mode: str = DEFAULT_RAG_QUERY_MODE,
         top_k: int = DEFAULT_RAG_TOP_K,
+        **_kwargs,
     ) -> RAGQueryResult:
         """
-        查询知识库
+        查询知识库（向量相似度检索）
 
         Args:
             query_text: 查询文本
-            mode: 检索模式
-            top_k: 返回数量
+            top_k:      返回数量
 
         Returns:
             RAGQueryResult
         """
         if not self.is_available:
-            return RAGQueryResult({"status": "error", "message": "RAG not available"})
+            return RAGQueryResult(error="RAG not available")
 
-        result = await self._service.query(query_text, mode=mode, top_k=top_k)
+        vector = self._embedder.embed_single(query_text)
+        hits = self._vector_store.query(vector, top_k=top_k)
+        result = RAGQueryResult(hits=hits)
 
         self._publish_event(EVENT_RAG_QUERY_COMPLETE, {
             "query": query_text[:100],
-            "mode": mode,
-            "results_count": result.entities_count + result.chunks_count,
-            "entities_found": result.entities_count,
-            "relations_found": result.relations_count,
-            "chunks_found": result.chunks_count,
+            "results_count": len(hits),
+            "chunks_found": len(hits),
         })
 
         return result
@@ -533,7 +508,7 @@ class RAGManager:
         if not self.is_available:
             logger.debug("RAG not available, cannot trigger index")
             return
-        self._worker.submit(self.index_project_files())
+        self._worker.submit(self.index_project_files)
 
     def trigger_index_single_file(self, file_path: str) -> None:
         """
@@ -544,13 +519,13 @@ class RAGManager:
         """
         if not self.is_available:
             return
-        self._worker.submit(self.index_single_file(file_path))
+        self._worker.submit(self.index_single_file, file_path)
 
     async def query_async(
         self,
         query_text: str,
-        mode: str = DEFAULT_RAG_QUERY_MODE,
         top_k: int = DEFAULT_RAG_TOP_K,
+        **_kwargs,
     ) -> "RAGQueryResult":
         """
         从 Qt 主线程异步查询知识库
@@ -560,20 +535,19 @@ class RAGManager:
 
         Args:
             query_text: 查询文本
-            mode: 检索模式
-            top_k: 返回数量
+            top_k:      返回数量上限
 
         Returns:
             RAGQueryResult
         """
         if not self.is_available:
-            return RAGQueryResult({"status": "error", "message": "RAG not available"})
+            return RAGQueryResult(error="RAG not available")
 
         future = self._worker.submit(
-            self.query(query_text, mode=mode, top_k=top_k)
+            self.query, query_text, top_k
         )
         if future is None:
-            return RAGQueryResult({"status": "error", "message": "RAG worker not running"})
+            return RAGQueryResult(error="RAG worker not running")
 
         return await asyncio.wrap_future(future)
 
@@ -590,25 +564,23 @@ class RAGManager:
         with self._meta_lock:
             files_meta = dict(self._index_meta.get("files", {}))
 
+        total_chunks = sum(f.get("chunks_count", 0) for f in files_meta.values())
+        # 优先使用 VectorStore 的实际 chunk 计数
+        if self._vector_store:
+            vc = self._vector_store.count()
+            if vc > 0:
+                total_chunks = vc
+
         stats = IndexStats(
             total_files=len(files_meta),
             processed=sum(1 for f in files_meta.values() if f.get("status") == "processed"),
             failed=sum(1 for f in files_meta.values() if f.get("status") == "failed"),
-            total_chunks=sum(f.get("chunks_count", 0) for f in files_meta.values()),
+            total_chunks=total_chunks,
         )
 
-        # 从 LightRAG 存储文件中读取实体/关系/分块数量
         if self._project_root:
-            storage_dir = os.path.join(self._project_root, DEFAULT_RAG_STORAGE_DIR)
-            stats.storage_size_mb = self._calc_dir_size_mb(storage_dir)
-            stats.total_entities = self._count_json_entries(
-                os.path.join(storage_dir, "kv_store_full_entities.json"))
-            stats.total_relations = self._count_json_entries(
-                os.path.join(storage_dir, "kv_store_full_relations.json"))
-            chunks_count = self._count_json_entries(
-                os.path.join(storage_dir, "kv_store_text_chunks.json"))
-            if chunks_count > 0:
-                stats.total_chunks = chunks_count
+            vs_dir = os.path.join(self._project_root, DEFAULT_VECTOR_STORE_DIR)
+            stats.storage_size_mb = self._calc_dir_size_mb(vs_dir)
 
         files = [
             FileIndexInfo.from_dict(path, data)
@@ -623,61 +595,22 @@ class RAGManager:
             files=files,
         )
 
-    async def delete_document(self, doc_id: str) -> None:
-        """删除文档及关联实体和关系"""
-        if not self._service.is_initialized:
-            return
-
-        await self._service.delete_document(doc_id)
-
-        # 从 meta 中移除
+    def delete_file(self, rel_path: str) -> None:
+        """删除指定文件的所有 chunk"""
+        if self._vector_store:
+            self._vector_store.delete_file(rel_path)
         with self._meta_lock:
-            files_meta = self._index_meta.get("files", {})
-            to_remove = [
-                path for path, data in files_meta.items()
-                if data.get("doc_id") == doc_id
-            ]
-            for path in to_remove:
-                del files_meta[path]
+            self._index_meta.get("files", {}).pop(rel_path, None)
         self._save_index_meta()
 
-    async def clear_index(self) -> None:
-        """
-        清空知识库（在工作线程执行）
-
-        删除所有 LightRAG 存储文件并重置索引元数据。
-        完成后重新初始化存储。
-        """
+    def clear_index(self) -> None:
+        """清空知识库（在工作线程执行）"""
         if not self._project_root:
             return
 
-        import shutil
+        if self._vector_store:
+            self._vector_store.clear()
 
-        storage_dir = os.path.join(self._project_root, DEFAULT_RAG_STORAGE_DIR)
-
-        # 销毁现有实例
-        if self._service.is_initialized:
-            try:
-                await self._service.finalize()
-            except Exception as e:
-                logger.warning(f"Finalize before clear failed: {e}")
-
-        # 删除存储文件（保留目录）
-        try:
-            if os.path.isdir(storage_dir):
-                for item in os.listdir(storage_dir):
-                    item_path = os.path.join(storage_dir, item)
-                    try:
-                        if os.path.isfile(item_path):
-                            os.remove(item_path)
-                        elif os.path.isdir(item_path):
-                            shutil.rmtree(item_path)
-                    except Exception as e:
-                        logger.warning(f"Failed to remove {item_path}: {e}")
-        except Exception as e:
-            logger.error(f"Failed to clear storage dir: {e}")
-
-        # 重置 meta
         with self._meta_lock:
             self._index_meta = {
                 "version": 1,
@@ -686,23 +619,11 @@ class RAGManager:
                 "stats": {},
             }
         self._save_index_meta()
-
-        # 重新初始化存储
-        try:
-            await self._service.create(self._project_root)
-            await self._service.initialize()
-            logger.info("RAG storage cleared and re-initialized")
-        except Exception as e:
-            logger.error(f"Failed to re-initialize after clear: {e}")
+        logger.info("RAG index cleared")
 
     async def clear_index_async(self) -> None:
-        """
-        从 Qt 主线程异步清空知识库
-
-        将 clear_index() 提交到工作线程，通过 asyncio.wrap_future()
-        让 Qt 协程可以 await 结果。
-        """
-        future = self._worker.submit(self.clear_index())
+        """从 Qt 主线程异步清空知识库"""
+        future = self._worker.submit(self.clear_index)
         if future is None:
             raise RuntimeError("RAG worker not running")
         await asyncio.wrap_future(future)
@@ -717,7 +638,7 @@ class RAGManager:
 
         增量策略：
         1. 对比 mtime，仅返回新增或变更文件
-        2. 检测已删除文件并从 index_meta 和 LightRAG 中清理
+        2. 检测已删除文件并从 index_meta 和 VectorStore 中清理
         """
         if not self._project_root:
             return []
@@ -773,35 +694,29 @@ class RAGManager:
         """
         调度清理已删除文件的索引数据
 
-        从 index_meta 和 LightRAG 存储中移除。
+        从 index_meta 和 VectorStore 中移除。
         """
         if self._worker.is_running:
-            self._worker.submit(self._cleanup_deleted_files(deleted_files))
+            self._worker.submit(self._cleanup_deleted_files, deleted_files)
         else:
-            # 工作线程未就绪时仅清理 meta（不含 LightRAG 存储）
+            # 工作线程未就绪时仅清理 meta
             with self._meta_lock:
                 files_meta = self._index_meta.get("files", {})
                 for rel_path in deleted_files:
                     files_meta.pop(rel_path, None)
             logger.info(f"Cleaned {len(deleted_files)} deleted files from index meta (meta only)")
 
-    async def _cleanup_deleted_files(self, deleted_files: List[str]) -> None:
+    def _cleanup_deleted_files(self, deleted_files: List[str]) -> None:
         """异步清理已删除文件"""
         files_meta = self._index_meta.get("files", {})
         cleaned = 0
 
         for rel_path in deleted_files:
-            meta = files_meta.get(rel_path, {})
-            doc_id = meta.get("doc_id")
-
-            # 从 LightRAG 删除
-            if doc_id and self._service.is_initialized:
+            if self._vector_store:
                 try:
-                    await self._service.delete_document(doc_id)
+                    self._vector_store.delete_file(rel_path)
                 except Exception as e:
-                    logger.warning(f"Failed to delete {rel_path} from LightRAG: {e}")
-
-            # 从 meta 移除
+                    logger.warning(f"Failed to delete {rel_path} from VectorStore: {e}")
             files_meta.pop(rel_path, None)
             cleaned += 1
 
@@ -903,22 +818,6 @@ class RAGManager:
     # ============================================================
 
     @staticmethod
-    def _count_json_entries(json_path: str) -> int:
-        """读取 LightRAG KV 存储 JSON 文件中的条目数"""
-        try:
-            if not os.path.isfile(json_path):
-                return 0
-            with open(json_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            if isinstance(data, dict):
-                return len(data)
-            if isinstance(data, list):
-                return len(data)
-        except Exception:
-            pass
-        return 0
-
-    @staticmethod
     def _calc_dir_size_mb(dir_path: str) -> float:
         """计算目录大小（MB）"""
         total = 0
@@ -947,10 +846,10 @@ class RAGManager:
         except Exception:
             pass
 
-    async def _safe_index_project(self) -> None:
+    def _safe_index_project(self) -> None:
         """安全的自动索引（异常不冒泡）"""
         try:
-            await self.index_project_files()
+            self.index_project_files()
         except Exception as e:
             logger.error(f"Auto-index failed: {e}")
 

@@ -212,34 +212,22 @@ LOCAL_LLM_REQUEST_TIMEOUT = 300                    # 本地模型请求超时秒
 LOCAL_LLM_HEALTH_CHECK_INTERVAL = 30               # 健康检查间隔秒数
 
 # ============================================================
-# RAG 相关默认值（基于 LightRAG 架构）
+# RAG 相关默认值（Embedding-only 向量检索）
 # ============================================================
 
-DEFAULT_RAG_STORAGE_DIR = ".circuit_ai/rag_storage"  # 相对于项目根目录
-DEFAULT_RAG_CHUNK_SIZE = 1200                    # 分块 token 数（LightRAG 默认）
-DEFAULT_RAG_CHUNK_OVERLAP = 100                  # 分块重叠 token 数
-DEFAULT_RAG_QUERY_MODE = "mix"                    # 默认检索模式（mix = KG + 向量双路）
-DEFAULT_RAG_TOP_K = 10                           # 检索返回数量
-DEFAULT_RAG_CONTEXT_TOKEN_BUDGET = 2000          # 注入上下文的 Token 预算
-DEFAULT_RAG_ENTITY_TYPES = [                     # 电路设计领域实体类型
-    "Component", "Circuit", "Parameter", "Specification",
-    "Topology", "Signal", "Tool", "Standard", "Material", "Method",
-]
-DEFAULT_RAG_LANGUAGE = "Chinese"                  # 实体提取语言
+DEFAULT_RAG_STORAGE_DIR = ".circuit_ai/rag_storage"  # 保留兼容，用于 index_meta.json 存储
+DEFAULT_RAG_TOP_K = 10                              # 检索返回数量
+DEFAULT_RAG_CONTEXT_TOKEN_BUDGET = 2000             # 注入上下文的 Token 预算
 
-# RAG 配置字段名（per-project rag_config.json）
-CONFIG_RAG_QUERY_MODE = "rag_query_mode"          # 默认检索模式
+# 向量存储路径（ChromaDB）
+DEFAULT_VECTOR_STORE_DIR = ".circuit_ai/vector_store"
 
-# RAG 配置文件名
-RAG_CONFIG_FILE = "rag_config.json"               # 存放于 {project_root}/.circuit_ai/
+# Embedding 模型（sentence-transformers 本地模型）
+DEFAULT_EMBEDDING_MODEL_NAME = "all-MiniLM-L6-v2"   # 384 维，约 90MB
 
-# ============================================================
-# Embedding 相关默认值
-# ============================================================
-
-DEFAULT_EMBEDDING_MODEL = "embedding-3"           # 智谱 embedding 模型
-DEFAULT_EMBEDDING_DIM = 1024                      # embedding 维度
-DEFAULT_EMBEDDING_MAX_TOKEN_SIZE = 8192           # embedding 最大 token 数
+# 分块大小限制
+DEFAULT_CHUNK_MAX_CHARS = 3000
+DEFAULT_CHUNK_OVERLAP_CHARS = 200
 
 # ============================================================
 # 嵌入模型厂商相关常量

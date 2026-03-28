@@ -848,37 +848,29 @@ def _init_llm_client():
 def _init_rag_services():
     """
     初始化 RAG 服务（Phase 3.8）
-    
-    3.8.1 创建 RAGService → 注册 SVC_RAG_SERVICE（仅创建，不初始化存储）
-    3.8.2 创建 RAGManager（注入 RAGService）→ 注册 SVC_RAG_MANAGER
+
+    3.8.1 创建 RAGManager → 注册 SVC_RAG_MANAGER
           → 订阅 EVENT_STATE_PROJECT_OPENED / EVENT_STATE_PROJECT_CLOSED
-    3.8.3 创建 DocumentWatcher → 启动监听
+    3.8.2 创建 DocumentWatcher → 启动监听
     """
     try:
-        from domain.rag.rag_service import RAGService
         from domain.rag.rag_manager import RAGManager
         from domain.rag.document_watcher import DocumentWatcher
         from shared.service_locator import ServiceLocator
-        from shared.service_names import SVC_RAG_SERVICE, SVC_RAG_MANAGER
+        from shared.service_names import SVC_RAG_MANAGER
 
-        # 3.8.1 RAGService（仅创建实例，不初始化 LightRAG 存储）
-        rag_service = RAGService()
-        ServiceLocator.register(SVC_RAG_SERVICE, rag_service)
-        if _logger:
-            _logger.info("Phase 3.8.1 RAGService 创建完成（存储未初始化）")
-
-        # 3.8.2 RAGManager + 订阅生命周期事件
-        rag_manager = RAGManager(rag_service)
+        # 3.8.1 RAGManager + 订阅生命周期事件
+        rag_manager = RAGManager()
         rag_manager.subscribe_lifecycle_events()
         ServiceLocator.register(SVC_RAG_MANAGER, rag_manager)
         if _logger:
-            _logger.info("Phase 3.8.2 RAGManager 创建完成，已订阅项目生命周期事件")
+            _logger.info("Phase 3.8.1 RAGManager 创建完成，已订阅项目生命周期事件")
 
-        # 3.8.3 DocumentWatcher
+        # 3.8.2 DocumentWatcher
         doc_watcher = DocumentWatcher()
         doc_watcher.start()
         if _logger:
-            _logger.info("Phase 3.8.3 DocumentWatcher 启动完成")
+            _logger.info("Phase 3.8.2 DocumentWatcher 启动完成")
 
     except Exception as e:
         if _logger:

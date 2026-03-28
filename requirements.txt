@@ -15,9 +15,6 @@ langgraph>=0.2.0
 langgraph-checkpoint-sqlite>=1.0.0
 langchain-core>=0.2.0
 
-# RAG (Knowledge Graph + Vector Search)
-lightrag-hku==1.4.11
-
 # Vector Database & Embeddings
 chromadb>=0.4.0
 sentence-transformers>=3.3.0  # Required for ModernBERT support

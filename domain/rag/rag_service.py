@@ -18,7 +18,6 @@ LightRAG 封装层
 
 import logging
 import os
-from functools import partial
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -209,29 +208,24 @@ class RAGService:
             from lightrag.utils import EmbeddingFunc
             from lightrag.llm.zhipu import zhipu_embedding, zhipu_complete
 
-            # Embedding 适配：将 api_key 和 embedding_dim 注入 zhipu_embedding
-            # 使用 .func 访问原始函数避免 EmbeddingFunc 双重包装
-            # 必须传 embedding_dim 给底层函数，否则智谱 API 返回默认 2048 维
+            async def _embed(texts, **kwargs):
+                return await zhipu_embedding.func(
+                    texts, api_key=api_key, embedding_dim=DEFAULT_EMBEDDING_DIM
+                )
+
             embedding_func = EmbeddingFunc(
-                func=partial(zhipu_embedding.func, api_key=api_key, embedding_dim=DEFAULT_EMBEDDING_DIM),
+                func=_embed,
                 embedding_dim=DEFAULT_EMBEDDING_DIM,
                 max_token_size=DEFAULT_EMBEDDING_MAX_TOKEN_SIZE,
             )
 
-            # LLM 适配：包装 zhipu_complete
-            # 必须剥离 keyword_extraction 参数，因为 LightRAG 传入
-            # keyword_extraction=True 但期望返回原始字符串（自行解析 JSON），
-            # 而 zhipu_complete 在 keyword_extraction=True 时会返回
-            # GPTKeywordExtractionFormat 对象，导致 regex 报错。
             async def _llm_wrapper(prompt, **kwargs):
                 kwargs.pop("keyword_extraction", None)
                 return await zhipu_complete(prompt, api_key=api_key, **kwargs)
 
-            llm_func = _llm_wrapper
-
             self._rag = LightRAG(
                 working_dir=working_dir,
-                llm_model_func=llm_func,
+                llm_model_func=_llm_wrapper,
                 embedding_func=embedding_func,
                 chunk_token_size=DEFAULT_RAG_CHUNK_SIZE,
                 chunk_overlap_token_size=DEFAULT_RAG_CHUNK_OVERLAP,
@@ -399,31 +393,6 @@ class RAGService:
 
         raw = await self._rag.aquery_data(query_text, param)
         return RAGQueryResult(raw)
-
-    # ============================================================
-    # Embedding 可用性检测
-    # ============================================================
-
-    async def test_embedding(self) -> bool:
-        """
-        测试 Embedding API 是否可用
-
-        发送测试文本验证 API Key 和网络连通性。
-
-        Returns:
-            True: 可用  False: 不可用
-        """
-        try:
-            api_key = self._get_api_key()
-            if not api_key:
-                return False
-
-            from lightrag.llm.zhipu import zhipu_embedding
-            result = await zhipu_embedding.func(["test"], api_key=api_key)
-            return result is not None and len(result) > 0
-        except Exception as e:
-            logger.warning(f"Embedding test failed: {e}")
-            return False
 
     # ============================================================
     # 内部方法

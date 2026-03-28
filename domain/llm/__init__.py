@@ -90,13 +90,6 @@ from domain.llm.conversation import (
     StreamingContentBuffer,
 )
 
-# 上下文检索（从 context_retrieval 模块组导入）
-from domain.llm.context_retrieval import (
-    ContextRetriever,
-    RetrievalResult,
-    RetrievalContext,
-)
-
 # Token 计数
 from domain.llm.token_counter import (
     count_tokens,
@@ -217,10 +210,6 @@ __all__ = [
     "render_web_search_results",
     "format_messages_for_export",
     "StreamingContentBuffer",
-    # 上下文检索
-    "ContextRetriever",
-    "RetrievalResult",
-    "RetrievalContext",
     # Token 计数
     "count_tokens",
     "count_message_tokens",

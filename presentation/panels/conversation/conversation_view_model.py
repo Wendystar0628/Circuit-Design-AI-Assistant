@@ -85,7 +85,6 @@ class DisplayMessage:
     is_partial: bool = False                     # 是否为部分响应（已中断）
     stop_reason: str = ""                        # 停止原因（仅 is_partial=True 时有效）
     web_search_results: List[Dict[str, Any]] = field(default_factory=list)  # 联网搜索结果
-    rag_references: List[Dict[str, Any]] = field(default_factory=list)     # RAG 知识库来源
     
     # 建议选项相关（仅 role=suggestion 时有效）
     suggestions: List[SuggestionItem] = field(default_factory=list)
@@ -463,7 +462,6 @@ class ConversationViewModel(QObject):
             is_partial_response,
             get_stop_reason,
             get_web_search_results,
-            get_rag_references,
         )
         
         # 获取消息内容
@@ -490,9 +488,6 @@ class ConversationViewModel(QObject):
         # 获取联网搜索结果
         web_search_results = get_web_search_results(lc_msg)
         
-        # 获取 RAG 知识库来源
-        rag_references = get_rag_references(lc_msg)
-        
         # 获取部分响应标记（3.0.10 数据稳定性）
         is_partial = is_partial_response(lc_msg)
         stop_reason = get_stop_reason(lc_msg)
@@ -510,7 +505,6 @@ class ConversationViewModel(QObject):
             is_partial=is_partial,
             stop_reason=stop_reason,
             web_search_results=web_search_results,
-            rag_references=rag_references,
         )
 
     # ============================================================
@@ -860,7 +854,6 @@ class ConversationViewModel(QObject):
         reasoning_content = result.get("reasoning_content", "")
         usage = result.get("usage")
         is_partial = result.get("is_partial", False)
-        rag_references = result.get("rag_references") or []
         
         # 构建工具操作摘要（在清空前）
         tool_operations = self._build_tool_operations()
@@ -872,7 +865,6 @@ class ConversationViewModel(QObject):
                 reasoning_content=reasoning_content,
                 usage=usage,
                 operations=tool_operations if tool_operations else None,
-                rag_references=rag_references if rag_references else None,
             )
         
         # 更新状态

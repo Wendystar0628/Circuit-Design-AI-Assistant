@@ -412,14 +412,6 @@ function toggleThink(id) {
     } 
 }
 function onFileClick(path) { window.location.href = 'file://' + path; }
-function toggleRag(id) {
-    var c = document.getElementById('rag-'+id);
-    var t = c ? c.previousElementSibling : null;
-    if(c) {
-        c.classList.toggle('show');
-        if(t) t.classList.toggle('expanded');
-    }
-}
 function addToolCard(html) {
     var streaming = document.querySelector('.msg.streaming');
     if (!streaming) { document.getElementById('msgs').insertAdjacentHTML('beforeend', html); }
@@ -486,9 +478,7 @@ function updateToolCard(id, resultHtml, isError) {
 <div class="think-content" id="think-{msg_id}">{reasoning}</div></div>'''
             ops_html = self._render_operations_html(operations) if operations else ''
             sources_html = self._render_sources_html(web_search_results) if web_search_results else ''
-            rag_refs = getattr(msg, 'rag_references', []) or []
-            rag_html = self._render_rag_references_html(rag_refs, msg_id) if rag_refs else ''
-            return f'<div class="row"><div class="avatar">{SVG_ROBOT}</div><div class="msg assistant">{think}{content_html}{sources_html}{rag_html}{ops_html}</div></div>'
+            return f'<div class="row"><div class="avatar">{SVG_ROBOT}</div><div class="msg assistant">{think}{content_html}{sources_html}{ops_html}</div></div>'
 
     def _render_operations_html(self, operations: List[str]) -> str:
         if not operations:
@@ -591,54 +581,6 @@ function updateToolCard(id, resultHtml, isError) {
 <div class="sources-list">{"".join(items)}</div>
 </div>'''
     
-    def _render_rag_references_html(self, references: List[Dict[str, Any]], msg_id: str) -> str:
-        """
-        渲染 RAG 知识库来源卡片（折叠式）
-        
-        Args:
-            references: RAG 引用列表，每项包含 file_path, snippet, score
-            msg_id: 消息 ID（用于折叠切换）
-            
-        Returns:
-            HTML 字符串
-        """
-        if not references:
-            return ""
-        
-        import html as html_mod
-        
-        count = len(references)
-        items = []
-        for ref in references[:8]:
-            fp = ref.get("file_path", ref.get("path", ""))
-            snippet = ref.get("snippet", ref.get("content", ""))[:120]
-            score = ref.get("score", ref.get("relevance", 0))
-            
-            safe_fp = html_mod.escape(fp)
-            safe_snippet = html_mod.escape(snippet)
-            score_html = f'<span class="rag-score">{score:.2f}</span>' if score else ''
-            
-            onclick = f'onclick="onFileClick(\'{self._esc_attr(fp)}\')"' if fp else ''
-            items.append(
-                f'<div class="rag-item">'
-                f'{score_html}'
-                f'<div class="rag-file" {onclick}>{safe_fp}</div>'
-                f'<div class="rag-snippet">{safe_snippet}</div>'
-                f'</div>'
-            )
-        
-        more = ""
-        if count > 8:
-            more = f'<div class="ops-more">... 还有 {count - 8} 个来源</div>'
-        
-        return f'''<div class="rag-card">
-<div class="rag-title rag-toggle" onclick="toggleRag('{msg_id}')"><span class="arrow">▶</span> 参考了 {count} 个知识库来源</div>
-<div class="rag-content" id="rag-{msg_id}">
-{''.join(items)}
-{more}
-</div>
-</div>'''
-
     def _linkify_file_paths(self, text: str) -> str:
         import re
         import html

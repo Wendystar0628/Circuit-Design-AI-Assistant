@@ -11,7 +11,7 @@ RAG 业务逻辑管理器
 - 项目生命周期联动（订阅 PROJECT_OPENED / PROJECT_CLOSED）
 - 项目打开时自动初始化 LightRAG 并增量索引
 - 项目文件扫描与索引（全量/增量/单文件）
-- 查询接口（供 ContextRetriever 调用）
+- 查询接口（供 rag_search 工具调用）
 - 索引状态管理（index_meta.json）
 - 增量更新：mtime 对比 + 已删除文件清理
 - 通过 EventBus 发布 RAG 事件
@@ -151,7 +151,7 @@ class RAGManager:
     RAG 是项目的原生能力：
     - 打开项目 → 自动初始化 LightRAG + 自动增量索引
     - 关闭项目 → 自动 finalize 刷盘
-    - AI 对话时 → ContextRetriever 自动调用 query() 检索
+    - AI 对话时 → rag_search 工具按需调用 query() 检索
 
     持久化策略：
     - LightRAG 存储（KV/Vector/Graph）：{project}/.circuit_ai/rag_storage/
@@ -166,7 +166,6 @@ class RAGManager:
         self._project_root: Optional[str] = None
         self._index_meta: Dict[str, Any] = {}
         self._meta_lock = threading.RLock()  # 保护 _index_meta 跨线程读写
-        self._embedding_verified = False
         self._init_error: Optional[str] = None  # 初始化失败的错误信息
         self._subscribed = False
         # 后台工作线程：所有 LightRAG 操作在此独立 asyncio 循环中执行
@@ -256,7 +255,6 @@ class RAGManager:
         # ── 同步：立即设置 project_root ──
         old_root = self._project_root
         self._project_root = project_root
-        self._embedding_verified = False
         self._init_error = None
         self._index_meta = {}
         self._load_index_meta()
@@ -266,32 +264,16 @@ class RAGManager:
         self._worker.submit(self._async_init_for_project(old_root))
 
     async def _async_init_for_project(self, old_root: Optional[str]) -> None:
-        """
-        异步：finalize 旧服务 → 初始化 LightRAG → 验证 Embedding → 自动索引
-        """
+        """异步：finalize 旧服务 → 初始化 LightRAG → 自动索引"""
         try:
-            # 1. 销毁旧项目实例
             if old_root and self._service.is_initialized:
                 await self._service.finalize()
 
-            # 2. 为新项目初始化 LightRAG
             if not self._project_root:
                 return
 
             await self._service.create(self._project_root)
             await self._service.initialize()
-
-            # 3. 验证 Embedding API
-            if not await self._service.test_embedding():
-                self._init_error = "Embedding API 不可用，请检查 API Key"
-                logger.error(self._init_error)
-                self._publish_event(EVENT_RAG_INIT_COMPLETE, {
-                    "project_root": self._project_root,
-                    "status": "error",
-                    "error": self._init_error,
-                })
-                return
-            self._embedding_verified = True
             self._init_error = None
 
             logger.info("RAG service initialized, starting auto-index")
@@ -327,7 +309,6 @@ class RAGManager:
 
         self._project_root = None
         self._index_meta = {}
-        self._embedding_verified = False
         self._init_error = None
 
         # 提交到后台工作线程异步刷盘
@@ -921,14 +902,6 @@ class RAGManager:
             existing = self._index_meta["files"].get(rel_path, {})
             existing.update(data)
             self._index_meta["files"][rel_path] = existing
-
-    def invalidate_embedding_cache(self) -> None:
-        """
-        使 Embedding 验证缓存失效
-
-        API Key 变更时调用，下次打开项目会重新验证。
-        """
-        self._embedding_verified = False
 
     # ============================================================
     # 辅助方法

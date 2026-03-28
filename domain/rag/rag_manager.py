@@ -34,6 +34,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
+from domain.rag.file_extractor import extract_content, is_indexable, INDEXABLE_EXTENSIONS_SET
 from domain.rag.rag_service import RAGService, RAGQueryResult
 from domain.rag.rag_worker import RAGWorkerThread
 from infrastructure.config.settings import (
@@ -61,11 +62,6 @@ logger = logging.getLogger(__name__)
 # ============================================================
 # 文件扫描规则
 # ============================================================
-
-INDEXABLE_EXTENSIONS: Set[str] = {
-    ".cir", ".sp", ".spice", ".lib", ".inc",  # SPICE 文件
-    ".md", ".txt",                              # 文档
-}
 
 EXCLUDED_DIRS: Set[str] = {
     ".circuit_ai", "__pycache__", ".git", ".venv",
@@ -464,7 +460,7 @@ class RAGManager:
            → 获取真实 doc_id（MD5）和 chunks_count
         3. 将真实 doc_id 写入 meta（供 adelete_by_doc_id 删除时使用）
         """
-        content = self._read_file_safe(abs_path)
+        content = extract_content(abs_path)
         if not content.strip():
             return
 
@@ -742,7 +738,7 @@ class RAGManager:
                 abs_path = os.path.join(dirpath, filename)
                 ext = os.path.splitext(filename)[1].lower()
 
-                if ext not in INDEXABLE_EXTENSIONS:
+                if ext not in INDEXABLE_EXTENSIONS_SET:
                     continue
 
                 rel_path = os.path.relpath(abs_path, root).replace("\\", "/")
@@ -815,8 +811,7 @@ class RAGManager:
 
     def _is_indexable(self, abs_path: str) -> bool:
         """检查文件是否可索引"""
-        ext = os.path.splitext(abs_path)[1].lower()
-        return ext in INDEXABLE_EXTENSIONS
+        return is_indexable(abs_path)
 
     def _resolve_path(self, file_path: str) -> tuple:
         """解析路径为 (abs_path, rel_path)"""
@@ -906,21 +901,6 @@ class RAGManager:
     # ============================================================
     # 辅助方法
     # ============================================================
-
-    @staticmethod
-    def _read_file_safe(abs_path: str, max_size: int = 1024 * 1024) -> str:
-        """安全读取文件内容（限制大小）"""
-        try:
-            size = os.path.getsize(abs_path)
-            if size > max_size:
-                logger.warning(f"File too large, skipping: {abs_path} ({size} bytes)")
-                return ""
-
-            with open(abs_path, "r", encoding="utf-8", errors="replace") as f:
-                return f.read()
-        except Exception as e:
-            logger.warning(f"Failed to read file {abs_path}: {e}")
-            return ""
 
     @staticmethod
     def _count_json_entries(json_path: str) -> int:

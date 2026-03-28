@@ -41,6 +41,7 @@ from infrastructure.config.settings import (
     DEFAULT_RAG_TOP_K,
     DEFAULT_RAG_STORAGE_DIR,
     DEFAULT_RAG_CONTEXT_TOKEN_BUDGET,
+    DEFAULT_RAG_BATCH_INDEX_SIZE,
     CONFIG_RAG_QUERY_MODE,
 )
 from shared.event_types import (
@@ -384,22 +385,16 @@ class RAGManager:
                 })
                 return
 
-            # ── 读取所有文件内容 ──────────────────────────────────────────
-            # 过滤空文件，收集路径、内容、stat
-            batch_rel_paths: List[str] = []
-            batch_texts: List[str] = []
-            batch_stats: List[Any] = []
-
+            # ── 读取所有文件内容，过滤空文件 ────────────────────────────
+            all_entries: List[tuple] = []  # (rel_path, content, stat)
             for rel_path, abs_path in files_to_index:
                 content = self._read_file_safe(abs_path)
                 if not content.strip():
                     logger.debug(f"Skipping empty file: {rel_path}")
                     continue
-                batch_rel_paths.append(rel_path)
-                batch_texts.append(content)
-                batch_stats.append(os.stat(abs_path))
+                all_entries.append((rel_path, content, os.stat(abs_path)))
 
-            if not batch_texts:
+            if not all_entries:
                 logger.info("No non-empty files to index")
                 self._indexing = False
                 self._publish_event(EVENT_RAG_INDEX_COMPLETE, {
@@ -410,7 +405,9 @@ class RAGManager:
                 })
                 return
 
-            total = len(batch_texts)
+            total = len(all_entries)
+            batch_size = DEFAULT_RAG_BATCH_INDEX_SIZE
+            n_batches = (total + batch_size - 1) // batch_size
             self._current_track_id = f"idx-{int(time.time())}"
 
             self._publish_event(EVENT_RAG_INDEX_STARTED, {
@@ -419,46 +416,79 @@ class RAGManager:
             })
 
             logger.info(
-                f"Batch indexing {total} files with single ainsert "
-                f"(LightRAG concurrent pipeline, max_async={total})"
+                f"Starting indexed: {total} files → "
+                f"{n_batches} batch(es) × {batch_size} files/batch "
+                f"(LightRAG llm_model_max_async controls per-batch concurrency)"
             )
 
-            # ── 单次批量插入 ─────────────────────────────────────────────
-            # 将所有文件一次性提交给 LightRAG，由其 llm_model_max_async
-            # 并发控制机制并行提取实体，避免串行调用累积延迟。
-            track_id = await self._service.insert(
-                texts=batch_texts,
-                file_paths=batch_rel_paths,
-            )
-
-            # ── 查询每个文件的真实 doc_id 和 chunks_count ─────────────────
-            doc_info = await self._service.get_all_doc_info_by_track_id(track_id)
-
-            # ── 写入 meta ────────────────────────────────────────────────
+            # ── 分批次提交 ───────────────────────────────────────────────
+            # 策略来源：LightRAG constants.py DEFAULT_MAX_ASYNC=4
+            # batch_size = max_async × 4 = 16（在 settings 中可调）
+            # 每批一次 ainsert → LightRAG 内部并发处理本批 chunks
+            # 每批完成后保存 meta（支持断点：重启后已完成批次自动跳过）
+            total_processed = 0
             indexed_at = datetime.now(timezone.utc).isoformat()
-            for rel_path, stat in zip(batch_rel_paths, batch_stats):
-                doc_id, chunks_count = doc_info.get(rel_path, ("", 0))
-                self._update_file_meta(rel_path, {
-                    "doc_id": doc_id or track_id,
-                    "chunks_count": chunks_count,
-                    "mtime": stat.st_mtime,
-                    "size": stat.st_size,
-                    "status": "processed",
-                    "indexed_at": indexed_at,
+
+            for batch_idx in range(n_batches):
+                batch_start = batch_idx * batch_size
+                batch_end = min(batch_start + batch_size, total)
+                batch = all_entries[batch_start:batch_end]
+
+                batch_rel_paths = [e[0] for e in batch]
+                batch_texts = [e[1] for e in batch]
+                batch_stats = [e[2] for e in batch]
+                b_size = len(batch)
+
+                logger.info(
+                    f"Batch {batch_idx + 1}/{n_batches}: "
+                    f"files {batch_start + 1}–{batch_end}/{total}"
+                )
+                self._publish_event(EVENT_RAG_INDEX_PROGRESS, {
+                    "processed": total_processed,
+                    "total": total,
+                    "current_file": batch_rel_paths[0],
+                    "batch": batch_idx + 1,
+                    "n_batches": n_batches,
+                    "track_id": self._current_track_id,
                 })
 
-            duration = time.time() - start_time
-            self._save_index_meta()
+                track_id = await self._service.insert(
+                    texts=batch_texts,
+                    file_paths=batch_rel_paths,
+                )
 
+                doc_info = await self._service.get_all_doc_info_by_track_id(track_id)
+
+                for rel_path, stat in zip(batch_rel_paths, batch_stats):
+                    doc_id, chunks_count = doc_info.get(rel_path, ("", 0))
+                    self._update_file_meta(rel_path, {
+                        "doc_id": doc_id or track_id,
+                        "chunks_count": chunks_count,
+                        "mtime": stat.st_mtime,
+                        "size": stat.st_size,
+                        "status": "processed",
+                        "indexed_at": indexed_at,
+                    })
+
+                # 每批完成后立即持久化 meta（支持断点续传）
+                self._save_index_meta()
+                total_processed += b_size
+                elapsed = time.time() - start_time
+                logger.info(
+                    f"Batch {batch_idx + 1}/{n_batches} done: "
+                    f"{total_processed}/{total} files, {elapsed:.1f}s elapsed"
+                )
+
+            duration = time.time() - start_time
             self._publish_event(EVENT_RAG_INDEX_COMPLETE, {
-                "total_indexed": total,
+                "total_indexed": total_processed,
                 "failed": 0,
                 "duration_s": round(duration, 2),
             })
 
             logger.info(
-                f"Batch indexing complete: {total} files in {duration:.1f}s "
-                f"({duration/total:.1f}s/file)"
+                f"All batches complete: {total_processed}/{total} files "
+                f"in {duration:.1f}s ({duration/max(total_processed,1):.1f}s/file)"
             )
 
         except Exception as e:

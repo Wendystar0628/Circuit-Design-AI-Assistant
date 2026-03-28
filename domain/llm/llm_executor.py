@@ -875,22 +875,16 @@ class LLMExecutor(QObject):
             # 获取项目根目录
             project_root = self._get_project_root()
 
-            # 创建工具上下文和注册表
+            # 创建工具上下文和注册表（通过工厂集中注册所有工具）
             from domain.llm.agent.types import ToolContext
-            from domain.llm.agent.tool_registry import ToolRegistry, GROUP_FILE_OPS
-            from domain.llm.agent.tools import (
-                ReadFileTool, PatchFileTool, RewriteFileTool,
-            )
+            from domain.llm.agent.tool_factory import create_default_tools
             from domain.llm.agent.agent_loop import AgentLoop
             from domain.llm.agent.agent_prompt_builder import (
                 build_agent_system_prompt,
             )
 
             context = ToolContext(project_root=project_root)
-            registry = ToolRegistry(context)
-            registry.register(ReadFileTool(), [GROUP_FILE_OPS])
-            registry.register(PatchFileTool(), [GROUP_FILE_OPS])
-            registry.register(RewriteFileTool(), [GROUP_FILE_OPS])
+            registry = create_default_tools(context)
 
             if self.logger:
                 self.logger.info(f"Agent tools registered: {registry.get_names()}")

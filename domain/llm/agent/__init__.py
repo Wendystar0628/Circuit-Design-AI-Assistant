@@ -15,12 +15,16 @@ Agent 工具调用模块
 - 被 domain/llm/llm_executor.py 调用以执行 Agent 模式
 
 模块结构：
-- types.py        : 基础类型定义（BaseTool、ToolResult、ToolContext、ToolCallInfo）
-- tool_registry.py : 工具注册表
-- agent_loop.py   : ReAct 循环控制器
+- types.py             : 基础类型定义（BaseTool、ToolResult、ToolContext、ToolCallInfo）
+- tool_registry.py     : 工具注册表
+- tool_factory.py      : 工具工厂（集中注册所有默认工具）
+- agent_loop.py        : ReAct 循环控制器
 - agent_prompt_builder.py : Agent 系统提示词构建器
-- tools/          : 具体工具实现（read_file、patch_file、rewrite_file）
-- utils/          : 工具函数（path_utils、truncate、edit_diff、file_mutex 已实现）
+- tools/               : 具体工具实现
+    read_file, patch_file, rewrite_file  — 文件操作
+    grep_search, find_files, list_directory — 搜索导航
+    rag_search — 知识库检索（条件性注册）
+- utils/               : 工具函数（path_utils、truncate、edit_diff、file_mutex）
 """
 
 from domain.llm.agent.types import (
@@ -49,7 +53,17 @@ from domain.llm.agent.tool_registry import (
     GROUP_ALL,
 )
 
-from domain.llm.agent.tools import ReadFileTool, PatchFileTool, RewriteFileTool
+from domain.llm.agent.tool_factory import create_default_tools
+
+from domain.llm.agent.tools import (
+    ReadFileTool,
+    PatchFileTool,
+    RewriteFileTool,
+    GrepSearchTool,
+    FindFilesTool,
+    ListDirectoryTool,
+    RAGSearchTool,
+)
 
 from domain.llm.agent.agent_loop import (
     AgentLoop,
@@ -76,10 +90,18 @@ __all__ = [
     "GROUP_SEARCH",
     "GROUP_SIMULATION",
     "GROUP_ALL",
-    # 工具
+    # 工具工厂
+    "create_default_tools",
+    # 工具（文件操作）
     "ReadFileTool",
     "PatchFileTool",
     "RewriteFileTool",
+    # 工具（搜索导航）
+    "GrepSearchTool",
+    "FindFilesTool",
+    "ListDirectoryTool",
+    # 工具（知识检索）
+    "RAGSearchTool",
     # Agent 循环
     "AgentLoop",
     "AgentResult",

@@ -384,7 +384,33 @@ class RAGManager:
                 })
                 return
 
-            total = len(files_to_index)
+            # ── 读取所有文件内容 ──────────────────────────────────────────
+            # 过滤空文件，收集路径、内容、stat
+            batch_rel_paths: List[str] = []
+            batch_texts: List[str] = []
+            batch_stats: List[Any] = []
+
+            for rel_path, abs_path in files_to_index:
+                content = self._read_file_safe(abs_path)
+                if not content.strip():
+                    logger.debug(f"Skipping empty file: {rel_path}")
+                    continue
+                batch_rel_paths.append(rel_path)
+                batch_texts.append(content)
+                batch_stats.append(os.stat(abs_path))
+
+            if not batch_texts:
+                logger.info("No non-empty files to index")
+                self._indexing = False
+                self._publish_event(EVENT_RAG_INDEX_COMPLETE, {
+                    "total_indexed": 0,
+                    "failed": 0,
+                    "duration_s": 0,
+                    "already_up_to_date": True,
+                })
+                return
+
+            total = len(batch_texts)
             self._current_track_id = f"idx-{int(time.time())}"
 
             self._publish_event(EVENT_RAG_INDEX_STARTED, {
@@ -392,51 +418,57 @@ class RAGManager:
                 "track_id": self._current_track_id,
             })
 
-            processed = 0
-            failed = 0
+            logger.info(
+                f"Batch indexing {total} files with single ainsert "
+                f"(LightRAG concurrent pipeline, max_async={total})"
+            )
 
-            for i, (rel_path, abs_path) in enumerate(files_to_index):
-                try:
-                    self._publish_event(EVENT_RAG_INDEX_PROGRESS, {
-                        "processed": i,
-                        "total": total,
-                        "current_file": rel_path,
-                        "track_id": self._current_track_id,
-                    })
+            # ── 单次批量插入 ─────────────────────────────────────────────
+            # 将所有文件一次性提交给 LightRAG，由其 llm_model_max_async
+            # 并发控制机制并行提取实体，避免串行调用累积延迟。
+            track_id = await self._service.insert(
+                texts=batch_texts,
+                file_paths=batch_rel_paths,
+            )
 
-                    await self._index_single_file_internal(rel_path, abs_path)
-                    processed += 1
+            # ── 查询每个文件的真实 doc_id 和 chunks_count ─────────────────
+            doc_info = await self._service.get_all_doc_info_by_track_id(track_id)
 
-                except Exception as e:
-                    failed += 1
-                    logger.error(f"Failed to index {rel_path}: {e}")
-                    self._publish_event(EVENT_RAG_INDEX_ERROR, {
-                        "file_path": rel_path,
-                        "error": str(e),
-                        "track_id": self._current_track_id,
-                    })
-                    # 记录失败状态
-                    self._update_file_meta(rel_path, {
-                        "status": "failed",
-                        "error": str(e),
-                    })
+            # ── 写入 meta ────────────────────────────────────────────────
+            indexed_at = datetime.now(timezone.utc).isoformat()
+            for rel_path, stat in zip(batch_rel_paths, batch_stats):
+                doc_id, chunks_count = doc_info.get(rel_path, ("", 0))
+                self._update_file_meta(rel_path, {
+                    "doc_id": doc_id or track_id,
+                    "chunks_count": chunks_count,
+                    "mtime": stat.st_mtime,
+                    "size": stat.st_size,
+                    "status": "processed",
+                    "indexed_at": indexed_at,
+                })
 
             duration = time.time() - start_time
             self._save_index_meta()
 
             self._publish_event(EVENT_RAG_INDEX_COMPLETE, {
-                "total_indexed": processed,
-                "failed": failed,
+                "total_indexed": total,
+                "failed": 0,
                 "duration_s": round(duration, 2),
-                "entities_count": 0,
-                "relations_count": 0,
-                "chunks_found": 0,
             })
 
             logger.info(
-                f"Indexing complete: {processed}/{total} files, "
-                f"{failed} failed, {duration:.1f}s"
+                f"Batch indexing complete: {total} files in {duration:.1f}s "
+                f"({duration/total:.1f}s/file)"
             )
+
+        except Exception as e:
+            duration = time.time() - start_time
+            logger.error(f"Batch indexing failed after {duration:.1f}s: {e}")
+            self._publish_event(EVENT_RAG_INDEX_ERROR, {
+                "file_path": "batch",
+                "error": str(e),
+                "track_id": self._current_track_id or "",
+            })
 
         finally:
             self._indexing = False

@@ -360,6 +360,50 @@ class RAGService:
             logger.warning(f"get_doc_info_by_track_id failed for {track_id}: {e}")
             return ("", 0)
 
+    async def get_all_doc_info_by_track_id(
+        self, track_id: str
+    ) -> dict:
+        """
+        批量查询：返回 {file_path: (doc_id, chunks_count)} 映射。
+
+        用于 index_project_files() 批量插入后的结果回写。
+        同样处理 LightRAG dup 记录，自动解析原始 doc_id。
+
+        Args:
+            track_id: ainsert() 返回的 track_id
+
+        Returns:
+            dict[file_path, (doc_id, chunks_count)]；失败时返回 {}
+        """
+        self._ensure_initialized()
+        try:
+            docs = await self._rag.doc_status.get_docs_by_track_id(track_id)
+            result = {}
+            for doc_id, status in docs.items():
+                file_path = getattr(status, "file_path", "") or ""
+                chunks_count = (
+                    status.chunks_count if status.chunks_count is not None else 0
+                )
+
+                summary = getattr(status, "content_summary", "") or ""
+                if summary.startswith("[DUPLICATE] Original document:"):
+                    original_doc_id = summary.replace(
+                        "[DUPLICATE] Original document:", ""
+                    ).strip()
+                    original_data = await self._rag.doc_status.get_by_id(
+                        original_doc_id
+                    )
+                    if original_data:
+                        chunks_count = original_data.get("chunks_count") or 0
+                        doc_id = original_doc_id
+
+                if file_path:
+                    result[file_path] = (doc_id, chunks_count)
+            return result
+        except Exception as e:
+            logger.warning(f"get_all_doc_info_by_track_id failed: {e}")
+            return {}
+
     async def delete_document(self, doc_id: str) -> None:
         """
         删除文档及关联实体和关系

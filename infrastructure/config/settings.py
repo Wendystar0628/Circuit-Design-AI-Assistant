@@ -222,9 +222,6 @@ DEFAULT_RAG_CONTEXT_TOKEN_BUDGET = 2000             # 注入上下文的 Token �
 # 向量存储路径（ChromaDB）
 DEFAULT_VECTOR_STORE_DIR = ".circuit_ai/vector_store"
 
-# Embedding 模型（sentence-transformers 本地模型）
-DEFAULT_EMBEDDING_MODEL_NAME = "all-MiniLM-L6-v2"   # 384 维，约 90MB
-
 # 分块大小限制
 DEFAULT_CHUNK_MAX_CHARS = 3000
 DEFAULT_CHUNK_OVERLAP_CHARS = 200

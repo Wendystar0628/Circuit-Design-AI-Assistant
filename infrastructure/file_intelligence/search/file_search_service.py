@@ -14,7 +14,7 @@
 - 文件名索引缓存维护
 
 不负责：
-- 语义搜索（由 RAGService 负责）
+- 语义搜索（由 RAGManager 向量检索负责）
 - 搜索结果融合（由 UnifiedSearchService 负责）
 - Token 预算管理（由 UnifiedSearchService 负责）
 

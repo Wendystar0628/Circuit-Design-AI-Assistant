@@ -129,7 +129,7 @@ class UnifiedSearchResult:
     """精确匹配结果（来自 FileSearchService）"""
     
     semantic_matches: List[SemanticMatchResult] = field(default_factory=list)
-    """语义匹配结果（来自 RAGService）"""
+    """语义匹配结果（来自 RAGManager 向量检索）"""
     
     total_exact_count: int = 0
     """精确匹配总数（截断前）"""

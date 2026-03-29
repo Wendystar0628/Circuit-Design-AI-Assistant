@@ -7,7 +7,7 @@
 - design/: 设计管理域（目标、迭代、终止判断）
 - llm/: LLM交互域（上下文、Prompt、解析）
 - simulation/: 仿真执行域（ngspice、指标提取、图表）
-- rag/: RAG 知识检索域（基于 LightRAG，待实现）
+- rag/: RAG 知识检索域（Embedding-only 向量检索，ChromaDB + sentence-transformers）
 - knowledge/: 知识检索域（已清空，待 domain/rag/ 替代）
 
 领域服务设计原则：

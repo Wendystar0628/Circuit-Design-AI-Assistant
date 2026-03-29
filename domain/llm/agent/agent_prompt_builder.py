@@ -42,9 +42,6 @@ def build_agent_system_prompt(
     2. 使用指南（从工具的 promptGuidelines 汇总 + 通用指南）
     3. 项目上下文（工作目录、日期、当前文件）
 
-    RAG 检索结果统一由 ContextRetriever 步骤 5.5 注入，
-    不再在此处单独处理。
-
     LLM 的角色身份由 API 的 tools 参数隐式传达，
     不需要在 system prompt 里额外声明“你是xxx助手”。
 

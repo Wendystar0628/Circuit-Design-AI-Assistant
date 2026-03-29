@@ -52,7 +52,7 @@
   - 3.5.2 GraphStateProjector 初始化（自动投影 GraphState 到 SessionState）
   - 3.5.5 TracingLogger 初始化（可观测性基础设施）
   - 3.6 LLM 客户端初始化
-  - 3.8 RAG 服务初始化（RAGService + RAGManager + DocumentWatcher）
+  - 3.8 RAG 服务初始化（RAGManager + DocumentWatcher）
   - 3.7 发布 EVENT_INIT_COMPLETE 事件
 - 应用关闭时：
   - 异步运行时关闭（取消待处理任务）
@@ -504,7 +504,7 @@ def _delayed_init():
 
         # --------------------------------------------------------
         # 3.2.2 UnifiedSearchService 初始化
-        # 依赖：FileSearchService、RAGService（延迟获取）
+        # 依赖：FileSearchService（延迟获取）
         # 职责：统一搜索门面，协调精确搜索和语义搜索
         # --------------------------------------------------------
         from domain.search import UnifiedSearchService
@@ -622,7 +622,7 @@ def _delayed_init():
         # --------------------------------------------------------
         # 3.8 RAG 服务初始化
         # 依赖：EventBus、ConfigManager、CredentialManager
-        # 职责：创建 RAGService + RAGManager，订阅项目生命周期
+        # 职责：创建 RAGManager，订阅项目生命周期
         # --------------------------------------------------------
         _init_rag_services()
 

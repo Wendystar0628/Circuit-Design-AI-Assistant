@@ -22,7 +22,6 @@ LLM 交互域
 
 对话辅助模块：
 - conversation.py: 对话格式化辅助
-- context_retriever.py: 智能上下文检索
 
 Agent 工具调用模块：
 - agent/: Agent 工具调用核心（AgentLoop、ToolRegistry、提示词构建）

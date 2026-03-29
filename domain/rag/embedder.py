@@ -1,62 +1,75 @@
-# Embedder - Local Sentence Embedding Model Wrapper
+# Embedder - Zhipu AI Embedding via REST API
 """
-本地 Embedding 模型封装
+文本向量化模块
 
-使用 sentence-transformers 库在本地生成文本向量，无需网络调用。
-模型首次使用时懒加载，之后常驻内存。
+使用智谱 embedding-3 API 生成文本向量，与对话模型共用同一 API Key。
 
-默认模型：all-MiniLM-L6-v2（384 维，模型约 90MB，~0.5ms/chunk）
+接口：POST https://open.bigmodel.cn/api/paas/v4/embeddings
+模型：embedding-3（2048 维）
+认证：Bearer {zhipu_api_key}（从 CredentialManager 获取）
 """
 
 import logging
-import threading
-from typing import List, Optional
+from typing import List
+
+import httpx
 
 logger = logging.getLogger(__name__)
 
-_BATCH_SIZE = 64
+_ZHIPU_EMBEDDING_URL = "https://open.bigmodel.cn/api/paas/v4/embeddings"
+_ZHIPU_EMBEDDING_MODEL = "embedding-3"
+_BATCH_SIZE = 32      # 每批最多 32 条（API 限制）
+_TIMEOUT = 30.0       # 单次请求超时秒数
 
 
 class Embedder:
     """
-    线程安全的本地 Embedding 模型单例
+    智谱 embedding-3 向量化器
 
-    懒加载：第一次调用 embed_texts() 时才真正加载模型权重，
-    不阻塞应用启动流程。
+    与对话模型共用同一 API Key，无需额外配置。
+    使用 httpx 同步调用（在 RAGWorkerThread 内执行，不阻塞 Qt 主线程）。
     """
 
-    def __init__(self, model_name: str = "all-MiniLM-L6-v2"):
-        self._model_name = model_name
-        self._model = None
-        self._model_lock = threading.Lock()
+    def __init__(self):
+        self._api_key: str = ""
 
     # ============================================================
-    # 内部：模型加载
+    # 内部
     # ============================================================
 
-    def _ensure_model(self) -> None:
-        if self._model is not None:
-            return
-        with self._model_lock:
-            if self._model is not None:
-                return
-            try:
-                from sentence_transformers import SentenceTransformer
-                logger.info(f"Loading embedding model: {self._model_name}")
-                self._model = SentenceTransformer(self._model_name)
-                logger.info(
-                    f"Embedding model loaded: {self._model_name} "
-                    f"(dim={self._model.get_sentence_embedding_dimension()})"
-                )
-            except ImportError as exc:
-                raise ImportError(
-                    "sentence-transformers is not installed. "
-                    "Run: pip install sentence-transformers"
-                ) from exc
-            except Exception as exc:
-                raise RuntimeError(
-                    f"Failed to load embedding model '{self._model_name}': {exc}"
-                ) from exc
+    def _get_api_key(self) -> str:
+        if self._api_key:
+            return self._api_key
+        try:
+            from shared.service_locator import ServiceLocator
+            from shared.service_names import SVC_CREDENTIAL_MANAGER
+            cm = ServiceLocator.get_optional(SVC_CREDENTIAL_MANAGER)
+            if cm:
+                credential = cm.get_credential("llm", "zhipu")
+                if credential:
+                    key = credential.get("api_key", "") if isinstance(credential, dict) else str(credential)
+                    if key:
+                        self._api_key = key
+                        return self._api_key
+        except Exception as exc:
+            logger.debug(f"CredentialManager unavailable: {exc}")
+        raise RuntimeError(
+            "Zhipu API key not configured. "
+            "Please set it in Settings → Model Configuration."
+        )
+
+    def _call_api(self, batch: List[str]) -> List[List[float]]:
+        api_key = self._get_api_key()
+        resp = httpx.post(
+            _ZHIPU_EMBEDDING_URL,
+            headers={"Authorization": f"Bearer {api_key}"},
+            json={"input": batch, "model": _ZHIPU_EMBEDDING_MODEL},
+            timeout=_TIMEOUT,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        items = sorted(data["data"], key=lambda x: x["index"])
+        return [item["embedding"] for item in items]
 
     # ============================================================
     # 公共接口
@@ -70,22 +83,15 @@ class Embedder:
             texts: 文本列表
 
         Returns:
-            与输入等长的 float 列表列表（每项为 384 维向量）
+            与输入等长的 float 列表列表（每项为 2048 维向量）
         """
         if not texts:
             return []
 
-        self._ensure_model()
-
         results: List[List[float]] = []
         for i in range(0, len(texts), _BATCH_SIZE):
             batch = texts[i : i + _BATCH_SIZE]
-            embeddings = self._model.encode(
-                batch,
-                show_progress_bar=False,
-                convert_to_numpy=True,
-            )
-            results.extend(embeddings.tolist())
+            results.extend(self._call_api(batch))
 
         return results
 
@@ -95,12 +101,8 @@ class Embedder:
         return result[0] if result else []
 
     @property
-    def is_loaded(self) -> bool:
-        return self._model is not None
-
-    @property
     def model_name(self) -> str:
-        return self._model_name
+        return _ZHIPU_EMBEDDING_MODEL
 
 
 __all__ = ["Embedder"]

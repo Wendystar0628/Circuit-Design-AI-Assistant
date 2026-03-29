@@ -5,15 +5,14 @@
 架构定位：
 - 作为项目级搜索系统的统一入口
 - 对 LLM 工具层只暴露一个 search_project 接口
-- 协调 FileSearchService（精确搜索）和 RAGService（语义搜索）
+- 协调 FileSearchService（精确搜索）和 RAGManager（语义搜索）
 
 职责边界：
 - 项目级搜索：跨文件搜索内容、符号、文档
 - 不负责单文件搜索（由 InFileSearchService 负责）
 
 被调用方：
-- search_project 工具（阶段6）
-- ContextRetriever（阶段3）
+- search_project 工具
 
 设计原则：
 - 消除 LLM 的搜索工具选择困惑
@@ -77,8 +76,7 @@ class UnifiedSearchService:
         
         # 延迟获取的服务
         self._file_search_service = None
-        # RAG 服务已清空，待 LightRAG 集成后重新对接
-        # self._rag_service = None
+        # 语义搜索由 RAGManager.query_async() 提供（通过 rag_search 工具按需调用）
         self._logger = None
     
     # ============================================================
@@ -101,9 +99,7 @@ class UnifiedSearchService:
     
     @property
     def rag_service(self):
-        """延迟获取 RAG 服务（待 LightRAG 集成后重新实现）"""
-        # 原有基于 ChromaDB 的 rag_service 已清空
-        # LightRAG 集成后将改为获取 SVC_RAG_MANAGER
+        """语义搜索由 rag_search 工具按需触发，本属性保留为兼容占位符"""
         return None
     
     @property
@@ -297,13 +293,12 @@ class UnifiedSearchService:
         """
         执行语义搜索
         
-        调用 RAG 服务进行语义检索（待 LightRAG 集成后重新实现）。
+        语义搜索占位（由 rag_search 工具按需调用 RAGManager）。
         
         Returns:
             Tuple[List[SemanticMatchResult], int]: (结果列表, 总数)
         """
-        # 待 LightRAG 集成后重新实现语义搜索
-        # 将通过 RAGManager.query() 调用 LightRAG 多模式检索
+        # 语义搜索由 rag_search 工具按需触发，此处不直接调用
         results: List[SemanticMatchResult] = []
         total = len(results)
         
@@ -389,7 +384,7 @@ class UnifiedSearchService:
                 "semantic_ratio": self._token_config.semantic_ratio,
             },
             "file_search_available": self.file_search_service is not None,
-            "rag_available": False,  # 待 LightRAG 集成
+            "rag_available": False,  # 语义搜索由 rag_search 工具按需触发
         }
         
         if self.file_search_service:

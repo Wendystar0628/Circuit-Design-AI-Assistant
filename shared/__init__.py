@@ -60,7 +60,6 @@ from shared.service_names import (
     SVC_CONTEXT_MANAGER,
     SVC_EXTERNAL_SERVICE_MANAGER,
     SVC_ITERATION_HISTORY_SERVICE,
-    SVC_RAG_SERVICE,
     SVC_RAG_MANAGER,
 )
 
@@ -103,7 +102,7 @@ from shared.event_types import (
     EVENT_SIM_STARTED,
     EVENT_SIM_COMPLETE,
     EVENT_SIM_ERROR,
-    # RAG 事件（基于 LightRAG 架构）
+    # RAG 事件
     EVENT_RAG_INDEX_STARTED,
     EVENT_RAG_INDEX_PROGRESS,
     EVENT_RAG_INDEX_COMPLETE,
@@ -248,7 +247,6 @@ __all__ = [
     "SVC_CONTEXT_MANAGER",
     "SVC_EXTERNAL_SERVICE_MANAGER",
     "SVC_ITERATION_HISTORY_SERVICE",
-    "SVC_RAG_SERVICE",
     "SVC_RAG_MANAGER",
     # 服务定位器
     "ServiceLocator",

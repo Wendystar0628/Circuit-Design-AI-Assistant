@@ -5,7 +5,7 @@
 架构定位：
 - 项目级搜索：UnifiedSearchService 对 LLM 工具层暴露 search_project 接口
 - 单文件搜索：InFileSearchService 对 FileContentLocator 暴露 search 接口
-- 协调 FileSearchService（精确搜索）和 RAGService（语义搜索）
+- 协调 FileSearchService（精确搜索）和 RAGManager（语义搜索）
 - 负责搜索结果融合和 Token 预算管理
 
 包含：

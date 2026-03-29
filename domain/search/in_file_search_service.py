@@ -5,7 +5,7 @@
 架构定位：
 - 在单个文件内执行搜索，支持分层降级策略
 - 被 FileContentLocator（阶段六）调用
-- 协调 FileSearchService（精确搜索）和 RAG 服务（语义搜索，待 LightRAG 集成）
+- 主要执行 FileSearchService 精确搜索
 
 核心设计：分层降级策略
 - 精确搜索：始终执行（基础能力）
@@ -63,8 +63,6 @@ class InFileSearchService:
         """初始化单文件搜索服务"""
         # 延迟获取的服务
         self._file_search_service = None
-        # RAG 服务已清空，待 LightRAG 集成后重新对接
-        # self._rag_service = None
         self._logger = None
     
     # ============================================================
@@ -84,13 +82,6 @@ class InFileSearchService:
             except Exception:
                 pass
         return self._file_search_service
-    
-    @property
-    def rag_service(self):
-        """延迟获取 RAG 服务（待 LightRAG 集成后重新实现）"""
-        # 原有基于 ChromaDB 的 rag_service 已清空
-        # LightRAG 集成后将改为获取 SVC_RAG_MANAGER
-        return None
     
     @property
     def logger(self):
@@ -182,19 +173,6 @@ class InFileSearchService:
         
         return result
     
-    def is_file_indexed(self, file_path: str) -> bool:
-        """
-        检查文件是否已被索引
-        
-        Args:
-            file_path: 文件路径
-            
-        Returns:
-            bool: 文件是否已被索引
-        """
-        # 待 LightRAG 集成后重新实现
-        return False
-    
     # ============================================================
     # 内部搜索方法
     # ============================================================
@@ -228,24 +206,6 @@ class InFileSearchService:
                 self.logger.warning(f"精确搜索失败: {e}")
         
         return results
-    
-    def _search_semantic(
-        self,
-        file_path: str,
-        query: str,
-        options: InFileSearchOptions
-    ) -> List[InFileMatch]:
-        """
-        执行语义搜索
-        
-        调用 RAG 服务在单个文件中搜索（待 LightRAG 集成后重新实现）。
-        
-        Returns:
-            List[InFileMatch]: 匹配结果列表
-        """
-        # 待 LightRAG 集成后重新实现语义搜索
-        # 将通过 RAGManager 调用 LightRAG 多模式检索
-        return []
     
     def _merge_matches(
         self,

@@ -6,7 +6,7 @@ ChromaDB 向量存储封装
 - 封装 ChromaDB PersistentClient（嵌入式，无独立服务进程）
 - 每个项目使用独立 Collection（基于项目路径 MD5 命名）
 - 提供 chunk 级别的 upsert / delete / query 接口
-- 定义 RAGQueryResult（替代原 LightRAG RAGQueryResult）
+- 定义 RAGQueryResult（向量检索结果）
 
 存储路径：{project_root}/.circuit_ai/vector_store/
 """
@@ -39,8 +39,7 @@ class RAGQueryResult:
     """
     向量检索结果
 
-    接口与原 LightRAG RAGQueryResult 兼容，
-    上层调用方（rag_search 工具、RAGManager）无需修改。
+    上层调用方：rag_search 工具、RAGManager。
     """
 
     def __init__(self, hits: Optional[List[QueryHit]] = None, error: str = ""):

@@ -7,7 +7,7 @@
 
 1. 协程任务（通过 AsyncTaskRegistry 管理）：
    - LLM 生成任务
-   - RAG 索引/检索任务（基于 LightRAG）
+   - RAG 索引/检索任务（Embedding + ChromaDB）
    - 仿真任务
 
 2. 长期运行任务（独立线程管理）：

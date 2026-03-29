@@ -581,7 +581,7 @@ EVENT_SCHEMATIC_JUMP_TO_SOURCE = "schematic_jump_to_source"
 EVENT_SCHEMATIC_ZOOM_CHANGED = "schematic_zoom_changed"
 
 # ============================================================
-# RAG 事件（基于 LightRAG 架构）
+# RAG 事件
 # ============================================================
 
 # RAG 初始化完成（服务就绪，可能还未索引）
@@ -594,7 +594,7 @@ EVENT_RAG_INIT_COMPLETE = "rag.init_complete"
 # RAG 索引开始
 # 携带数据：
 #   - total_files: int - 总文件数
-#   - track_id: str - 追踪 ID（LightRAG track_id）
+#   - track_id: str - 追踪 ID
 EVENT_RAG_INDEX_STARTED = "rag.index_started"
 
 # RAG 索引进度
@@ -1159,7 +1159,7 @@ __all__ = [
     "EVENT_SCHEMATIC_ELEMENT_HOVERED",
     "EVENT_SCHEMATIC_JUMP_TO_SOURCE",
     "EVENT_SCHEMATIC_ZOOM_CHANGED",
-    # RAG 事件（基于 LightRAG 架构）
+    # RAG 事件
     "EVENT_RAG_INIT_COMPLETE",
     "EVENT_RAG_INDEX_STARTED",
     "EVENT_RAG_INDEX_PROGRESS",

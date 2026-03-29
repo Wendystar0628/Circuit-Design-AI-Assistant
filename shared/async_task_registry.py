@@ -53,8 +53,8 @@ from PyQt6.QtCore import QObject, pyqtSignal
 # ============================================================
 
 TASK_LLM = "llm"                    # LLM 生成任务
-TASK_RAG_INDEX = "rag_index"        # RAG 索引任务（LightRAG 文档摄入）
-TASK_RAG_QUERY = "rag_query"        # RAG 检索任务（LightRAG 多模式查询）
+TASK_RAG_INDEX = "rag_index"        # RAG 索引任务（Embedding + ChromaDB）
+TASK_RAG_QUERY = "rag_query"        # RAG 检索任务（向量相似度搜索）
 TASK_FILE_WATCH = "file_watch"      # 文件监听任务
 TASK_SIMULATION = "simulation"      # 仿真任务（子进程）
 TASK_SCHEMATIC = "schematic"        # 原理图生成任务

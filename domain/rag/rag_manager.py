@@ -18,7 +18,7 @@ RAG 业务逻辑管理器
 
 架构位置：
 - 被 Application 层 bootstrap 创建并注册到 ServiceLocator
-- 依赖 Embedder（本地 sentence-transformers）
+- 依赖 Embedder（智谱 embedding-3 API）
 - 依赖 VectorStore（ChromaDB 持久化向量库）
 - 订阅 EVENT_STATE_PROJECT_OPENED / EVENT_STATE_PROJECT_CLOSED
 """
@@ -43,7 +43,6 @@ from infrastructure.config.settings import (
     DEFAULT_RAG_TOP_K,
     DEFAULT_RAG_STORAGE_DIR,
     DEFAULT_RAG_CONTEXT_TOKEN_BUDGET,
-    DEFAULT_EMBEDDING_MODEL_NAME,
     DEFAULT_VECTOR_STORE_DIR,
 )
 from shared.event_types import (
@@ -267,9 +266,8 @@ class RAGManager:
             if not self._project_root:
                 return
 
-            # 初始化 Embedder（懒加载，首次调用才真正加载模型）
             if self._embedder is None:
-                self._embedder = Embedder(model_name=DEFAULT_EMBEDDING_MODEL_NAME)
+                self._embedder = Embedder()
 
             # 初始化 VectorStore（ChromaDB，同步，~100ms）
             self._vector_store = VectorStore(

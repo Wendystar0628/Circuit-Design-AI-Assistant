@@ -33,12 +33,10 @@ from .settings import (
     DEFAULT_CONFIG,
     ENCRYPTED_FIELDS,
     ENCRYPTION_SALT,
-    CONFIG_API_KEY,
     CONFIG_GENERAL_WEB_SEARCH_API_KEY,
-    CONFIG_TIMEOUT,
-    CONFIG_STREAMING,
     CONFIG_LANGUAGE,
     CONFIG_LLM_PROVIDER,
+    CONFIG_LLM_MODEL,
     CONFIG_LLM_TIMEOUT,
     CONFIG_LLM_STREAMING,
     CONFIG_EMBEDDING_PROVIDER,
@@ -241,30 +239,8 @@ class ConfigManager:
             return list(self._config.keys())
     
     # ============================================================
-    # API 密钥专用方法
+    # 联网搜索 API 密钥专用方法
     # ============================================================
-    
-    def get_api_key(self, provider: Optional[str] = None) -> str:
-        """
-        获取解密后的 API 密钥
-        
-        Args:
-            provider: LLM 提供者（可选，用于未来多提供者支持）
-            
-        Returns:
-            解密后的 API 密钥
-        """
-        return self.get(CONFIG_API_KEY, "")
-    
-    def set_api_key(self, key: str, provider: Optional[str] = None) -> None:
-        """
-        加密存储 API 密钥
-        
-        Args:
-            key: API 密钥明文
-            provider: LLM 提供者（可选）
-        """
-        self.set(CONFIG_API_KEY, key)
     
     def get_general_web_search_api_key(self) -> str:
         """获取解密后的通用联网搜索 API 密钥"""
@@ -374,20 +350,15 @@ class ConfigManager:
         errors = []
         
         with self._lock:
-            # 校验超时值
-            timeout = self._config.get(CONFIG_TIMEOUT, 0)
-            if not isinstance(timeout, (int, float)) or timeout <= 0:
-                errors.append(f"超时值必须大于 0，当前值: {timeout}")
-            
             # 校验 LLM 超时值
             llm_timeout = self._config.get(CONFIG_LLM_TIMEOUT, 0)
             if llm_timeout and (not isinstance(llm_timeout, (int, float)) or llm_timeout <= 0):
                 errors.append(f"LLM 超时值必须大于 0，当前值: {llm_timeout}")
             
-            # 校验流式输出开关
-            streaming = self._config.get(CONFIG_STREAMING)
-            if not isinstance(streaming, bool):
-                errors.append(f"streaming 必须为布尔值，当前值: {streaming}")
+            # 校验 LLM 流式输出开关
+            llm_streaming = self._config.get(CONFIG_LLM_STREAMING)
+            if llm_streaming is not None and not isinstance(llm_streaming, bool):
+                errors.append(f"llm_streaming 必须为布尔值，当前值: {llm_streaming}")
             
             # 校验语言设置
             language = self._config.get(CONFIG_LANGUAGE, "")
@@ -424,9 +395,17 @@ class ConfigManager:
             if provider == LLM_PROVIDER_LOCAL:
                 return True
             
-            # 其他厂商需要 API Key
-            api_key = self._config.get(CONFIG_API_KEY, "")
-            return bool(api_key)
+            # 其他厂商需要 API Key（通过 CredentialManager 校验）
+            try:
+                from shared.service_locator import ServiceLocator
+                from shared.service_names import SVC_CREDENTIAL_MANAGER
+                cm = ServiceLocator.get_optional(SVC_CREDENTIAL_MANAGER)
+                if cm:
+                    credential = cm.get_credential("llm", provider)
+                    return bool(credential and credential.get("api_key"))
+            except Exception:
+                pass
+            return False
     
     # ============================================================
     # 变更通知机制

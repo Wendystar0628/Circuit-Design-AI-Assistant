@@ -773,7 +773,7 @@ class ConversationViewModel(QObject):
                 return
             
             # 获取模型配置
-            model = config_manager.get("llm_model", "glm-4.7")
+            model = config_manager.get("llm_model", "glm-5")
             enable_thinking = config_manager.get("enable_thinking", True)
             
             # 获取消息历史（用于 LLM 调用）

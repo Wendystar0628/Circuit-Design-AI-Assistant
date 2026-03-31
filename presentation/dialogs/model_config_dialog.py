@@ -38,11 +38,10 @@ from infrastructure.config.settings import (
     WEB_SEARCH_BING,
     SUPPORTED_GENERAL_WEB_SEARCH,
     CONFIG_LLM_PROVIDER,
-    CONFIG_API_KEY,
-    CONFIG_BASE_URL,
-    CONFIG_MODEL,
-    CONFIG_TIMEOUT,
-    CONFIG_STREAMING,
+    CONFIG_LLM_MODEL,
+    CONFIG_LLM_BASE_URL,
+    CONFIG_LLM_TIMEOUT,
+    CONFIG_LLM_STREAMING,
     CONFIG_ENABLE_THINKING,
     CONFIG_THINKING_TIMEOUT,
     CONFIG_ENABLE_PROVIDER_WEB_SEARCH,
@@ -724,16 +723,16 @@ class ModelConfigDialog(QDialog):
                     break
             
             # 流式输出
-            streaming = self.config_manager.get(CONFIG_STREAMING, True)
+            streaming = self.config_manager.get(CONFIG_LLM_STREAMING, True)
             self._local_streaming_check.setChecked(streaming)
             
             # 超时
-            timeout = self.config_manager.get(CONFIG_TIMEOUT, LOCAL_LLM_REQUEST_TIMEOUT)
+            timeout = self.config_manager.get(CONFIG_LLM_TIMEOUT, LOCAL_LLM_REQUEST_TIMEOUT)
             self._local_timeout_spin.setValue(timeout)
         else:
             # 云端模型配置
             # 模型
-            model = self.config_manager.get(CONFIG_MODEL, DEFAULT_MODEL)
+            model = self.config_manager.get(CONFIG_LLM_MODEL, DEFAULT_MODEL)
             index = self._model_combo.findText(model, Qt.MatchFlag.MatchFixedString)
             if index >= 0:
                 self._model_combo.setCurrentIndex(index)
@@ -745,15 +744,15 @@ class ModelConfigDialog(QDialog):
             self._api_key_edit.setText(api_key)
             
             # Base URL
-            base_url = self.config_manager.get(CONFIG_BASE_URL, "")
+            base_url = self.config_manager.get(CONFIG_LLM_BASE_URL, "")
             self._base_url_edit.setText(base_url)
             
             # 流式输出
-            streaming = self.config_manager.get(CONFIG_STREAMING, True)
+            streaming = self.config_manager.get(CONFIG_LLM_STREAMING, True)
             self._streaming_check.setChecked(streaming)
             
             # 超时
-            timeout = self.config_manager.get(CONFIG_TIMEOUT, DEFAULT_TIMEOUT)
+            timeout = self.config_manager.get(CONFIG_LLM_TIMEOUT, DEFAULT_TIMEOUT)
             self._timeout_spin.setValue(timeout)
         
         # 深度思考
@@ -828,9 +827,9 @@ class ModelConfigDialog(QDialog):
             self.config_manager.set(CONFIG_LOCAL_LLM_HOST, self._local_host_edit.text().strip())
             local_model = self._local_model_combo.currentData() or self._local_model_combo.currentText()
             self.config_manager.set(CONFIG_LOCAL_LLM_MODEL, local_model)
-            self.config_manager.set(CONFIG_MODEL, local_model)  # 同步到通用模型配置
-            self.config_manager.set(CONFIG_STREAMING, self._local_streaming_check.isChecked())
-            self.config_manager.set(CONFIG_TIMEOUT, self._local_timeout_spin.value())
+            self.config_manager.set(CONFIG_LLM_MODEL, local_model)
+            self.config_manager.set(CONFIG_LLM_STREAMING, self._local_streaming_check.isChecked())
+            self.config_manager.set(CONFIG_LLM_TIMEOUT, self._local_timeout_spin.value())
             # 本地模型不需要保存 API Key
         else:
             # 云端模型配置
@@ -840,10 +839,10 @@ class ModelConfigDialog(QDialog):
                 if api_key:
                     self.credential_manager.set_llm_api_key(provider_id, api_key)
             
-            self.config_manager.set(CONFIG_BASE_URL, self._base_url_edit.text())
-            self.config_manager.set(CONFIG_MODEL, self._model_combo.currentText())
-            self.config_manager.set(CONFIG_STREAMING, self._streaming_check.isChecked())
-            self.config_manager.set(CONFIG_TIMEOUT, self._timeout_spin.value())
+            self.config_manager.set(CONFIG_LLM_BASE_URL, self._base_url_edit.text())
+            self.config_manager.set(CONFIG_LLM_MODEL, self._model_combo.currentText())
+            self.config_manager.set(CONFIG_LLM_STREAMING, self._streaming_check.isChecked())
+            self.config_manager.set(CONFIG_LLM_TIMEOUT, self._timeout_spin.value())
         
         # 保存搜索凭证
         if self.credential_manager:

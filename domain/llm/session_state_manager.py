@@ -46,6 +46,7 @@
     manager.save_current_session(state, project_root)
 """
 
+import logging
 import threading
 from dataclasses import dataclass
 from datetime import datetime
@@ -100,8 +101,9 @@ class SessionStateManager:
             try:
                 from infrastructure.utils.logger import get_logger
                 self._logger = get_logger("session_state_manager")
-            except Exception:
-                pass
+            except Exception as e:
+                logging.getLogger(__name__).warning(f"Failed to load custom logger, using stdlib: {e}")
+                self._logger = logging.getLogger(__name__)
         return self._logger
     
     @property
@@ -112,8 +114,8 @@ class SessionStateManager:
                 from shared.service_locator import ServiceLocator
                 from shared.service_names import SVC_EVENT_BUS
                 self._event_bus = ServiceLocator.get_optional(SVC_EVENT_BUS)
-            except Exception:
-                pass
+            except Exception as e:
+                logging.getLogger(__name__).warning(f"Failed to load EventBus: {e}")
         return self._event_bus
     
     @property
@@ -123,8 +125,8 @@ class SessionStateManager:
             try:
                 from domain.llm.message_store import MessageStore
                 self._message_store = MessageStore()
-            except Exception:
-                pass
+            except Exception as e:
+                logging.getLogger(__name__).error(f"Failed to load MessageStore: {e}")
         return self._message_store
     
     # ============================================================

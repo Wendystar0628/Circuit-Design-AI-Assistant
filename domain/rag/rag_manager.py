@@ -841,8 +841,8 @@ class RAGManager:
             event_bus = ServiceLocator.get_optional(SVC_EVENT_BUS)
             if event_bus:
                 event_bus.publish(event_type, data)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Failed to publish event '{event_type}': {e}")
 
     def _safe_index_project(self) -> None:
         """安全的自动索引（异常不冒泡）"""

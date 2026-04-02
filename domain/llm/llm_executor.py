@@ -44,6 +44,7 @@ LLM 调用执行器
 """
 
 import asyncio
+import logging
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from PyQt6.QtCore import QObject, pyqtSignal
@@ -126,8 +127,8 @@ class LLMExecutor(QObject):
                 from shared.service_locator import ServiceLocator
                 from shared.service_names import SVC_ASYNC_TASK_REGISTRY
                 self._task_registry = ServiceLocator.get_optional(SVC_ASYNC_TASK_REGISTRY)
-            except Exception:
-                pass
+            except Exception as e:
+                logging.getLogger(__name__).warning(f"Failed to load AsyncTaskRegistry: {e}")
         return self._task_registry
     
     @property
@@ -138,8 +139,8 @@ class LLMExecutor(QObject):
                 from shared.service_locator import ServiceLocator
                 from shared.service_names import SVC_STREAM_THROTTLER
                 self._throttler = ServiceLocator.get_optional(SVC_STREAM_THROTTLER)
-            except Exception:
-                pass
+            except Exception as e:
+                logging.getLogger(__name__).warning(f"Failed to load StreamThrottler: {e}")
         return self._throttler
     
     @property
@@ -150,8 +151,8 @@ class LLMExecutor(QObject):
                 from shared.service_locator import ServiceLocator
                 from shared.service_names import SVC_EXTERNAL_SERVICE_MANAGER
                 self._external_service = ServiceLocator.get_optional(SVC_EXTERNAL_SERVICE_MANAGER)
-            except Exception:
-                pass
+            except Exception as e:
+                logging.getLogger(__name__).error(f"Failed to load ExternalServiceManager: {e}")
         return self._external_service
     
     @property
@@ -161,8 +162,9 @@ class LLMExecutor(QObject):
             try:
                 from infrastructure.utils.logger import get_logger
                 self._logger = get_logger("llm_executor")
-            except Exception:
-                pass
+            except Exception as e:
+                logging.getLogger(__name__).warning(f"Failed to load custom logger, using stdlib: {e}")
+                self._logger = logging.getLogger(__name__)
         return self._logger
     
     @property
@@ -173,8 +175,8 @@ class LLMExecutor(QObject):
                 from shared.service_locator import ServiceLocator
                 from shared.service_names import SVC_STOP_CONTROLLER
                 self._stop_controller = ServiceLocator.get_optional(SVC_STOP_CONTROLLER)
-            except Exception:
-                pass
+            except Exception as e:
+                logging.getLogger(__name__).warning(f"Failed to load StopController: {e}")
         return self._stop_controller
     
     @property
@@ -184,8 +186,8 @@ class LLMExecutor(QObject):
             try:
                 from shared.resource_cleanup import ResourceCleanupManager
                 self._resource_cleanup = ResourceCleanupManager()
-            except Exception:
-                pass
+            except Exception as e:
+                logging.getLogger(__name__).warning(f"Failed to load ResourceCleanupManager: {e}")
         return self._resource_cleanup
     
     def _subscribe_stop_events(self) -> None:
@@ -519,8 +521,9 @@ class LLMExecutor(QObject):
             if stream_gen:
                 try:
                     await stream_gen.aclose()
-                except Exception:
-                    pass
+                except Exception as close_err:
+                    if self.logger:
+                        self.logger.warning(f"Failed to close stream generator during cleanup: {close_err}")
             
             if self.resource_cleanup:
                 await self.resource_cleanup.cleanup_all()
@@ -781,8 +784,9 @@ class LLMExecutor(QObject):
             if stream_gen:
                 try:
                     await stream_gen.aclose()
-                except Exception:
-                    pass
+                except Exception as close_err:
+                    if self.logger:
+                        self.logger.warning(f"Failed to close stream generator during cleanup: {close_err}")
             
             if self.logger:
                 self.logger.error(f"LLM stream generation failed: {e}")
@@ -1069,8 +1073,8 @@ class LLMExecutor(QObject):
                 path = project_service.get_current_project_path()
                 if path:
                     return path
-        except Exception:
-            pass
+        except Exception as e:
+            logging.getLogger(__name__).warning(f"Failed to get project root: {e}")
 
         import os
         return os.getcwd()
@@ -1089,8 +1093,8 @@ class LLMExecutor(QObject):
             event_bus = ServiceLocator.get_optional(SVC_EVENT_BUS)
             if event_bus:
                 event_bus.publish(event_name, data)
-        except Exception:
-            pass
+        except Exception as e:
+            logging.getLogger(__name__).warning(f"Failed to publish event '{event_name}': {e}")
 
     # ============================================================
     # 任务取消

@@ -352,8 +352,6 @@ CONFIG_ENABLE_PROVIDER_WEB_SEARCH = "enable_provider_web_search"
 # 通用联网搜索配置
 CONFIG_ENABLE_GENERAL_WEB_SEARCH = "enable_general_web_search"
 CONFIG_GENERAL_WEB_SEARCH_PROVIDER = "general_web_search_provider"
-CONFIG_GENERAL_WEB_SEARCH_API_KEY = "general_web_search_api_key"
-CONFIG_GOOGLE_SEARCH_CX = "google_search_cx"  # Google 自定义搜索引擎 ID
 
 # 嵌入模型配置
 CONFIG_EMBEDDING_PROVIDER = "embedding_provider"
@@ -395,8 +393,6 @@ DEFAULT_CONFIG = {
     # 通用联网搜索配置
     CONFIG_ENABLE_GENERAL_WEB_SEARCH: DEFAULT_ENABLE_GENERAL_WEB_SEARCH,
     CONFIG_GENERAL_WEB_SEARCH_PROVIDER: DEFAULT_GENERAL_WEB_SEARCH_PROVIDER,
-    CONFIG_GENERAL_WEB_SEARCH_API_KEY: "",
-    CONFIG_GOOGLE_SEARCH_CX: "",
     
     # 嵌入模型配置
     CONFIG_EMBEDDING_PROVIDER: DEFAULT_EMBEDDING_PROVIDER,
@@ -436,9 +432,6 @@ CHARS_PER_TOKEN_ESTIMATE = 4
 # 加密相关常量
 # ============================================================
 
-# 需要加密存储的配置字段
-ENCRYPTED_FIELDS = [CONFIG_GENERAL_WEB_SEARCH_API_KEY]
-
 # 加密盐值（用于密钥派生）
 ENCRYPTION_SALT = b"circuit_design_ai_v1"
 
@@ -448,5 +441,4 @@ ENCRYPTION_SALT = b"circuit_design_ai_v1"
 
 CREDENTIAL_TYPE_LLM = "llm"           # LLM 厂商凭证类型
 CREDENTIAL_TYPE_SEARCH = "search"     # 搜索厂商凭证类型
-CREDENTIAL_TYPE_EMBEDDING = "embedding"  # 嵌入模型厂商凭证类型
 CREDENTIAL_TYPE_COMPONENT = "component"  # 元器件商城凭证类型（阶段十）

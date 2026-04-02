@@ -117,6 +117,11 @@ class ServiceLocator:
         cls._services[name] = service
 
     @classmethod
+    def unregister(cls, name: str) -> None:
+        """注销服务实例，不存在时静默忽略"""
+        cls._services.pop(name, None)
+
+    @classmethod
     def get(cls, name: str) -> Any:
         """
         获取服务实例

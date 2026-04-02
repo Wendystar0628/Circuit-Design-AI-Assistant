@@ -36,7 +36,6 @@ from infrastructure.config.settings import (
     LLM_PROVIDER_LOCAL,
     WEB_SEARCH_GOOGLE,
     WEB_SEARCH_BING,
-    SUPPORTED_GENERAL_WEB_SEARCH,
     CONFIG_LLM_PROVIDER,
     CONFIG_LLM_MODEL,
     CONFIG_LLM_BASE_URL,
@@ -47,8 +46,6 @@ from infrastructure.config.settings import (
     CONFIG_ENABLE_PROVIDER_WEB_SEARCH,
     CONFIG_ENABLE_GENERAL_WEB_SEARCH,
     CONFIG_GENERAL_WEB_SEARCH_PROVIDER,
-    CONFIG_GENERAL_WEB_SEARCH_API_KEY,
-    CONFIG_GOOGLE_SEARCH_CX,
     CONFIG_LOCAL_LLM_HOST,
     CONFIG_LOCAL_LLM_MODEL,
     DEFAULT_BASE_URL,
@@ -763,14 +760,12 @@ class ModelConfigDialog(QDialog):
         thinking_timeout = self.config_manager.get(CONFIG_THINKING_TIMEOUT, DEFAULT_THINKING_TIMEOUT)
         self._thinking_timeout_spin.setValue(thinking_timeout)
         self._thinking_timeout_spin.setEnabled(deep_think)
-        
-        # 通用搜索供应商
+
         search_provider = self.config_manager.get(CONFIG_GENERAL_WEB_SEARCH_PROVIDER, WEB_SEARCH_GOOGLE)
         index = self._general_search_provider_combo.findData(search_provider)
         if index >= 0:
             self._general_search_provider_combo.setCurrentIndex(index)
-        
-        # 通用搜索凭证（从 CredentialManager 获取）
+
         search_api_key = ""
         google_cx = ""
         if self.credential_manager:
@@ -835,21 +830,16 @@ class ModelConfigDialog(QDialog):
             # 云端模型配置
             # 保存 LLM 凭证到 CredentialManager
             if self.credential_manager:
-                api_key = self._api_key_edit.text()
+                api_key = self._api_key_edit.text().strip()
                 if api_key:
                     self.credential_manager.set_llm_api_key(provider_id, api_key)
+                else:
+                    self.credential_manager.delete_credential("llm", provider_id)
             
             self.config_manager.set(CONFIG_LLM_BASE_URL, self._base_url_edit.text())
             self.config_manager.set(CONFIG_LLM_MODEL, self._model_combo.currentText())
             self.config_manager.set(CONFIG_LLM_STREAMING, self._streaming_check.isChecked())
             self.config_manager.set(CONFIG_LLM_TIMEOUT, self._timeout_spin.value())
-        
-        # 保存搜索凭证
-        if self.credential_manager:
-            search_api_key = self._general_search_api_key_edit.text()
-            if search_api_key:
-                google_cx = self._google_cx_edit.text() if search_provider_id == WEB_SEARCH_GOOGLE else None
-                self.credential_manager.set_search_credential(search_provider_id, search_api_key, google_cx)
         
         # 保存其他配置
         self.config_manager.set(CONFIG_ENABLE_THINKING, self._deep_think_check.isChecked())
@@ -857,6 +847,14 @@ class ModelConfigDialog(QDialog):
         self.config_manager.set(CONFIG_ENABLE_PROVIDER_WEB_SEARCH, self._provider_web_search_check.isChecked())
         self.config_manager.set(CONFIG_ENABLE_GENERAL_WEB_SEARCH, self._general_search_check.isChecked())
         self.config_manager.set(CONFIG_GENERAL_WEB_SEARCH_PROVIDER, search_provider_id)
+
+        if self.credential_manager:
+            search_api_key = self._general_search_api_key_edit.text().strip()
+            if search_api_key:
+                google_cx = self._google_cx_edit.text().strip() if search_provider_id == WEB_SEARCH_GOOGLE else None
+                self.credential_manager.set_search_credential(search_provider_id, search_api_key, google_cx)
+            else:
+                self.credential_manager.delete_credential("search", search_provider_id)
         
         if self.logger:
             if is_local:
@@ -937,127 +935,56 @@ class ModelConfigDialog(QDialog):
         支持云端厂商和本地模型（Ollama）。
         """
         try:
-            from shared.service_locator import ServiceLocator
-            from shared.service_names import SVC_LLM_CLIENT
-            from infrastructure.config.settings import LLM_PROVIDER_ZHIPU, LLM_PROVIDER_LOCAL
-            
+            from application.bootstrap import refresh_llm_runtime_services
             defaults = PROVIDER_DEFAULTS.get(provider_id, {})
             is_local = defaults.get("is_local", False)
-            
-            if is_local:
-                # 本地模型（Ollama）：无需 API Key
-                host = self._local_host_edit.text().strip() or DEFAULT_LOCAL_LLM_HOST
-                model = self._local_model_combo.currentData() or self._local_model_combo.currentText()
-                timeout = self._local_timeout_spin.value()
-                streaming = self._local_streaming_check.isChecked()
-                
-                from infrastructure.llm_adapters.ollama import OllamaClient
-                
-                client = OllamaClient(
-                    host=host,
-                    model=model if model else None,
-                    timeout=timeout,
-                    streaming=streaming,
-                )
-                ServiceLocator.register(SVC_LLM_CLIENT, client)
-                
-                if self.logger:
+            model = (
+                self._local_model_combo.currentData() or self._local_model_combo.currentText()
+                if is_local else self._model_combo.currentText()
+            )
+            host = self._local_host_edit.text().strip() if is_local else ""
+
+            refresh_llm_runtime_services()
+
+            if self.logger:
+                if is_local:
                     self.logger.info(f"LLM 客户端已重新初始化：{provider_id}, model={model}, host={host}")
-                
-                # 发布事件
-                if self.event_bus:
-                    from shared.event_types import EVENT_LLM_CLIENT_REINITIALIZED, EVENT_MODEL_CHANGED
-                    self.event_bus.publish(
-                        EVENT_LLM_CLIENT_REINITIALIZED,
-                        data={
-                            "provider": provider_id,
-                            "model": model,
-                            "host": host,
-                            "source": "model_config_dialog",
-                        }
-                    )
-                    
-                    self.event_bus.publish(
-                        EVENT_MODEL_CHANGED,
-                        data={
-                            "new_model_id": f"{provider_id}:{model}",
-                            "old_model_id": None,
-                            "provider": provider_id,
-                            "model_name": model,
-                            "display_name": model,  # 本地模型直接使用模型名
-                        },
-                        source="model_config_dialog"
-                    )
-                return
-            
-            # 云端厂商：需要 API Key
-            if not self.credential_manager:
-                return
-            
-            credential = self.credential_manager.get_credential("llm", provider_id)
-            if not credential or not credential.get("api_key"):
-                if self.logger:
-                    self.logger.warning(f"无法重新初始化 LLM 客户端：{provider_id} 的 API Key 未配置")
-                return
-            
-            api_key = credential.get("api_key")
-            base_url = self._base_url_edit.text().strip()
-            model = self._model_combo.currentText()
-            timeout = self._timeout_spin.value()
-            
-            # 根据厂商创建客户端
-            if provider_id == LLM_PROVIDER_ZHIPU:
-                from infrastructure.llm_adapters.zhipu import ZhipuClient
-                
-                client = ZhipuClient(
-                    api_key=api_key,
-                    base_url=base_url if base_url else None,
-                    model=model if model else None,
-                    timeout=timeout,
-                )
-                ServiceLocator.register(SVC_LLM_CLIENT, client)
-                
-                if self.logger:
+                else:
                     self.logger.info(f"LLM 客户端已重新初始化：{provider_id}, model={model}")
-                
-                # 发布 LLM 客户端重新初始化事件，通知其他组件刷新引用
-                if self.event_bus:
-                    from shared.event_types import EVENT_LLM_CLIENT_REINITIALIZED, EVENT_MODEL_CHANGED
-                    self.event_bus.publish(
-                        EVENT_LLM_CLIENT_REINITIALIZED,
-                        data={
-                            "provider": provider_id,
-                            "model": model,
-                            "source": "model_config_dialog",
-                        }
-                    )
-                    
-                    # 发布模型变更事件，通知 UI 组件更新模型卡片显示
-                    # 获取模型的 display_name
-                    display_name = model
-                    try:
-                        from shared.model_registry import ModelRegistry
-                        model_id = f"{provider_id}:{model}"
-                        model_config = ModelRegistry.get_model(model_id)
-                        if model_config:
-                            display_name = model_config.display_name
-                    except Exception:
-                        pass
-                    
-                    self.event_bus.publish(
-                        EVENT_MODEL_CHANGED,
-                        data={
-                            "new_model_id": f"{provider_id}:{model}",
-                            "old_model_id": None,
-                            "provider": provider_id,
-                            "model_name": model,
-                            "display_name": display_name,
-                        },
-                        source="model_config_dialog"
-                    )
-            else:
-                if self.logger:
-                    self.logger.warning(f"LLM 客户端重新初始化跳过：厂商 {provider_id} 暂未实现")
+
+            if self.event_bus:
+                from shared.event_types import EVENT_LLM_CLIENT_REINITIALIZED, EVENT_MODEL_CHANGED
+                self.event_bus.publish(
+                    EVENT_LLM_CLIENT_REINITIALIZED,
+                    data={
+                        "provider": provider_id,
+                        "model": model,
+                        "host": host,
+                        "source": "model_config_dialog",
+                    }
+                )
+
+                display_name = model
+                try:
+                    from shared.model_registry import ModelRegistry
+                    model_id = f"{provider_id}:{model}"
+                    model_config = ModelRegistry.get_model(model_id)
+                    if model_config:
+                        display_name = model_config.display_name
+                except Exception:
+                    pass
+
+                self.event_bus.publish(
+                    EVENT_MODEL_CHANGED,
+                    data={
+                        "new_model_id": f"{provider_id}:{model}",
+                        "old_model_id": None,
+                        "provider": provider_id,
+                        "model_name": model,
+                        "display_name": display_name,
+                    },
+                    source="model_config_dialog"
+                )
                     
         except Exception as e:
             if self.logger:

@@ -757,15 +757,9 @@ def _init_tracing_logger():
             print(f"[Phase 3.5.5] TracingLogger 初始化失败: {e}")
 
 
-def _init_llm_client():
-    """
-    初始化 LLM 客户端（可选）
-    
-    根据配置创建 LLM 客户端并注册到 ServiceLocator 和 ExternalServiceManager。
-    如果配置不完整（如 API Key 未设置），则跳过初始化。
-    """
+def refresh_llm_runtime_services() -> bool:
     global _logger
-    
+
     try:
         from shared.service_locator import ServiceLocator
         from shared.service_names import (
@@ -776,73 +770,98 @@ def _init_llm_client():
             SVC_LLM_EXECUTOR,
         )
         from infrastructure.config.settings import LLM_PROVIDER_ZHIPU
-        
+        from domain.llm.external_service_manager import (
+            ExternalServiceManager,
+            SERVICE_LLM_ZHIPU,
+            SERVICE_LLM_GEMINI,
+            SERVICE_LLM_OPENAI,
+            SERVICE_LLM_CLAUDE,
+            SERVICE_LLM_QWEN,
+            SERVICE_LLM_DEEPSEEK,
+        )
+
         config_manager = ServiceLocator.get_optional(SVC_CONFIG_MANAGER)
         credential_manager = ServiceLocator.get_optional(SVC_CREDENTIAL_MANAGER)
-        
+
         if not config_manager or not credential_manager:
             if _logger:
                 _logger.warning("Phase 3.6 LLM 客户端初始化跳过：ConfigManager 或 CredentialManager 不可用")
-            return
-        
-        # 获取当前 LLM 厂商
+            return False
+
+        external_service_manager = ServiceLocator.get_optional(SVC_EXTERNAL_SERVICE_MANAGER)
+        if external_service_manager is None:
+            external_service_manager = ExternalServiceManager()
+            ServiceLocator.register(SVC_EXTERNAL_SERVICE_MANAGER, external_service_manager)
+
+        for service_type in [
+            SERVICE_LLM_ZHIPU,
+            SERVICE_LLM_GEMINI,
+            SERVICE_LLM_OPENAI,
+            SERVICE_LLM_CLAUDE,
+            SERVICE_LLM_QWEN,
+            SERVICE_LLM_DEEPSEEK,
+        ]:
+            external_service_manager.unregister_service(service_type)
+
+        ServiceLocator.unregister(SVC_LLM_CLIENT)
+
         provider = config_manager.get("llm_provider", "")
         if not provider:
             if _logger:
                 _logger.info("Phase 3.6 LLM 客户端初始化跳过：未配置 LLM 厂商")
-            return
-        
-        # 获取凭证
-        credential = credential_manager.get_credential("llm", provider)
-        if not credential or not credential.get("api_key"):
-            if _logger:
-                _logger.info(f"Phase 3.6 LLM 客户端初始化跳过：{provider} 的 API Key 未配置")
-            return
-        
-        api_key = credential.get("api_key")
-        base_url = config_manager.get("llm_base_url", "")
-        model = config_manager.get("llm_model", "")
-        timeout = config_manager.get("llm_timeout", 60)
-        
-        # 根据厂商创建客户端
+            return False
+
         if provider == LLM_PROVIDER_ZHIPU:
+            credential = credential_manager.get_credential("llm", provider)
+            if not credential or not credential.get("api_key"):
+                if _logger:
+                    _logger.info(f"Phase 3.6 LLM 客户端初始化跳过：{provider} 的 API Key 未配置")
+                return False
+
             from infrastructure.llm_adapters.zhipu import ZhipuClient
-            from domain.llm.external_service_manager import (
-                ExternalServiceManager,
-                SERVICE_LLM_ZHIPU,
-            )
-            
+
+            api_key = credential.get("api_key")
+            base_url = config_manager.get("llm_base_url", "")
+            model = config_manager.get("llm_model", "")
+            timeout = config_manager.get("llm_timeout", 60)
+
             client = ZhipuClient(
                 api_key=api_key,
                 base_url=base_url if base_url else None,
                 model=model if model else None,
                 timeout=timeout,
             )
-            
-            # 注册到 ServiceLocator（供直接访问）
             ServiceLocator.register(SVC_LLM_CLIENT, client)
-            
-            # 创建并注册 ExternalServiceManager
-            external_service_manager = ExternalServiceManager()
             external_service_manager.register_service(SERVICE_LLM_ZHIPU, client)
-            ServiceLocator.register(SVC_EXTERNAL_SERVICE_MANAGER, external_service_manager)
-            
-            # 创建并注册 LLMExecutor
-            from domain.llm.llm_executor import LLMExecutor
-            llm_executor = LLMExecutor()
-            ServiceLocator.register(SVC_LLM_EXECUTOR, llm_executor)
-            
+
+            llm_executor = ServiceLocator.get_optional(SVC_LLM_EXECUTOR)
+            if llm_executor is None:
+                from domain.llm.llm_executor import LLMExecutor
+                llm_executor = LLMExecutor()
+                ServiceLocator.register(SVC_LLM_EXECUTOR, llm_executor)
+
             if _logger:
                 _logger.info(f"Phase 3.6 LLM 客户端初始化完成：{provider}, model={model or 'default'}")
-                _logger.info("Phase 3.6 ExternalServiceManager 和 LLMExecutor 已注册")
-        else:
-            if _logger:
-                _logger.warning(f"Phase 3.6 LLM 客户端初始化跳过：厂商 {provider} 暂未实现")
-                
+            return True
+
+        if _logger:
+            _logger.warning(f"Phase 3.6 LLM 客户端初始化跳过：厂商 {provider} 暂未实现")
+        return False
+
     except Exception as e:
         if _logger:
             _logger.warning(f"Phase 3.6 LLM 客户端初始化失败（非致命）: {e}")
-        # LLM 客户端初始化失败不是致命错误，用户可以稍后在设置中配置
+        return False
+
+
+def _init_llm_client():
+    """
+    初始化 LLM 客户端（可选）
+    
+    根据配置创建 LLM 客户端并注册到 ServiceLocator 和 ExternalServiceManager。
+    如果配置不完整（如 API Key 未设置），则跳过初始化。
+    """
+    refresh_llm_runtime_services()
 
 
 def _init_rag_services():

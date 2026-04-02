@@ -734,9 +734,9 @@ def test_main_window():
         results.add_fail("主窗口", str(e))
 
 
-def test_api_config_dialog():
-    """测试 API 配置对话框"""
-    print("\n📋 测试 API 配置对话框...")
+def test_model_config_dialog():
+    """测试模型配置对话框"""
+    print("\n📋 测试模型配置对话框...")
     
     try:
         from PyQt6.QtWidgets import QApplication
@@ -759,10 +759,10 @@ def test_api_config_dialog():
             from shared.i18n_manager import I18nManager
             ServiceLocator.register(SVC_I18N_MANAGER, I18nManager())
         
-        from presentation.dialogs.api_config_dialog import APIConfigDialog
+        from presentation.dialogs.model_config_dialog import ModelConfigDialog
         
-        dialog = APIConfigDialog()
-        results.add_pass("APIConfigDialog 创建")
+        dialog = ModelConfigDialog()
+        results.add_pass("ModelConfigDialog 创建")
         
         # 验证对话框标题
         title = dialog.windowTitle()
@@ -1287,7 +1287,7 @@ def run_all_tests():
     
     test_gui_components()
     test_main_window()
-    test_api_config_dialog()
+    test_model_config_dialog()
     test_about_dialog()
     
     # 3. 集成测试

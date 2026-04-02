@@ -132,7 +132,7 @@ class BaseLLMClient(ABC):
             model: 模型名称（可选，使用默认模型）
             timeout: 超时秒数
         """
-        self.api_key = api_key
+        self.api_key = api_key.strip() if isinstance(api_key, str) else api_key
         self.base_url = base_url
         self.model = model
         self.timeout = timeout

@@ -30,16 +30,11 @@ class Embedder:
     使用 httpx 同步调用（在 RAGWorkerThread 内执行，不阻塞 Qt 主线程）。
     """
 
-    def __init__(self):
-        self._api_key: str = ""
-
     # ============================================================
     # 内部
     # ============================================================
 
     def _get_api_key(self) -> str:
-        if self._api_key:
-            return self._api_key
         try:
             from shared.service_locator import ServiceLocator
             from shared.service_names import SVC_CREDENTIAL_MANAGER
@@ -48,9 +43,9 @@ class Embedder:
                 credential = cm.get_credential("llm", "zhipu")
                 if credential:
                     key = credential.get("api_key", "") if isinstance(credential, dict) else str(credential)
+                    key = key.strip()
                     if key:
-                        self._api_key = key
-                        return self._api_key
+                        return key
         except Exception as exc:
             logger.debug(f"CredentialManager unavailable: {exc}")
         raise RuntimeError(

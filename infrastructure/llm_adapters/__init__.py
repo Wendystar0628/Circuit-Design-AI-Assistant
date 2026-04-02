@@ -22,10 +22,10 @@ LLM 提供商适配器模块
 - deepseek/: DeepSeek 适配器目录
 
 使用示例：
-    from infrastructure.llm_adapters import ZhipuClient, create_zhipu_client
+    from infrastructure.llm_adapters import ZhipuClient
     
     # 创建智谱客户端
-    client = create_zhipu_client()
+    client = ZhipuClient(api_key="your_api_key")
     
     # 非流式调用
     response = client.chat(messages=[{"role": "user", "content": "Hello"}])
@@ -51,7 +51,6 @@ from infrastructure.llm_adapters.base_client import (
 # 智谱 GLM 适配器
 from infrastructure.llm_adapters.zhipu import (
     ZhipuClient,
-    create_zhipu_client,
 )
 
 # 模型配置已迁移到 ModelRegistry
@@ -73,5 +72,4 @@ __all__ = [
     "ResponseParseError",
     # 智谱客户端
     "ZhipuClient",
-    "create_zhipu_client",
 ]

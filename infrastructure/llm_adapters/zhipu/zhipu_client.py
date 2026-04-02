@@ -596,67 +596,9 @@ class ZhipuClient(BaseLLMClient):
 
 
 # ============================================================
-# 工厂函数
-# ============================================================
-
-def create_zhipu_client(
-    api_key: Optional[str] = None,
-    base_url: Optional[str] = None,
-    model: Optional[str] = None,
-    timeout: Optional[int] = None,
-) -> ZhipuClient:
-    """
-    创建智谱客户端（工厂函数）
-    
-    如果未提供 api_key，将从 ConfigManager 获取。
-    
-    Args:
-        api_key: API 密钥（可选）
-        base_url: API 端点（可选）
-        model: 默认模型（可选）
-        timeout: 超时秒数（可选）
-        
-    Returns:
-        ZhipuClient 实例
-        
-    Raises:
-        ValueError: API 密钥未配置
-    """
-    # 如果未提供 api_key，从 ConfigManager 获取
-    if not api_key:
-        try:
-            from shared.service_locator import ServiceLocator
-            from shared.service_names import SVC_CONFIG_MANAGER
-            
-            config_manager = ServiceLocator.get(SVC_CONFIG_MANAGER)
-            api_key = config_manager.get_api_key()
-            
-            if not base_url:
-                base_url = config_manager.get("base_url")
-            if not model:
-                model = config_manager.get("model")
-            if not timeout:
-                timeout = config_manager.get("timeout")
-                
-        except Exception:
-            pass
-    
-    if not api_key:
-        raise ValueError("API key is required. Please configure it in settings.")
-    
-    return ZhipuClient(
-        api_key=api_key,
-        base_url=base_url,
-        model=model,
-        timeout=timeout or DEFAULT_TIMEOUT,
-    )
-
-
-# ============================================================
 # 模块导出
 # ============================================================
 
 __all__ = [
     "ZhipuClient",
-    "create_zhipu_client",
 ]

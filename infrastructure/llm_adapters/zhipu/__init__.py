@@ -20,13 +20,10 @@ API 文档参考：
 - 上下文缓存：https://zhipu-ef7018ed.mintlify.app/cn/guide/capabilities/cache
 
 使用示例：
-    from infrastructure.llm_adapters.zhipu import ZhipuClient, create_zhipu_client
+    from infrastructure.llm_adapters.zhipu import ZhipuClient
     
-    # 方式一：直接创建
+    # 直接创建
     client = ZhipuClient(api_key="your_api_key")
-    
-    # 方式二：使用工厂函数（自动从 ConfigManager 获取配置）
-    client = create_zhipu_client()
     
     # 非流式调用
     response = client.chat(messages=[{"role": "user", "content": "Hello"}])
@@ -36,11 +33,11 @@ API 文档参考：
     async for chunk in client.chat_stream(messages):
         if chunk.content:
             print(chunk.content, end="")
+
 """
 
 from infrastructure.llm_adapters.zhipu.zhipu_client import (
     ZhipuClient,
-    create_zhipu_client,
 )
 from infrastructure.llm_adapters.zhipu.zhipu_request_builder import ZhipuRequestBuilder
 from infrastructure.llm_adapters.zhipu.zhipu_response_parser import ZhipuResponseParser
@@ -54,9 +51,8 @@ from infrastructure.llm_adapters.zhipu.zhipu_stream_handler import (
 # 参见：shared/model_registry.py 和 infrastructure/llm_adapters/model_configs/
 
 __all__ = [
-    # 客户端主类和工厂函数
+    # 客户端主类
     "ZhipuClient",
-    "create_zhipu_client",
     # 请求构建器（供高级用户使用）
     "ZhipuRequestBuilder",
     # 响应解析器（供高级用户使用）

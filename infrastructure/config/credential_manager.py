@@ -28,7 +28,6 @@ import hashlib
 import uuid
 import os
 import stat
-from pathlib import Path
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 from threading import Lock
@@ -38,7 +37,6 @@ from .settings import (
     CREDENTIALS_FILE,
     CREDENTIAL_TYPE_LLM,
     CREDENTIAL_TYPE_SEARCH,
-    CREDENTIAL_TYPE_EMBEDDING,
     ENCRYPTION_SALT,
 )
 
@@ -82,12 +80,15 @@ class CredentialManager:
                 if self._credentials_file.exists():
                     with open(self._credentials_file, "r", encoding="utf-8") as f:
                         self._credentials = json.load(f)
+                    self._credentials = {
+                        CREDENTIAL_TYPE_LLM: dict(self._credentials.get(CREDENTIAL_TYPE_LLM, {})),
+                        CREDENTIAL_TYPE_SEARCH: dict(self._credentials.get(CREDENTIAL_TYPE_SEARCH, {})),
+                    }
                 else:
                     # 凭证文件不存在，初始化空结构
                     self._credentials = {
                         CREDENTIAL_TYPE_LLM: {},
                         CREDENTIAL_TYPE_SEARCH: {},
-                        CREDENTIAL_TYPE_EMBEDDING: {},
                     }
                     self._save_credentials_internal()
                 
@@ -100,7 +101,6 @@ class CredentialManager:
                 self._credentials = {
                     CREDENTIAL_TYPE_LLM: {},
                     CREDENTIAL_TYPE_SEARCH: {},
-                    CREDENTIAL_TYPE_EMBEDDING: {},
                 }
                 self._loaded = True
                 return False
@@ -110,7 +110,6 @@ class CredentialManager:
                 self._credentials = {
                     CREDENTIAL_TYPE_LLM: {},
                     CREDENTIAL_TYPE_SEARCH: {},
-                    CREDENTIAL_TYPE_EMBEDDING: {},
                 }
                 self._loaded = True
                 return False
@@ -172,7 +171,7 @@ class CredentialManager:
             result = provider_credentials.copy()
             encrypted_key = result.get("api_key", "")
             if encrypted_key:
-                result["api_key"] = self._decrypt(encrypted_key)
+                result["api_key"] = self._decrypt(encrypted_key).strip()
             
             return result
     
@@ -203,6 +202,8 @@ class CredentialManager:
             
             # 加密 api_key 字段
             api_key = store_data.get("api_key", "")
+            if isinstance(api_key, str):
+                api_key = api_key.strip()
             if api_key:
                 store_data["api_key"] = self._encrypt(api_key)
             else:
@@ -383,80 +384,32 @@ class CredentialManager:
         if cx is not None:
             credential_data["cx"] = cx
         return self.set_credential(CREDENTIAL_TYPE_SEARCH, provider_id, credential_data)
-    
-    # ============================================================
-    # 便捷方法（嵌入模型凭证）
-    # ============================================================
-    
-    def get_embedding_api_key(self, provider_id: str) -> str:
-        """
-        获取嵌入模型厂商的 API Key
-        
-        Args:
-            provider_id: 厂商标识（zhipu/openai）
-            
-        Returns:
-            解密后的 API Key，不存在则返回空字符串
-        """
-        credential = self.get_credential(CREDENTIAL_TYPE_EMBEDDING, provider_id)
-        return credential.get("api_key", "") if credential else ""
-    
-    def set_embedding_api_key(self, provider_id: str, api_key: str) -> bool:
-        """
-        设置嵌入模型厂商的 API Key
-        
-        Args:
-            provider_id: 厂商标识
-            api_key: API Key 明文
-            
-        Returns:
-            bool: 保存是否成功
-        """
-        return self.set_credential(
-            CREDENTIAL_TYPE_EMBEDDING, 
-            provider_id, 
-            {"api_key": api_key}
-        )
-    
-    def has_embedding_credential(self, provider_id: str) -> bool:
-        """
-        检查嵌入模型厂商凭证是否存在
-        
-        Args:
-            provider_id: 厂商标识
-            
-        Returns:
-            bool: 凭证是否存在且 api_key 非空
-        """
-        return self.has_credential(CREDENTIAL_TYPE_EMBEDDING, provider_id)
-    
+
     # ============================================================
     # 加密/解密
     # ============================================================
-    
+
     def _get_encryption_key(self) -> bytes:
         """
         获取加密密钥（派生自机器标识）
-        
+
         Returns:
             32 字节的密钥
         """
-        if self._encryption_key is not None:
+        with self._lock:
+            if self._encryption_key is not None:
+                return self._encryption_key
+
+            machine_id = self._get_machine_id()
+            self._encryption_key = hashlib.pbkdf2_hmac(
+                "sha256",
+                machine_id.encode(),
+                ENCRYPTION_SALT,
+                100000,
+                dklen=32,
+            )
             return self._encryption_key
-        
-        # 获取机器标识
-        machine_id = self._get_machine_id()
-        
-        # 使用 PBKDF2 派生密钥
-        self._encryption_key = hashlib.pbkdf2_hmac(
-            "sha256",
-            machine_id.encode(),
-            ENCRYPTION_SALT,
-            100000,
-            dklen=32
-        )
-        return self._encryption_key
-    
+
     def _get_machine_id(self) -> str:
         """
         获取机器唯一标识

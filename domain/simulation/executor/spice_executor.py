@@ -185,6 +185,14 @@ class SpiceExecutor(SimulationExecutor):
         start_time = time.time()
         analysis_type = self._get_analysis_type(analysis_config)
         
+        # 若配置未指定分析类型，从网表内容检测
+        if not analysis_type:
+            try:
+                content = Path(file_path).read_text(encoding='utf-8', errors='ignore')
+                analysis_type = self._detect_analysis_from_netlist(content)
+            except Exception:
+                pass
+        
         # 1. 校验文件
         valid, error_msg = self.validate_file(file_path)
         if not valid:
@@ -363,10 +371,48 @@ class SpiceExecutor(SimulationExecutor):
             self._logger.debug(f"工作目录恢复: {target_dir} -> {original_dir}")
     
     def _get_analysis_type(self, analysis_config: Optional[Dict[str, Any]]) -> str:
-        """从配置中提取分析类型"""
+        """从配置中提取分析类型，若配置中未指定则返回空字符串"""
         if analysis_config is None:
-            return "ac"
-        return analysis_config.get("analysis_type", "ac")
+            return ""
+        return analysis_config.get("analysis_type", "")
+
+    @staticmethod
+    def _detect_analysis_from_netlist(netlist_content: str) -> str:
+        """
+        从网表内容检测分析类型
+        
+        扫描网表中的分析命令（.ac / .dc / .tran / .noise / .op），
+        返回最后一条分析命令对应的类型。
+        """
+        analysis_type = ""
+        for line in netlist_content.splitlines():
+            stripped = line.strip().lower()
+            if stripped.startswith('*'):
+                continue
+            for cmd in ('.ac', '.dc', '.tran', '.noise', '.op'):
+                if stripped == cmd or (
+                    stripped.startswith(cmd)
+                    and len(stripped) > len(cmd)
+                    and stripped[len(cmd)] in (' ', '\t')
+                ):
+                    analysis_type = cmd[1:]  # 去掉前缀点
+                    break
+        return analysis_type
+
+    @staticmethod
+    def _detect_analysis_from_plot(plot_name: str) -> str:
+        """
+        从 ngspice plot 名称推断分析类型
+        
+        ngspice plot 命名规则：dc1, ac1, tran1, noise1, op1 等
+        """
+        if not plot_name:
+            return ""
+        name = plot_name.lower().strip()
+        for prefix in ('dc', 'ac', 'tran', 'noise', 'op'):
+            if name.startswith(prefix):
+                return prefix
+        return ""
     
     def _run_simulation(
         self,
@@ -382,11 +428,12 @@ class SpiceExecutor(SimulationExecutor):
         circuit_path = Path(file_path)
         netlist_content = circuit_path.read_text(encoding='utf-8', errors='ignore')
         
-        # 生成分析命令
-        analysis_command = self._generate_analysis_command(analysis_type, analysis_config)
-        
-        # 注入分析命令到网表
-        modified_netlist = self._inject_analysis_command(netlist_content, analysis_command)
+        # 仅在 analysis_config 显式指定了 analysis_type 时才注入分析命令
+        modified_netlist = netlist_content
+        config_has_analysis = analysis_config and analysis_config.get("analysis_type")
+        if config_has_analysis:
+            analysis_command = self._generate_analysis_command(analysis_type, analysis_config)
+            modified_netlist = self._inject_analysis_command(modified_netlist, analysis_command)
         
         # 注入仿真选项（收敛参数和温度）
         modified_netlist = self._inject_simulation_options(modified_netlist, analysis_config)
@@ -409,7 +456,6 @@ class SpiceExecutor(SimulationExecutor):
             if self._is_critical_error(combined_output):
                 self._logger.warning("检测到 ngspice 严重错误，尝试重新初始化...")
                 if self._ngspice.reinitialize():
-                    # 重新初始化成功，返回错误让用户重试
                     return create_error_result(
                         executor=self.get_name(),
                         file_path=file_path,
@@ -439,7 +485,6 @@ class SpiceExecutor(SimulationExecutor):
             stderr = self._ngspice.get_stderr()
             combined_output = stdout + "\n" + stderr
             
-            # 检查是否是严重错误
             if self._is_critical_error(combined_output):
                 self._logger.warning("检测到 ngspice 严重错误，尝试重新初始化...")
                 self._ngspice.reinitialize()
@@ -451,6 +496,13 @@ class SpiceExecutor(SimulationExecutor):
                 error=self._parse_ngspice_output(combined_output, file_path),
                 raw_output=combined_output,
             )
+        
+        # 从 ngspice 当前 plot 名称推断实际分析类型
+        actual_type = self._detect_analysis_from_plot(
+            self._ngspice.get_current_plot() or ""
+        )
+        if actual_type:
+            analysis_type = actual_type
         
         # 提取仿真数据
         sim_data = self._extract_simulation_data(analysis_type)
@@ -529,7 +581,7 @@ class SpiceExecutor(SimulationExecutor):
                     max_step=analysis_config.get("max_step", config.max_step),
                 )
             cmd = f".tran {config.step_time} {config.end_time}"
-            if config.start_time > 0:
+            if config.start_time > 0 or config.max_step:
                 cmd += f" {config.start_time}"
             if config.max_step:
                 cmd += f" {config.max_step}"
@@ -683,19 +735,40 @@ class SpiceExecutor(SimulationExecutor):
             return netlist, []
     
     def _extract_simulation_data(self, analysis_type: str) -> SimulationData:
-        """从 ngspice 提取仿真数据"""
+        """
+        从 ngspice 提取仿真数据
+        
+        根据 analysis_type 决定如何提取独立变量：
+        - ac:   提取 SV_FREQUENCY 作为 frequency 轴
+        - tran: 提取 SV_TIME 作为 time 轴
+        - dc:   提取名称含 "sweep" 的向量作为 sweep 轴
+        - 其他: 按向量类型自动判断
+        """
         frequency = None
         time_data = None
+        sweep_data = None
+        sweep_name = None
         signals = {}
         signal_types = {}
+        is_dc = (analysis_type == "dc")
         
         # 获取所有向量
         vectors = self._ngspice.get_all_vectors()
-        self._logger.debug(f"可用向量: {vectors}")
+        self._logger.debug(f"可用向量: {vectors} (analysis_type={analysis_type})")
         
         for vec_name in vectors:
             vec_info = self._ngspice.get_vector_info(vec_name)
             if not vec_info:
+                continue
+            
+            # DC 分析：检测扫描变量（ngspice 命名为 "v-sweep" / "i-sweep" 等）
+            if is_dc and 'sweep' in vec_name.lower():
+                if vec_info.data is not None and len(vec_info.data) > 0:
+                    sweep_data = vec_info.data
+                    sweep_name = vec_name
+                elif vec_info.cdata is not None and len(vec_info.cdata) > 0:
+                    sweep_data = np.real(vec_info.cdata)
+                    sweep_name = vec_name
                 continue
             
             # 标准化信号名称（ngspice 返回小写，统一转为大写 V/I 开头）
@@ -741,6 +814,8 @@ class SpiceExecutor(SimulationExecutor):
         return SimulationData(
             frequency=frequency,
             time=time_data,
+            sweep=sweep_data,
+            sweep_name=sweep_name,
             signals=signals,
             signal_types=signal_types,
         )

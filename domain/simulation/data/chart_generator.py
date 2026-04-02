@@ -561,6 +561,9 @@ class ChartGeneratorService:
         Returns:
             (x_data, x_label) 或 (None, "")
         """
+        if data.sweep is not None and len(data.sweep) > 0:
+            return data.sweep, data.sweep_name or "Sweep"
+
         # 优先使用 time 轴（某些 DC 仿真将扫描值存入 time）
         if data.time is not None and len(data.time) > 0:
             return data.time, "Sweep Variable"

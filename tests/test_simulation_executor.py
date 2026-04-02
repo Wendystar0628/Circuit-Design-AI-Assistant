@@ -15,8 +15,6 @@ from typing import Any, Dict, List, Optional
 
 from domain.simulation.executor.simulation_executor import (
     SimulationExecutor,
-    validate_analysis_config,
-    get_analysis_type,
 )
 from domain.simulation.models.simulation_result import (
     SimulationResult,
@@ -47,7 +45,7 @@ class MockExecutor(SimulationExecutor):
         return create_success_result(
             executor=self.get_name(),
             file_path=file_path,
-            analysis_type=get_analysis_type(analysis_config),
+            analysis_type=(analysis_config or {}).get("analysis_type", "ac"),
             data=SimulationData(),
             duration_seconds=1.0,
         )
@@ -214,61 +212,6 @@ def test_executor_repr(mock_executor):
     assert "mock" in repr_str
     assert ".cir" in repr_str
     assert "ac" in repr_str
-
-
-# ============================================================
-# 测试辅助函数
-# ============================================================
-
-def test_validate_analysis_config_valid():
-    """测试校验有效的分析配置"""
-    config = {
-        "analysis_type": "ac",
-        "start_freq": 1.0,
-        "stop_freq": 1e9,
-    }
-    
-    valid, error = validate_analysis_config(config, ["analysis_type", "start_freq", "stop_freq"])
-    assert valid is True
-    assert error is None
-
-
-def test_validate_analysis_config_missing_keys():
-    """测试校验缺少必需键的配置"""
-    config = {
-        "analysis_type": "ac",
-    }
-    
-    valid, error = validate_analysis_config(config, ["analysis_type", "start_freq", "stop_freq"])
-    assert valid is False
-    assert "start_freq" in error
-    assert "stop_freq" in error
-
-
-def test_validate_analysis_config_none():
-    """测试校验 None 配置"""
-    valid, error = validate_analysis_config(None, ["analysis_type"])
-    assert valid is False
-    assert "缺少必需的配置项" in error
-
-
-def test_validate_analysis_config_no_required_keys():
-    """测试校验无必需键的情况"""
-    valid, error = validate_analysis_config(None, [])
-    assert valid is True
-    assert error is None
-
-
-def test_get_analysis_type_from_config():
-    """测试从配置中提取分析类型"""
-    config = {"analysis_type": "dc"}
-    assert get_analysis_type(config) == "dc"
-
-
-def test_get_analysis_type_default():
-    """测试默认分析类型"""
-    assert get_analysis_type({}) == "ac"
-    assert get_analysis_type(None) == "ac"
 
 
 # ============================================================

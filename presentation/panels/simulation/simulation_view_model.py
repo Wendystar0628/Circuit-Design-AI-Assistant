@@ -910,8 +910,18 @@ class SimulationViewModel(BaseViewModel):
         import csv
         
         # 确定 X 轴数据
-        x_data = data.time if data.time is not None else data.frequency
-        x_name = "time" if data.time is not None else "frequency"
+        if data.time is not None:
+            x_data = data.time
+            x_name = "time"
+        elif data.frequency is not None:
+            x_data = data.frequency
+            x_name = "frequency"
+        elif data.sweep is not None:
+            x_data = data.sweep
+            x_name = data.sweep_name or "sweep"
+        else:
+            x_data = None
+            x_name = "x"
         
         if x_data is None:
             self._logger.error("No x-axis data available")
@@ -953,6 +963,8 @@ class SimulationViewModel(BaseViewModel):
         export_data = {
             "time": data.time.tolist() if data.time is not None else None,
             "frequency": data.frequency.tolist() if data.frequency is not None else None,
+            "sweep": data.sweep.tolist() if data.sweep is not None else None,
+            "sweep_name": data.sweep_name,
             "signals": {},
         }
         
@@ -987,6 +999,8 @@ class SimulationViewModel(BaseViewModel):
             export_data["time"] = data.time
         if data.frequency is not None:
             export_data["frequency"] = data.frequency
+        if data.sweep is not None:
+            export_data["sweep"] = data.sweep
         
         signal_names = signals or list(data.signals.keys())
         for sig_name in signal_names:

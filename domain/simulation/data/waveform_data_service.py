@@ -102,7 +102,7 @@ class TableData:
         total_rows: 总行数
         start_index: 起始索引
         signal_names: 信号名称列表（列头）
-        x_label: X 轴标签（"Time" 或 "Frequency"）
+        x_label: X 轴标签（"Time" / "Frequency" / "Sweep"）
     """
     rows: List[TableRow]
     total_rows: int
@@ -421,7 +421,7 @@ class WaveformDataService:
             result: 仿真结果对象
             
         Returns:
-            str: "Time (s)" 或 "Frequency (Hz)"
+            str: "Time (s)" / "Frequency (Hz)" / "Sweep"
         """
         if not result.success or result.data is None:
             return "X"
@@ -430,6 +430,8 @@ class WaveformDataService:
             return "Time (s)"
         elif result.data.frequency is not None:
             return "Frequency (Hz)"
+        elif result.data.sweep is not None:
+            return result.data.sweep_name or "Sweep"
         return "X"
 
     def get_table_data(
@@ -545,11 +547,13 @@ class WaveformDataService:
     # ============================================================
     
     def _get_x_axis(self, data: SimulationData) -> Optional[np.ndarray]:
-        """获取 X 轴数据（时间或频率）"""
+        """获取 X 轴数据（时间、频率或 DC 扫描轴）"""
         if data.time is not None:
             return data.time
         elif data.frequency is not None:
             return data.frequency
+        elif data.sweep is not None:
+            return data.sweep
         return None
     
     def _get_or_build_pyramid(

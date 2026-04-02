@@ -269,75 +269,9 @@ class SimulationExecutor(ABC):
 
 
 # ============================================================
-# 辅助函数
-# ============================================================
-
-def validate_analysis_config(
-    analysis_config: Optional[Dict[str, Any]],
-    required_keys: List[str]
-) -> tuple[bool, Optional[str]]:
-    """
-    校验分析配置是否包含必需的键
-    
-    Args:
-        analysis_config: 分析配置字典
-        required_keys: 必需的键列表
-        
-    Returns:
-        tuple[bool, Optional[str]]: (是否有效, 错误消息)
-        
-    示例：
-        >>> valid, error = validate_analysis_config(
-        ...     {"analysis_type": "ac"},
-        ...     ["analysis_type", "start_freq", "stop_freq"]
-        ... )
-        >>> if not valid:
-        ...     print(error)
-        "缺少必需的配置项: start_freq, stop_freq"
-    """
-    if analysis_config is None:
-        if required_keys:
-            return False, f"缺少必需的配置项: {', '.join(required_keys)}"
-        return True, None
-    
-    missing_keys = [key for key in required_keys if key not in analysis_config]
-    
-    if missing_keys:
-        return False, f"缺少必需的配置项: {', '.join(missing_keys)}"
-    
-    return True, None
-
-
-def get_analysis_type(analysis_config: Optional[Dict[str, Any]]) -> str:
-    """
-    从配置中提取分析类型
-    
-    Args:
-        analysis_config: 分析配置字典
-        
-    Returns:
-        str: 分析类型（默认为 "ac"）
-        
-    示例:
-        >>> get_analysis_type({"analysis_type": "dc"})
-        "dc"
-        >>> get_analysis_type({})
-        "ac"
-        >>> get_analysis_type(None)
-        "ac"
-    """
-    if analysis_config is None:
-        return "ac"
-    
-    return analysis_config.get("analysis_type", "ac")
-
-
-# ============================================================
 # 模块导出
 # ============================================================
 
 __all__ = [
     "SimulationExecutor",
-    "validate_analysis_config",
-    "get_analysis_type",
 ]

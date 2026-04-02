@@ -144,7 +144,6 @@ class SimulationService:
         self,
         file_path: str,
         analysis_config: Optional[Dict[str, Any]] = None,
-        *,
         project_root: Optional[str] = None,
         version: int = 1,
         session_id: str = "",
@@ -166,6 +165,8 @@ class SimulationService:
         """
         start_time = time.time()
         analysis_type = self._get_analysis_type(analysis_config)
+        if not analysis_type:
+            analysis_type = self._detect_analysis_type_from_file(file_path)
         
         # 标记正在运行
         self._is_running = True
@@ -894,11 +895,33 @@ class SimulationService:
     # 内部辅助方法
     # ============================================================
     
+    def _detect_analysis_type_from_file(self, file_path: str) -> str:
+        """从网表文件中检测最后一条分析命令的类型"""
+        try:
+            content = Path(file_path).read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            return ""
+
+        analysis_type = ""
+        for line in content.splitlines():
+            stripped = line.strip().lower()
+            if stripped.startswith("*"):
+                continue
+            for cmd in (".ac", ".dc", ".tran", ".noise", ".op"):
+                if stripped == cmd or (
+                    stripped.startswith(cmd)
+                    and len(stripped) > len(cmd)
+                    and stripped[len(cmd)] in (" ", "\t")
+                ):
+                    analysis_type = cmd[1:]
+                    break
+        return analysis_type
+
     def _get_analysis_type(self, analysis_config: Optional[Dict[str, Any]]) -> str:
-        """从配置中提取分析类型"""
+        """从配置中提取分析类型，若未指定则返回空字符串（由执行器自动检测）"""
         if analysis_config is None:
-            return "ac"
-        return analysis_config.get("analysis_type", "ac")
+            return ""
+        return analysis_config.get("analysis_type", "")
     
     def _generate_result_id(self) -> str:
         """生成仿真结果 ID"""

@@ -12,6 +12,12 @@ circuit/
 
 # Vendor (models, binaries)
 vendor/
+!vendor/ngspice/
+!vendor/ngspice/win64/
+!vendor/ngspice/win64/Spice64_dll/
+!vendor/ngspice/win64/Spice64_dll/include/
+!vendor/ngspice/win64/Spice64_dll/include/ngspice/
+!vendor/ngspice/win64/Spice64_dll/include/ngspice/sharedspice.h
 
 # Runtime / storage
 .circuit_ai/

@@ -64,6 +64,8 @@ class SimulationData:
     Attributes:
         frequency: AC 分析频率点（Hz）
         time: 瞬态分析时间点（秒）
+        sweep: DC 分析扫描变量数据
+        sweep_name: DC 扫描变量名称（如 "Vin"）
         signals: 信号数据字典，键为信号名称，值为 numpy 数组
     """
     
@@ -72,6 +74,12 @@ class SimulationData:
     
     time: Optional[np.ndarray] = None
     """瞬态分析时间点（秒）"""
+    
+    sweep: Optional[np.ndarray] = None
+    """DC 分析扫描变量数据"""
+    
+    sweep_name: Optional[str] = None
+    """DC 扫描变量名称（如 "Vin"）"""
     
     signals: Dict[str, np.ndarray] = field(default_factory=dict)
     """信号数据字典，键为信号名称（如 "V(out)"），值为 numpy 数组"""
@@ -93,6 +101,8 @@ class SimulationData:
         return {
             "frequency": self.frequency.tolist() if self.frequency is not None else None,
             "time": self.time.tolist() if self.time is not None else None,
+            "sweep": self.sweep.tolist() if self.sweep is not None else None,
+            "sweep_name": self.sweep_name,
             "signals": {
                 name: self._serialize_array(data)
                 for name, data in self.signals.items()
@@ -139,6 +149,8 @@ class SimulationData:
         return cls(
             frequency=np.array(data["frequency"]) if data.get("frequency") is not None else None,
             time=np.array(data["time"]) if data.get("time") is not None else None,
+            sweep=np.array(data["sweep"]) if data.get("sweep") is not None else None,
+            sweep_name=data.get("sweep_name"),
             signals={
                 name: cls._deserialize_array(signal_data)
                 for name, signal_data in data.get("signals", {}).items()

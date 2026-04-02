@@ -132,15 +132,26 @@ class VecValuesAllC(Structure):
     ]
 
 
-class VecInfoC(Structure):
-    """ngspice 向量信息结构体 (vecinfoall)"""
+class VecInfoDetailC(Structure):
+    """ngspice 单个向量信息结构体 (vecinfo)"""
+    _fields_ = [
+        ("number", c_int),
+        ("vecname", c_char_p),
+        ("is_real", c_bool),
+        ("pdvec", c_void_p),
+        ("pdvecscale", c_void_p),
+    ]
+
+
+class VecInfoAllC(Structure):
+    """ngspice 全部向量信息结构体 (vecinfoall)"""
     _fields_ = [
         ("name", c_char_p),
         ("title", c_char_p),
         ("date", c_char_p),
         ("type", c_char_p),
         ("veccount", c_int),
-        ("vecs", POINTER(POINTER(VecValuesC))),
+        ("vecs", POINTER(POINTER(VecInfoDetailC))),
     ]
 
 
@@ -161,10 +172,19 @@ CONTROLLED_EXIT_FUNC = CFUNCTYPE(c_int, c_int, c_bool, c_bool, c_int, c_void_p)
 SEND_DATA_FUNC = CFUNCTYPE(c_int, POINTER(VecValuesAllC), c_int, c_int, c_void_p)
 
 # SendInitData: int (*SendInitData)(pvecinfoall, int, void*)
-SEND_INIT_DATA_FUNC = CFUNCTYPE(c_int, POINTER(VecInfoC), c_int, c_void_p)
+SEND_INIT_DATA_FUNC = CFUNCTYPE(c_int, POINTER(VecInfoAllC), c_int, c_void_p)
 
 # BGThreadRunning: int (*BGThreadRunning)(bool, int, void*)
 BG_THREAD_RUNNING_FUNC = CFUNCTYPE(c_int, c_bool, c_int, c_void_p)
+
+# GetVSRCData: int (*GetVSRCData)(double*, double, char*, int, void*)
+GET_VSRC_DATA_FUNC = CFUNCTYPE(c_int, POINTER(c_double), c_double, c_char_p, c_int, c_void_p)
+
+# GetISRCData: int (*GetISRCData)(double*, double, char*, int, void*)
+GET_ISRC_DATA_FUNC = CFUNCTYPE(c_int, POINTER(c_double), c_double, c_char_p, c_int, c_void_p)
+
+# GetSyncData: int (*GetSyncData)(double, double*, double, int, int, int, void*)
+GET_SYNC_DATA_FUNC = CFUNCTYPE(c_int, c_double, POINTER(c_double), c_double, c_int, c_int, c_int, c_void_p)
 
 
 # ============================================================
@@ -308,13 +328,11 @@ class NgSpiceWrapper:
         # ngSpice_Init_Sync (同步模式初始化)
         try:
             self._ngspice.ngSpice_Init_Sync.argtypes = [
-                SEND_CHAR_FUNC,
-                SEND_STAT_FUNC,
-                CONTROLLED_EXIT_FUNC,
-                SEND_DATA_FUNC,
-                SEND_INIT_DATA_FUNC,
-                BG_THREAD_RUNNING_FUNC,
-                c_void_p,
+                GET_VSRC_DATA_FUNC,     # GetVSRCData
+                GET_ISRC_DATA_FUNC,     # GetISRCData
+                GET_SYNC_DATA_FUNC,     # GetSyncData
+                POINTER(c_int),         # ident
+                c_void_p,               # userdata
             ]
             self._ngspice.ngSpice_Init_Sync.restype = c_int
         except AttributeError:
@@ -398,7 +416,7 @@ class NgSpiceWrapper:
         callbacks['send_data'] = SEND_DATA_FUNC(send_data)
         
         # SendInitData 回调 - 接收初始化数据（可选）
-        def send_init_data(vecinfoall: POINTER(VecInfoC), ident: int, 
+        def send_init_data(vecinfoall: POINTER(VecInfoAllC), ident: int, 
                           userdata: c_void_p) -> int:
             return 0
         

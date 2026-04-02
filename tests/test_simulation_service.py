@@ -166,6 +166,28 @@ class TestSimulationServiceRun:
         
         assert not result.success
         assert result.error is not None
+
+    def test_run_simulation_no_executor_saves_error_result(self, temp_project):
+        """测试没有执行器时也会保存失败结果文件"""
+        registry = ExecutorRegistry()
+        service = SimulationService(registry=registry)
+
+        result = service.run_simulation(
+            file_path=str(temp_project / "test_circuit.cir"),
+            analysis_config={"analysis_type": "ac"},
+            project_root=str(temp_project),
+        )
+
+        assert not result.success
+
+        results = service.list_sim_results(str(temp_project), limit=10)
+        assert len(results) >= 1
+
+        latest = service.get_latest_sim_result(str(temp_project))
+        assert latest.success
+        assert latest.data is not None
+        assert latest.data.success is False
+        assert latest.data.error is not None
     
     def test_run_simulation_with_mock_executor(self, temp_project, mock_registry, mock_executor):
         """测试使用模拟执行器"""

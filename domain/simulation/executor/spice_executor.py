@@ -72,6 +72,7 @@ from domain.simulation.models.simulation_config import (
     TransientConfig,
     NoiseConfig,
 )
+from domain.simulation.service.bundled_spice_library_injector import BundledSpiceLibraryInjector
 from infrastructure.utils.ngspice_config import (
     is_ngspice_available,
     get_configuration_error,
@@ -124,6 +125,7 @@ class SpiceExecutor(SimulationExecutor):
         self._logger = logging.getLogger(__name__)
         self._ngspice: Optional[NgSpiceWrapper] = None
         self._init_error: Optional[str] = None
+        self._bundled_model_injector = BundledSpiceLibraryInjector(self._logger)
         
         # 尝试初始化 ngspice
         self._try_init_ngspice()
@@ -148,6 +150,25 @@ class SpiceExecutor(SimulationExecutor):
         except Exception as e:
             self._init_error = str(e)
             self._logger.exception(f"SpiceExecutor 初始化异常: {e}")
+
+    def _recreate_ngspice(self) -> bool:
+        """在 ngspice 进入不可恢复状态后重建 wrapper 实例。"""
+        try:
+            dll_path = get_ngspice_dll_path()
+            if not dll_path:
+                self._init_error = "无法获取 ngspice DLL 路径"
+                self._ngspice = None
+                return False
+
+            self._ngspice = NgSpiceWrapper(dll_path)
+            self._init_error = None
+            self._logger.info("SpiceExecutor 已重建 ngspice 实例")
+            return True
+        except Exception as e:
+            self._init_error = str(e)
+            self._ngspice = None
+            self._logger.exception(f"重建 ngspice 实例失败: {e}")
+            return False
     
     # ============================================================
     # SimulationExecutor 接口实现
@@ -428,6 +449,9 @@ class SpiceExecutor(SimulationExecutor):
         circuit_path = Path(file_path)
         netlist_content = circuit_path.read_text(encoding='utf-8', errors='ignore')
         
+        # 注入内置器件模型库（自动为 Q/M/D/J 元件插入对应 .lib 引用）
+        netlist_content = self._inject_model_libraries(netlist_content, circuit_path.parent)
+        
         # 仅在 analysis_config 显式指定了 analysis_type 时才注入分析命令
         modified_netlist = netlist_content
         config_has_analysis = analysis_config and analysis_config.get("analysis_type")
@@ -451,31 +475,20 @@ class SpiceExecutor(SimulationExecutor):
             stdout = self._ngspice.get_stdout()
             stderr = self._ngspice.get_stderr()
             combined_output = stdout + "\n" + stderr
+            parsed_error = self._parse_ngspice_output(combined_output, file_path)
             
             # 检查是否是严重错误，需要重新初始化
             if self._is_critical_error(combined_output):
-                self._logger.warning("检测到 ngspice 严重错误，尝试重新初始化...")
-                if self._ngspice.reinitialize():
-                    return create_error_result(
-                        executor=self.get_name(),
-                        file_path=file_path,
-                        analysis_type=analysis_type,
-                        error=SimulationError(
-                            code="E010",
-                            type=SimulationErrorType.NGSPICE_CRASH,
-                            severity=ErrorSeverity.HIGH,
-                            message="ngspice 遇到严重错误并已重置，请检查网表语法后重试",
-                            file_path=file_path,
-                            recovery_suggestion="请检查网表中的 .MEASURE 语句语法是否正确",
-                        ),
-                        raw_output=combined_output,
-                    )
+                self._logger.warning("检测到 ngspice 严重错误，尝试重建 ngspice 实例...")
+                recovery_ok = self._recreate_ngspice()
+                parsed_error.recovery_attempted = True
+                parsed_error.recovery_result = "success" if recovery_ok else "failed"
             
             return create_error_result(
                 executor=self.get_name(),
                 file_path=file_path,
                 analysis_type=analysis_type,
-                error=self._parse_ngspice_output(combined_output, file_path),
+                error=parsed_error,
                 raw_output=combined_output,
             )
         
@@ -484,16 +497,19 @@ class SpiceExecutor(SimulationExecutor):
             stdout = self._ngspice.get_stdout()
             stderr = self._ngspice.get_stderr()
             combined_output = stdout + "\n" + stderr
+            parsed_error = self._parse_ngspice_output(combined_output, file_path)
             
             if self._is_critical_error(combined_output):
-                self._logger.warning("检测到 ngspice 严重错误，尝试重新初始化...")
-                self._ngspice.reinitialize()
+                self._logger.warning("检测到 ngspice 严重错误，尝试重建 ngspice 实例...")
+                recovery_ok = self._recreate_ngspice()
+                parsed_error.recovery_attempted = True
+                parsed_error.recovery_result = "success" if recovery_ok else "failed"
             
             return create_error_result(
                 executor=self.get_name(),
                 file_path=file_path,
                 analysis_type=analysis_type,
-                error=self._parse_ngspice_output(combined_output, file_path),
+                error=parsed_error,
                 raw_output=combined_output,
             )
         
@@ -734,6 +750,11 @@ class SpiceExecutor(SimulationExecutor):
             self._logger.warning(f"注入 .MEASURE 语句异常: {e}")
             return netlist, []
     
+    def _inject_model_libraries(self, netlist: str, circuit_dir: Path) -> str:
+        return self._bundled_model_injector.inject(netlist, circuit_dir)
+
+    # ============================================================
+
     def _extract_simulation_data(self, analysis_type: str) -> SimulationData:
         """
         从 ngspice 提取仿真数据
@@ -899,20 +920,41 @@ class SpiceExecutor(SimulationExecutor):
     ) -> SimulationError:
         """解析 ngspice 输出，提取错误信息"""
         output_lower = output.lower()
-        
-        # 语法错误
-        if "syntax" in output_lower or "parse" in output_lower or "error:" in output_lower:
+
+        if "library file" in output_lower and "not found" in output_lower:
+            missing_files = self._extract_missing_library_files(output)
+            return SimulationError(
+                code="E009",
+                type=SimulationErrorType.FILE_ACCESS,
+                severity=ErrorSeverity.HIGH,
+                message=f"模型库文件不存在: {', '.join(missing_files) if missing_files else '未知路径'}",
+                file_path=file_path,
+                recovery_suggestion="请检查 .lib/.include 路径是否有效，或确认内置模型库已正确注入",
+            )
+
+        if "unknown subckt" in output_lower or ("subckt" in output_lower and "not found" in output_lower):
+            missing_subckts = self._extract_missing_subckts(output)
+            return SimulationError(
+                code="E002",
+                type=SimulationErrorType.MODEL_MISSING,
+                severity=ErrorSeverity.HIGH,
+                message=f"缺少子电路定义: {', '.join(missing_subckts) if missing_subckts else '未知'}",
+                file_path=file_path,
+                recovery_suggestion="请添加缺失的 .SUBCKT 定义或 .include/.lib 子电路文件",
+            )
+
+        if "undefined parameter" in output_lower or "cannot compute substitute" in output_lower:
             line_num = self._extract_line_number(output)
             return SimulationError(
-                code="E001",
-                type=SimulationErrorType.SYNTAX_ERROR,
+                code="E010",
+                type=SimulationErrorType.PARAMETER_INVALID,
                 severity=ErrorSeverity.HIGH,
-                message=f"网表语法错误: {self._extract_error_message(output)}",
+                message=f"模型或参数表达式不兼容: {self._extract_error_message(output)}",
                 file_path=file_path,
                 line_number=line_num,
-                recovery_suggestion="请检查网表语法，确保所有元件和节点名称正确",
+                recovery_suggestion="请检查模型参数是否被当前 ngspice 版本支持，或移除不兼容的厂商/额定值元数据",
             )
-        
+
         # 模型缺失
         if "model" in output_lower and ("not found" in output_lower or "unknown" in output_lower):
             missing_models = self._extract_missing_models(output)
@@ -923,6 +965,34 @@ class SpiceExecutor(SimulationExecutor):
                 message=f"缺少模型定义: {', '.join(missing_models) if missing_models else '未知'}",
                 file_path=file_path,
                 recovery_suggestion="请添加缺失的 .model 语句或 .include 模型文件",
+            )
+
+        # 语法错误
+        if (
+            "syntax" in output_lower
+            or "parse error" in output_lower
+            or "unimplemented dot command" in output_lower
+            or re.search(r'error\s+on\s+line\s+\d+', output_lower)
+        ):
+            line_num = self._extract_line_number(output)
+            return SimulationError(
+                code="E001",
+                type=SimulationErrorType.SYNTAX_ERROR,
+                severity=ErrorSeverity.HIGH,
+                message=f"网表语法错误: {self._extract_error_message(output)}",
+                file_path=file_path,
+                line_number=line_num,
+                recovery_suggestion="请检查网表语法，确保所有元件和节点名称正确",
+            )
+
+        if "cannot recover" in output_lower or "awaits to be detached" in output_lower:
+            return SimulationError(
+                code="E008",
+                type=SimulationErrorType.NGSPICE_CRASH,
+                severity=ErrorSeverity.CRITICAL,
+                message=f"ngspice 进入不可恢复状态: {self._extract_error_message(output)}",
+                file_path=file_path,
+                recovery_suggestion="请重建 ngspice 实例后重试，并优先检查前序原始错误日志",
             )
         
         # 节点浮空
@@ -993,6 +1063,20 @@ class SpiceExecutor(SimulationExecutor):
         matches = re.findall(r"model\s+['\"]?(\w+)['\"]?\s+(?:not found|unknown)", output, re.IGNORECASE)
         models.extend(matches)
         return models
+
+    def _extract_missing_library_files(self, output: str) -> List[str]:
+        """从输出中提取缺失的模型库文件路径。"""
+        files = []
+        files.extend(re.findall(r'library file\s+(.+?)\s+not found', output, re.IGNORECASE))
+        files.extend(re.findall(r'could not find library file\s+(.+)', output, re.IGNORECASE))
+        return list(dict.fromkeys(file_path.strip() for file_path in files if file_path.strip()))
+
+    def _extract_missing_subckts(self, output: str) -> List[str]:
+        """从输出中提取缺失的子电路名称。"""
+        subckts = []
+        subckts.extend(re.findall(r'unknown subckt:?\s*([^\s]+)', output, re.IGNORECASE))
+        subckts.extend(re.findall(r'subckt\s+([^\s]+)\s+not found', output, re.IGNORECASE))
+        return list(dict.fromkeys(name.strip() for name in subckts if name.strip()))
     
     def _extract_floating_nodes(self, output: str) -> List[str]:
         """从输出中提取浮空节点名称"""

@@ -1635,16 +1635,28 @@ class SimulationTab(QWidget):
             result: SimulationResult 对象
         """
         self._view_model.load_result(result)
+        self._chart_viewer_panel.clear()
+        self._chart_viewer_panel.chart_viewer.set_simulation_data(
+            getattr(result, 'data', None)
+        )
         
         # 显示时间戳
         timestamp = getattr(result, 'timestamp', None)
         if timestamp:
             self._metrics_summary_panel.set_result_timestamp(timestamp)
         
-        # 加载波形数据到各组件
-        self._load_waveform_data(result)
-        
-        self._hide_empty_state()
+        if getattr(result, 'success', False) and getattr(result, 'data', None) is not None:
+            self._load_waveform_data(result)
+
+        raw_output = getattr(result, 'raw_output', None)
+        if raw_output:
+            self._chart_viewer_panel.output_log_viewer.load_log_from_text(raw_output)
+
+        if getattr(result, 'success', False) or raw_output or getattr(result, 'error', None):
+            self._hide_empty_state()
+
+        if not getattr(result, 'success', False):
+            self._chart_viewer_panel.switch_to_log()
     
     def _load_waveform_data(self, result):
         """
@@ -1688,11 +1700,6 @@ class SimulationTab(QWidget):
         
         # 加载原始数据表格
         self._chart_viewer_panel.raw_data_table.load_data(result)
-        
-        # 加载输出日志（如果有）
-        raw_output = getattr(result, 'raw_output', None)
-        if raw_output:
-            self._chart_viewer_panel.output_log_viewer.load_log_from_text(raw_output)
     
     def _generate_and_load_charts(self, result):
         """

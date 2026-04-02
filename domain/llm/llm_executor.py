@@ -10,7 +10,7 @@ LLM 调用执行器
 - 提供异步生成器接口，支持 AsyncTaskRegistry 任务提交模式
 
 初始化顺序：
-- Phase 3.8，依赖 AsyncTaskRegistry、StreamThrottler、ExternalServiceManager
+- Phase 3.6，依赖 ConfigManager、CredentialManager（见 bootstrap._init_llm_client）
 
 设计原则：
 - 使用 @asyncSlot() 装饰器，使异步方法可被 Qt 信号直接调用

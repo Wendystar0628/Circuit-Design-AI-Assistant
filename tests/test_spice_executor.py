@@ -337,6 +337,24 @@ class TestSpiceExecutorErrorHandling:
         )
         assert error.type == SimulationErrorType.NGSPICE_CRASH
 
+    def test_parse_ngspice_output_detached_state_as_crash(self, executor):
+        """测试仅有 detached 错误时识别为 ngspice 崩溃"""
+        error = executor._parse_ngspice_output(
+            "stderr Error: ngspice.dll cannot recover and awaits to be detached",
+            "test.cir"
+        )
+        assert error.type == SimulationErrorType.NGSPICE_CRASH
+
+    def test_parse_ngspice_output_preserves_specific_root_cause_over_detached(self, executor):
+        """测试更具体的根因不会被 detached 错误覆盖"""
+        error = executor._parse_ngspice_output(
+            "Error: unknown subckt: ideal_opamp\n"
+            "stderr Error: ngspice.dll cannot recover and awaits to be detached",
+            "test.cir"
+        )
+        assert error.type == SimulationErrorType.MODEL_MISSING
+        assert "ideal_opamp" in error.message
+
 
 # ============================================================
 # 预留接口测试

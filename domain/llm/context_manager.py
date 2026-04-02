@@ -17,7 +17,13 @@
 - Token 监控：委托给 TokenMonitor
 - 上下文压缩：委托给 ContextCompressor
 - 缓存统计：委托给 CacheStatsTracker
-- 会话管理：由 SessionStateManager 负责（不在本类职责范围内）
+- 会话文件生命周期（创建/切换/持久化）：由 SessionStateManager 负责
+- 运行时内部状态（_internal_state）：由本类维护，提供无状态和有状态两种调用模式
+
+双模式设计：
+- 无状态模式：方法接受 state 参数并返回新状态副本，适用于 LangGraph 集成场景
+- 有状态模式：方法直接操作内部 _internal_state，适用于 UI 层和协调器的便捷调用
+  供调用方：UI 层对话面板、SessionStateManager 等需要便捷访问当前状态的场景
 
 使用示例：
     from domain.llm.context_manager import ContextManager
@@ -57,12 +63,17 @@ from domain.llm.cache_stats_tracker import (
 class ContextManager:
     """
     上下文管理器 - 门面类
-    
-    协调 MessageStore、TokenMonitor、ContextCompressor、CacheStatsTracker
+
+    协调 MessageStore、TokenMonitor、ContextCompressor、CacheStatsTracker，
     提供统一的对外接口。
-    
-    注意：会话管理（保存、加载、切换会话）由 SessionStateManager 负责，
-    不在本类职责范围内。
+
+    提供两种调用模式（均可用，各自适合不同场景）：
+    - 无状态模式：add_message(state, ...) 接受并返回 state，适用于 LangGraph 节点
+    - 有状态模式：add_user_message() / add_assistant_message() 等直接操作内部
+      _internal_state，适用于 UI 层和 SessionStateManager 等协调器
+
+    注意：会话文件生命周期（持久化/切换/加载会话文件）由 SessionStateManager 负责；
+    本类只负责运行时内存状态（_internal_state），不读写磁盘。
     """
     
     def __init__(self, compress_threshold: float = 0.8):
@@ -91,8 +102,10 @@ class ContextManager:
             try:
                 from infrastructure.utils.logger import get_logger
                 self._logger = get_logger("context_manager")
-            except Exception:
-                pass
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning(f"Failed to load custom logger, using stdlib: {e}")
+                self._logger = logging.getLogger(__name__)
         return self._logger
     
     @property
@@ -103,8 +116,9 @@ class ContextManager:
                 from shared.service_locator import ServiceLocator
                 from shared.service_names import SVC_EVENT_BUS
                 self._event_bus = ServiceLocator.get_optional(SVC_EVENT_BUS)
-            except Exception:
-                pass
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning(f"Failed to load EventBus: {e}")
         return self._event_bus
     
     # ============================================================
@@ -481,10 +495,12 @@ class ContextManager:
         }
 
     # ============================================================
-    # 有状态便捷方法（供 UI 层使用）
+    # 有状态便捷方法（无 LangGraph 集成场景）
     # ============================================================
-    # 以下方法内部维护一个默认 state，供不需要 LangGraph 集成的场景使用
-    # 这些方法是对基于 state 参数方法的封装，简化 UI 层调用
+    # 以下方法内部维护 _internal_state，供 UI 层和协调器（如 SessionStateManager）使用。
+    # 这些方法是对无状态 state 参数方法的封装，调用方无需自行持有和传递 state。
+    # sync_state() 由 SessionStateManager 在会话切换/恢复时调用（领域层）；
+    # add_user_message() / add_assistant_message() 等由 UI 层调用。
     
     def get_current_state(self) -> Dict[str, Any]:
         """
@@ -517,7 +533,7 @@ class ContextManager:
         attachments: Optional[List[Any]] = None
     ) -> None:
         """
-        添加用户消息（有状态版本，供 UI 层使用）
+        添加用户消息（有状态版本）
         
         Args:
             content: 消息内容
@@ -547,7 +563,7 @@ class ContextManager:
         operations: Optional[List[str]] = None,
     ) -> None:
         """
-        添加助手消息（有状态版本，供 UI 层使用）
+        添加助手消息（有状态版本）
         
         Args:
             content: 消息内容

@@ -196,7 +196,11 @@ class SimulationService:
                     version=version,
                     session_id=session_id,
                 )
-                self._publish_error_event(result)
+                saved_result_path = ""
+                if project_root:
+                    saved_result_path = self.save_sim_result(project_root, result)
+                    self._logger.info(f"仿真结果已保存: {saved_result_path}")
+                self._publish_complete_event(result, saved_result_path)
                 return result
             
             # 执行仿真
@@ -236,7 +240,11 @@ class SimulationService:
                 version=version,
                 session_id=session_id,
             )
-            self._publish_error_event(result)
+            saved_result_path = ""
+            if project_root:
+                saved_result_path = self.save_sim_result(project_root, result)
+                self._logger.info(f"仿真结果已保存: {saved_result_path}")
+            self._publish_complete_event(result, saved_result_path)
             return result
             
         finally:

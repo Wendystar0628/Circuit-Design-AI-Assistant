@@ -52,6 +52,7 @@
   - 3.5.2 GraphStateProjector 初始化（自动投影 GraphState 到 SessionState）
   - 3.5.5 TracingLogger 初始化（可观测性基础设施）
   - 3.6 LLM 客户端初始化
+  - 3.6.1 订阅 EVENT_LLM_CONFIG_CHANGED（应用层响应配置变更，刷新 LLM 运行时）
   - 3.8 RAG 服务初始化（RAGManager + DocumentWatcher）
   - 3.7 发布 EVENT_INIT_COMPLETE 事件
 - 应用关闭时：

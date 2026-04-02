@@ -62,7 +62,7 @@ class TestChartViewerPanelIntegration:
         panel = ChartViewerPanel()
         
         # 验证标签页数量
-        assert panel._tab_widget.count() == 4
+        assert panel._tab_widget.count() == 5
         
         # 验证各组件存在
         assert panel.chart_viewer is not None
@@ -145,6 +145,47 @@ class TestSimulationTabWaveformIntegration:
         waveform = tab.get_waveform_widget()
         displayed_signals = waveform.get_displayed_signals()
         assert len(displayed_signals) > 0
+
+    def test_load_failed_result_clears_previous_success_artifacts(self, qapp, mock_simulation_result):
+        """测试失败结果会清空上一次成功结果并显示失败日志"""
+        from presentation.panels.simulation.simulation_tab import SimulationTab, ChartViewerPanel
+        from domain.simulation.models.simulation_result import SimulationResult
+        from domain.simulation.models.simulation_error import (
+            SimulationError,
+            SimulationErrorType,
+            ErrorSeverity,
+        )
+
+        tab = SimulationTab()
+        tab.load_result(mock_simulation_result)
+
+        waveform = tab.get_waveform_widget()
+        assert len(waveform.get_displayed_signals()) > 0
+
+        failed_result = SimulationResult(
+            executor="spice",
+            file_path="test_failed.cir",
+            analysis_type="ac",
+            success=False,
+            data=None,
+            error=SimulationError(
+                code="E008",
+                type=SimulationErrorType.NGSPICE_CRASH,
+                severity=ErrorSeverity.CRITICAL,
+                message="ngspice 进入不可恢复状态",
+                file_path="test_failed.cir",
+            ),
+            raw_output="stderr Error: ngspice.dll cannot recover and awaits to be detached",
+            timestamp="2026-01-06T12:30:00",
+        )
+
+        tab.load_result(failed_result)
+
+        assert waveform.get_displayed_signals() == []
+        assert tab.get_output_log_viewer().get_total_lines() > 0
+        assert tab._chart_viewer_panel.chart_viewer.get_current_chart_path() is None
+        assert tab._chart_viewer_panel.chart_viewer._simulation_data is None
+        assert tab._chart_viewer_panel._tab_widget.currentIndex() == ChartViewerPanel.TAB_LOG
 
 
 class TestDataExportIntegration:

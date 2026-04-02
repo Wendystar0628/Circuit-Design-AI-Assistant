@@ -924,11 +924,15 @@ class ChartViewer(QWidget):
         self._chart_paths.clear()
         self._current_chart_type = None
         self._chart_types.clear()
+        self._simulation_data = None
+        self._measurement_mode = MeasurementMode.NONE
         
         while self._tab_bar.count() > 0:
             self._tab_bar.removeTab(0)
         
         self._image_label.set_pixmap(None)
+        self._measurement_bar.clear_measurement()
+        self._measurement_bar.hide()
         self._show_empty_state()
     
     def get_current_chart_type(self) -> Optional[str]:

@@ -10,7 +10,7 @@
 设计原则：
 - 有状态：持有当前 session_id 和 project_root
 - 协调者：不直接操作文件，通过 context_service 模块进行
-- 不直接操作 GraphState.messages，通过 MessageStore 进行
+- 会话切换时直接构建新 state（含 messages 替换），日常消息追加通过 MessageStore 进行
 
 三层职责分离：
 ┌─────────────────────────────────────────────────────────────┐

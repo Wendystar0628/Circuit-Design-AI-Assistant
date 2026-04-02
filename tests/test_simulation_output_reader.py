@@ -327,6 +327,32 @@ Total time: 0.5s"""
         
         assert len(lines) == 8
         assert lines[0].content == "ngspice simulation started"
+
+    def test_get_output_log_from_sim_results_dir_relative_path(self, reader, sample_output):
+        """测试使用包含 .circuit_ai/sim_results 的相对路径读取日志"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir)
+            sim_results_dir = project_root / ".circuit_ai" / "sim_results"
+            sim_results_dir.mkdir(parents=True)
+
+            result_data = {
+                "executor": "spice",
+                "file_path": "amplifier.cir",
+                "analysis_type": "ac",
+                "success": False,
+                "raw_output": sample_output,
+                "timestamp": "2026-01-06T10:00:00",
+                "duration_seconds": 0.5,
+            }
+
+            result_file = sim_results_dir / "run_002.json"
+            with open(result_file, 'w', encoding='utf-8') as f:
+                json.dump(result_data, f)
+
+            lines = reader.get_output_log(".circuit_ai/sim_results/run_002.json", str(project_root))
+
+            assert len(lines) == 8
+            assert lines[0].content == "ngspice simulation started"
     
     def test_get_output_log_file_not_found(self, reader):
         """测试文件不存在"""

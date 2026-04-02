@@ -38,6 +38,21 @@ def get_icons_dir() -> Path:
     return get_resources_dir() / "icons"
 
 
+def get_spice_models_dir() -> Path:
+    """获取 SPICE 模型根目录路径（resources/models/）"""
+    return get_resources_dir() / "models"
+
+
+def get_spice_cmp_dir() -> Path:
+    """获取标准器件模型目录（resources/models/cmp/），存放 .model 定义文件"""
+    return get_spice_models_dir() / "cmp"
+
+
+def get_spice_sub_dir() -> Path:
+    """获取子电路模型目录（resources/models/sub/），存放 .subckt 定义文件"""
+    return get_spice_models_dir() / "sub"
+
+
 # ============================================================
 # 样式表加载
 # ============================================================
@@ -165,6 +180,9 @@ __all__ = [
     "get_resources_dir",
     "get_styles_dir",
     "get_icons_dir",
+    "get_spice_models_dir",
+    "get_spice_cmp_dir",
+    "get_spice_sub_dir",
     
     # 样式表
     "load_stylesheet",

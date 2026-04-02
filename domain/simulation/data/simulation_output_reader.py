@@ -520,11 +520,15 @@ class SimulationOutputReader:
         if not sim_result_path or not project_root:
             return None
         
-        # 构建完整路径
-        full_path = Path(project_root) / SYSTEM_DIR / sim_result_path
-        
-        if not full_path.exists():
-            self._logger.warning(f"仿真结果文件不存在: {full_path}")
+        root_path = Path(project_root)
+        candidate_paths = [
+            root_path / sim_result_path,
+            root_path / SYSTEM_DIR / sim_result_path,
+        ]
+
+        full_path = next((path for path in candidate_paths if path.exists()), None)
+        if full_path is None:
+            self._logger.warning(f"仿真结果文件不存在: {candidate_paths[0]}")
             return None
         
         try:

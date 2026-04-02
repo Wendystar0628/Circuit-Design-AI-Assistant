@@ -513,12 +513,21 @@ class SpiceExecutor(SimulationExecutor):
                 raw_output=combined_output,
             )
         
-        # 从 ngspice 当前 plot 名称推断实际分析类型
-        actual_type = self._detect_analysis_from_plot(
-            self._ngspice.get_current_plot() or ""
-        )
-        if actual_type:
-            analysis_type = actual_type
+        # 找到最匹配 analysis_type 的 plot 并激活，确保 ngGet_Vec_Info 在正确上下文中工作
+        # （多分析命令如 .op + .ac 场景下，run() 后 current plot 可能是 OP 的 "const"，
+        #  而非 AC 的 "ac1"，导致 get_vector_info 从错误 plot 读取数据）
+        target_plot = self._find_best_analysis_plot(analysis_type)
+        if target_plot:
+            self._ngspice.execute_command(f"setplot {target_plot}")
+            actual_type = self._detect_analysis_from_plot(target_plot)
+            if actual_type:
+                analysis_type = actual_type
+        else:
+            actual_type = self._detect_analysis_from_plot(
+                self._ngspice.get_current_plot() or ""
+            )
+            if actual_type:
+                analysis_type = actual_type
         
         # 提取仿真数据
         sim_data = self._extract_simulation_data(analysis_type)
@@ -536,6 +545,36 @@ class SpiceExecutor(SimulationExecutor):
             raw_output=raw_output,
         )
     
+    def _find_best_analysis_plot(self, preferred_type: str) -> Optional[str]:
+        """
+        从当前所有 ngspice plot 中选取最匹配 preferred_type 的 plot 名称。
+
+        用于多分析命令（如 .op + .ac）场景：run() 结束后，ngspice 的
+        current plot 不一定指向目标分析的 plot。此方法通过枚举所有 plot
+        并按前缀匹配，确保后续数据提取从正确的 plot 上下文进行。
+
+        Rules:
+        - 精确前缀匹配（ac/dc/tran/noise/op）→ 取编号最大（最后一次）的
+        - 无精确匹配 → 取第一个非 'const' 的 plot
+        - 完全无 plot → 返回 None
+        """
+        all_plots = self._ngspice.get_all_plots()
+        if not all_plots:
+            return None
+
+        matches = [
+            p for p in all_plots
+            if self._detect_analysis_from_plot(p) == preferred_type
+        ]
+        if matches:
+            return sorted(matches)[-1]
+
+        non_const = [p for p in all_plots if p.lower() != 'const']
+        if non_const:
+            return sorted(non_const)[-1]
+
+        return all_plots[0] if all_plots else None
+
     def _is_critical_error(self, output: str) -> bool:
         """
         检查是否是需要重新初始化的严重错误

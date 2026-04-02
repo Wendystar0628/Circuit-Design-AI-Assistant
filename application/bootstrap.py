@@ -254,7 +254,7 @@ def _init_phase_1() -> bool:
         # --------------------------------------------------------
         # 1.0 CredentialManager 初始化
         # 依赖：Logger（记录凭证操作日志）
-        # 职责：加载凭证，初始化加密密钥
+        # 职责：加载凭证
         # --------------------------------------------------------
         from infrastructure.config.credential_manager import CredentialManager
         from shared.service_locator import ServiceLocator

@@ -60,7 +60,7 @@ SVC_RESOURCE_CLEANUP = "resource_cleanup"
 # 基础设施层服务
 # ============================================================
 
-# 凭证管理器 - 敏感信息加密存储
+# 凭证管理器 - 敏感信息存储
 SVC_CREDENTIAL_MANAGER = "credential_manager"
 
 # 配置管理器 - 统一配置访问

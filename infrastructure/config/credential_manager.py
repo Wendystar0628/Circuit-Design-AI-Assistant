@@ -3,7 +3,7 @@
 凭证管理器 - 敏感信息专用管理
 
 职责：
-- 专门负责敏感凭证（API Key 等）的加密存储和读取
+- 专门负责敏感凭证（API Key 等）的明文存储和读取
 - 按厂商隔离存储，避免切换厂商时丢失配置
 - 与普通配置分离，便于安全审计
 
@@ -12,32 +12,28 @@
 存储结构（~/.circuit_design_ai/credentials.json）：
 {
     "llm": {
-        "zhipu": {"api_key": "encrypted_value", "updated_at": "..."},
-        "deepseek": {"api_key": "encrypted_value", "updated_at": "..."}
+        "zhipu": {"api_key": "plaintext_value", "updated_at": "..."},
+        "deepseek": {"api_key": "plaintext_value", "updated_at": "..."}
     },
     "search": {
-        "google": {"api_key": "encrypted_value", "cx": "...", "updated_at": "..."},
-        "bing": {"api_key": "encrypted_value", "updated_at": "..."}
+        "google": {"api_key": "plaintext_value", "cx": "...", "updated_at": "..."},
+        "bing": {"api_key": "plaintext_value", "updated_at": "..."}
     }
 }
 """
 
 import json
-import base64
-import hashlib
-import uuid
 import os
 import stat
 from datetime import datetime
 from typing import Any, Dict, List, Optional
-from threading import Lock
+from threading import RLock
 
 from .settings import (
     GLOBAL_CONFIG_DIR,
     CREDENTIALS_FILE,
     CREDENTIAL_TYPE_LLM,
     CREDENTIAL_TYPE_SEARCH,
-    ENCRYPTION_SALT,
 )
 
 
@@ -45,7 +41,7 @@ class CredentialManager:
     """
     凭证管理器
     
-    专门负责敏感凭证的加密存储、读取和管理。
+    负责敏感凭证的明文存储、读取和管理。
     每个厂商的凭证独立存储，切换厂商时不会丢失已保存的凭证。
     """
     
@@ -57,9 +53,8 @@ class CredentialManager:
         """
         self._credentials: Dict[str, Dict[str, Dict[str, Any]]] = {}
         self._credentials_file = GLOBAL_CONFIG_DIR / CREDENTIALS_FILE
-        self._lock = Lock()
+        self._lock = RLock()
         self._loaded = False
-        self._encryption_key: Optional[bytes] = None
     
     # ============================================================
     # 核心功能
@@ -151,14 +146,14 @@ class CredentialManager:
         provider_id: str
     ) -> Optional[Dict[str, Any]]:
         """
-        获取指定厂商的解密凭证
+        获取指定厂商的凭证
         
         Args:
             provider_type: 厂商类型（llm/search）
             provider_id: 厂商标识（zhipu/deepseek/google/bing 等）
             
         Returns:
-            解密后的凭证字典，不存在则返回 None
+            凭证字典，不存在则返回 None
         """
         with self._lock:
             type_credentials = self._credentials.get(provider_type, {})
@@ -167,11 +162,10 @@ class CredentialManager:
             if not provider_credentials:
                 return None
             
-            # 解密 api_key 字段
             result = provider_credentials.copy()
-            encrypted_key = result.get("api_key", "")
-            if encrypted_key:
-                result["api_key"] = self._decrypt(encrypted_key).strip()
+            api_key = result.get("api_key", "")
+            if isinstance(api_key, str):
+                result["api_key"] = api_key.strip()
             
             return result
     
@@ -182,12 +176,12 @@ class CredentialManager:
         credential_data: Dict[str, Any]
     ) -> bool:
         """
-        加密存储厂商凭证
+        存储厂商凭证（明文）
         
         Args:
             provider_type: 厂商类型（llm/search）
             provider_id: 厂商标识
-            credential_data: 凭证数据（api_key 会被加密，其他字段明文存储）
+            credential_data: 凭证数据
             
         Returns:
             bool: 保存是否成功
@@ -200,14 +194,10 @@ class CredentialManager:
             # 准备存储数据
             store_data = credential_data.copy()
             
-            # 加密 api_key 字段
+            # 规范化 api_key
             api_key = store_data.get("api_key", "")
             if isinstance(api_key, str):
-                api_key = api_key.strip()
-            if api_key:
-                store_data["api_key"] = self._encrypt(api_key)
-            else:
-                store_data["api_key"] = ""
+                store_data["api_key"] = api_key.strip()
             
             # 添加更新时间
             store_data["updated_at"] = datetime.now().isoformat()
@@ -384,112 +374,6 @@ class CredentialManager:
         if cx is not None:
             credential_data["cx"] = cx
         return self.set_credential(CREDENTIAL_TYPE_SEARCH, provider_id, credential_data)
-
-    # ============================================================
-    # 加密/解密
-    # ============================================================
-
-    def _get_encryption_key(self) -> bytes:
-        """
-        获取加密密钥（派生自机器标识）
-
-        Returns:
-            32 字节的密钥
-        """
-        with self._lock:
-            if self._encryption_key is not None:
-                return self._encryption_key
-
-            machine_id = self._get_machine_id()
-            self._encryption_key = hashlib.pbkdf2_hmac(
-                "sha256",
-                machine_id.encode(),
-                ENCRYPTION_SALT,
-                100000,
-                dklen=32,
-            )
-            return self._encryption_key
-
-    def _get_machine_id(self) -> str:
-        """
-        获取机器唯一标识
-        
-        Returns:
-            机器标识字符串
-        """
-        try:
-            # 尝试获取 MAC 地址 + 用户名作为机器标识
-            mac = uuid.getnode()
-            username = os.getenv("USERNAME") or os.getenv("USER") or "default"
-            return f"circuit_ai_cred_{mac}_{username}"
-        except Exception:
-            # 回退到固定标识
-            return "circuit_ai_credential_default_key"
-    
-    def _encrypt(self, plaintext: str) -> str:
-        """
-        加密字符串
-        
-        Args:
-            plaintext: 明文
-            
-        Returns:
-            Base64 编码的密文
-        """
-        if not plaintext:
-            return ""
-        
-        try:
-            from cryptography.fernet import Fernet
-            
-            key = base64.urlsafe_b64encode(self._get_encryption_key())
-            fernet = Fernet(key)
-            
-            encrypted = fernet.encrypt(plaintext.encode())
-            return base64.urlsafe_b64encode(encrypted).decode()
-            
-        except ImportError:
-            self._log_warning("cryptography 未安装，凭证将使用不安全的编码存储")
-            return base64.b64encode(plaintext.encode()).decode()
-            
-        except Exception as e:
-            self._log_error(f"加密失败: {e}")
-            return base64.b64encode(plaintext.encode()).decode()
-    
-    def _decrypt(self, ciphertext: str) -> str:
-        """
-        解密字符串
-        
-        Args:
-            ciphertext: Base64 编码的密文
-            
-        Returns:
-            明文，解密失败时返回空字符串
-        """
-        if not ciphertext:
-            return ""
-        
-        try:
-            from cryptography.fernet import Fernet
-            
-            key = base64.urlsafe_b64encode(self._get_encryption_key())
-            fernet = Fernet(key)
-            
-            encrypted = base64.urlsafe_b64decode(ciphertext.encode())
-            decrypted = fernet.decrypt(encrypted)
-            return decrypted.decode()
-            
-        except ImportError:
-            try:
-                return base64.b64decode(ciphertext.encode()).decode()
-            except Exception:
-                return ""
-                
-        except Exception:
-            try:
-                return base64.b64decode(ciphertext.encode()).decode()
-            except Exception:
-                return ""
 
     
     # ============================================================

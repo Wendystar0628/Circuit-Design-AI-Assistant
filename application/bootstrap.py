@@ -620,6 +620,36 @@ def _delayed_init():
         _init_llm_client()
 
         # --------------------------------------------------------
+        # 3.6.1 订阅 LLM 配置变更事件
+        # 依赖：EventBus
+        # 职责：当界面层发布 EVENT_LLM_CONFIG_CHANGED 后，由应用层统一负责
+        #       刷新 LLM 运行时并发布 EVENT_LLM_CLIENT_REINITIALIZED 结果通知
+        # --------------------------------------------------------
+        from shared.service_names import SVC_EVENT_BUS
+        from shared.event_types import EVENT_LLM_CONFIG_CHANGED, EVENT_LLM_CLIENT_REINITIALIZED
+        _event_bus = ServiceLocator.get_optional(SVC_EVENT_BUS)
+        if _event_bus:
+            def _on_llm_config_changed(data):
+                success = refresh_llm_runtime_services()
+                if success:
+                    _event_bus.publish(
+                        EVENT_LLM_CLIENT_REINITIALIZED,
+                        data={
+                            "provider": data.get("provider", ""),
+                            "model": data.get("model", ""),
+                            "host": data.get("host", ""),
+                            "source": data.get("source", "config_change"),
+                        }
+                    )
+                    if _logger:
+                        _logger.info(
+                            f"Phase 3.6.1 LLM 运行时已刷新：provider={data.get('provider', '')}"
+                        )
+            _event_bus.subscribe(EVENT_LLM_CONFIG_CHANGED, _on_llm_config_changed)
+            if _logger:
+                _logger.info("Phase 3.6.1 已订阅 EVENT_LLM_CONFIG_CHANGED")
+
+        # --------------------------------------------------------
         # 3.8 RAG 服务初始化
         # 依赖：EventBus、ConfigManager、CredentialManager
         # 职责：创建 RAGManager，订阅项目生命周期

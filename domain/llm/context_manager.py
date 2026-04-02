@@ -486,15 +486,28 @@ class ContextManager:
     # 以下方法内部维护一个默认 state，供不需要 LangGraph 集成的场景使用
     # 这些方法是对基于 state 参数方法的封装，简化 UI 层调用
     
-    def _get_internal_state(self) -> Dict[str, Any]:
-        """获取内部状态（线程安全）"""
+    def get_current_state(self) -> Dict[str, Any]:
+        """
+        获取当前内部状态（线程安全）
+        
+        Returns:
+            当前内部状态字典，至少包含 "messages" 键
+        """
         with self._lock:
             if not hasattr(self, '_internal_state'):
                 self._internal_state = {"messages": []}
             return self._internal_state
     
-    def _set_internal_state(self, state: Dict[str, Any]) -> None:
-        """设置内部状态（线程安全）"""
+    def sync_state(self, state: Dict[str, Any]) -> None:
+        """
+        同步外部状态到内部（线程安全）
+        
+        供 SessionStateManager 等协调器在会话切换、恢复时调用，
+        确保 ContextManager 内部状态与当前会话一致。
+        
+        Args:
+            state: 要同步的状态字典
+        """
         with self._lock:
             self._internal_state = state
     
@@ -510,14 +523,14 @@ class ContextManager:
             content: 消息内容
             attachments: 附件列表
         """
-        state = self._get_internal_state()
+        state = self.get_current_state()
         new_state = self.add_message(
             state=state,
             role="user",
             content=content,
             attachments=attachments,
         )
-        self._set_internal_state(new_state)
+        self.sync_state(new_state)
         
         if self.logger:
             self.logger.debug(f"Added user message: {content[:50]}...")
@@ -546,7 +559,7 @@ class ContextManager:
             stop_reason: 停止原因
             operations: 操作摘要列表（直接传入，优先于 tool_calls 自动生成）
         """
-        state = self._get_internal_state()
+        state = self.get_current_state()
         
         # 合并 operations：直接传入的优先，tool_calls 自动生成的追加
         final_operations = list(operations) if operations else []
@@ -566,7 +579,7 @@ class ContextManager:
             is_partial=is_partial,
             stop_reason=stop_reason,
         )
-        self._set_internal_state(new_state)
+        self.sync_state(new_state)
         
         # 记录缓存统计
         if usage:
@@ -586,7 +599,7 @@ class ContextManager:
         Returns:
             消息列表，格式为 [{"role": str, "content": str|list}, ...]
         """
-        state = self._get_internal_state()
+        state = self.get_current_state()
         messages = self.get_messages(state)
         
         # 转换为 LLM API 格式
@@ -765,7 +778,7 @@ class ContextManager:
         Returns:
             消息列表（LangChain BaseMessage 格式）
         """
-        state = self._get_internal_state()
+        state = self.get_current_state()
         return self.get_messages(state)
     
     def get_usage_ratio_stateful(self, model: str = "default") -> float:
@@ -778,7 +791,7 @@ class ContextManager:
         Returns:
             占用比例（0.0 - 1.0）
         """
-        state = self._get_internal_state()
+        state = self.get_current_state()
         return self.get_usage_ratio(state, model)
     
     def request_compress(self) -> None:

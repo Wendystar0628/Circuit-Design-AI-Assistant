@@ -195,8 +195,8 @@ class SimulationConfigService:
             return self._event_bus
         try:
             from shared.service_locator import ServiceLocator
-            from shared.service_names import SERVICE_EVENT_BUS
-            return ServiceLocator.get(SERVICE_EVENT_BUS)
+            from shared.service_names import SVC_EVENT_BUS
+            return ServiceLocator.get(SVC_EVENT_BUS)
         except Exception:
             return None
     

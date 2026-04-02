@@ -358,8 +358,8 @@ class SensitivityAnalyzer:
         if self._event_bus is None:
             try:
                 from shared.service_locator import ServiceLocator
-                from shared.service_names import SERVICE_EVENT_BUS
-                self._event_bus = ServiceLocator.get(SERVICE_EVENT_BUS)
+                from shared.service_names import SVC_EVENT_BUS
+                self._event_bus = ServiceLocator.get(SVC_EVENT_BUS)
             except Exception:
                 pass
         return self._event_bus

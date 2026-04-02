@@ -347,7 +347,7 @@ class HistoryDialog(QDialog):
             current_state = {}
             if self.context_manager:
                 try:
-                    current_state = self.context_manager._get_internal_state()
+                    current_state = self.context_manager.get_current_state()
                 except Exception:
                     pass
             
@@ -535,7 +535,7 @@ class HistoryDialog(QDialog):
             current_state = {}
             if self.context_manager:
                 try:
-                    current_state = self.context_manager._get_internal_state()
+                    current_state = self.context_manager.get_current_state()
                 except Exception:
                     pass
             

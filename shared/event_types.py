@@ -147,11 +147,22 @@ EVENT_LLM_ERROR = "llm_error"
 # LLM 工具调用
 EVENT_LLM_TOOL_CALL = "llm_tool_call"
 
-# LLM 客户端重新初始化
+# LLM 配置变更请求
+# 由界面层在保存配置后发布，由应用层（bootstrap）订阅并刷新 LLM 运行时。
 # 携带数据：
 #   - provider: str - LLM 厂商 ID
 #   - model: str - 模型名称
-#   - source: str - 触发来源（如 "model_config_dialog"）
+#   - host: str - Ollama 本地地址（云端模型时为空字符串）
+#   - source: str - 触发来源
+EVENT_LLM_CONFIG_CHANGED = "llm_config_changed"
+
+# LLM 客户端重新初始化（结果通知）
+# 由应用层（bootstrap）在运行时刷新完成后发布。
+# 携带数据：
+#   - provider: str - LLM 厂商 ID
+#   - model: str - 模型名称
+#   - host: str - Ollama 本地地址（云端模型时为空字符串）
+#   - source: str - 触发来源
 EVENT_LLM_CLIENT_REINITIALIZED = "llm_client_reinitialized"
 
 # 模型切换
@@ -1102,6 +1113,7 @@ __all__ = [
     "EVENT_LLM_COMPLETE",
     "EVENT_LLM_ERROR",
     "EVENT_LLM_TOOL_CALL",
+    "EVENT_LLM_CONFIG_CHANGED",
     "EVENT_LLM_CLIENT_REINITIALIZED",
     "EVENT_MODEL_CHANGED",
     "EVENT_LLM_PROVIDER_CHANGED",

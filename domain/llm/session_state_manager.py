@@ -290,7 +290,7 @@ class SessionStateManager:
             
             context_manager = ServiceLocator.get_optional(SVC_CONTEXT_MANAGER)
             if context_manager:
-                context_manager._set_internal_state(state)
+                context_manager.sync_state(state)
                 if self.logger:
                     self.logger.debug("状态已同步到 ContextManager")
         except Exception as e:

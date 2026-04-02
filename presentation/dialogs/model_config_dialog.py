@@ -929,13 +929,12 @@ class ModelConfigDialog(QDialog):
 
     def _reinit_llm_client(self, provider_id: str) -> None:
         """
-        重新初始化 LLM 客户端
+        请求刷新 LLM 运行时
         
-        在配置保存后调用，根据新配置创建 LLM 客户端并注册到 ServiceLocator。
-        支持云端厂商和本地模型（Ollama）。
+        在配置保存后调用，发布 EVENT_LLM_CONFIG_CHANGED，由应用层（bootstrap）
+        订阅该事件并负责刷新 LLM 客户端运行时。界面层不直接操作运行时。
         """
         try:
-            from application.bootstrap import refresh_llm_runtime_services
             defaults = PROVIDER_DEFAULTS.get(provider_id, {})
             is_local = defaults.get("is_local", False)
             model = (
@@ -944,18 +943,10 @@ class ModelConfigDialog(QDialog):
             )
             host = self._local_host_edit.text().strip() if is_local else ""
 
-            refresh_llm_runtime_services()
-
-            if self.logger:
-                if is_local:
-                    self.logger.info(f"LLM 客户端已重新初始化：{provider_id}, model={model}, host={host}")
-                else:
-                    self.logger.info(f"LLM 客户端已重新初始化：{provider_id}, model={model}")
-
             if self.event_bus:
-                from shared.event_types import EVENT_LLM_CLIENT_REINITIALIZED, EVENT_MODEL_CHANGED
+                from shared.event_types import EVENT_LLM_CONFIG_CHANGED, EVENT_MODEL_CHANGED
                 self.event_bus.publish(
-                    EVENT_LLM_CLIENT_REINITIALIZED,
+                    EVENT_LLM_CONFIG_CHANGED,
                     data={
                         "provider": provider_id,
                         "model": model,
@@ -988,7 +979,7 @@ class ModelConfigDialog(QDialog):
                     
         except Exception as e:
             if self.logger:
-                self.logger.error(f"重新初始化 LLM 客户端失败: {e}")
+                self.logger.error(f"请求 LLM 运行时刷新失败: {e}")
 
     # ============================================================
     # 事件处理

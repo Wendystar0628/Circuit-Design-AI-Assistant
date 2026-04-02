@@ -394,7 +394,7 @@ class SessionManager:
             current_state = {}
             if self.context_manager:
                 try:
-                    current_state = self.context_manager._get_internal_state()
+                    current_state = self.context_manager.get_current_state()
                 except Exception as e:
                     if self.logger:
                         self.logger.warning(f"Failed to get state from ContextManager: {e}")

@@ -319,7 +319,7 @@ class CredentialManager:
             provider_id: 厂商标识（zhipu/deepseek/qwen/openai/anthropic）
             
         Returns:
-            解密后的 API Key，不存在则返回空字符串
+            API Key 明文，不存在则返回空字符串
         """
         credential = self.get_credential(CREDENTIAL_TYPE_LLM, provider_id)
         return credential.get("api_key", "") if credential else ""
@@ -349,7 +349,7 @@ class CredentialManager:
             provider_id: 厂商标识（google/bing）
             
         Returns:
-            解密后的凭证字典（包含 api_key，Google 还包含 cx）
+            凭证字典（包含 api_key，Google 还包含 cx），不存在则返回 None
         """
         return self.get_credential(CREDENTIAL_TYPE_SEARCH, provider_id)
     

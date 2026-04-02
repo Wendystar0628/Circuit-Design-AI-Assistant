@@ -813,7 +813,7 @@ class ConversationPanel(QWidget):
             context_manager = ServiceLocator.get_optional(SVC_CONTEXT_MANAGER)
             
             if session_manager and context_manager:
-                state = context_manager._get_internal_state()
+                state = context_manager.get_current_state()
                 success = session_manager.save_current_session(state, project_path)
                 if success:
                     if self.logger:

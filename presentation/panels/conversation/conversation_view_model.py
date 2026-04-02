@@ -1095,7 +1095,7 @@ class ConversationViewModel(QObject):
         
         if self.context_manager:
             try:
-                state = self.context_manager._get_internal_state()
+                state = self.context_manager.get_current_state()
                 usage = self.context_manager.calculate_usage(state)
                 current_tokens = usage.get("total_tokens", 0)
                 # max_tokens 是可用于输入的空间（context_limit - output_reserve）
@@ -1305,7 +1305,7 @@ class ConversationViewModel(QObject):
                 if session_state and session_state.project_root:
                     # 获取当前 GraphState
                     if self.context_manager:
-                        state = self.context_manager._get_internal_state()
+                        state = self.context_manager.get_current_state()
                         success = self.session_state_manager.save_current_session(
                             state, session_state.project_root
                         )
@@ -1440,7 +1440,7 @@ class ConversationViewModel(QObject):
                 session_state = ServiceLocator.get_optional(SVC_SESSION_STATE)
                 if session_state and session_state.project_root:
                     # 获取当前 GraphState
-                    state = self.context_manager._get_internal_state()
+                    state = self.context_manager.get_current_state()
                     success = self.session_state_manager.save_current_session(
                         state, session_state.project_root
                     )

@@ -433,30 +433,6 @@ class TestSimulationTab:
 class TestSimulationTabEvents:
     """SimulationTab 事件处理测试"""
     
-    def test_on_workflow_locked(self, app, mock_service_locator):
-        """测试工作流锁定事件"""
-        from presentation.panels.simulation.simulation_tab import SimulationTab
-        
-        tab = SimulationTab()
-        
-        tab._on_workflow_locked({})
-        
-        assert tab._is_workflow_running
-        # 检查状态指示器未被隐藏（而非 isVisible）
-        assert not tab._status_indicator.isHidden()
-    
-    def test_on_workflow_unlocked(self, app, mock_service_locator):
-        """测试工作流解锁事件"""
-        from presentation.panels.simulation.simulation_tab import SimulationTab
-        
-        tab = SimulationTab()
-        
-        tab._on_workflow_locked({})
-        tab._on_workflow_unlocked({})
-        
-        assert not tab._is_workflow_running
-        assert not tab._status_indicator.isVisible()
-    
     def test_on_awaiting_confirmation(self, app, mock_service_locator):
         """测试等待确认事件"""
         from presentation.panels.simulation.simulation_tab import SimulationTab

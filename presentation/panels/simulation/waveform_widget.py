@@ -729,28 +729,6 @@ class WaveformWidget(QWidget):
         
         return measurement
     
-    def export_image(self, path: str) -> bool:
-        """
-        导出图表图片
-        
-        Args:
-            path: 导出路径
-            
-        Returns:
-            bool: 是否成功
-        """
-        try:
-            from pyqtgraph.exporters import ImageExporter
-            
-            exporter = ImageExporter(self._plot_widget.getPlotItem())
-            exporter.export(path)
-            
-            self._logger.info(f"Waveform exported: {path}")
-            return True
-        except Exception as e:
-            self._logger.error(f"Failed to export waveform: {e}")
-            return False
-    
     def get_displayed_signals(self) -> List[str]:
         """获取当前显示的信号列表"""
         return list(self._plot_items.keys())

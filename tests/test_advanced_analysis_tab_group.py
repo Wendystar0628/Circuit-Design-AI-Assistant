@@ -44,7 +44,7 @@ class TestAdvancedAnalysisTabGroup:
         
         assert widget is not None
         assert widget._tab_widget is not None
-        assert widget._tab_widget.count() == 8
+        assert widget._tab_widget.count() == 7
     
     def test_sub_tabs_exist(self, app):
         """测试所有子标签页存在"""
@@ -58,7 +58,6 @@ class TestAdvancedAnalysisTabGroup:
         assert widget._worst_case_tab is not None
         assert widget._sensitivity_tab is not None
         assert widget._fft_tab is not None
-        assert widget._topology_tab is not None
         assert widget._diagnosis_tab is not None
     
     def test_switch_to_pvt(self, app):
@@ -115,15 +114,6 @@ class TestAdvancedAnalysisTabGroup:
         
         assert widget._tab_widget.currentIndex() == widget.TAB_FFT
     
-    def test_switch_to_topology(self, app):
-        """测试切换到拓扑识别标签页"""
-        from presentation.panels.simulation.simulation_tab import AdvancedAnalysisTabGroup
-        
-        widget = AdvancedAnalysisTabGroup()
-        widget.switch_to_topology()
-        
-        assert widget._tab_widget.currentIndex() == widget.TAB_TOPOLOGY
-    
     def test_switch_to_diagnosis(self, app):
         """测试切换到收敛诊断标签页"""
         from presentation.panels.simulation.simulation_tab import AdvancedAnalysisTabGroup
@@ -145,7 +135,6 @@ class TestAdvancedAnalysisTabGroup:
         assert widget.worst_case_tab is widget._worst_case_tab
         assert widget.sensitivity_tab is widget._sensitivity_tab
         assert widget.fft_tab is widget._fft_tab
-        assert widget.topology_tab is widget._topology_tab
         assert widget.diagnosis_tab is widget._diagnosis_tab
     
     def test_retranslate_ui(self, app):
@@ -183,11 +172,3 @@ class TestChartViewerPanelAdvanced:
         panel.switch_to_advanced()
         
         assert panel._tab_widget.currentIndex() == panel.TAB_ADVANCED
-    
-    def test_advanced_property(self, app):
-        """测试高级分析属性访问"""
-        from presentation.panels.simulation.simulation_tab import ChartViewerPanel
-        
-        panel = ChartViewerPanel()
-        
-        assert panel.advanced_analysis is panel._advanced_analysis_widget

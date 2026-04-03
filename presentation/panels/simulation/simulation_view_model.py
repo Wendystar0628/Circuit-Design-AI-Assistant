@@ -159,17 +159,12 @@ class SimulationViewModel(BaseViewModel):
         # 核心状态
         self._current_result: Optional[SimulationResult] = None
         self._metrics_list: List[DisplayMetric] = []
-        self._chart_paths: List[str] = []
         self._overall_score: float = 0.0
         self._simulation_status: SimulationStatus = SimulationStatus.IDLE
         self._progress: float = 0.0
         self._error_message: str = ""
         self._tuning_parameters: List[TuningParameter] = []
         self._has_goals: bool = False  # 是否有设计目标
-        
-        # 版本校验字段
-        self._current_result_id: Optional[str] = None
-        self._current_result_timestamp: Optional[str] = None
         
         # 历史指标（用于计算趋势）
         self._previous_metrics: Dict[str, float] = {}
@@ -190,11 +185,6 @@ class SimulationViewModel(BaseViewModel):
     def metrics_list(self) -> List[DisplayMetric]:
         """格式化后的指标列表"""
         return self._metrics_list
-    
-    @property
-    def chart_paths(self) -> List[str]:
-        """图表文件路径列表"""
-        return self._chart_paths
     
     @property
     def overall_score(self) -> float:
@@ -348,10 +338,6 @@ class SimulationViewModel(BaseViewModel):
         """
         self._current_result = result
         
-        # 更新版本校验字段
-        self._current_result_id = getattr(result, 'id', None)
-        self._current_result_timestamp = getattr(result, 'timestamp', None)
-        
         if result.success and result.data is not None:
             # 优先使用 measurements 字段（.MEASURE 结果）
             if hasattr(result, 'measurements') and result.measurements:
@@ -435,115 +421,6 @@ class SimulationViewModel(BaseViewModel):
             display_metrics.append(self._create_simple_display_metric(name, value, unit))
         
         return display_metrics
-    
-    def _detect_output_signal(self, sim_data: 'SimulationData') -> Optional[str]:
-        """
-        自动检测输出信号名称
-        
-        检测规则：
-        1. 优先匹配标准格式的输出信号（如 V(out)）
-        2. 其次匹配包含 "out" 的信号（如 V(vout), V(output)）
-        3. 若无匹配，使用第一个电压信号（V(...) 格式）
-        4. 若仍无匹配，返回 None
-        
-        注意：跳过带后缀的信号（如 _mag, _phase），优先使用原始复数信号
-        
-        Args:
-            sim_data: 仿真数据
-            
-        Returns:
-            Optional[str]: 检测到的输出信号名称，或 None
-        """
-        if not sim_data or not sim_data.signals:
-            return None
-        
-        signal_names = list(sim_data.signals.keys())
-
-        if sim_data.frequency is not None:
-            magnitude_signals = [
-                name for name in signal_names
-                if name.lower().endswith('_mag')
-            ]
-
-            for name in magnitude_signals:
-                if name.lower() in ('v(out)_mag', 'out_mag'):
-                    return name
-
-            for name in magnitude_signals:
-                name_lower = name.lower()
-                if name_lower.startswith('v(') and 'out' in name_lower:
-                    return name
-
-            for name in magnitude_signals:
-                if name.upper().startswith('V('):
-                    return name
-        
-        # 过滤掉带后缀的信号，只保留原始信号名
-        base_signals = [
-            name for name in signal_names 
-            if not any(name.endswith(suffix) for suffix in ['_mag', '_phase', '_real', '_imag'])
-        ]
-        
-        # 规则1：优先匹配标准格式的输出信号 V(out)
-        for name in base_signals:
-            if name.upper() == 'V(OUT)':
-                return name
-        
-        # 规则2：匹配包含 "out" 的电压信号
-        for name in base_signals:
-            name_lower = name.lower()
-            if name_lower.startswith('v(') and 'out' in name_lower:
-                return name
-        
-        # 规则3：使用第一个电压信号
-        for name in base_signals:
-            if name.upper().startswith('V('):
-                return name
-        
-        # 规则4：如果没有基础信号，尝试使用 _mag 后缀的信号
-        for name in signal_names:
-            name_lower = name.lower()
-            if "out" in name_lower and "_mag" in name_lower:
-                # 返回去掉 _mag 后缀的名称
-                return name.replace('_mag', '')
-        
-        # 规则5：无匹配
-        return None
-    
-    def check_for_updates(self, project_root: str) -> bool:
-        """
-        检查是否有更新的仿真结果
-        
-        Args:
-            project_root: 项目根目录
-            
-        Returns:
-            bool: 是否有更新
-        """
-        if self.simulation_service is None:
-            return False
-        
-        try:
-            load_result = self.simulation_service.get_latest_sim_result(project_root)
-            if not load_result.success or load_result.data is None:
-                return False
-            
-            latest_result = load_result.data
-            latest_timestamp = getattr(latest_result, 'timestamp', None)
-            
-            # 比较时间戳
-            if latest_timestamp and self._current_result_timestamp:
-                return latest_timestamp > self._current_result_timestamp
-            
-            # 如果没有当前结果，则有更新
-            if self._current_result is None:
-                return True
-            
-            return False
-            
-        except Exception as e:
-            self._logger.warning(f"Failed to check for updates: {e}")
-            return False
     
     def _load_metrics_from_dict(self, metrics_dict: Dict[str, Any]) -> List[DisplayMetric]:
         """
@@ -1109,21 +986,15 @@ class SimulationViewModel(BaseViewModel):
         """清空所有数据"""
         self._current_result = None
         self._metrics_list = []
-        self._chart_paths = []
         self._overall_score = 0.0
         self._simulation_status = SimulationStatus.IDLE
         self._progress = 0.0
         self._error_message = ""
         self._tuning_parameters = []
         
-        # 重置版本校验字段
-        self._current_result_id = None
-        self._current_result_timestamp = None
-        
         self.notify_properties_changed({
             "current_result": None,
             "metrics_list": [],
-            "chart_paths": [],
             "overall_score": 0.0,
             "simulation_status": SimulationStatus.IDLE,
             "progress": 0.0,

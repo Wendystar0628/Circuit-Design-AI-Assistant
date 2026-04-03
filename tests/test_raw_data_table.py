@@ -153,8 +153,8 @@ class TestRawDataTableModel:
         header1 = model.headerData(1, Qt.Orientation.Horizontal, Qt.ItemDataRole.DisplayRole)
         assert header1 == "V(out)"
     
-    def test_get_row_for_time(self, mock_simulation_result, mock_table_data):
-        """测试时间查找"""
+    def test_get_row_for_x_value(self, mock_simulation_result, mock_table_data):
+        """测试 X 轴值查找"""
         from presentation.panels.simulation.raw_data_table import RawDataTableModel
         
         model = RawDataTableModel()
@@ -163,11 +163,11 @@ class TestRawDataTableModel:
             mock_service.get_table_data.return_value = mock_table_data
             model.load_result(mock_simulation_result)
         
-        # 查找存在的时间
-        row = model.get_row_for_time(0.0)
+        # 查找存在的 X 轴值
+        row = model.get_row_for_x_value(0.0)
         assert row == 0
         
-        row = model.get_row_for_time(1e-6)
+        row = model.get_row_for_x_value(1e-6)
         assert row == 1
     
     def test_search_value(self, mock_simulation_result, mock_table_data):

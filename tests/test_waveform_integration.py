@@ -105,32 +105,15 @@ class TestChartViewerPanelIntegration:
 class TestSimulationTabWaveformIntegration:
     """测试 SimulationTab 波形集成"""
     
-    def test_get_waveform_widget(self, qapp):
-        """测试获取波形组件"""
+    def test_simulation_tab_exposes_components(self, qapp):
+        """测试仿真标签页暴露核心组件"""
         from presentation.panels.simulation.simulation_tab import SimulationTab
         
         tab = SimulationTab()
         
-        waveform = tab.get_waveform_widget()
-        assert waveform is not None
-    
-    def test_get_raw_data_table(self, qapp):
-        """测试获取原始数据表格"""
-        from presentation.panels.simulation.simulation_tab import SimulationTab
-        
-        tab = SimulationTab()
-        
-        table = tab.get_raw_data_table()
-        assert table is not None
-    
-    def test_get_output_log_viewer(self, qapp):
-        """测试获取输出日志查看器"""
-        from presentation.panels.simulation.simulation_tab import SimulationTab
-        
-        tab = SimulationTab()
-        
-        viewer = tab.get_output_log_viewer()
-        assert viewer is not None
+        assert tab._chart_viewer_panel.waveform_widget is not None
+        assert tab._chart_viewer_panel.raw_data_table is not None
+        assert tab._chart_viewer_panel.output_log_viewer is not None
     
     def test_load_result_populates_components(self, qapp, mock_simulation_result):
         """测试加载结果时填充各组件"""
@@ -142,7 +125,7 @@ class TestSimulationTabWaveformIntegration:
         tab.load_result(mock_simulation_result)
         
         # 验证波形组件有数据
-        waveform = tab.get_waveform_widget()
+        waveform = tab._chart_viewer_panel.waveform_widget
         displayed_signals = waveform.get_displayed_signals()
         assert len(displayed_signals) > 0
 
@@ -159,7 +142,7 @@ class TestSimulationTabWaveformIntegration:
         tab = SimulationTab()
         tab.load_result(mock_simulation_result)
 
-        waveform = tab.get_waveform_widget()
+        waveform = tab._chart_viewer_panel.waveform_widget
         assert len(waveform.get_displayed_signals()) > 0
 
         failed_result = SimulationResult(
@@ -182,7 +165,7 @@ class TestSimulationTabWaveformIntegration:
         tab.load_result(failed_result)
 
         assert waveform.get_displayed_signals() == []
-        assert tab.get_output_log_viewer().get_total_lines() > 0
+        assert tab._chart_viewer_panel.output_log_viewer.get_total_lines() > 0
         assert tab._chart_viewer_panel.chart_viewer.get_current_chart_path() is None
         assert tab._chart_viewer_panel.chart_viewer._simulation_data is None
         assert tab._chart_viewer_panel._tab_widget.currentIndex() == ChartViewerPanel.TAB_LOG

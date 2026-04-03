@@ -148,25 +148,6 @@ class TestStatusIndicatorIntegration:
         
         assert simulation_tab._status_indicator.isHidden()
     
-    def test_workflow_locked_event(self, simulation_tab):
-        """测试工作流锁定事件处理"""
-        simulation_tab._on_workflow_locked({})
-        
-        assert not simulation_tab._status_indicator.isHidden()
-        assert simulation_tab._is_workflow_running
-    
-    def test_workflow_unlocked_event(self, simulation_tab):
-        """测试工作流解锁事件处理"""
-        # 先锁定
-        simulation_tab._on_workflow_locked({})
-        assert not simulation_tab._status_indicator.isHidden()
-        
-        # 解锁
-        simulation_tab._on_workflow_unlocked({})
-        
-        assert simulation_tab._status_indicator.isHidden()
-        assert not simulation_tab._is_workflow_running
-    
     def test_clear_hides_status(self, simulation_tab):
         """测试清空时隐藏状态指示器"""
         # 先显示

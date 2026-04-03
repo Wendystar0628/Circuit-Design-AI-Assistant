@@ -1003,32 +1003,6 @@ class ChartViewerPanel(QFrame):
         """获取输出日志查看器"""
         return self._output_log_viewer
     
-    @property
-    def advanced_analysis(self):
-        """获取高级分析标签页组"""
-        return self._advanced_analysis_widget
-    
-    def load_chart(self, chart_path: str, chart_type: Optional[str] = None):
-        """加载图表"""
-        self._chart_viewer.load_chart(chart_path, chart_type)
-    
-    def load_charts(self, chart_paths: Dict[str, str]):
-        """批量加载图表"""
-        self._chart_viewer.load_charts(chart_paths)
-    
-    def load_waveform(self, result, signal_name: str):
-        """加载波形数据"""
-        self._waveform_widget.load_waveform(result, signal_name)
-        self._tab_widget.setCurrentIndex(self.TAB_WAVEFORM)
-    
-    def load_raw_data(self, result):
-        """加载原始数据"""
-        self._raw_data_table.load_data(result)
-    
-    def load_output_log(self, sim_result_path: str, project_root: str):
-        """加载输出日志"""
-        self._output_log_viewer.load_log(sim_result_path, project_root)
-    
     def clear(self):
         """清空所有内容"""
         self._chart_viewer.clear()
@@ -1100,11 +1074,10 @@ class SimulationTab(QWidget):
         
         # 项目状态
         self._project_root: Optional[str] = None
-        self._is_workflow_running: bool = False
         self._last_loaded_result_path: Optional[str] = None
         
         # 仿真结果文件监控器
-        self._result_watcher = SimulationResultWatcher()
+        self._result_watcher: Optional[SimulationResultWatcher] = None
         
         # EventBus 引用
         self._event_bus = None
@@ -1326,8 +1299,6 @@ class SimulationTab(QWidget):
             self._metrics_summary_panel.set_overall_score(value)
         elif name == "simulation_status":
             self._update_status(value)
-        elif name == "chart_paths":
-            self._update_charts(value)
         elif name == "error_message":
             if value:
                 self._show_error(value)
@@ -1353,7 +1324,8 @@ class SimulationTab(QWidget):
     def _on_project_closed(self, event_data: dict):
         """处理项目关闭事件"""
         # 停止仿真结果文件监控器
-        self._result_watcher.stop()
+        if self._result_watcher is not None:
+            self._result_watcher.stop()
         
         self._project_root = None
         self.clear()
@@ -1729,7 +1701,7 @@ class SimulationTab(QWidget):
             chart_paths = chart_generator.generate_for_result(result, enabled_types)
             
             if chart_paths:
-                self._chart_viewer_panel.load_charts(chart_paths)
+                self._chart_viewer_panel.chart_viewer.load_charts(chart_paths)
                 self._logger.info(
                     f"Loaded {len(chart_paths)} charts: "
                     f"{', '.join(chart_paths.keys())}"
@@ -1745,30 +1717,9 @@ class SimulationTab(QWidget):
         更新指标显示
         
         Args:
-            metrics_list: DisplayMetric 列表
+            metrics_list: 指标列表
         """
         self._update_metrics(metrics_list)
-    
-    def load_chart(self, chart_path: str, chart_type: Optional[str] = None):
-        """
-        加载图表
-        
-        Args:
-            chart_path: 图表文件路径
-            chart_type: 图表类型
-        """
-        self._chart_viewer_panel.load_chart(chart_path, chart_type)
-        self._hide_empty_state()
-    
-    def load_charts(self, chart_paths: Dict[str, str]):
-        """
-        批量加载图表
-        
-        Args:
-            chart_paths: 图表类型到路径的映射
-        """
-        self._chart_viewer_panel.load_charts(chart_paths)
-        self._hide_empty_state()
     
     def clear(self):
         """清空所有显示"""
@@ -1832,26 +1783,10 @@ class SimulationTab(QWidget):
                 self._get_text("export.failed", "导出失败：{error}").format(error=result.error_message)
             )
     
-    def get_waveform_widget(self):
-        """获取波形查看器组件"""
-        return self._chart_viewer_panel.waveform_widget
-    
-    def get_raw_data_table(self):
-        """获取原始数据表格组件"""
-        return self._chart_viewer_panel.raw_data_table
-    
-    def get_output_log_viewer(self):
-        """获取输出日志查看器组件"""
-        return self._chart_viewer_panel.output_log_viewer
-    
     def refresh(self):
         """刷新显示"""
         if self._project_root:
             self._load_project_simulation_result()
-    
-    def show_history_dialog(self):
-        """显示历史记录对话框"""
-        self._show_history_dialog()
     
     def retranslate_ui(self):
         """重新翻译 UI 文本"""
@@ -1886,17 +1821,6 @@ class SimulationTab(QWidget):
             self._hide_empty_state()
         else:
             self._metrics_summary_panel.clear()
-    
-    def _update_charts(self, chart_paths: List[str]):
-        """更新图表显示"""
-        if chart_paths:
-            # 转换为字典格式
-            charts_dict = {}
-            for i, path in enumerate(chart_paths):
-                chart_type = f"chart_{i}"
-                charts_dict[chart_type] = path
-            self._chart_viewer_panel.load_charts(charts_dict)
-            self._hide_empty_state()
     
     def _update_status(self, status: SimulationStatus):
         """更新状态显示"""
@@ -2101,7 +2025,8 @@ class SimulationTab(QWidget):
     def closeEvent(self, event):
         """处理关闭事件"""
         # 停止仿真结果文件监控器
-        self._result_watcher.stop()
+        if self._result_watcher is not None:
+            self._result_watcher.stop()
         
         self._unsubscribe_events()
         self._view_model.dispose()

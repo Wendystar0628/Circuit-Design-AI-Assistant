@@ -23,10 +23,6 @@ from domain.simulation.models.simulation_result import (
     SimulationResult,
     SimulationData,
 )
-from domain.simulation.metrics.metric_result import (
-    MetricResult,
-    MetricCategory,
-)
 
 
 class TestSimulationStatus:
@@ -143,59 +139,42 @@ class TestSimulationViewModel:
         assert view_model.metrics_list == []
         assert view_model.overall_score == 0.0
     
-    def test_format_metric_basic(self, view_model):
-        """测试基本指标格式化"""
-        metric = MetricResult(
-            name="gain",
-            display_name="增益",
-            value=20.5,
-            unit="dB",
-            category=MetricCategory.AMPLIFIER,
-        )
-        
-        display = view_model.format_metric(metric)
-        
-        assert display.name == "gain"
-        assert display.display_name == "增益"
-        assert "20.5" in display.value
-        assert display.unit == "dB"
-        assert display.category == "amplifier"
+    def test_load_result_from_metrics_dict(self, view_model, mock_simulation_result):
+        """测试从 metrics 字典加载显示指标"""
+        view_model.load_result(mock_simulation_result)
+
+        assert view_model.simulation_status == SimulationStatus.COMPLETE
+        assert len(view_model.metrics_list) == 1
+        assert view_model.metrics_list[0].name == "gain"
+        assert view_model.metrics_list[0].category == "amplifier"
     
-    def test_format_metric_with_target(self, view_model):
-        """测试带目标值的指标格式化"""
-        metric = MetricResult(
-            name="gain",
-            display_name="增益",
-            value=20.5,
-            unit="dB",
-            target=20.0,
-            target_type="min",
-            category=MetricCategory.AMPLIFIER,
+    def test_load_result_prefers_measurements_over_metrics(self, view_model):
+        """测试优先使用 measurements 构建显示指标"""
+        result = SimulationResult(
+            executor="spice",
+            file_path="measure_test.cir",
+            analysis_type="tran",
+            success=True,
+            data=SimulationData(
+                time=np.array([0.0, 1e-6]),
+                signals={"V(out)": np.array([0.0, 1.0])},
+            ),
+            measurements=[
+                {
+                    "name": "bandwidth",
+                    "value": 1e6,
+                    "unit": "Hz",
+                    "status": "OK",
+                }
+            ],
+            metrics={"gain": 20.0},
         )
-        
-        display = view_model.format_metric(metric)
-        
-        assert display.is_met is True
-        assert "≥" in display.target
-        assert "20" in display.target
-    
-    def test_format_metric_range_target(self, view_model):
-        """测试范围目标的指标格式化"""
-        metric = MetricResult(
-            name="phase_margin",
-            display_name="相位裕度",
-            value=55.0,
-            unit="°",
-            target=45.0,
-            target_type="range",
-            target_max=90.0,
-            category=MetricCategory.AMPLIFIER,
-        )
-        
-        display = view_model.format_metric(metric)
-        
-        assert display.is_met is True
-        assert "~" in display.target
+
+        view_model.load_result(result)
+
+        assert len(view_model.metrics_list) == 1
+        assert view_model.metrics_list[0].name == "bandwidth"
+        assert view_model.metrics_list[0].category == "amplifier"
     
     def test_calculate_trend_up(self, view_model):
         """测试上升趋势计算"""
@@ -475,95 +454,3 @@ class TestSimulationViewModelExport:
         result = vm.export_result("xyz", str(tmp_path / "export.xyz"))
         
         assert result is False
-
-
-class TestDetectOutputSignal:
-    """测试输出信号自动检测功能"""
-    
-    @pytest.fixture
-    def view_model(self):
-        """创建 ViewModel 实例"""
-        return SimulationViewModel()
-    
-    def test_detect_out_mag_signal(self, view_model):
-        """测试检测 out_mag 信号（优先级最高）"""
-        data = SimulationData(
-            frequency=np.array([1e3, 1e4, 1e5]),
-            signals={
-                "vin#branch_mag": np.array([1.0, 1.0, 1.0]),
-                "out_mag": np.array([0.9, 0.8, 0.7]),
-                "out_phase": np.array([0.0, -10.0, -20.0]),
-            }
-        )
-        
-        result = view_model._detect_output_signal(data)
-        assert result == "out_mag"
-    
-    def test_detect_vout_mag_signal(self, view_model):
-        """测试检测 V(out)_mag 信号"""
-        data = SimulationData(
-            frequency=np.array([1e3, 1e4, 1e5]),
-            signals={
-                "V(in)_mag": np.array([1.0, 1.0, 1.0]),
-                "V(out)_mag": np.array([0.9, 0.8, 0.7]),
-            }
-        )
-        
-        result = view_model._detect_output_signal(data)
-        assert result == "V(out)_mag"
-    
-    def test_detect_vout_signal(self, view_model):
-        """测试检测 V(out) 信号（无 mag 后缀）"""
-        data = SimulationData(
-            frequency=np.array([1e3, 1e4, 1e5]),
-            signals={
-                "V(in)": np.array([1.0, 1.0, 1.0]),
-                "V(out)": np.array([0.9, 0.8, 0.7]),
-            }
-        )
-        
-        result = view_model._detect_output_signal(data)
-        assert result == "V(out)"
-    
-    def test_detect_fallback_to_first_non_branch(self, view_model):
-        """测试回退到第一个非电流信号"""
-        data = SimulationData(
-            frequency=np.array([1e3, 1e4, 1e5]),
-            signals={
-                "vin#branch": np.array([1.0, 1.0, 1.0]),
-                "V(node1)": np.array([0.9, 0.8, 0.7]),
-                "V(node2)": np.array([0.5, 0.4, 0.3]),
-            }
-        )
-        
-        result = view_model._detect_output_signal(data)
-        assert result == "V(node1)"
-    
-    def test_detect_none_for_empty_signals(self, view_model):
-        """测试空信号时返回 None"""
-        data = SimulationData(
-            frequency=np.array([1e3, 1e4, 1e5]),
-            signals={}
-        )
-        
-        result = view_model._detect_output_signal(data)
-        assert result is None
-    
-    def test_detect_none_for_none_data(self, view_model):
-        """测试 None 数据时返回 None"""
-        result = view_model._detect_output_signal(None)
-        assert result is None
-    
-    def test_detect_excludes_branch_signals(self, view_model):
-        """测试排除 #branch 信号"""
-        data = SimulationData(
-            frequency=np.array([1e3, 1e4, 1e5]),
-            signals={
-                "vout#branch": np.array([1.0, 1.0, 1.0]),
-                "V(node1)": np.array([0.9, 0.8, 0.7]),
-            }
-        )
-        
-        result = view_model._detect_output_signal(data)
-        # 应该选择 V(node1) 而不是 vout#branch
-        assert result == "V(node1)"

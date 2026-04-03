@@ -17,7 +17,7 @@
     
     table = RawDataTable()
     table.load_data(simulation_result)
-    table.jump_to_time(0.001)
+    table.jump_to_x_value(0.001)
     table.export_selection("output.csv", "csv")
 """
 
@@ -28,8 +28,6 @@ from PyQt6.QtCore import (
     Qt,
     QAbstractTableModel,
     QModelIndex,
-    pyqtSignal,
-    QTimer,
 )
 from PyQt6.QtWidgets import (
     QWidget,
@@ -49,11 +47,9 @@ from PyQt6.QtWidgets import (
     QSizePolicy,
     QAbstractItemView,
 )
-from PyQt6.QtGui import QColor
 
 from domain.simulation.data.waveform_data_service import (
     WaveformDataService,
-    TableData,
     TableRow,
     waveform_data_service,
 )
@@ -69,7 +65,6 @@ from resources.theme import (
     COLOR_ACCENT,
     COLOR_ACCENT_LIGHT,
     FONT_SIZE_SMALL,
-    FONT_SIZE_NORMAL,
     SPACING_SMALL,
     SPACING_NORMAL,
     BORDER_RADIUS_NORMAL,
@@ -256,14 +251,14 @@ class RawDataTableModel(QAbstractTableModel):
         
         return None
     
-    def get_row_for_time(self, time_value: float) -> int:
+    def get_row_for_x_value(self, x_value: float) -> int:
         """
-        获取指定时间值对应的行号
+        获取指定 X 轴值对应的行号
         
         使用二分查找在缓存或数据中定位。
         
         Args:
-            time_value: 时间值
+            x_value: X 轴值
             
         Returns:
             int: 行号，未找到返回 -1
@@ -276,7 +271,7 @@ class RawDataTableModel(QAbstractTableModel):
         
         # 首先检查缓存
         for row_idx, row in self._cache.items():
-            if abs(row.x_value - time_value) < DEFAULT_TOLERANCE:
+            if abs(row.x_value - x_value) < DEFAULT_TOLERANCE:
                 return row_idx
         
         # 二分查找：加载数据块进行搜索
@@ -293,9 +288,9 @@ class RawDataTableModel(QAbstractTableModel):
             
             mid_value = self._cache[mid].x_value
             
-            if abs(mid_value - time_value) < DEFAULT_TOLERANCE:
+            if abs(mid_value - x_value) < DEFAULT_TOLERANCE:
                 return mid
-            elif mid_value < time_value:
+            elif mid_value < x_value:
                 low = mid + 1
             else:
                 high = mid - 1
@@ -469,18 +464,10 @@ class RawDataTable(QWidget):
     
     以表格形式显示仿真原始数据，支持：
     - 虚拟滚动（大数据量）
-    - 跳转到指定行/时间
+    - 跳转到指定行/X 轴值
     - 搜索特定值
     - 导出选中数据
-    
-    Signals:
-        row_selected: 行选中时发出，携带行号
-        time_selected: 时间选中时发出，携带时间值
     """
-    
-    row_selected = pyqtSignal(int)
-    x_value_selected = pyqtSignal(float)
-    time_selected = pyqtSignal(float)
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -537,20 +524,20 @@ class RawDataTable(QWidget):
         
         toolbar_layout.addSpacing(SPACING_NORMAL)
         
-        # 跳转到时间
-        self._jump_time_label = QLabel()
-        self._jump_time_spin = QDoubleSpinBox()
-        self._jump_time_spin.setDecimals(9)
-        self._jump_time_spin.setMinimum(0.0)
-        self._jump_time_spin.setMaximum(1e9)
-        self._jump_time_spin.setFixedWidth(120)
-        self._jump_time_btn = QPushButton()
-        self._jump_time_btn.setObjectName("jumpBtn")
-        self._jump_time_btn.clicked.connect(self._on_jump_to_time)
+        # 跳转到 X 轴值
+        self._jump_x_label = QLabel()
+        self._jump_x_spin = QDoubleSpinBox()
+        self._jump_x_spin.setDecimals(9)
+        self._jump_x_spin.setMinimum(0.0)
+        self._jump_x_spin.setMaximum(1e9)
+        self._jump_x_spin.setFixedWidth(120)
+        self._jump_x_btn = QPushButton()
+        self._jump_x_btn.setObjectName("jumpBtn")
+        self._jump_x_btn.clicked.connect(self._on_jump_to_x_value)
         
-        toolbar_layout.addWidget(self._jump_time_label)
-        toolbar_layout.addWidget(self._jump_time_spin)
-        toolbar_layout.addWidget(self._jump_time_btn)
+        toolbar_layout.addWidget(self._jump_x_label)
+        toolbar_layout.addWidget(self._jump_x_spin)
+        toolbar_layout.addWidget(self._jump_x_btn)
         
         toolbar_layout.addSpacing(SPACING_NORMAL)
         
@@ -757,29 +744,18 @@ class RawDataTable(QWidget):
         index = self._model.index(row_number, 0)
         self._table_view.scrollTo(index, QAbstractItemView.ScrollHint.PositionAtCenter)
         self._table_view.selectRow(row_number)
-        
-        self.row_selected.emit(row_number)
     
     def jump_to_x_value(self, x_value: float):
         """
-        跳转到指定时间点
+        跳转到指定 X 轴值
         
         Args:
             x_value: X 轴值
         """
-        row = self._model.get_row_for_time(x_value)
+        row = self._model.get_row_for_x_value(x_value)
         
         if row >= 0:
             self.jump_to_row(row)
-            
-            # 获取实际 X 轴值
-            row_data = self._model.get_row_data(row)
-            if row_data:
-                self.x_value_selected.emit(row_data.x_value)
-                self.time_selected.emit(row_data.x_value)
-
-    def jump_to_time(self, time_value: float):
-        self.jump_to_x_value(time_value)
     
     def search_value(
         self,
@@ -863,25 +839,11 @@ class RawDataTable(QWidget):
             self._logger.error(f"Export failed: {e}")
             return False
     
-    def get_selected_rows(self) -> List[int]:
-        """获取选中的行号列表"""
-        selection = self._table_view.selectionModel().selectedRows()
-        return [index.row() for index in selection]
-    
-    def get_selected_data(self) -> List[TableRow]:
-        """获取选中行的数据"""
-        rows = self.get_selected_rows()
-        return [
-            self._model.get_row_data(row)
-            for row in rows
-            if self._model.get_row_data(row) is not None
-        ]
-    
     def retranslate_ui(self):
         """重新翻译 UI 文本"""
         self._jump_row_label.setText(self._tr("Row:"))
         self._jump_row_btn.setText(self._tr("Go"))
-        self._jump_time_btn.setText(self._tr("Go"))
+        self._jump_x_btn.setText(self._tr("Go"))
         self._search_label.setText(self._tr("Search:"))
         self._search_btn.setText(self._tr("Find"))
         self._export_btn.setText(self._tr("Export"))
@@ -911,8 +873,8 @@ class RawDataTable(QWidget):
         has_data = total_rows > 0
         self._jump_row_spin.setEnabled(has_data)
         self._jump_row_btn.setEnabled(has_data)
-        self._jump_time_spin.setEnabled(has_data)
-        self._jump_time_btn.setEnabled(has_data)
+        self._jump_x_spin.setEnabled(has_data)
+        self._jump_x_btn.setEnabled(has_data)
         self._search_column_combo.setEnabled(has_data)
         self._search_value_edit.setEnabled(has_data)
         self._search_btn.setEnabled(has_data)
@@ -920,7 +882,7 @@ class RawDataTable(QWidget):
 
     def _update_axis_labels(self):
         axis_name = self._get_x_axis_name()
-        self._jump_time_label.setText(f"{axis_name}:")
+        self._jump_x_label.setText(f"{axis_name}:")
 
     def _get_x_axis_name(self) -> str:
         label = self._model.x_label or "X"
@@ -949,10 +911,10 @@ class RawDataTable(QWidget):
         row = self._jump_row_spin.value()
         self.jump_to_row(row)
     
-    def _on_jump_to_time(self):
-        """跳转到时间按钮点击"""
-        time_value = self._jump_time_spin.value()
-        self.jump_to_x_value(time_value)
+    def _on_jump_to_x_value(self):
+        """跳转到 X 轴值按钮点击"""
+        x_value = self._jump_x_spin.value()
+        self.jump_to_x_value(x_value)
     
     def _on_search(self):
         """搜索按钮点击"""
@@ -1025,11 +987,7 @@ class RawDataTable(QWidget):
     def _on_double_clicked(self, index: QModelIndex):
         """双击行"""
         row = index.row()
-        row_data = self._model.get_row_data(row)
-        
-        if row_data:
-            self.x_value_selected.emit(row_data.x_value)
-            self.time_selected.emit(row_data.x_value)
+        self.jump_to_row(row)
     
     def _tr(self, text: str) -> str:
         """翻译文本"""

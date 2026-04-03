@@ -432,14 +432,15 @@ class SensitivityAnalyzer:
         
         # 1. 执行标称仿真
         nominal_result = self._run_nominal(circuit_file, analysis_config)
-        if not nominal_result.success or metric not in (nominal_result.metrics or {}):
+        nominal_value = nominal_result.get_metric(metric)
+        if not nominal_result.success or nominal_value is None:
             result.success = False
             result.error_message = "标称仿真失败或指标不存在"
             result.duration_seconds = time.time() - start_time
             self._logger.error(result.error_message)
             return result
         
-        result.nominal_value = nominal_result.metrics[metric]
+        result.nominal_value = nominal_value
         result.simulation_count = 1
         
         # 2. 对每个参数执行 +/- 扰动仿真
@@ -906,12 +907,14 @@ class SensitivityAnalyzer:
         # 计算输出变化
         delta_plus = 0.0
         delta_minus = 0.0
+        plus_value = plus_result.get_metric(metric)
+        minus_value = minus_result.get_metric(metric)
         
-        if plus_result.success and metric in (plus_result.metrics or {}):
-            delta_plus = plus_result.metrics[metric] - nominal_output
+        if plus_result.success and plus_value is not None:
+            delta_plus = plus_value - nominal_output
         
-        if minus_result.success and metric in (minus_result.metrics or {}):
-            delta_minus = minus_result.metrics[metric] - nominal_output
+        if minus_result.success and minus_value is not None:
+            delta_minus = minus_value - nominal_output
         
         # 计算敏感度
         abs_sens_plus, rel_sens_plus = self.calculate_sensitivity(

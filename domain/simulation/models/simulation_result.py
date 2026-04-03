@@ -24,7 +24,10 @@
             frequency=np.array([1e3, 1e4, 1e5]),
             signals={"V(out)": np.array([0.1, 1.0, 10.0])}
         ),
-        metrics={"gain": "20dB", "bandwidth": "10MHz"},
+        measurements=[
+            MeasureResult(name="gain", value=20.0, unit="dB"),
+            MeasureResult(name="bandwidth", value=1e7, unit="Hz"),
+        ],
         timestamp=datetime.now().isoformat(),
         duration_seconds=2.5,
         version=1
@@ -50,6 +53,12 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 
 import numpy as np
+
+from domain.simulation.measure.measure_metadata import (
+    get_result_metric_value,
+    normalize_measurements_payload,
+    resolve_result_metric_values,
+)
 
 
 # ============================================================
@@ -257,9 +266,6 @@ class SimulationResult:
     data: Optional[SimulationData] = None
     """仿真数据（成功时有值）"""
     
-    metrics: Optional[Dict[str, Any]] = None
-    """性能指标字典（可选，旧格式兼容）"""
-    
     measurements: Optional[list] = None
     """
     .MEASURE 测量结果列表（新格式）
@@ -336,7 +342,6 @@ class SimulationResult:
             "analysis_type": self.analysis_type,
             "success": self.success,
             "data": self.data.to_dict() if self.data is not None else None,
-            "metrics": self.metrics,
             "measurements": measurements_data,
             "error": self.error.to_dict() if self.error is not None and hasattr(self.error, "to_dict") else str(self.error) if self.error is not None else None,
             "raw_output": self.raw_output,
@@ -365,15 +370,7 @@ class SimulationResult:
         # 反序列化 measurements
         measurements = None
         if data.get("measurements") is not None:
-            try:
-                from domain.simulation.measure.measure_result import MeasureResult
-                measurements = [
-                    MeasureResult.from_dict(m) if isinstance(m, dict) else m
-                    for m in data["measurements"]
-                ]
-            except ImportError:
-                # MeasureResult 不可用，保留原始字典
-                measurements = data["measurements"]
+            measurements = normalize_measurements_payload(data["measurements"])
         
         # 反序列化错误信息
         error = None
@@ -397,7 +394,6 @@ class SimulationResult:
             analysis_type=data["analysis_type"],
             success=data["success"],
             data=sim_data,
-            metrics=data.get("metrics"),
             measurements=measurements,
             error=error,
             raw_output=data.get("raw_output"),
@@ -465,6 +461,10 @@ class SimulationResult:
             return age.total_seconds()
         except (ValueError, TypeError):
             return -1.0
+
+    @property
+    def metric_values(self) -> Dict[str, float]:
+        return resolve_result_metric_values(self)
     
     def has_metrics(self) -> bool:
         """
@@ -473,7 +473,7 @@ class SimulationResult:
         Returns:
             bool: 是否包含性能指标
         """
-        return self.metrics is not None and len(self.metrics) > 0
+        return bool(self.metric_values)
     
     def get_metric(self, name: str, default: Any = None) -> Any:
         """
@@ -486,9 +486,7 @@ class SimulationResult:
         Returns:
             Any: 指标值，若不存在则返回默认值
         """
-        if self.metrics is None:
-            return default
-        return self.metrics.get(name, default)
+        return get_result_metric_value(self, name, default)
     
     def get_summary(self) -> str:
         """
@@ -518,7 +516,6 @@ def create_success_result(
     file_path: str,
     analysis_type: str,
     data: SimulationData,
-    metrics: Optional[Dict[str, Any]] = None,
     measurements: Optional[list] = None,
     raw_output: Optional[str] = None,
     duration_seconds: float = 0.0,
@@ -533,8 +530,7 @@ def create_success_result(
         file_path: 仿真文件路径
         analysis_type: 分析类型
         data: 仿真数据
-        metrics: 性能指标（可选，旧格式）
-        measurements: .MEASURE 测量结果列表（可选，新格式）
+        measurements: 规范化测量结果列表（可选）
         raw_output: 原始输出（可选）
         duration_seconds: 执行耗时
         version: 版本号（应从 GraphState.iteration_count + 1 计算）
@@ -549,8 +545,7 @@ def create_success_result(
         analysis_type=analysis_type,
         success=True,
         data=data,
-        metrics=metrics,
-        measurements=measurements,
+        measurements=normalize_measurements_payload(measurements),
         error=None,
         raw_output=raw_output,
         timestamp=datetime.now().isoformat(),
@@ -592,7 +587,6 @@ def create_error_result(
         analysis_type=analysis_type,
         success=False,
         data=None,
-        metrics=None,
         error=error,
         raw_output=raw_output,
         timestamp=datetime.now().isoformat(),

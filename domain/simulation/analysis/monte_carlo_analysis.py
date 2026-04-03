@@ -686,11 +686,7 @@ class MonteCarloAnalyzer:
         if not sim_result.success:
             return {}
         
-        metrics = {}
-        if sim_result.metrics:
-            metrics.update(sim_result.metrics)
-        
-        return metrics
+        return dict(sim_result.metric_values)
     
     def _check_design_goals(
         self,

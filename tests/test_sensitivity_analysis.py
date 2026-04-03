@@ -503,7 +503,10 @@ class TestSensitivityAnalyzerIntegration:
             file_path="test.cir",
             analysis_type="ac",
             success=True,
-            metrics={"gain": 20.0, "bandwidth": 1e6},
+            measurements=[
+                {"name": "gain", "value": 20.0, "unit": "dB", "status": "OK"},
+                {"name": "bandwidth", "value": 1e6, "unit": "Hz", "status": "OK"},
+            ],
         )
         
         # +扰动结果
@@ -512,7 +515,10 @@ class TestSensitivityAnalyzerIntegration:
             file_path="test.cir",
             analysis_type="ac",
             success=True,
-            metrics={"gain": 20.5, "bandwidth": 0.95e6},
+            measurements=[
+                {"name": "gain", "value": 20.5, "unit": "dB", "status": "OK"},
+                {"name": "bandwidth", "value": 0.95e6, "unit": "Hz", "status": "OK"},
+            ],
         )
         
         # -扰动结果
@@ -521,7 +527,10 @@ class TestSensitivityAnalyzerIntegration:
             file_path="test.cir",
             analysis_type="ac",
             success=True,
-            metrics={"gain": 19.6, "bandwidth": 1.05e6},
+            measurements=[
+                {"name": "gain", "value": 19.6, "unit": "dB", "status": "OK"},
+                {"name": "bandwidth", "value": 1.05e6, "unit": "Hz", "status": "OK"},
+            ],
         )
         
         # 根据调用参数返回不同结果
@@ -632,7 +641,7 @@ class TestSensitivityAnalyzerIntegration:
             file_path="test.cir",
             analysis_type="ac",
             success=True,
-            metrics={"other_metric": 10.0},
+            measurements=[{"name": "other_metric", "value": 10.0, "status": "OK"}],
         ))
         
         analyzer = SensitivityAnalyzer(executor=mock_executor)
@@ -666,7 +675,7 @@ class TestEdgeCases:
             file_path="test.cir",
             analysis_type="ac",
             success=True,
-            metrics={"gain": 20.0},
+            measurements=[{"name": "gain", "value": 20.0, "unit": "dB", "status": "OK"}],
         ))
         
         analyzer = SensitivityAnalyzer(executor=executor)

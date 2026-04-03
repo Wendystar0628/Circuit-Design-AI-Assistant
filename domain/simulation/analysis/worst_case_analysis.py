@@ -321,12 +321,13 @@ class WorstCaseAnalyzer:
         
         # 1. 执行标称仿真
         nominal_result = self._run_nominal(circuit_file, analysis_config)
-        if not nominal_result.success or metric not in (nominal_result.metrics or {}):
+        nominal_value = nominal_result.get_metric(metric)
+        if not nominal_result.success or nominal_value is None:
             self._logger.error("标称仿真失败或指标不存在")
             result.duration_seconds = time.time() - start_time
             return result
         
-        result.nominal_value = nominal_result.metrics[metric]
+        result.nominal_value = nominal_value
         result.simulation_count = 1
         
         if on_progress:
@@ -359,12 +360,14 @@ class WorstCaseAnalyzer:
             # 计算敏感度
             delta_plus = 0.0
             delta_minus = 0.0
+            plus_value = plus_result.get_metric(metric)
+            minus_value = minus_result.get_metric(metric)
             
-            if plus_result.success and metric in (plus_result.metrics or {}):
-                delta_plus = plus_result.metrics[metric] - result.nominal_value
+            if plus_result.success and plus_value is not None:
+                delta_plus = plus_value - result.nominal_value
             
-            if minus_result.success and metric in (minus_result.metrics or {}):
-                delta_minus = minus_result.metrics[metric] - result.nominal_value
+            if minus_result.success and minus_value is not None:
+                delta_minus = minus_value - result.nominal_value
             
             # 敏感度系数 = 指标变化 / 参数变化
             param_change = tol.tolerance_factor * nominal
@@ -698,8 +701,9 @@ class WorstCaseAnalyzer:
         result_min = self._executor.execute(circuit_file, config_min)
         
         wc_min = 0.0
-        if result_min.success and metric in (result_min.metrics or {}):
-            wc_min = result_min.metrics[metric]
+        result_min_value = result_min.get_metric(metric)
+        if result_min.success and result_min_value is not None:
+            wc_min = result_min_value
         
         # 执行最坏情况仿真（最大化）
         config_max = dict(analysis_config) if analysis_config else {}
@@ -707,8 +711,9 @@ class WorstCaseAnalyzer:
         result_max = self._executor.execute(circuit_file, config_max)
         
         wc_max = 0.0
-        if result_max.success and metric in (result_max.metrics or {}):
-            wc_max = result_max.metrics[metric]
+        result_max_value = result_max.get_metric(metric)
+        if result_max.success and result_max_value is not None:
+            wc_max = result_max_value
         
         return wc_max, wc_min, worst_min_params
     

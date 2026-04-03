@@ -20,7 +20,7 @@ Python 脚本仿真执行器
 - 返回字典需包含：
   - success: bool - 执行状态
   - data: dict - 仿真数据（frequency, time, signals）
-  - metrics: dict - 性能指标（可选）
+  - measurements: list - 规范化测量结果（可选）
 - 脚本通过 stdout 以 JSON 格式输出结果
 
 安全声明：
@@ -63,11 +63,12 @@ import numpy as np
 
 from domain.simulation.executor.simulation_executor import SimulationExecutor
 from domain.simulation.models.simulation_result import (
-    SimulationData,
     SimulationResult,
-    create_error_result,
+    SimulationData,
     create_success_result,
+    create_error_result,
 )
+from domain.simulation.measure.measure_metadata import normalize_measurements_payload
 from domain.simulation.models.simulation_error import (
     SimulationError,
     SimulationErrorType,
@@ -494,14 +495,29 @@ except Exception as e:
             
             # 脚本执行成功，提取数据
             sim_data = self._extract_simulation_data(result_dict)
-            metrics = result_dict.get("metrics")
+            if result_dict.get("measurements") is None and "metrics" in result_dict:
+                return create_error_result(
+                    executor=self.get_name(),
+                    file_path=file_path,
+                    analysis_type=analysis_type,
+                    error=SimulationError(
+                        code="E012",
+                        type=SimulationErrorType.OUTPUT_PARSE_ERROR,
+                        severity=ErrorSeverity.HIGH,
+                        message="脚本返回了已废弃的 metrics 字段，必须改为 measurements",
+                        file_path=file_path,
+                        recovery_suggestion="请让脚本返回 measurements 列表，每项包含 name/value/status 及可选 unit",
+                    ),
+                    raw_output=stdout,
+                )
+            measurements = normalize_measurements_payload(result_dict.get("measurements"))
             
             return create_success_result(
                 executor=self.get_name(),
                 file_path=file_path,
                 analysis_type=analysis_type,
                 data=sim_data,
-                metrics=metrics,
+                measurements=measurements,
                 raw_output=stdout,
             )
             

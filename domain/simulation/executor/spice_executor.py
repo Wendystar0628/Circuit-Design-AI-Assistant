@@ -534,7 +534,7 @@ class SpiceExecutor(SimulationExecutor):
         raw_output = self._ngspice.get_stdout()
         
         # 解析 .MEASURE 结果
-        measurements = self._parse_measure_results(raw_output)
+        measurements = self._parse_measure_results(raw_output, modified_netlist)
         
         return create_success_result(
             executor=self.get_name(),
@@ -926,7 +926,7 @@ class SpiceExecutor(SimulationExecutor):
         else:
             return "other"
     
-    def _parse_measure_results(self, raw_output: str) -> list:
+    def _parse_measure_results(self, raw_output: str, netlist: str = "") -> list:
         """
         从 ngspice 输出中解析 .MEASURE 结果
         
@@ -938,8 +938,26 @@ class SpiceExecutor(SimulationExecutor):
         """
         try:
             from domain.simulation.measure.measure_parser import measure_parser
+            from domain.simulation.measure.measure_metadata import measure_metadata_resolver
             
             results = measure_parser.parse_measure_output(raw_output)
+            definitions = measure_metadata_resolver.extract_definitions(netlist) if netlist else {}
+
+            for result in results:
+                definition = definitions.get(result.name)
+                metadata = measure_metadata_resolver.resolve(
+                    result.name,
+                    statement=definition.statement if definition else result.statement,
+                    description=definition.description if definition else result.description,
+                    fallback_unit=result.unit,
+                )
+                if definition:
+                    result.statement = definition.statement
+                    result.description = definition.description
+                result.unit = metadata.unit
+                result.display_name = metadata.display_name
+                result.category = metadata.category
+                result.quantity_kind = metadata.quantity_kind
             
             if results:
                 self._logger.info(f"解析到 {len(results)} 个 .MEASURE 结果")

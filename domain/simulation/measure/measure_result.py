@@ -14,7 +14,7 @@
     )
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Dict, Optional
 
@@ -61,6 +61,15 @@ class MeasureResult:
     description: str = ""
     """测量描述（用于 UI 显示）"""
     
+    display_name: str = ""
+    """显示名称"""
+    
+    category: str = ""
+    """分类"""
+    
+    quantity_kind: str = ""
+    """物理量种类"""
+    
     raw_output: str = ""
     """ngspice 原始输出行"""
     
@@ -76,6 +85,9 @@ class MeasureResult:
             "status": self.status.value,
             "statement": self.statement,
             "description": self.description,
+            "display_name": self.display_name,
+            "category": self.category,
+            "quantity_kind": self.quantity_kind,
             "raw_output": self.raw_output,
             "error_message": self.error_message,
         }
@@ -96,6 +108,9 @@ class MeasureResult:
             status=status,
             statement=data.get("statement", ""),
             description=data.get("description", ""),
+            display_name=data.get("display_name", ""),
+            category=data.get("category", ""),
+            quantity_kind=data.get("quantity_kind", ""),
             raw_output=data.get("raw_output", ""),
             error_message=data.get("error_message", ""),
         )

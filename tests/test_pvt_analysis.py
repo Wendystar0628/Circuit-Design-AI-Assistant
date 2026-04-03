@@ -222,7 +222,7 @@ class TestPVTAnalyzer:
         # 模拟仿真结果
         mock_result = Mock(spec=SimulationResult)
         mock_result.success = True
-        mock_result.metrics = {"gain": 20.0}
+        mock_result.metric_values = {"gain": 20.0}
         mock_result.to_dict.return_value = {"success": True}
         mock_executor.execute.return_value = mock_result
         

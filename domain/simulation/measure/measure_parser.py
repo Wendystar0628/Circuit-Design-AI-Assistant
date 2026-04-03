@@ -29,6 +29,7 @@ import logging
 import re
 from typing import Dict, List, Optional, Tuple
 
+from domain.simulation.measure.measure_metadata import measure_metadata_resolver
 from domain.simulation.measure.measure_result import MeasureResult, MeasureStatus
 
 
@@ -56,12 +57,6 @@ class MeasureParser:
         re.MULTILINE | re.IGNORECASE
     )
     
-    # 匹配带附加信息的测量结果（提取 from/to/trig/targ 值）
-    MEASURE_DETAIL_PATTERN = re.compile(
-        r"(from|to|targ|trig|at)\s*=\s*([-+]?\d+\.?\d*(?:[eE][-+]?\d+)?)",
-        re.IGNORECASE
-    )
-    
     # 排除的变量名（ngspice 内部变量，不是测量结果）
     EXCLUDED_NAMES = {
         'time', 'frequency', 'temp', 'hertz', 'alter', 'sweep',
@@ -70,16 +65,6 @@ class MeasureParser:
     
     def __init__(self):
         self._logger = logging.getLogger(__name__)
-        self._unit_hints: Dict[str, str] = {}
-    
-    def set_unit_hints(self, hints: Dict[str, str]):
-        """
-        设置单位提示
-        
-        Args:
-            hints: 测量名称到单位的映射，如 {"gain_db": "dB", "f_3db": "Hz"}
-        """
-        self._unit_hints = hints
     
     def parse_measure_output(self, output: str) -> List[MeasureResult]:
         """
@@ -113,23 +98,23 @@ class MeasureParser:
             
             try:
                 value = float(value_str)
-                unit = self._infer_unit(name)
-                
-                # 提取附加信息
-                details = self._extract_details(full_match)
+                metadata = measure_metadata_resolver.resolve(name)
                 
                 result = MeasureResult(
                     name=name,
                     value=value,
-                    unit=unit,
+                    unit=metadata.unit,
                     status=MeasureStatus.OK,
+                    display_name=metadata.display_name,
+                    category=metadata.category,
+                    quantity_kind=metadata.quantity_kind,
                     raw_output=full_match,
                 )
                 
                 results.append(result)
                 parsed_names.add(name)
                 
-                self._logger.debug(f"Parsed measure: {name} = {value} {unit}")
+                self._logger.debug(f"Parsed measure: {name} = {value} {metadata.unit}")
                 
             except ValueError as e:
                 self._logger.warning(f"Failed to parse measure value: {name} = {value_str}")
@@ -184,76 +169,6 @@ class MeasureParser:
                 line = line[7:]
             lines.append(line)
         return "\n".join(lines)
-    
-    def _extract_details(self, line: str) -> Dict[str, float]:
-        """
-        从测量结果行中提取附加信息
-        
-        Args:
-            line: 测量结果行
-            
-        Returns:
-            Dict[str, float]: 附加信息字典，如 {"from": 1e-9, "to": 2e-9}
-        """
-        details = {}
-        for match in self.MEASURE_DETAIL_PATTERN.finditer(line):
-            key = match.group(1).lower()
-            try:
-                value = float(match.group(2))
-                details[key] = value
-            except ValueError:
-                pass
-        return details
-    
-    def _infer_unit(self, name: str) -> str:
-        """
-        根据测量名称推断单位
-        
-        Args:
-            name: 测量名称
-            
-        Returns:
-            str: 推断的单位
-        """
-        # 优先使用用户提供的单位提示
-        if name in self._unit_hints:
-            return self._unit_hints[name]
-        
-        name_lower = name.lower()
-        
-        # 根据名称推断单位（按优先级排序）
-        # dB 相关
-        if "db" in name_lower:
-            return "dB"
-        # 频率相关
-        if any(kw in name_lower for kw in ["freq", "f_", "bw", "gbw", "ugf", "bandwidth"]):
-            return "Hz"
-        # 相位相关
-        if any(kw in name_lower for kw in ["phase", "margin", "pm", "deg"]):
-            return "°"
-        # 时间相关
-        if any(kw in name_lower for kw in ["time", "rise", "fall", "delay", "period", "pw"]):
-            return "s"
-        # 压摆率
-        if "slew" in name_lower or "sr" in name_lower:
-            return "V/s"
-        # 电流相关
-        if name_lower.startswith("i") or "current" in name_lower or "bias" in name_lower:
-            return "A"
-        # 电压相关
-        if name_lower.startswith("v") or "voltage" in name_lower or "offset" in name_lower:
-            return "V"
-        # 功率相关
-        if "power" in name_lower or "pwr" in name_lower or "pdiss" in name_lower:
-            return "W"
-        # 电阻相关
-        if name_lower.startswith("r") or "resistance" in name_lower or "impedance" in name_lower:
-            return "Ω"
-        # 增益（无单位或 V/V）
-        if "gain" in name_lower and "db" not in name_lower:
-            return "V/V"
-        
-        return ""
     
     def validate_measure_statement(self, statement: str) -> Tuple[bool, Optional[str]]:
         """

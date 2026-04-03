@@ -127,7 +127,9 @@ class TestSimulationViewModel:
             analysis_type="ac",
             success=True,
             data=data,
-            metrics={"gain": 20.0},
+            measurements=[
+                {"name": "gain", "value": 20.0, "unit": "dB", "status": "OK"}
+            ],
             duration_seconds=1.5,
         )
     
@@ -139,8 +141,8 @@ class TestSimulationViewModel:
         assert view_model.metrics_list == []
         assert view_model.overall_score == 0.0
     
-    def test_load_result_from_metrics_dict(self, view_model, mock_simulation_result):
-        """测试从 metrics 字典加载显示指标"""
+    def test_load_result_from_measurements(self, view_model, mock_simulation_result):
+        """测试从 measurements 加载显示指标"""
         view_model.load_result(mock_simulation_result)
 
         assert view_model.simulation_status == SimulationStatus.COMPLETE
@@ -148,8 +150,8 @@ class TestSimulationViewModel:
         assert view_model.metrics_list[0].name == "gain"
         assert view_model.metrics_list[0].category == "amplifier"
     
-    def test_load_result_prefers_measurements_over_metrics(self, view_model):
-        """测试优先使用 measurements 构建显示指标"""
+    def test_load_result_uses_measurement_metadata(self, view_model):
+        """测试 measurements 元数据用于显示"""
         result = SimulationResult(
             executor="spice",
             file_path="measure_test.cir",
@@ -165,15 +167,17 @@ class TestSimulationViewModel:
                     "value": 1e6,
                     "unit": "Hz",
                     "status": "OK",
+                    "display_name": "Bandwidth",
+                    "category": "amplifier",
                 }
             ],
-            metrics={"gain": 20.0},
         )
 
         view_model.load_result(result)
 
         assert len(view_model.metrics_list) == 1
         assert view_model.metrics_list[0].name == "bandwidth"
+        assert view_model.metrics_list[0].display_name == "Bandwidth"
         assert view_model.metrics_list[0].category == "amplifier"
     
     def test_calculate_trend_up(self, view_model):

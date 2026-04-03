@@ -151,7 +151,7 @@ class TestSimulationResult:
             file_path="amplifier.cir",
             analysis_type="ac",
             data=data,
-            metrics={"gain": "20dB"},
+            measurements=[{"name": "gain", "value": 20.0, "unit": "dB", "status": "OK"}],
             duration_seconds=2.5,
             version=1,
         )
@@ -161,7 +161,8 @@ class TestSimulationResult:
         assert result.file_path == "amplifier.cir"
         assert result.analysis_type == "ac"
         assert result.data is not None
-        assert result.metrics == {"gain": "20dB"}
+        assert result.measurements is not None
+        assert result.measurements[0].name == "gain"
         assert result.error is None
         assert result.duration_seconds == 2.5
         assert result.version == 1
@@ -180,7 +181,6 @@ class TestSimulationResult:
         assert result.success is False
         assert result.executor == "spice"
         assert result.data is None
-        assert result.metrics is None
         assert result.error == "Convergence failed"
     
     def test_serialization(self):
@@ -195,7 +195,7 @@ class TestSimulationResult:
             file_path="amplifier.cir",
             analysis_type="ac",
             data=data,
-            metrics={"gain": "20dB"},
+            measurements=[{"name": "gain", "value": 20.0, "unit": "dB", "status": "OK"}],
             duration_seconds=2.5,
             version=1,
         )
@@ -207,7 +207,7 @@ class TestSimulationResult:
         assert result_dict["success"] is True
         assert isinstance(result_dict["data"], dict)
         assert isinstance(result_dict["data"]["frequency"], list)
-        assert result_dict["metrics"] == {"gain": "20dB"}
+        assert result_dict["measurements"][0]["name"] == "gain"
     
     def test_deserialization(self):
         """测试反序列化"""
@@ -221,7 +221,9 @@ class TestSimulationResult:
                 "time": None,
                 "signals": {"V(out)": [0.1, 1.0, 10.0]},
             },
-            "metrics": {"gain": "20dB"},
+            "measurements": [
+                {"name": "gain", "value": 20.0, "unit": "dB", "status": "OK"}
+            ],
             "error": None,
             "raw_output": None,
             "timestamp": "2024-12-20T14:30:22.123456",
@@ -236,7 +238,8 @@ class TestSimulationResult:
         assert result.success is True
         assert result.data is not None
         assert isinstance(result.data.frequency, np.ndarray)
-        assert result.metrics == {"gain": "20dB"}
+        assert result.measurements is not None
+        assert result.measurements[0].unit == "dB"
     
     def test_round_trip(self):
         """测试序列化-反序列化往返"""
@@ -250,7 +253,7 @@ class TestSimulationResult:
             file_path="amplifier.cir",
             analysis_type="ac",
             data=data,
-            metrics={"gain": "20dB"},
+            measurements=[{"name": "gain", "value": 20.0, "unit": "dB", "status": "OK"}],
             duration_seconds=2.5,
             version=1,
         )
@@ -261,7 +264,10 @@ class TestSimulationResult:
         # 检查往返后数据一致
         assert restored.executor == original.executor
         assert restored.success == original.success
-        assert restored.metrics == original.metrics
+        assert restored.measurements is not None
+        assert original.measurements is not None
+        assert restored.measurements[0].name == original.measurements[0].name
+        assert restored.measurements[0].value == original.measurements[0].value
         assert np.array_equal(
             restored.data.frequency,
             original.data.frequency
@@ -279,7 +285,7 @@ class TestSimulationResult:
             file_path="amplifier.cir",
             analysis_type="ac",
             data=data,
-            metrics={"gain": "20dB"},
+            measurements=[{"name": "gain", "value": 20.0, "unit": "dB", "status": "OK"}],
             duration_seconds=2.5,
             version=1,
         )
@@ -397,7 +403,7 @@ class TestSimulationResult:
             file_path="test.cir",
             analysis_type="ac",
             data=SimulationData(),
-            metrics={"gain": "20dB"},
+            measurements=[{"name": "gain", "value": 20.0, "unit": "dB", "status": "OK"}],
         )
         
         result_without_metrics = create_success_result(
@@ -417,12 +423,15 @@ class TestSimulationResult:
             file_path="test.cir",
             analysis_type="ac",
             data=SimulationData(),
-            metrics={"gain": "20dB", "bandwidth": "10MHz"},
+            measurements=[
+                {"name": "gain", "value": 20.0, "unit": "dB", "status": "OK"},
+                {"name": "bandwidth", "value": 1e7, "unit": "Hz", "status": "OK"},
+            ],
         )
         
         # 存在的指标
-        assert result.get_metric("gain") == "20dB"
-        assert result.get_metric("bandwidth") == "10MHz"
+        assert result.get_metric("gain") == 20.0
+        assert result.get_metric("bandwidth") == 1e7
         
         # 不存在的指标返回默认值
         assert result.get_metric("phase_margin") is None

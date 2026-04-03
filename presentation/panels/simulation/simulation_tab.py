@@ -1336,7 +1336,6 @@ class SimulationTab(QWidget):
         # 事件数据在 "data" 字段中
         data = event_data.get("data", event_data)
         result_path = data.get("result_path")
-        metrics = data.get("metrics", {})
         success = data.get("success", False)
         
         self._logger.info(f"Simulation complete: result_path={result_path}, success={success}")

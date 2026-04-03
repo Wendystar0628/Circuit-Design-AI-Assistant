@@ -306,7 +306,7 @@ class TestMonteCarloAnalyzer:
         # 模拟仿真结果
         mock_result = Mock(spec=SimulationResult)
         mock_result.success = True
-        mock_result.metrics = {"gain": 20.0}
+        mock_result.metric_values = {"gain": 20.0}
         mock_executor.execute.return_value = mock_result
         
         analyzer = MonteCarloAnalyzer(executor=mock_executor)
@@ -338,11 +338,11 @@ class TestMonteCarloAnalyzer:
         # 模拟部分失败
         success_result = Mock(spec=SimulationResult)
         success_result.success = True
-        success_result.metrics = {"gain": 20.0}
+        success_result.metric_values = {"gain": 20.0}
         
         fail_result = Mock(spec=SimulationResult)
         fail_result.success = False
-        fail_result.metrics = {}
+        fail_result.metric_values = {}
         
         # 交替返回成功和失败
         mock_executor.execute.side_effect = [

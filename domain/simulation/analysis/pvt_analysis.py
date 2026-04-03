@@ -538,11 +538,7 @@ class PVTAnalyzer:
         if not sim_result.success:
             return {}
         
-        metrics = {}
-        
-        # 复制已有指标
-        if sim_result.metrics:
-            metrics.update(sim_result.metrics)
+        metrics = dict(sim_result.metric_values)
         
         # 从仿真数据中提取常用指标
         if sim_result.data and sim_result.data.signals:

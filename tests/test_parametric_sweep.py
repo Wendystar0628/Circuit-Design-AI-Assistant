@@ -379,7 +379,7 @@ class TestParametricSweepAnalyzer:
         
         mock_result = Mock(spec=SimulationResult)
         mock_result.success = True
-        mock_result.metrics = {"gain": 20.0}
+        mock_result.metric_values = {"gain": 20.0}
         mock_executor.execute.return_value = mock_result
         
         analyzer = ParametricSweepAnalyzer(executor=mock_executor)

@@ -984,7 +984,6 @@ class SimulationService:
         if bus:
             bus.publish(EVENT_SIM_COMPLETE, {
                 "result_path": result_path,
-                "metrics": result.metrics or {},
                 "duration_seconds": result.duration_seconds,
                 "success": result.success,
             })

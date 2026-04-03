@@ -218,17 +218,17 @@ class TestWorstCaseAnalyzer:
         # 标称仿真结果
         nominal_result = Mock(spec=SimulationResult)
         nominal_result.success = True
-        nominal_result.metrics = {"gain": 20.0}
+        nominal_result.get_metric.return_value = 20.0
         
         # +tolerance 结果
         plus_result = Mock(spec=SimulationResult)
         plus_result.success = True
-        plus_result.metrics = {"gain": 21.0}  # +1
+        plus_result.get_metric.return_value = 21.0  # +1
         
         # -tolerance 结果
         minus_result = Mock(spec=SimulationResult)
         minus_result.success = True
-        minus_result.metrics = {"gain": 19.0}  # -1
+        minus_result.get_metric.return_value = 19.0  # -1
         
         mock_executor.execute.side_effect = [
             nominal_result, plus_result, minus_result
@@ -262,26 +262,26 @@ class TestWorstCaseAnalyzer:
         # 标称仿真结果
         nominal_result = Mock(spec=SimulationResult)
         nominal_result.success = True
-        nominal_result.metrics = {"gain": 20.0}
+        nominal_result.get_metric.return_value = 20.0
         
         # +tolerance 结果
         plus_result = Mock(spec=SimulationResult)
         plus_result.success = True
-        plus_result.metrics = {"gain": 22.0}
+        plus_result.get_metric.return_value = 22.0
         
         # -tolerance 结果
         minus_result = Mock(spec=SimulationResult)
         minus_result.success = True
-        minus_result.metrics = {"gain": 18.0}
+        minus_result.get_metric.return_value = 18.0
         
         # EVA 最坏情况仿真结果
         eva_min_result = Mock(spec=SimulationResult)
         eva_min_result.success = True
-        eva_min_result.metrics = {"gain": 17.0}
+        eva_min_result.get_metric.return_value = 17.0
         
         eva_max_result = Mock(spec=SimulationResult)
         eva_max_result.success = True
-        eva_max_result.metrics = {"gain": 23.0}
+        eva_max_result.get_metric.return_value = 23.0
         
         mock_executor.execute.side_effect = [
             nominal_result, plus_result, minus_result,
@@ -432,13 +432,12 @@ class TestWorstCaseIntegration:
         # 设置仿真结果
         # R1 影响更大：delta = 2.0，C1 影响较小：delta = 0.5
         # 使用相同量级的标称值以便比较敏感度
-        results = [
-            Mock(success=True, metrics={"gain": 20.0}),  # 标称
-            Mock(success=True, metrics={"gain": 22.0}),  # R1 +tol (+2)
-            Mock(success=True, metrics={"gain": 18.0}),  # R1 -tol (-2)
-            Mock(success=True, metrics={"gain": 20.5}),  # C1 +tol (+0.5)
-            Mock(success=True, metrics={"gain": 19.5}),  # C1 -tol (-0.5)
-        ]
+        results = []
+        for value in [20.0, 22.0, 18.0, 20.5, 19.5]:
+            mock_result = Mock(spec=SimulationResult)
+            mock_result.success = True
+            mock_result.get_metric.return_value = value
+            results.append(mock_result)
         mock_executor.execute.side_effect = results
         
         analyzer = WorstCaseAnalyzer(executor=mock_executor)

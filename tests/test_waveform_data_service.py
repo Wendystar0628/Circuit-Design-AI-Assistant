@@ -52,7 +52,7 @@ def sample_result(sample_sim_data: SimulationData) -> SimulationResult:
         file_path="test.cir",
         analysis_type="tran",
         data=sample_sim_data,
-        metrics={"rise_time": "10us"},
+        measurements=[{"name": "rise_time", "value": 10e-6, "unit": "s", "status": "OK"}],
     )
 
 

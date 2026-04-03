@@ -37,6 +37,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional
 
+from domain.simulation.measure.measure_metadata import measure_metadata_resolver
 from presentation.core.base_view_model import BaseViewModel
 from domain.simulation.models.simulation_result import SimulationResult
 from shared.event_types import (
@@ -339,12 +340,8 @@ class SimulationViewModel(BaseViewModel):
         self._current_result = result
         
         if result.success and result.data is not None:
-            # 优先使用 measurements 字段（.MEASURE 结果）
             if hasattr(result, 'measurements') and result.measurements:
                 self._metrics_list = self._load_metrics_from_measurements(result.measurements)
-            # 其次使用已有的 metrics 数据
-            elif result.metrics:
-                self._metrics_list = self._load_metrics_from_dict(result.metrics)
             else:
                 self._metrics_list = []
             
@@ -394,6 +391,10 @@ class SimulationViewModel(BaseViewModel):
                 name = measure.name
                 value = getattr(measure, 'value', None)
                 unit = getattr(measure, 'unit', '')
+                display_name = getattr(measure, 'display_name', '')
+                category = getattr(measure, 'category', '')
+                description = getattr(measure, 'description', '')
+                statement = getattr(measure, 'statement', '')
                 status = getattr(measure, 'status', None)
                 # 检查是否有效（使用 is_valid 属性或检查状态）
                 is_valid = getattr(measure, 'is_valid', None)
@@ -409,6 +410,10 @@ class SimulationViewModel(BaseViewModel):
                 name = measure.get('name', 'unknown')
                 value = measure.get('value')
                 unit = measure.get('unit', '')
+                display_name = measure.get('display_name', '')
+                category = measure.get('category', '')
+                description = measure.get('description', '')
+                statement = measure.get('statement', '')
                 status = measure.get('status', 'OK')
                 is_valid = status == 'OK' and value is not None
             else:
@@ -418,43 +423,30 @@ class SimulationViewModel(BaseViewModel):
             if not is_valid:
                 continue
             
-            display_metrics.append(self._create_simple_display_metric(name, value, unit))
+            metadata = measure_metadata_resolver.resolve(
+                name,
+                statement=statement,
+                description=description,
+                fallback_unit=unit,
+            )
+
+            display_metrics.append(self._create_display_metric(
+                name,
+                value,
+                unit=metadata.unit,
+                display_name=display_name or metadata.display_name,
+                category=category or metadata.category,
+            ))
         
         return display_metrics
     
-    def _load_metrics_from_dict(self, metrics_dict: Dict[str, Any]) -> List[DisplayMetric]:
-        """
-        从字典格式的 metrics 数据创建 DisplayMetric 列表
-        
-        支持两种格式：
-        1. 简单格式：{"gain": "20.5 dB", "bandwidth": "10 MHz"}
-        2. 完整格式：{"gain": {"value": 20.5, "unit": "dB", "target": 20.0, ...}}
-        
-        Args:
-            metrics_dict: 指标字典
-            
-        Returns:
-            List[DisplayMetric]: DisplayMetric 列表
-        """
-        display_metrics = []
-        
-        for name, data in metrics_dict.items():
-            if isinstance(data, dict):
-                # 完整格式：直接从字典创建 DisplayMetric
-                display_metrics.append(self._create_simple_display_metric(
-                    name, data.get("value"), data.get("unit", "")
-                ))
-            else:
-                # 简单格式：字符串值
-                display_metrics.append(self._create_simple_display_metric(name, data))
-        
-        return display_metrics
-    
-    def _create_simple_display_metric(
+    def _create_display_metric(
         self,
         name: str,
         value: Any,
-        unit: str = ""
+        unit: str = "",
+        display_name: str = "",
+        category: str = "",
     ) -> DisplayMetric:
         """
         从简单值创建 DisplayMetric
@@ -486,50 +478,25 @@ class SimulationViewModel(BaseViewModel):
                 except ValueError:
                     pass
         
-        # 生成显示名称（将下划线转为空格，首字母大写）
-        display_name = name.replace("_", " ").title()
-        
-        # 推断类别
-        category = self._infer_category(name)
+        metadata = measure_metadata_resolver.resolve(
+            name,
+            description=display_name,
+            fallback_unit=unit,
+        )
         
         return DisplayMetric(
             name=name,
-            display_name=display_name,
+            display_name=display_name or metadata.display_name,
             value=formatted_value,
-            unit=unit,
+            unit=metadata.unit,
             target="",
             is_met=None,
             trend="unknown",
-            category=category,
+            category=category or metadata.category,
             raw_value=raw_value,
             confidence=1.0,
             error_message=None,
         )
-    
-    def _infer_category(self, name: str) -> str:
-        """
-        根据指标名称推断类别
-        
-        Args:
-            name: 指标名称
-            
-        Returns:
-            str: 类别名称
-        """
-        name_lower = name.lower()
-        
-        if any(kw in name_lower for kw in ["gain", "bandwidth", "phase", "margin", "gbw"]):
-            return "amplifier"
-        elif any(kw in name_lower for kw in ["noise", "snr", "nf"]):
-            return "noise"
-        elif any(kw in name_lower for kw in ["thd", "distortion", "imd", "sfdr"]):
-            return "distortion"
-        elif any(kw in name_lower for kw in ["power", "current", "efficiency", "consumption"]):
-            return "power"
-        elif any(kw in name_lower for kw in ["rise", "fall", "slew", "settling", "overshoot"]):
-            return "transient"
-        else:
-            return "general"
 
     def _calculate_trend(
         self,

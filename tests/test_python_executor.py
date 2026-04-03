@@ -110,9 +110,9 @@ def {ENTRY_FUNCTION_NAME}(config):
                 "output": [0.1, 1.0, 10.0]
             }}
         }},
-        "metrics": {{
-            "gain": "20dB"
-        }}
+        "measurements": [
+            {{"name": "gain", "value": 20.0, "unit": "dB", "status": "OK"}}
+        ]
     }}
 """
     
@@ -129,8 +129,8 @@ def {ENTRY_FUNCTION_NAME}(config):
     assert result.data.frequency is not None
     assert len(result.data.frequency) == 3
     assert "output" in result.data.signals
-    assert result.metrics is not None
-    assert result.metrics["gain"] == "20dB"
+    assert result.measurements is not None
+    assert result.get_metric("gain") == 20.0
 
 
 def test_execute_with_config(executor, temp_script_dir):
@@ -151,9 +151,9 @@ def {ENTRY_FUNCTION_NAME}(config):
                 "result": [param1 * 2]
             }}
         }},
-        "metrics": {{
-            "param2_value": param2
-        }}
+        "measurements": [
+            {{"name": "result_value", "value": float(param1 * 2), "status": "OK"}}
+        ]
     }}
 """
     
@@ -170,7 +170,7 @@ def {ENTRY_FUNCTION_NAME}(config):
     # 验证结果
     assert result.success
     assert result.data.signals["result"][0] == 200
-    assert result.metrics["param2_value"] == "test_value"
+    assert result.get_metric("result_value") == 200.0
 
 
 def test_execute_script_with_time_data(executor, temp_script_dir):
@@ -305,6 +305,26 @@ def {ENTRY_FUNCTION_NAME}(config):
     assert result.error.type == SimulationErrorType.OUTPUT_PARSE_ERROR
 
 
+def test_execute_script_with_deprecated_metrics_payload(executor, temp_script_dir):
+    """测试返回已废弃 metrics 字段的脚本会失败"""
+    script_content = f"""
+def {ENTRY_FUNCTION_NAME}(config):
+    return {{
+        "success": True,
+        "data": {{"signals": {{"out": [1.0]}}}},
+        "metrics": {{"gain": 20.0}}
+    }}
+"""
+
+    script_path = create_test_script(temp_script_dir, "deprecated_metrics.py", script_content)
+    result = executor.execute(script_path, {"analysis_type": "custom"})
+
+    assert not result.success
+    assert result.error is not None
+    assert result.error.type == SimulationErrorType.OUTPUT_PARSE_ERROR
+    assert "metrics" in result.error.message
+
+
 def test_execute_script_without_success_field(executor, temp_script_dir):
     """测试执行返回缺少 success 字段的脚本"""
     # 创建返回缺少 success 字段的脚本
@@ -406,11 +426,11 @@ def {ENTRY_FUNCTION_NAME}(config):
                 "phase": [-90, -45, 0, 45]
             }}
         }},
-        "metrics": {{
-            "gain_db": 20.0,
-            "bandwidth_hz": 1e6,
-            "phase_margin_deg": 60.0
-        }}
+        "measurements": [
+            {{"name": "gain_db", "value": 20.0, "unit": "dB", "status": "OK"}},
+            {{"name": "bandwidth_hz", "value": 1e6, "unit": "Hz", "status": "OK"}},
+            {{"name": "phase_margin_deg", "value": 60.0, "unit": "°", "status": "OK"}}
+        ]
     }}
 """
     
@@ -427,8 +447,8 @@ def {ENTRY_FUNCTION_NAME}(config):
     assert "V(out)" in result.data.signals
     assert "I(R1)" in result.data.signals
     assert "phase" in result.data.signals
-    assert result.metrics["gain_db"] == 20.0
-    assert result.metrics["bandwidth_hz"] == 1e6
+    assert result.get_metric("gain_db") == 20.0
+    assert result.get_metric("bandwidth_hz") == 1e6
 
 
 def test_extract_empty_data(executor, temp_script_dir):
@@ -480,12 +500,12 @@ def {ENTRY_FUNCTION_NAME}(config):
                 "gain_distribution": results.tolist()
             }}
         }},
-        "metrics": {{
-            "mean": float(np.mean(results)),
-            "std": float(np.std(results)),
-            "min": float(np.min(results)),
-            "max": float(np.max(results))
-        }}
+        "measurements": [
+            {{"name": "mean", "value": float(np.mean(results)), "status": "OK"}},
+            {{"name": "std", "value": float(np.std(results)), "status": "OK"}},
+            {{"name": "min", "value": float(np.min(results)), "status": "OK"}},
+            {{"name": "max", "value": float(np.max(results)), "status": "OK"}}
+        ]
     }}
 """
     
@@ -502,8 +522,8 @@ def {ENTRY_FUNCTION_NAME}(config):
     assert result.success
     assert "gain_distribution" in result.data.signals
     assert len(result.data.signals["gain_distribution"]) == 100
-    assert "mean" in result.metrics
-    assert "std" in result.metrics
+    assert result.get_metric("mean") is not None
+    assert result.get_metric("std") is not None
 
 
 def test_parameter_sweep(executor, temp_script_dir):
@@ -529,10 +549,9 @@ def {ENTRY_FUNCTION_NAME}(config):
                 "output": output_values.tolist()
             }}
         }},
-        "metrics": {{
-            "sweep_range": [float(start), float(stop)],
-            "num_points": steps
-        }}
+        "measurements": [
+            {{"name": "num_points", "value": float(steps), "status": "OK"}}
+        ]
     }}
 """
     
@@ -552,7 +571,7 @@ def {ENTRY_FUNCTION_NAME}(config):
     assert "parameter" in result.data.signals
     assert "output" in result.data.signals
     assert len(result.data.signals["parameter"]) == 11
-    assert result.metrics["num_points"] == 11
+    assert result.get_metric("num_points") == 11.0
 
 
 # ============================================================

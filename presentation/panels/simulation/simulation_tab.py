@@ -1021,9 +1021,9 @@ class ChartViewerPanel(QFrame):
         self._waveform_widget.load_waveform(result, signal_name)
         self._tab_widget.setCurrentIndex(self.TAB_WAVEFORM)
     
-    def load_raw_data(self, result, signal_names: Optional[List[str]] = None):
+    def load_raw_data(self, result):
         """加载原始数据"""
-        self._raw_data_table.load_data(result, signal_names)
+        self._raw_data_table.load_data(result)
     
     def load_output_log(self, sim_result_path: str, project_root: str):
         """加载输出日志"""
@@ -1102,7 +1102,6 @@ class SimulationTab(QWidget):
         self._project_root: Optional[str] = None
         self._is_workflow_running: bool = False
         self._last_loaded_result_path: Optional[str] = None
-        self._suppress_waveform_signal_sync: bool = False
         
         # 仿真结果文件监控器
         self._result_watcher = SimulationResultWatcher()
@@ -1263,10 +1262,6 @@ class SimulationTab(QWidget):
         # 图表查看器波形运算回调
         self._chart_viewer_panel.chart_viewer.set_waveform_math_handler(
             self._on_waveform_math_request
-        )
-
-        self._chart_viewer_panel.waveform_widget.displayed_signals_changed.connect(
-            self._on_displayed_signals_changed
         )
     
     def _subscribe_events(self):
@@ -1549,19 +1544,6 @@ class SimulationTab(QWidget):
         # 检查是否需要重新加载
         if self._should_reload(file_path):
             self._load_simulation_result(file_path)
-
-    def _on_displayed_signals_changed(self, signal_names: list):
-        if self._suppress_waveform_signal_sync:
-            return
-
-        current_result = self._view_model.current_result
-        if current_result is None or not getattr(current_result, 'success', False):
-            return
-
-        self._chart_viewer_panel.raw_data_table.load_data(
-            current_result,
-            signal_names or None,
-        )
     
     def _should_reload(self, file_path: str) -> bool:
         """
@@ -1660,37 +1642,29 @@ class SimulationTab(QWidget):
             self._last_loaded_result_path = self._normalize_result_path(result_path)
 
         self._view_model.load_result(result)
-        self._suppress_waveform_signal_sync = True
-        displayed_signals: List[str] = []
-        try:
-            self._chart_viewer_panel.clear()
-            self._chart_viewer_panel.chart_viewer.set_simulation_data(
-                getattr(result, 'data', None)
-            )
+        self._chart_viewer_panel.clear()
+        self._chart_viewer_panel.chart_viewer.set_simulation_data(
+            getattr(result, 'data', None)
+        )
         
-            # 显示时间戳
-            timestamp = getattr(result, 'timestamp', None)
-            if timestamp:
-                self._metrics_summary_panel.set_result_timestamp(timestamp)
-            
-            if getattr(result, 'success', False) and getattr(result, 'data', None) is not None:
-                self._load_waveform_data(result)
-
-            raw_output = getattr(result, 'raw_output', None)
-            if raw_output:
-                self._chart_viewer_panel.output_log_viewer.load_log_from_text(raw_output)
-
-            if getattr(result, 'success', False) or raw_output or getattr(result, 'error', None):
-                self._hide_empty_state()
-
-            if not getattr(result, 'success', False):
-                self._chart_viewer_panel.switch_to_log()
-        finally:
-            self._suppress_waveform_signal_sync = False
-
+        # 显示时间戳
+        timestamp = getattr(result, 'timestamp', None)
+        if timestamp:
+            self._metrics_summary_panel.set_result_timestamp(timestamp)
+        
         if getattr(result, 'success', False) and getattr(result, 'data', None) is not None:
-            displayed_signals = self._chart_viewer_panel.waveform_widget.get_displayed_signals()
-            self._on_displayed_signals_changed(displayed_signals)
+            self._load_waveform_data(result)
+            self._chart_viewer_panel.raw_data_table.load_data(result)
+
+        raw_output = getattr(result, 'raw_output', None)
+        if raw_output:
+            self._chart_viewer_panel.output_log_viewer.load_log_from_text(raw_output)
+
+        if getattr(result, 'success', False) or raw_output or getattr(result, 'error', None):
+            self._hide_empty_state()
+
+        if not getattr(result, 'success', False):
+            self._chart_viewer_panel.switch_to_log()
     
     def _load_waveform_data(self, result):
         """
@@ -1716,12 +1690,7 @@ class SimulationTab(QWidget):
         if signal_names:
             try:
                 from domain.simulation.data.waveform_data_service import waveform_data_service
-                classified = waveform_data_service.get_classified_signals(result)
-                voltage_signals = classified.get("voltage", [])
-                if voltage_signals:
-                    default_signal = voltage_signals[0]
-                else:
-                    default_signal = signal_names[0]
+                default_signal = waveform_data_service.get_preferred_display_signal(result)
             except Exception:
                 default_signal = signal_names[0]
         
@@ -1804,14 +1773,10 @@ class SimulationTab(QWidget):
     def clear(self):
         """清空所有显示"""
         self._last_loaded_result_path = None
-        self._suppress_waveform_signal_sync = True
-        try:
-            self._metrics_summary_panel.clear()
-            self._chart_viewer_panel.clear()
-            self._view_model.clear()
-            self._status_indicator.hide_status()
-        finally:
-            self._suppress_waveform_signal_sync = False
+        self._metrics_summary_panel.clear()
+        self._chart_viewer_panel.clear()
+        self._view_model.clear()
+        self._status_indicator.hide_status()
     
     def export_waveform_data(self, format: str = "csv"):
         """

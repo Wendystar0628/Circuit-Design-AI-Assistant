@@ -131,6 +131,38 @@ def create_mock_simulation_result(
     )
 
 
+def create_mock_ac_simulation_result() -> SimulationResult:
+    frequency = np.logspace(1, 6, 1000)
+    v_out = 1 / (1 + 1j * (frequency / 10000))
+
+    sim_data = SimulationData(
+        frequency=frequency,
+        signals={
+            "V(out)": v_out,
+            "V(out)_mag": np.abs(v_out),
+            "V(out)_phase": np.angle(v_out, deg=True),
+            "V(out)_real": np.real(v_out),
+            "V(out)_imag": np.imag(v_out),
+        },
+        signal_types={
+            "V(out)": "voltage",
+            "V(out)_mag": "voltage",
+            "V(out)_phase": "voltage",
+            "V(out)_real": "voltage",
+            "V(out)_imag": "voltage",
+        },
+    )
+
+    return SimulationResult(
+        executor="spice",
+        file_path="ac_test.cir",
+        analysis_type="ac",
+        success=True,
+        data=sim_data,
+        timestamp="2026-01-06T10:05:00",
+    )
+
+
 # ============================================================
 # WaveformWidget 测试（需要 Qt 环境）
 # ============================================================
@@ -315,6 +347,23 @@ class TestWaveformWidgetGUI:
         success = waveform_widget.load_waveform(result, "V(nonexistent)")
         
         assert success is False
+
+    def test_load_ac_complex_signal_uses_magnitude_display_signal(self, waveform_widget):
+        result = create_mock_ac_simulation_result()
+
+        success = waveform_widget.load_waveform(result, "V(out)")
+
+        assert success is True
+        assert waveform_widget.get_displayed_signals() == ["V(out)_mag"]
+
+    def test_remove_ac_waveform_by_base_signal_name(self, waveform_widget):
+        result = create_mock_ac_simulation_result()
+        waveform_widget.load_waveform(result, "V(out)")
+
+        success = waveform_widget.remove_waveform("V(out)")
+
+        assert success is True
+        assert waveform_widget.get_displayed_signals() == []
     
     def test_get_measurement_empty(self, waveform_widget):
         """测试空状态下获取测量"""

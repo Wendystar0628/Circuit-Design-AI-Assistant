@@ -458,6 +458,25 @@ class SimulationViewModel(BaseViewModel):
             return None
         
         signal_names = list(sim_data.signals.keys())
+
+        if sim_data.frequency is not None:
+            magnitude_signals = [
+                name for name in signal_names
+                if name.lower().endswith('_mag')
+            ]
+
+            for name in magnitude_signals:
+                if name.lower() in ('v(out)_mag', 'out_mag'):
+                    return name
+
+            for name in magnitude_signals:
+                name_lower = name.lower()
+                if name_lower.startswith('v(') and 'out' in name_lower:
+                    return name
+
+            for name in magnitude_signals:
+                if name.upper().startswith('V('):
+                    return name
         
         # 过滤掉带后缀的信号，只保留原始信号名
         base_signals = [

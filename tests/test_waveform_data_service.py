@@ -60,11 +60,33 @@ def sample_result(sample_sim_data: SimulationData) -> SimulationResult:
 def ac_sim_data() -> SimulationData:
     """创建 AC 分析仿真数据"""
     frequency = np.logspace(1, 6, 5000)  # 10Hz - 1MHz, 5000 点
+    v_out = 10 / (1 + 1j * (frequency / 10000))
+    v_in = np.ones_like(frequency, dtype=np.complex128)
     return SimulationData(
         frequency=frequency,
         signals={
-            "V(out)": 10 / np.sqrt(1 + (frequency / 10000) ** 2),  # 低通响应
-            "phase": -np.arctan(frequency / 10000) * 180 / np.pi,
+            "V(out)": v_out,
+            "V(out)_mag": np.abs(v_out),
+            "V(out)_phase": np.angle(v_out, deg=True),
+            "V(out)_real": np.real(v_out),
+            "V(out)_imag": np.imag(v_out),
+            "V(in)": v_in,
+            "V(in)_mag": np.abs(v_in),
+            "V(in)_phase": np.angle(v_in, deg=True),
+            "V(in)_real": np.real(v_in),
+            "V(in)_imag": np.imag(v_in),
+        },
+        signal_types={
+            "V(out)": "voltage",
+            "V(out)_mag": "voltage",
+            "V(out)_phase": "voltage",
+            "V(out)_real": "voltage",
+            "V(out)_imag": "voltage",
+            "V(in)": "voltage",
+            "V(in)_mag": "voltage",
+            "V(in)_phase": "voltage",
+            "V(in)_real": "voltage",
+            "V(in)_imag": "voltage",
         },
     )
 
@@ -452,6 +474,47 @@ class TestWaveformDataService:
         assert table is not None
         assert table.signal_names == ["V(out)"]
         assert "V(in)" not in table.rows[0].values
+
+    def test_get_display_signal_names_for_ac_expand_complex_signals(
+        self,
+        service: WaveformDataService,
+        ac_result: SimulationResult,
+    ):
+        signals = service.get_display_signal_names(ac_result)
+
+        assert "V(out)_mag" in signals
+        assert "V(out)_phase" in signals
+        assert "V(out)" not in signals
+
+    def test_get_preferred_display_signal_for_ac_prefers_output_magnitude(
+        self,
+        service: WaveformDataService,
+        ac_result: SimulationResult,
+    ):
+        signal_name = service.get_preferred_display_signal(ac_result)
+
+        assert signal_name == "V(out)_mag"
+
+    def test_get_table_data_for_ac_expands_complex_signal_filter(
+        self,
+        service: WaveformDataService,
+        ac_result: SimulationResult,
+    ):
+        table = service.get_table_data(
+            ac_result,
+            start_row=0,
+            count=5,
+            signal_names=["V(out)"],
+        )
+
+        assert table is not None
+        assert table.signal_names == [
+            "V(out)_mag",
+            "V(out)_phase",
+            "V(out)_real",
+            "V(out)_imag",
+        ]
+        assert "V(out)_mag" in table.rows[0].values
     
     def test_get_table_data_beyond_range(
         self,
@@ -551,7 +614,7 @@ class TestWaveformDataService:
         data = service.get_initial_data(ac_result, "V(out)", target_points=500)
         
         assert data is not None
-        assert data.signal_name == "V(out)"
+        assert data.signal_name == "V(out)_mag"
         assert data.is_downsampled is True
         
         # 验证频率范围

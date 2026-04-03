@@ -77,6 +77,49 @@ def mock_simulation_result():
     )
 
 
+@pytest.fixture
+def mock_ac_simulation_result():
+    from domain.simulation.models.simulation_result import SimulationResult, SimulationData
+
+    frequency = np.logspace(1, 6, 100)
+    v_out = 1 / (1 + 1j * (frequency / 10000))
+    v_in = np.ones_like(frequency, dtype=np.complex128)
+
+    data = SimulationData(
+        frequency=frequency,
+        signals={
+            "V(out)": v_out,
+            "V(out)_mag": np.abs(v_out),
+            "V(out)_phase": np.angle(v_out, deg=True),
+            "V(out)_real": np.real(v_out),
+            "V(out)_imag": np.imag(v_out),
+            "V(in)": v_in,
+            "V(in)_mag": np.abs(v_in),
+            "V(in)_phase": np.angle(v_in, deg=True),
+        },
+        signal_types={
+            "V(out)": "voltage",
+            "V(out)_mag": "voltage",
+            "V(out)_phase": "voltage",
+            "V(out)_real": "voltage",
+            "V(out)_imag": "voltage",
+            "V(in)": "voltage",
+            "V(in)_mag": "voltage",
+            "V(in)_phase": "voltage",
+        },
+    )
+
+    return SimulationResult(
+        executor="spice",
+        file_path="ac_test.cir",
+        analysis_type="ac",
+        success=True,
+        data=data,
+        timestamp="2026-01-06T12:05:00",
+        raw_output="ok",
+    )
+
+
 class TestStatusIndicator:
     """StatusIndicator 测试"""
     
@@ -495,20 +538,27 @@ class TestSimulationTabEvents:
 
                 assert mock_load_result.call_count == 1
 
-    def test_displayed_signals_change_updates_raw_data_filter(self, app, mock_service_locator, mock_simulation_result):
-        """测试波形显示信号变化直接驱动原始数据刷新"""
+    def test_load_result_loads_full_raw_data(self, app, mock_service_locator, mock_simulation_result):
+        """测试加载结果时原始数据表总是加载完整结果"""
         from presentation.panels.simulation.simulation_tab import SimulationTab
 
         tab = SimulationTab()
-        tab.load_result(mock_simulation_result)
 
         with patch.object(tab._chart_viewer_panel.raw_data_table, "load_data") as mock_load_data:
-            tab._on_displayed_signals_changed(["V(out)"])
-            mock_load_data.assert_called_once_with(mock_simulation_result, ["V(out)"])
+            tab.load_result(mock_simulation_result)
+            mock_load_data.assert_called_once_with(mock_simulation_result)
 
-        with patch.object(tab._chart_viewer_panel.raw_data_table, "load_data") as mock_load_data:
-            tab._on_displayed_signals_changed([])
-            mock_load_data.assert_called_once_with(mock_simulation_result, None)
+    def test_load_result_prefers_ac_display_signal(self, app, mock_service_locator, mock_ac_simulation_result):
+        """测试 AC 结果默认波形优先使用可显示的幅值信号"""
+        from presentation.panels.simulation.simulation_tab import SimulationTab
+
+        tab = SimulationTab()
+
+        with patch.object(tab._chart_viewer_panel.waveform_widget, "load_waveform") as mock_load_waveform:
+            with patch.object(tab._chart_viewer_panel.raw_data_table, "load_data"):
+                tab.load_result(mock_ac_simulation_result)
+
+        mock_load_waveform.assert_called_once_with(mock_ac_simulation_result, "V(out)_mag")
 
 
 if __name__ == "__main__":

@@ -22,7 +22,7 @@
 """
 
 import logging
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional
 
 from PyQt6.QtCore import (
     Qt,
@@ -127,17 +127,13 @@ class RawDataTableModel(QAbstractTableModel):
         self._cache: Dict[int, TableRow] = {}
         self._cache_start: int = 0
         self._cache_end: int = 0
-        
-        # 选中的信号列（用于过滤显示）
-        self._visible_signals: Optional[Set[str]] = None
     
-    def load_result(self, result: SimulationResult, signal_names: Optional[List[str]] = None):
+    def load_result(self, result: SimulationResult):
         """
         加载仿真结果
         
         Args:
             result: 仿真结果对象
-            signal_names: 要显示的信号列表（None 表示全部）
         """
         self.beginResetModel()
         
@@ -148,7 +144,7 @@ class RawDataTableModel(QAbstractTableModel):
         
         # 获取初始数据以确定总行数和列名
         initial_data = self._data_service.get_table_data(
-            result, start_row=0, count=CHUNK_SIZE, signal_names=signal_names
+            result, start_row=0, count=CHUNK_SIZE
         )
         
         if initial_data:
@@ -166,11 +162,6 @@ class RawDataTableModel(QAbstractTableModel):
             self._total_rows = 0
             self._signal_names = []
             self._x_label = "Time"
-        
-        if signal_names:
-            self._visible_signals = set(signal_names)
-        else:
-            self._visible_signals = None
         
         self.endResetModel()
         
@@ -190,7 +181,6 @@ class RawDataTableModel(QAbstractTableModel):
         self._cache.clear()
         self._cache_start = 0
         self._cache_end = 0
-        self._visible_signals = None
         
         self.endResetModel()
     
@@ -429,12 +419,10 @@ class RawDataTableModel(QAbstractTableModel):
             return
         
         # 加载数据
-        signal_names = list(self._visible_signals) if self._visible_signals else None
         table_data = self._data_service.get_table_data(
             self._result,
             start_row=start_row,
             count=count,
-            signal_names=signal_names
         )
         
         if table_data:
@@ -491,6 +479,7 @@ class RawDataTable(QWidget):
     """
     
     row_selected = pyqtSignal(int)
+    x_value_selected = pyqtSignal(float)
     time_selected = pyqtSignal(float)
     
     def __init__(self, parent=None):
@@ -729,20 +718,15 @@ class RawDataTable(QWidget):
     # 公共方法
     # ============================================================
     
-    def load_data(
-        self,
-        result: SimulationResult,
-        signal_names: Optional[List[str]] = None
-    ):
+    def load_data(self, result: SimulationResult):
         """
         加载仿真结果数据
         
         Args:
             result: 仿真结果对象
-            signal_names: 要显示的信号列表（None 表示全部）
         """
         self._result = result
-        self._model.load_result(result, signal_names)
+        self._model.load_result(result)
         
         # 更新 UI
         self._update_controls()
@@ -776,22 +760,26 @@ class RawDataTable(QWidget):
         
         self.row_selected.emit(row_number)
     
-    def jump_to_time(self, time_value: float):
+    def jump_to_x_value(self, x_value: float):
         """
         跳转到指定时间点
         
         Args:
-            time_value: 时间值
+            x_value: X 轴值
         """
-        row = self._model.get_row_for_time(time_value)
+        row = self._model.get_row_for_time(x_value)
         
         if row >= 0:
             self.jump_to_row(row)
             
-            # 获取实际时间值
+            # 获取实际 X 轴值
             row_data = self._model.get_row_data(row)
             if row_data:
+                self.x_value_selected.emit(row_data.x_value)
                 self.time_selected.emit(row_data.x_value)
+
+    def jump_to_time(self, time_value: float):
+        self.jump_to_x_value(time_value)
     
     def search_value(
         self,
@@ -893,12 +881,12 @@ class RawDataTable(QWidget):
         """重新翻译 UI 文本"""
         self._jump_row_label.setText(self._tr("Row:"))
         self._jump_row_btn.setText(self._tr("Go"))
-        self._jump_time_label.setText(self._tr("Time:"))
         self._jump_time_btn.setText(self._tr("Go"))
         self._search_label.setText(self._tr("Search:"))
         self._search_btn.setText(self._tr("Find"))
         self._export_btn.setText(self._tr("Export"))
         
+        self._update_axis_labels()
         self._update_status()
     
     # ============================================================
@@ -908,6 +896,7 @@ class RawDataTable(QWidget):
     def _update_controls(self):
         """更新控件状态"""
         total_rows = self._model.total_rows
+        self._update_axis_labels()
         
         # 更新行号范围
         self._jump_row_spin.setMaximum(max(0, total_rows - 1))
@@ -928,6 +917,16 @@ class RawDataTable(QWidget):
         self._search_value_edit.setEnabled(has_data)
         self._search_btn.setEnabled(has_data)
         self._export_btn.setEnabled(has_data)
+
+    def _update_axis_labels(self):
+        axis_name = self._get_x_axis_name()
+        self._jump_time_label.setText(f"{axis_name}:")
+
+    def _get_x_axis_name(self) -> str:
+        label = self._model.x_label or "X"
+        if " (" in label:
+            return label.split(" (", 1)[0]
+        return label
     
     def _update_status(self):
         """更新状态栏"""
@@ -953,7 +952,7 @@ class RawDataTable(QWidget):
     def _on_jump_to_time(self):
         """跳转到时间按钮点击"""
         time_value = self._jump_time_spin.value()
-        self.jump_to_time(time_value)
+        self.jump_to_x_value(time_value)
     
     def _on_search(self):
         """搜索按钮点击"""
@@ -1029,6 +1028,7 @@ class RawDataTable(QWidget):
         row_data = self._model.get_row_data(row)
         
         if row_data:
+            self.x_value_selected.emit(row_data.x_value)
             self.time_selected.emit(row_data.x_value)
     
     def _tr(self, text: str) -> str:

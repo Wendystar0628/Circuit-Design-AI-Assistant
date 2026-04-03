@@ -179,7 +179,6 @@ class WaveformWidget(QWidget):
     measurement_changed = pyqtSignal(object)  # WaveformMeasurement
     viewport_changed = pyqtSignal(float, float, float, float)  # x_min, x_max, y_min, y_max
     signal_selected = pyqtSignal(str)  # signal_name
-    displayed_signals_changed = pyqtSignal(list)
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -563,23 +562,24 @@ class WaveformWidget(QWidget):
         if result_signature != self._current_result_signature:
             self._clear_displayed_waveforms(preserve_result_context=True)
             self._set_result_context(result)
-
-        if signal_name in self._plot_items:
-            self._logger.debug(f"Signal already displayed: {signal_name}")
-            return True
         
         waveform_data = self._get_display_waveform_data(result, signal_name)
         
         if waveform_data is None:
             self._logger.warning(f"Failed to load waveform: {signal_name}")
             return False
+
+        resolved_signal_name = waveform_data.signal_name
+        if resolved_signal_name in self._plot_items:
+            self._logger.debug(f"Signal already displayed: {resolved_signal_name}")
+            return True
         
         # 选择颜色
         color = SIGNAL_COLORS[self._color_index % len(SIGNAL_COLORS)]
         self._color_index += 1
         
         # 判断信号类型，决定绘制到左轴还是右轴
-        sig_type = WaveformDataService.get_signal_type(signal_name, self._signal_types)
+        sig_type = WaveformDataService.get_signal_type(resolved_signal_name, self._signal_types)
         use_right = (sig_type == "current")
         
         pen = pg.mkPen(color=color, width=1)
@@ -587,7 +587,7 @@ class WaveformWidget(QWidget):
             waveform_data.x_data,
             waveform_data.y_data,
             pen=pen,
-            name=signal_name
+            name=resolved_signal_name
         )
         
         if use_right and self._right_vb is not None:
@@ -598,8 +598,8 @@ class WaveformWidget(QWidget):
             axis_label = "left"
         
         # 保存绘图项
-        self._plot_items[signal_name] = PlotItem(
-            signal_name=signal_name,
+        self._plot_items[resolved_signal_name] = PlotItem(
+            signal_name=resolved_signal_name,
             plot_data_item=plot_data_item,
             color=color,
             waveform_data=waveform_data,
@@ -607,17 +607,16 @@ class WaveformWidget(QWidget):
         )
         
         # 同步信号树复选框状态
-        self._set_signal_tree_checked(signal_name, True)
+        self._set_signal_tree_checked(resolved_signal_name, True)
         self._refresh_legend()
         self._update_measurement()
-        self.displayed_signals_changed.emit(self.get_displayed_signals())
         
         # 自动调整右侧 ViewBox 范围
         if use_right and self._right_vb is not None:
             self._right_vb.autoRange()
         
         self._logger.debug(
-            f"Waveform added: {signal_name} [{axis_label}], "
+            f"Waveform added: {resolved_signal_name} [{axis_label}], "
             f"points={waveform_data.point_count}"
         )
         return True
@@ -632,6 +631,14 @@ class WaveformWidget(QWidget):
         Returns:
             bool: 是否移除成功
         """
+        if signal_name not in self._plot_items and self._current_result is not None:
+            resolved_signal_name = self._data_service.resolve_display_signal_name(
+                self._current_result,
+                signal_name,
+            )
+            if resolved_signal_name is not None:
+                signal_name = resolved_signal_name
+
         if signal_name not in self._plot_items:
             return False
         
@@ -649,7 +656,6 @@ class WaveformWidget(QWidget):
         self._update_measurement()
         if not self._plot_items:
             self._color_index = 0
-        self.displayed_signals_changed.emit(self.get_displayed_signals())
         
         self._logger.debug(f"Waveform removed: {signal_name}")
         return True
@@ -794,8 +800,6 @@ class WaveformWidget(QWidget):
             self._current_result_signature = None
             self._signal_types = {}
             self._signal_tree.clear()
-
-        self.displayed_signals_changed.emit(self.get_displayed_signals())
 
     def _get_display_waveform_data(self, result: SimulationResult, signal_name: str) -> Optional[WaveformData]:
         x_range = self._pending_range

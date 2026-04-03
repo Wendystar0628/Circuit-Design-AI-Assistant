@@ -207,6 +207,17 @@ class TestWaveformWidgetGUI:
         signals = waveform_widget.get_displayed_signals()
         assert "V(out)" in signals
         assert "V(in)" in signals
+
+    def test_add_duplicate_waveform_does_not_duplicate_display(self, waveform_widget):
+        """测试重复添加同一信号不会重复显示"""
+        result = create_mock_simulation_result()
+
+        waveform_widget.load_waveform(result, "V(out)")
+        success = waveform_widget.add_waveform(result, "V(out)")
+
+        assert success is True
+        assert waveform_widget.get_displayed_signals() == ["V(out)"]
+        assert len(waveform_widget._plot_items) == 1
     
     def test_remove_waveform(self, waveform_widget):
         """测试移除波形"""
@@ -230,6 +241,35 @@ class TestWaveformWidgetGUI:
         waveform_widget.clear_waveforms()
         
         assert len(waveform_widget.get_displayed_signals()) == 0
+
+    def test_clear_all_signals_preserves_result_context(self, waveform_widget):
+        """测试清除显示信号后仍可继续从当前结果添加新曲线"""
+        result = create_mock_simulation_result()
+
+        waveform_widget.load_waveform(result, "V(out)")
+        waveform_widget._on_clear_all_signals()
+
+        assert waveform_widget.get_displayed_signals() == []
+        assert waveform_widget._current_result is result
+
+        success = waveform_widget.add_waveform(result, "V(in)")
+        assert success is True
+        assert waveform_widget.get_displayed_signals() == ["V(in)"]
+
+    def test_add_waveform_uses_current_viewport_range(self, waveform_widget):
+        """测试在当前视口中新增曲线时使用当前视口范围的数据"""
+        result = create_mock_simulation_result()
+
+        waveform_widget.load_waveform(result, "V(out)")
+        waveform_widget._pending_range = (0.002, 0.004)
+
+        success = waveform_widget.add_waveform(result, "V(in)")
+
+        assert success is True
+        waveform_data = waveform_widget._plot_items["V(in)"].waveform_data
+        assert waveform_data is not None
+        assert float(waveform_data.x_data.min()) >= 0.002 - 1e-9
+        assert float(waveform_data.x_data.max()) <= 0.004 + 1e-9
     
     def test_set_cursor_a(self, waveform_widget):
         """测试设置光标 A"""

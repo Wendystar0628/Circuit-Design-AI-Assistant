@@ -19,6 +19,7 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 import pytest
+import numpy as np
 from unittest.mock import MagicMock, patch
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import Qt
@@ -50,6 +51,30 @@ def mock_service_locator(mock_event_bus):
     with patch("shared.service_locator.ServiceLocator") as mock_locator:
         mock_locator.get_optional = MagicMock(return_value=mock_event_bus)
         yield mock_locator
+
+
+@pytest.fixture
+def mock_simulation_result():
+    from domain.simulation.models.simulation_result import SimulationResult, SimulationData
+
+    time = np.linspace(0, 1e-3, 100)
+    data = SimulationData(
+        time=time,
+        signals={
+            "V(out)": np.sin(2 * np.pi * 1000 * time),
+            "V(in)": np.cos(2 * np.pi * 1000 * time),
+        },
+    )
+
+    return SimulationResult(
+        executor="spice",
+        file_path="test.cir",
+        analysis_type="tran",
+        success=True,
+        data=data,
+        timestamp="2026-01-06T12:00:00",
+        raw_output="ok",
+    )
 
 
 class TestStatusIndicator:
@@ -438,6 +463,52 @@ class TestSimulationTabEvents:
         assert tab._project_root is None
         # 检查空状态组件未被隐藏
         assert not tab._empty_widget.isHidden()
+
+    def test_file_created_event_does_not_reload_same_result_path_twice(self, app, mock_service_locator):
+        """测试文件监控不会重复加载刚刚通过完成事件加载过的结果"""
+        from presentation.panels.simulation.simulation_tab import SimulationTab
+
+        tab = SimulationTab()
+        tab._project_root = "/test/project"
+
+        load_result_obj = MagicMock()
+        load_result_obj.success = True
+        load_result_obj.data = MagicMock()
+
+        with patch("domain.services.simulation_service.SimulationService.load_sim_result", return_value=load_result_obj):
+            with patch.object(tab, "load_result") as mock_load_result:
+                tab._on_simulation_complete({
+                    "data": {
+                        "result_path": ".circuit_ai/sim_results/result.json",
+                        "success": True,
+                    }
+                })
+
+                assert mock_load_result.call_count == 1
+
+                tab._on_sim_result_file_created({
+                    "data": {
+                        "file_path": ".circuit_ai/sim_results/result.json",
+                        "project_root": "/test/project",
+                    }
+                })
+
+                assert mock_load_result.call_count == 1
+
+    def test_displayed_signals_change_updates_raw_data_filter(self, app, mock_service_locator, mock_simulation_result):
+        """测试波形显示信号变化直接驱动原始数据刷新"""
+        from presentation.panels.simulation.simulation_tab import SimulationTab
+
+        tab = SimulationTab()
+        tab.load_result(mock_simulation_result)
+
+        with patch.object(tab._chart_viewer_panel.raw_data_table, "load_data") as mock_load_data:
+            tab._on_displayed_signals_changed(["V(out)"])
+            mock_load_data.assert_called_once_with(mock_simulation_result, ["V(out)"])
+
+        with patch.object(tab._chart_viewer_panel.raw_data_table, "load_data") as mock_load_data:
+            tab._on_displayed_signals_changed([])
+            mock_load_data.assert_called_once_with(mock_simulation_result, None)
 
 
 if __name__ == "__main__":

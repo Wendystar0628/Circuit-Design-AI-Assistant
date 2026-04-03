@@ -1101,6 +1101,8 @@ class SimulationTab(QWidget):
         # 项目状态
         self._project_root: Optional[str] = None
         self._is_workflow_running: bool = False
+        self._last_loaded_result_path: Optional[str] = None
+        self._suppress_waveform_signal_sync: bool = False
         
         # 仿真结果文件监控器
         self._result_watcher = SimulationResultWatcher()
@@ -1261,6 +1263,10 @@ class SimulationTab(QWidget):
         # 图表查看器波形运算回调
         self._chart_viewer_panel.chart_viewer.set_waveform_math_handler(
             self._on_waveform_math_request
+        )
+
+        self._chart_viewer_panel.waveform_widget.displayed_signals_changed.connect(
+            self._on_displayed_signals_changed
         )
     
     def _subscribe_events(self):
@@ -1543,6 +1549,19 @@ class SimulationTab(QWidget):
         # 检查是否需要重新加载
         if self._should_reload(file_path):
             self._load_simulation_result(file_path)
+
+    def _on_displayed_signals_changed(self, signal_names: list):
+        if self._suppress_waveform_signal_sync:
+            return
+
+        current_result = self._view_model.current_result
+        if current_result is None or not getattr(current_result, 'success', False):
+            return
+
+        self._chart_viewer_panel.raw_data_table.load_data(
+            current_result,
+            signal_names or None,
+        )
     
     def _should_reload(self, file_path: str) -> bool:
         """
@@ -1556,13 +1575,16 @@ class SimulationTab(QWidget):
         Returns:
             bool: 是否需要重新加载
         """
-        # 获取当前显示的结果信息
-        current_result = self._view_model.current_result
-        if current_result is None:
+        normalized_path = self._normalize_result_path(file_path)
+        if not normalized_path:
+            return False
+
+        if normalized_path == self._last_loaded_result_path:
+            return False
+
+        if self._view_model.current_result is None:
             return True
-        
-        # 比较时间戳（如果有的话）
-        # 新文件总是需要加载
+
         return True
     
     def _on_metric_clicked(self, metric_name: str):
@@ -1627,36 +1649,48 @@ class SimulationTab(QWidget):
         """设置项目根目录"""
         self._project_root = project_root
     
-    def load_result(self, result):
+    def load_result(self, result, result_path: Optional[str] = None):
         """
         加载仿真结果
         
         Args:
             result: SimulationResult 对象
         """
+        if result_path:
+            self._last_loaded_result_path = self._normalize_result_path(result_path)
+
         self._view_model.load_result(result)
-        self._chart_viewer_panel.clear()
-        self._chart_viewer_panel.chart_viewer.set_simulation_data(
-            getattr(result, 'data', None)
-        )
+        self._suppress_waveform_signal_sync = True
+        displayed_signals: List[str] = []
+        try:
+            self._chart_viewer_panel.clear()
+            self._chart_viewer_panel.chart_viewer.set_simulation_data(
+                getattr(result, 'data', None)
+            )
         
-        # 显示时间戳
-        timestamp = getattr(result, 'timestamp', None)
-        if timestamp:
-            self._metrics_summary_panel.set_result_timestamp(timestamp)
-        
+            # 显示时间戳
+            timestamp = getattr(result, 'timestamp', None)
+            if timestamp:
+                self._metrics_summary_panel.set_result_timestamp(timestamp)
+            
+            if getattr(result, 'success', False) and getattr(result, 'data', None) is not None:
+                self._load_waveform_data(result)
+
+            raw_output = getattr(result, 'raw_output', None)
+            if raw_output:
+                self._chart_viewer_panel.output_log_viewer.load_log_from_text(raw_output)
+
+            if getattr(result, 'success', False) or raw_output or getattr(result, 'error', None):
+                self._hide_empty_state()
+
+            if not getattr(result, 'success', False):
+                self._chart_viewer_panel.switch_to_log()
+        finally:
+            self._suppress_waveform_signal_sync = False
+
         if getattr(result, 'success', False) and getattr(result, 'data', None) is not None:
-            self._load_waveform_data(result)
-
-        raw_output = getattr(result, 'raw_output', None)
-        if raw_output:
-            self._chart_viewer_panel.output_log_viewer.load_log_from_text(raw_output)
-
-        if getattr(result, 'success', False) or raw_output or getattr(result, 'error', None):
-            self._hide_empty_state()
-
-        if not getattr(result, 'success', False):
-            self._chart_viewer_panel.switch_to_log()
+            displayed_signals = self._chart_viewer_panel.waveform_widget.get_displayed_signals()
+            self._on_displayed_signals_changed(displayed_signals)
     
     def _load_waveform_data(self, result):
         """
@@ -1697,9 +1731,6 @@ class SimulationTab(QWidget):
         
         # 生成图表并加载到图表查看器
         self._generate_and_load_charts(result)
-        
-        # 加载原始数据表格
-        self._chart_viewer_panel.raw_data_table.load_data(result)
     
     def _generate_and_load_charts(self, result):
         """
@@ -1772,10 +1803,15 @@ class SimulationTab(QWidget):
     
     def clear(self):
         """清空所有显示"""
-        self._metrics_summary_panel.clear()
-        self._chart_viewer_panel.clear()
-        self._view_model.clear()
-        self._status_indicator.hide_status()
+        self._last_loaded_result_path = None
+        self._suppress_waveform_signal_sync = True
+        try:
+            self._metrics_summary_panel.clear()
+            self._chart_viewer_panel.clear()
+            self._view_model.clear()
+            self._status_indicator.hide_status()
+        finally:
+            self._suppress_waveform_signal_sync = False
     
     def export_waveform_data(self, format: str = "csv"):
         """
@@ -1989,7 +2025,8 @@ class SimulationTab(QWidget):
             # 尝试加载最新的仿真结果
             load_result = service.get_latest_sim_result(self._project_root)
             if load_result.success and load_result.data:
-                self.load_result(load_result.data)
+                self._last_loaded_result_path = self._normalize_result_path(load_result.file_path)
+                self.load_result(load_result.data, load_result.file_path)
                 self._logger.info(f"Loaded simulation result: {load_result.file_path}")
             else:
                 self._logger.info(f"No simulation result found: {load_result.error_message}")
@@ -2011,12 +2048,18 @@ class SimulationTab(QWidget):
             load_result = service.load_sim_result(self._project_root, result_path)
             if load_result.success and load_result.data:
                 # load_result.data 已经是 SimulationResult 对象
-                self.load_result(load_result.data)
+                self._last_loaded_result_path = self._normalize_result_path(result_path)
+                self.load_result(load_result.data, result_path)
             else:
                 self._logger.warning(f"Failed to load result: {load_result.error_message}")
                 
         except Exception as e:
             self._logger.warning(f"Failed to load simulation result: {e}")
+
+    def _normalize_result_path(self, result_path: str) -> str:
+        if not result_path:
+            return ""
+        return result_path.replace('\\', '/').lower()
     
     def _load_empty_icon(self):
         """加载空状态图标"""

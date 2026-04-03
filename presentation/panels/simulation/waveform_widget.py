@@ -179,6 +179,7 @@ class WaveformWidget(QWidget):
     measurement_changed = pyqtSignal(object)  # WaveformMeasurement
     viewport_changed = pyqtSignal(float, float, float, float)  # x_min, x_max, y_min, y_max
     signal_selected = pyqtSignal(str)  # signal_name
+    displayed_signals_changed = pyqtSignal(list)
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -190,6 +191,7 @@ class WaveformWidget(QWidget):
         
         # 当前仿真结果
         self._current_result: Optional[SimulationResult] = None
+        self._current_result_signature: Optional[Tuple[str, str, str]] = None
         
         # 绘图项字典：signal_name -> PlotItem
         self._plot_items: Dict[str, PlotItem] = {}
@@ -528,24 +530,17 @@ class WaveformWidget(QWidget):
         Returns:
             bool: 是否加载成功
         """
-        if clear_existing:
-            self.clear_waveforms()
-        
-        self._current_result = result
-        
-        # 缓存信号类型
-        if result.data is not None:
-            self._signal_types = getattr(result.data, 'signal_types', {})
-        
-        # 更新信号树
-        self._update_signal_tree(result)
-        
-        # 更新 X 轴标签
-        x_label = self._data_service.get_x_axis_label(result)
-        self._plot_widget.getPlotItem().setLabel('bottom', x_label)
-        
-        # 添加波形
-        return self.add_waveform(result, signal_name)
+        result_signature = self._get_result_signature(result)
+
+        if result_signature != self._current_result_signature:
+            self._clear_displayed_waveforms(preserve_result_context=True)
+            self._set_result_context(result)
+        elif self._current_result is None:
+            self._set_result_context(result)
+        elif clear_existing:
+            self._clear_displayed_waveforms(preserve_result_context=True)
+
+        return self.add_waveform(self._current_result, signal_name)
     
     def add_waveform(
         self,
@@ -564,14 +559,16 @@ class WaveformWidget(QWidget):
         Returns:
             bool: 是否添加成功
         """
+        result_signature = self._get_result_signature(result)
+        if result_signature != self._current_result_signature:
+            self._clear_displayed_waveforms(preserve_result_context=True)
+            self._set_result_context(result)
+
         if signal_name in self._plot_items:
             self._logger.debug(f"Signal already displayed: {signal_name}")
             return True
         
-        # 获取初始数据（低分辨率）
-        waveform_data = self._data_service.get_initial_data(
-            result, signal_name, target_points=INITIAL_POINTS
-        )
+        waveform_data = self._get_display_waveform_data(result, signal_name)
         
         if waveform_data is None:
             self._logger.warning(f"Failed to load waveform: {signal_name}")
@@ -600,10 +597,6 @@ class WaveformWidget(QWidget):
             self._plot_widget.getPlotItem().addItem(plot_data_item)
             axis_label = "left"
         
-        # 添加到图例
-        if self._legend is not None:
-            self._legend.addItem(plot_data_item, signal_name)
-        
         # 保存绘图项
         self._plot_items[signal_name] = PlotItem(
             signal_name=signal_name,
@@ -615,6 +608,9 @@ class WaveformWidget(QWidget):
         
         # 同步信号树复选框状态
         self._set_signal_tree_checked(signal_name, True)
+        self._refresh_legend()
+        self._update_measurement()
+        self.displayed_signals_changed.emit(self.get_displayed_signals())
         
         # 自动调整右侧 ViewBox 范围
         if use_right and self._right_vb is not None:
@@ -647,31 +643,20 @@ class WaveformWidget(QWidget):
         else:
             self._plot_widget.getPlotItem().removeItem(plot_item.plot_data_item)
         
-        # 从图例移除
-        if self._legend is not None:
-            try:
-                self._legend.removeItem(plot_item.plot_data_item)
-            except Exception:
-                pass
-        
         # 同步信号树复选框状态
         self._set_signal_tree_checked(signal_name, False)
+        self._refresh_legend()
+        self._update_measurement()
+        if not self._plot_items:
+            self._color_index = 0
+        self.displayed_signals_changed.emit(self.get_displayed_signals())
         
         self._logger.debug(f"Waveform removed: {signal_name}")
         return True
     
     def clear_waveforms(self):
         """清空所有波形"""
-        for signal_name in list(self._plot_items.keys()):
-            self.remove_waveform(signal_name)
-        
-        self._color_index = 0
-        self._current_result = None
-        self._signal_types = {}
-        
-        # 清除光标
-        self._remove_cursor_a()
-        self._remove_cursor_b()
+        self._clear_displayed_waveforms(preserve_result_context=False)
     
     def set_cursor_a(self, x_position: float):
         """
@@ -769,6 +754,92 @@ class WaveformWidget(QWidget):
         self._plot_widget.getPlotItem().autoRange()
         if self._right_vb is not None:
             self._right_vb.autoRange()
+
+    def _get_result_signature(self, result: Optional[SimulationResult]) -> Optional[Tuple[str, str, str]]:
+        if result is None:
+            return None
+        return (
+            getattr(result, 'file_path', '') or '',
+            getattr(result, 'timestamp', '') or '',
+            getattr(result, 'analysis_type', '') or '',
+        )
+
+    def _set_result_context(self, result: SimulationResult):
+        self._current_result = result
+        self._current_result_signature = self._get_result_signature(result)
+        self._signal_types = getattr(result.data, 'signal_types', {}) if result.data is not None else {}
+        self._update_signal_tree(result)
+        x_label = self._data_service.get_x_axis_label(result)
+        self._plot_widget.getPlotItem().setLabel('bottom', x_label)
+
+    def _clear_displayed_waveforms(self, preserve_result_context: bool):
+        for plot_item in list(self._plot_items.values()):
+            if plot_item.axis == "right" and self._right_vb is not None:
+                self._right_vb.removeItem(plot_item.plot_data_item)
+            else:
+                self._plot_widget.getPlotItem().removeItem(plot_item.plot_data_item)
+
+        self._plot_items.clear()
+        self._color_index = 0
+        self._pending_range = None
+        self._refresh_legend()
+        self._signal_values_label.setText("")
+        self._remove_cursor_a()
+        self._remove_cursor_b()
+
+        if preserve_result_context and self._current_result is not None:
+            self._update_signal_tree(self._current_result)
+        else:
+            self._current_result = None
+            self._current_result_signature = None
+            self._signal_types = {}
+            self._signal_tree.clear()
+
+        self.displayed_signals_changed.emit(self.get_displayed_signals())
+
+    def _get_display_waveform_data(self, result: SimulationResult, signal_name: str) -> Optional[WaveformData]:
+        x_range = self._pending_range
+        if x_range is None:
+            try:
+                view_range = self._plot_widget.getPlotItem().viewRange()
+                if view_range and view_range[0]:
+                    x_range = (view_range[0][0], view_range[0][1])
+            except Exception:
+                x_range = None
+
+        if self._plot_items and x_range is not None:
+            x_min, x_max = x_range
+            if np.isfinite(x_min) and np.isfinite(x_max) and x_max > x_min:
+                waveform_data = self._data_service.get_viewport_data(
+                    result,
+                    signal_name,
+                    x_min,
+                    x_max,
+                    target_points=VIEWPORT_POINTS
+                )
+                if waveform_data is not None:
+                    return waveform_data
+
+        return self._data_service.get_initial_data(
+            result,
+            signal_name,
+            target_points=INITIAL_POINTS
+        )
+
+    def _refresh_legend(self):
+        if self._legend is None:
+            return
+
+        try:
+            self._legend.clear()
+        except Exception:
+            return
+
+        if not self._legend_checkbox.isChecked():
+            return
+
+        for signal_name, plot_item in self._plot_items.items():
+            self._legend.addItem(plot_item.plot_data_item, signal_name)
 
     
     # ============================================================
@@ -940,9 +1011,7 @@ class WaveformWidget(QWidget):
     
     def _on_clear_all_signals(self):
         """清除所有已显示的信号（保留信号树）"""
-        for signal_name in list(self._plot_items.keys()):
-            self.remove_waveform(signal_name)
-        self._color_index = 0
+        self._clear_displayed_waveforms(preserve_result_context=True)
     
     def _on_grid_changed(self, state: int):
         """网格显示变化"""
@@ -954,6 +1023,7 @@ class WaveformWidget(QWidget):
         if state == Qt.CheckState.Checked.value:
             if self._legend is None:
                 self._legend = self._plot_widget.getPlotItem().addLegend()
+            self._refresh_legend()
         else:
             if self._legend is not None:
                 self._legend.clear()
@@ -1015,6 +1085,8 @@ class WaveformWidget(QWidget):
                     waveform_data.y_data
                 )
                 plot_item.waveform_data = waveform_data
+
+        self._update_measurement()
         
         # 发出视口变化信号
         view_range = self._plot_widget.getPlotItem().viewRange()

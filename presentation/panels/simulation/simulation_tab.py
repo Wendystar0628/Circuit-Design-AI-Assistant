@@ -42,9 +42,6 @@ from presentation.panels.simulation.simulation_view_model import (
 )
 from presentation.panels.simulation.metrics_panel import MetricsPanel
 from presentation.panels.simulation.chart_viewer import ChartViewer
-from domain.simulation.service.simulation_result_watcher import (
-    SimulationResultWatcher,
-)
 from resources.theme import (
     COLOR_BG_PRIMARY,
     COLOR_BG_SECONDARY,
@@ -1076,9 +1073,6 @@ class SimulationTab(QWidget):
         self._project_root: Optional[str] = None
         self._last_loaded_result_path: Optional[str] = None
         
-        # 仿真结果文件监控器
-        self._result_watcher: Optional[SimulationResultWatcher] = None
-        
         # EventBus 引用
         self._event_bus = None
         self._subscriptions: List[tuple] = []
@@ -1313,20 +1307,12 @@ class SimulationTab(QWidget):
         # 清空当前显示
         self.clear()
         
-        # 启动仿真结果文件监控器
-        if self._project_root:
-            self._result_watcher.start(self._project_root)
-        
         # 显示空状态，等待会话变更事件或用户操作
         # 根据 4.0.7 节设计：新会话不自动加载历史结果
         self._show_empty_state()
     
     def _on_project_closed(self, event_data: dict):
         """处理项目关闭事件"""
-        # 停止仿真结果文件监控器
-        if self._result_watcher is not None:
-            self._result_watcher.stop()
-        
         self._project_root = None
         self.clear()
         self._show_empty_state()
@@ -2023,10 +2009,6 @@ class SimulationTab(QWidget):
     
     def closeEvent(self, event):
         """处理关闭事件"""
-        # 停止仿真结果文件监控器
-        if self._result_watcher is not None:
-            self._result_watcher.stop()
-        
         self._unsubscribe_events()
         self._view_model.dispose()
         super().closeEvent(event)

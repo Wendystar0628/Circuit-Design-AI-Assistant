@@ -32,7 +32,6 @@ from domain.services.design_service import (
 
 from domain.services.simulation_service import (
     SimulationService,
-    SIM_RESULTS_DIR,
     LoadResult,
 )
 
@@ -100,7 +99,6 @@ __all__ = [
     "validate_design_goals",
     # Simulation Service
     "SimulationService",
-    "SIM_RESULTS_DIR",
     "LoadResult",
     # Context Service
     "save_messages",

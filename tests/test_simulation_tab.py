@@ -483,6 +483,17 @@ class TestSimulationTabEvents:
         # 检查空状态组件未被隐藏
         assert not tab._empty_widget.isHidden()
 
+    def test_on_project_opened_does_not_require_local_result_watcher(self, app, mock_service_locator):
+        """测试项目打开事件不依赖未初始化的本地结果监控器"""
+        from presentation.panels.simulation.simulation_tab import SimulationTab
+
+        tab = SimulationTab()
+
+        tab._on_project_opened({"data": {"path": "/test/project"}})
+
+        assert tab._project_root == "/test/project"
+        assert not tab._empty_widget.isHidden()
+
     def test_file_created_event_does_not_reload_same_result_path_twice(self, app, mock_service_locator):
         """测试文件监控不会重复加载刚刚通过完成事件加载过的结果"""
         from presentation.panels.simulation.simulation_tab import SimulationTab

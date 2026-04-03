@@ -10,7 +10,6 @@
 设计原则：
 - 使用 dataclass 确保类型安全
 - 提供 numpy 数组的序列化支持
-- 支持数据新鲜度验证（用于缓存）
 - 与 SimulationError 数据类集成
 
 使用示例：
@@ -41,15 +40,10 @@
     
     # 查询信号
     output_signal = result.get_signal("V(out)")
-    
-    # 检查新鲜度
-    if result.is_fresh(max_age_seconds=300):
-        # 使用缓存的结果
-        pass
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any, Dict, Optional
 
 import numpy as np
@@ -242,7 +236,7 @@ class SimulationResult:
         analysis_type: 分析类型（如 "ac", "dc", "tran", "noise"）
         success: 是否成功
         data: 仿真数据（成功时有值）
-        metrics: 性能指标字典（可选）
+        measurements: 规范化测量结果列表（可选）
         error: 错误信息（失败时有值）
         raw_output: 原始输出（调试用）
         timestamp: ISO 格式时间戳
@@ -316,6 +310,10 @@ class SimulationResult:
     - 支持跨会话的结果查询
     - 便于清理过期数据
     """
+
+    def __post_init__(self):
+        if self.measurements is not None:
+            self.measurements = normalize_measurements_payload(self.measurements)
     
     # ============================================================
     # 序列化方法
@@ -370,7 +368,7 @@ class SimulationResult:
         # 反序列化 measurements
         measurements = None
         if data.get("measurements") is not None:
-            measurements = normalize_measurements_payload(data["measurements"])
+            measurements = data["measurements"]
         
         # 反序列化错误信息
         error = None
@@ -407,15 +405,6 @@ class SimulationResult:
     # 辅助方法
     # ============================================================
     
-    def is_successful(self) -> bool:
-        """
-        判断是否成功
-        
-        Returns:
-            bool: 是否成功
-        """
-        return self.success
-    
     def get_signal(self, name: str) -> Optional[np.ndarray]:
         """
         获取指定信号数据
@@ -429,51 +418,10 @@ class SimulationResult:
         if not self.success or self.data is None:
             return None
         return self.data.get_signal(name)
-    
-    def is_fresh(self, max_age_seconds: float) -> bool:
-        """
-        检查数据是否在指定时间内（用于缓存验证）
-        
-        Args:
-            max_age_seconds: 最大年龄（秒）
-            
-        Returns:
-            bool: 是否新鲜
-        """
-        try:
-            result_time = datetime.fromisoformat(self.timestamp)
-            age = datetime.now() - result_time
-            return age <= timedelta(seconds=max_age_seconds)
-        except (ValueError, TypeError):
-            # 时间戳解析失败，认为数据过期
-            return False
-    
-    def get_age_seconds(self) -> float:
-        """
-        获取数据年龄（秒）
-        
-        Returns:
-            float: 数据年龄（秒），解析失败返回 -1
-        """
-        try:
-            result_time = datetime.fromisoformat(self.timestamp)
-            age = datetime.now() - result_time
-            return age.total_seconds()
-        except (ValueError, TypeError):
-            return -1.0
 
     @property
     def metric_values(self) -> Dict[str, float]:
         return resolve_result_metric_values(self)
-    
-    def has_metrics(self) -> bool:
-        """
-        检查是否包含性能指标
-        
-        Returns:
-            bool: 是否包含性能指标
-        """
-        return bool(self.metric_values)
     
     def get_metric(self, name: str, default: Any = None) -> Any:
         """
@@ -487,24 +435,6 @@ class SimulationResult:
             Any: 指标值，若不存在则返回默认值
         """
         return get_result_metric_value(self, name, default)
-    
-    def get_summary(self) -> str:
-        """
-        获取结果摘要（用于日志和调试）
-        
-        Returns:
-            str: 结果摘要
-        """
-        status = "成功" if self.success else "失败"
-        session_info = f", session={self.session_id}" if self.session_id else ""
-        return (
-            f"SimulationResult(executor={self.executor}, "
-            f"file={self.file_path}, "
-            f"type={self.analysis_type}, "
-            f"status={status}, "
-            f"duration={self.duration_seconds:.2f}s, "
-            f"version={self.version}{session_info})"
-        )
 
 
 # ============================================================
@@ -545,7 +475,7 @@ def create_success_result(
         analysis_type=analysis_type,
         success=True,
         data=data,
-        measurements=normalize_measurements_payload(measurements),
+        measurements=measurements,
         error=None,
         raw_output=raw_output,
         timestamp=datetime.now().isoformat(),

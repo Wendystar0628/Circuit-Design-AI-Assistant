@@ -11,13 +11,11 @@ SimulationViewModel 单元测试
 
 import pytest
 import numpy as np
-from unittest.mock import Mock, patch, MagicMock
 
 from presentation.panels.simulation.simulation_view_model import (
     SimulationViewModel,
     SimulationStatus,
     DisplayMetric,
-    TuningParameter,
 )
 from domain.simulation.models.simulation_result import (
     SimulationResult,
@@ -78,28 +76,6 @@ class TestDisplayMetric:
         
         assert metric.error_message == "AC 分析数据不足"
         assert metric.is_met is None
-
-
-class TestTuningParameter:
-    """测试 TuningParameter 数据类"""
-    
-    def test_create_tuning_parameter(self):
-        """测试创建 TuningParameter"""
-        param = TuningParameter(
-            name="R1",
-            current_value=10000.0,
-            min_value=1000.0,
-            max_value=100000.0,
-            step=1000.0,
-            unit="Ω",
-            source_file="amplifier.cir",
-            source_line=15,
-        )
-        
-        assert param.name == "R1"
-        assert param.current_value == 10000.0
-        assert param.min_value == 1000.0
-        assert param.max_value == 100000.0
 
 
 class TestSimulationViewModel:
@@ -179,37 +155,6 @@ class TestSimulationViewModel:
         assert view_model.metrics_list[0].name == "bandwidth"
         assert view_model.metrics_list[0].display_name == "Bandwidth"
         assert view_model.metrics_list[0].category == "amplifier"
-    
-    def test_calculate_trend_up(self, view_model):
-        """测试上升趋势计算"""
-        # 设置历史值
-        view_model._previous_metrics["gain"] = 18.0
-        
-        trend = view_model._calculate_trend("gain", 20.0)
-        
-        assert trend == "up"
-    
-    def test_calculate_trend_down(self, view_model):
-        """测试下降趋势计算"""
-        view_model._previous_metrics["gain"] = 22.0
-        
-        trend = view_model._calculate_trend("gain", 20.0)
-        
-        assert trend == "down"
-    
-    def test_calculate_trend_stable(self, view_model):
-        """测试稳定趋势计算"""
-        view_model._previous_metrics["gain"] = 20.0
-        
-        trend = view_model._calculate_trend("gain", 20.1)
-        
-        assert trend == "stable"
-    
-    def test_calculate_trend_unknown(self, view_model):
-        """测试未知趋势（无历史数据）"""
-        trend = view_model._calculate_trend("gain", 20.0)
-        
-        assert trend == "unknown"
     
     def test_on_simulation_started(self, view_model):
         """测试仿真开始事件处理"""
@@ -347,21 +292,6 @@ class TestSimulationViewModel:
         assert view_model.progress == 0.0
         assert view_model.overall_score == 0.0
         assert view_model.metrics_list == []
-    
-    def test_update_tuning_parameter(self, view_model):
-        """测试更新调参参数"""
-        view_model._tuning_parameters = [
-            TuningParameter(
-                name="R1", current_value=10000.0,
-                min_value=1000.0, max_value=100000.0,
-                step=1000.0, unit="Ω",
-                source_file="test.cir", source_line=10
-            ),
-        ]
-        
-        view_model.update_tuning_parameter("R1", 20000.0)
-        
-        assert view_model._tuning_parameters[0].current_value == 20000.0
     
     def test_format_value_with_unit_large(self, view_model):
         """测试大数值格式化"""

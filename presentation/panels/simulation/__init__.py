@@ -26,7 +26,6 @@ from presentation.panels.simulation.simulation_view_model import (
     SimulationViewModel,
     SimulationStatus,
     DisplayMetric,
-    TuningParameter,
 )
 from presentation.panels.simulation.metric_card import MetricCard
 from presentation.panels.simulation.metrics_panel import MetricsPanel
@@ -59,7 +58,6 @@ __all__ = [
     "SimulationViewModel",
     "SimulationStatus",
     "DisplayMetric",
-    "TuningParameter",
     "MetricCard",
     "MetricsPanel",
     "ChartViewer",

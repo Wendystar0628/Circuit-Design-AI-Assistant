@@ -430,27 +430,18 @@ def infer_unit_hint(value: Any) -> str:
 
 
 def extract_numeric_metric_values(measurements: Any = None) -> Dict[str, float]:
+    from domain.simulation.measure.measure_result import MeasureResult
+
     values: Dict[str, float] = {}
 
     if measurements:
         for measurement in measurements:
-            if hasattr(measurement, "name"):
-                name = getattr(measurement, "name", "")
-                raw_value = getattr(measurement, "value", None)
-                is_valid = getattr(measurement, "is_valid", None)
-                status = getattr(measurement, "status", None)
-                if is_valid is None:
-                    if hasattr(status, "value"):
-                        is_valid = status.value == "OK" and raw_value is not None
-                    else:
-                        is_valid = status == "OK" and raw_value is not None
-            elif isinstance(measurement, dict):
-                name = measurement.get("name", "")
-                raw_value = measurement.get("value")
-                status = measurement.get("status", "OK")
-                is_valid = status == "OK" and raw_value is not None
-            else:
+            if not isinstance(measurement, MeasureResult):
                 continue
+
+            name = measurement.name
+            raw_value = measurement.value
+            is_valid = measurement.is_valid
 
             if not name or not is_valid:
                 continue

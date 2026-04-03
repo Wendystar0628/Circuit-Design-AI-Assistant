@@ -27,7 +27,7 @@ ngspice .MEASURE 输出格式示例：
 
 import logging
 import re
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List
 
 from domain.simulation.measure.measure_metadata import measure_metadata_resolver
 from domain.simulation.measure.measure_result import MeasureResult, MeasureStatus
@@ -169,38 +169,6 @@ class MeasureParser:
                 line = line[7:]
             lines.append(line)
         return "\n".join(lines)
-    
-    def validate_measure_statement(self, statement: str) -> Tuple[bool, Optional[str]]:
-        """
-        验证 .MEASURE 语句语法
-        
-        Args:
-            statement: .MEASURE 语句
-            
-        Returns:
-            Tuple[bool, Optional[str]]: (是否有效, 错误信息)
-        """
-        statement = statement.strip()
-        
-        if not statement.upper().startswith(".MEASURE"):
-            return False, "语句必须以 .MEASURE 开头"
-        
-        parts = statement.split()
-        if len(parts) < 4:
-            return False, "语句格式不完整，至少需要: .MEASURE <type> <name> <measurement>"
-        
-        # 检查分析类型
-        analysis_type = parts[1].upper()
-        valid_types = {"AC", "DC", "TRAN", "OP", "NOISE"}
-        if analysis_type not in valid_types:
-            return False, f"无效的分析类型 '{analysis_type}'，有效类型: {valid_types}"
-        
-        # 检查常见语法错误
-        # 错误：使用引号包裹表达式（应使用 par()）
-        if "='" in statement or "=\"" in statement:
-            return False, "引用其他测量结果时应使用 par('expr') 而不是引号"
-        
-        return True, None
 
 
 # 模块级单例

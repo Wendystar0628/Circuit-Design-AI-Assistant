@@ -10,7 +10,6 @@
 """
 
 import json
-from datetime import datetime, timedelta
 
 import numpy as np
 import pytest
@@ -306,25 +305,6 @@ class TestSimulationResult:
             result.data.frequency
         )
     
-    def test_is_successful(self):
-        """测试判断是否成功"""
-        success_result = create_success_result(
-            executor="spice",
-            file_path="test.cir",
-            analysis_type="ac",
-            data=SimulationData(),
-        )
-        
-        error_result = create_error_result(
-            executor="spice",
-            file_path="test.cir",
-            analysis_type="ac",
-            error="Error",
-        )
-        
-        assert success_result.is_successful() is True
-        assert error_result.is_successful() is False
-    
     def test_get_signal(self):
         """测试获取信号"""
         data = SimulationData(
@@ -357,65 +337,6 @@ class TestSimulationResult:
         signal = error_result.get_signal("V(out)")
         assert signal is None
     
-    def test_is_fresh(self):
-        """测试检查数据新鲜度"""
-        # 创建一个刚生成的结果
-        result = create_success_result(
-            executor="spice",
-            file_path="test.cir",
-            analysis_type="ac",
-            data=SimulationData(),
-        )
-        
-        # 应该是新鲜的
-        assert result.is_fresh(max_age_seconds=300) is True
-        
-        # 创建一个旧的结果
-        old_timestamp = (datetime.now() - timedelta(seconds=400)).isoformat()
-        old_result = SimulationResult(
-            executor="spice",
-            file_path="test.cir",
-            analysis_type="ac",
-            success=True,
-            timestamp=old_timestamp,
-        )
-        
-        # 应该是过期的
-        assert old_result.is_fresh(max_age_seconds=300) is False
-    
-    def test_get_age_seconds(self):
-        """测试获取数据年龄"""
-        result = create_success_result(
-            executor="spice",
-            file_path="test.cir",
-            analysis_type="ac",
-            data=SimulationData(),
-        )
-        
-        age = result.get_age_seconds()
-        # 刚创建的结果年龄应该接近 0
-        assert 0 <= age < 1.0
-    
-    def test_has_metrics(self):
-        """测试检查是否包含性能指标"""
-        result_with_metrics = create_success_result(
-            executor="spice",
-            file_path="test.cir",
-            analysis_type="ac",
-            data=SimulationData(),
-            measurements=[{"name": "gain", "value": 20.0, "unit": "dB", "status": "OK"}],
-        )
-        
-        result_without_metrics = create_success_result(
-            executor="spice",
-            file_path="test.cir",
-            analysis_type="ac",
-            data=SimulationData(),
-        )
-        
-        assert result_with_metrics.has_metrics() is True
-        assert result_without_metrics.has_metrics() is False
-    
     def test_get_metric(self):
         """测试获取性能指标"""
         result = create_success_result(
@@ -436,27 +357,6 @@ class TestSimulationResult:
         # 不存在的指标返回默认值
         assert result.get_metric("phase_margin") is None
         assert result.get_metric("phase_margin", "N/A") == "N/A"
-    
-    def test_get_summary(self):
-        """测试获取结果摘要"""
-        result = create_success_result(
-            executor="spice",
-            file_path="amplifier.cir",
-            analysis_type="ac",
-            data=SimulationData(),
-            duration_seconds=2.5,
-            version=1,
-        )
-        
-        summary = result.get_summary()
-        
-        # 检查摘要包含关键信息
-        assert "spice" in summary
-        assert "amplifier.cir" in summary
-        assert "ac" in summary
-        assert "成功" in summary
-        assert "2.50s" in summary
-        assert "version=1" in summary
 
 
 if __name__ == "__main__":

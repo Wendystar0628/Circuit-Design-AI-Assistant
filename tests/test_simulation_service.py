@@ -17,12 +17,9 @@ from unittest.mock import MagicMock, patch
 
 from domain.services.simulation_service import (
     SimulationService,
-    SIM_RESULTS_DIR,
 )
 from domain.simulation.executor.executor_registry import ExecutorRegistry
-from domain.simulation.executor.circuit_analyzer import CircuitAnalyzer, ScanResult
 from domain.simulation.models.simulation_result import (
-    SimulationResult,
     SimulationData,
     create_success_result,
     create_error_result,
@@ -32,6 +29,7 @@ from domain.simulation.models.simulation_error import (
     SimulationErrorType,
     ErrorSeverity,
 )
+from shared.constants.paths import SIM_RESULTS_DIR
 
 
 # ============================================================
@@ -103,7 +101,6 @@ class TestSimulationService:
         """测试默认初始化"""
         service = SimulationService()
         assert service._registry is not None
-        assert service._analyzer is not None
         assert not service._is_running
     
     def test_init_with_registry(self, mock_registry):
@@ -120,34 +117,6 @@ class TestSimulationService:
         """测试获取上次仿真文件"""
         service = SimulationService()
         assert service.get_last_simulation_file() is None
-
-
-class TestSimulationServiceScan:
-    """文件扫描测试"""
-    
-    def test_get_simulatable_files(self, temp_project, mock_registry):
-        """测试获取可仿真文件列表"""
-        service = SimulationService(registry=mock_registry)
-        files = service.get_simulatable_files(str(temp_project))
-        
-        # 应该找到至少一个文件
-        assert len(files) >= 1
-    
-    def test_get_main_circuit_candidates(self, temp_project, mock_registry):
-        """测试获取主电路候选"""
-        service = SimulationService(registry=mock_registry)
-        candidates = service.get_main_circuit_candidates(str(temp_project))
-        
-        # test_circuit.cir 包含 .ac 语句，应该是主电路候选
-        assert len(candidates) >= 1
-    
-    def test_scan_project(self, temp_project, mock_registry):
-        """测试扫描项目"""
-        service = SimulationService(registry=mock_registry)
-        result = service.scan_project(str(temp_project))
-        
-        assert isinstance(result, ScanResult)
-        assert len(result.files) >= 1
 
 
 class TestSimulationServiceRun:
@@ -284,44 +253,6 @@ class TestSimulationServiceResults:
         # 获取最新
         load_result = service.get_latest_sim_result(str(temp_project))
         assert load_result.success
-
-
-# ============================================================
-# ScanResult 测试
-# ============================================================
-
-class TestScanResult:
-    """ScanResult 数据类测试"""
-    
-    def test_has_single_main_circuit(self):
-        """测试单一主电路判断"""
-        result = ScanResult(
-            files=[Path("a.cir"), Path("b.cir")],
-            main_circuit_candidates=[Path("a.cir")],
-        )
-        assert result.has_single_main_circuit()
-        assert not result.has_multiple_candidates()
-        assert not result.has_no_candidates()
-    
-    def test_has_multiple_candidates(self):
-        """测试多候选判断"""
-        result = ScanResult(
-            files=[Path("a.cir"), Path("b.cir")],
-            main_circuit_candidates=[Path("a.cir"), Path("b.cir")],
-        )
-        assert not result.has_single_main_circuit()
-        assert result.has_multiple_candidates()
-        assert not result.has_no_candidates()
-    
-    def test_has_no_candidates(self):
-        """测试无候选判断"""
-        result = ScanResult(
-            files=[Path("a.cir")],
-            main_circuit_candidates=[],
-        )
-        assert not result.has_single_main_circuit()
-        assert not result.has_multiple_candidates()
-        assert result.has_no_candidates()
 
 
 # ============================================================

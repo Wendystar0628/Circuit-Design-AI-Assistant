@@ -64,6 +64,7 @@ from shared.event_types import (
     EVENT_ANALYSIS_COMPLETE,
     EVENT_ALL_ANALYSES_COMPLETE,
 )
+from shared.constants.paths import SIM_RESULTS_DIR
 
 # 全局事件总线实例（延迟获取）
 _event_bus: Optional[EventBus] = None
@@ -86,13 +87,6 @@ def _get_event_bus() -> Optional[EventBus]:
 # ============================================================
 # 常量定义
 # ============================================================
-
-# 从统一路径常量导入
-try:
-    from shared.constants.paths import SIM_RESULTS_DIR
-except ImportError:
-    # 回退到硬编码路径
-    SIM_RESULTS_DIR = ".circuit_ai/sim_results"
 
 # 默认超时时间（秒）
 DEFAULT_TIMEOUT = 300
@@ -1088,8 +1082,6 @@ class SimulationService:
 __all__ = [
     # 类
     "SimulationService",
-    # 常量
-    "SIM_RESULTS_DIR",
     # 类型
     "LoadResult",
 ]

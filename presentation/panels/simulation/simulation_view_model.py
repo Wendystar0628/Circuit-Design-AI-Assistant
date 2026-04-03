@@ -33,11 +33,12 @@
 """
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from domain.simulation.measure.measure_metadata import measure_metadata_resolver
+from domain.simulation.measure.measure_result import MeasureResult, MeasureStatus
 from presentation.core.base_view_model import BaseViewModel
 from domain.simulation.models.simulation_result import SimulationResult
 from shared.event_types import (
@@ -111,39 +112,6 @@ class DisplayMetric:
     """错误信息（若计算失败）"""
 
 
-@dataclass
-class TuningParameter:
-    """
-    可调参数数据结构
-    
-    用于快速调参面板显示
-    """
-    
-    name: str
-    """参数名称"""
-    
-    current_value: float
-    """当前值"""
-    
-    min_value: float
-    """最小值"""
-    
-    max_value: float
-    """最大值"""
-    
-    step: float
-    """步进值"""
-    
-    unit: str
-    """单位"""
-    
-    source_file: str
-    """来源文件路径"""
-    
-    source_line: int
-    """来源行号"""
-
-
 class SimulationViewModel(BaseViewModel):
     """
     仿真面板 ViewModel
@@ -164,12 +132,8 @@ class SimulationViewModel(BaseViewModel):
         self._simulation_status: SimulationStatus = SimulationStatus.IDLE
         self._progress: float = 0.0
         self._error_message: str = ""
-        self._tuning_parameters: List[TuningParameter] = []
         self._has_goals: bool = False  # 是否有设计目标
-        
-        # 历史指标（用于计算趋势）
-        self._previous_metrics: Dict[str, float] = {}
-        
+
         # 服务引用（延迟获取）
         self._simulation_service = None
     
@@ -212,11 +176,6 @@ class SimulationViewModel(BaseViewModel):
         """错误信息"""
         return self._error_message
     
-    @property
-    def tuning_parameters(self) -> List[TuningParameter]:
-        """可调参数列表"""
-        return self._tuning_parameters
-    
     # ============================================================
     # 延迟获取服务
     # ============================================================
@@ -225,11 +184,8 @@ class SimulationViewModel(BaseViewModel):
     def simulation_service(self):
         """延迟获取仿真服务"""
         if self._simulation_service is None:
-            try:
-                from domain.services.simulation_service import SimulationService
-                self._simulation_service = SimulationService()
-            except ImportError:
-                self._logger.warning("SimulationService not available")
+            from domain.services.simulation_service import SimulationService
+            self._simulation_service = SimulationService()
         return self._simulation_service
     
     # ============================================================
@@ -340,7 +296,7 @@ class SimulationViewModel(BaseViewModel):
         self._current_result = result
         
         if result.success and result.data is not None:
-            if hasattr(result, 'measurements') and result.measurements:
+            if result.measurements:
                 self._metrics_list = self._load_metrics_from_measurements(result.measurements)
             else:
                 self._metrics_list = []
@@ -386,38 +342,16 @@ class SimulationViewModel(BaseViewModel):
         display_metrics = []
         
         for measure in measurements:
-            # 支持 MeasureResult 对象或字典格式
-            if hasattr(measure, 'name'):
-                name = measure.name
-                value = getattr(measure, 'value', None)
-                unit = getattr(measure, 'unit', '')
-                display_name = getattr(measure, 'display_name', '')
-                category = getattr(measure, 'category', '')
-                description = getattr(measure, 'description', '')
-                statement = getattr(measure, 'statement', '')
-                status = getattr(measure, 'status', None)
-                # 检查是否有效（使用 is_valid 属性或检查状态）
-                is_valid = getattr(measure, 'is_valid', None)
-                if is_valid is None:
-                    # 没有 is_valid 属性，检查状态
-                    if hasattr(status, 'value'):
-                        # MeasureStatus 枚举
-                        is_valid = status.value == 'OK' and value is not None
-                    else:
-                        # 字符串状态
-                        is_valid = status == 'OK' and value is not None
-            elif isinstance(measure, dict):
-                name = measure.get('name', 'unknown')
-                value = measure.get('value')
-                unit = measure.get('unit', '')
-                display_name = measure.get('display_name', '')
-                category = measure.get('category', '')
-                description = measure.get('description', '')
-                statement = measure.get('statement', '')
-                status = measure.get('status', 'OK')
-                is_valid = status == 'OK' and value is not None
-            else:
+            if not isinstance(measure, MeasureResult):
                 continue
+            name = measure.name
+            value = measure.value
+            unit = measure.unit
+            display_name = measure.display_name
+            category = measure.category
+            description = measure.description
+            statement = measure.statement
+            is_valid = measure.status == MeasureStatus.OK and value is not None
             
             # 跳过无效的测量
             if not is_valid:
@@ -497,44 +431,6 @@ class SimulationViewModel(BaseViewModel):
             confidence=1.0,
             error_message=None,
         )
-
-    def _calculate_trend(
-        self,
-        metric_name: str,
-        current_value: Optional[float]
-    ) -> str:
-        """
-        计算指标趋势
-        
-        Args:
-            metric_name: 指标名称
-            current_value: 当前值
-            
-        Returns:
-            str: 趋势（"up", "down", "stable", "unknown"）
-        """
-        if current_value is None:
-            return "unknown"
-        
-        previous_value = self._previous_metrics.get(metric_name)
-        if previous_value is None:
-            return "unknown"
-        
-        # 计算变化百分比
-        if previous_value == 0:
-            if current_value > 0:
-                return "up"
-            elif current_value < 0:
-                return "down"
-            return "stable"
-        
-        change_percent = (current_value - previous_value) / abs(previous_value) * 100
-        
-        if change_percent > 1.0:  # 上升超过 1%
-            return "up"
-        elif change_percent < -1.0:  # 下降超过 1%
-            return "down"
-        return "stable"
     
     def _format_value_with_unit(self, value: float, unit: str) -> str:
         """格式化数值（带单位）"""
@@ -878,47 +774,6 @@ class SimulationViewModel(BaseViewModel):
         return True
     
     # ============================================================
-    # 调参方法
-    # ============================================================
-    
-    def update_tuning_parameter(self, name: str, value: float):
-        """
-        更新调参参数值
-        
-        Args:
-            name: 参数名称
-            value: 新值
-        """
-        for param in self._tuning_parameters:
-            if param.name == name:
-                param.current_value = value
-                self.notify_property_changed("tuning_parameters", self._tuning_parameters)
-                break
-    
-    def apply_tuning(self, project_root: str):
-        """
-        应用调参并重新仿真
-        
-        Args:
-            project_root: 项目根目录
-        """
-        # TODO: 实现参数写入电路文件的逻辑
-        # 这需要与 CircuitAnalyzer 配合，修改 .param 语句
-        self._logger.info("Applying tuning parameters...")
-        
-        # 重新仿真
-        if self._current_result:
-            self.request_simulation(
-                file_path=self._current_result.file_path,
-                project_root=project_root,
-            )
-    
-    def reset_tuning(self):
-        """重置调参参数为原始值"""
-        # TODO: 从电路文件重新读取原始参数值
-        self._logger.info("Resetting tuning parameters...")
-    
-    # ============================================================
     # 辅助方法
     # ============================================================
     
@@ -957,7 +812,6 @@ class SimulationViewModel(BaseViewModel):
         self._simulation_status = SimulationStatus.IDLE
         self._progress = 0.0
         self._error_message = ""
-        self._tuning_parameters = []
         
         self.notify_properties_changed({
             "current_result": None,
@@ -966,7 +820,6 @@ class SimulationViewModel(BaseViewModel):
             "simulation_status": SimulationStatus.IDLE,
             "progress": 0.0,
             "error_message": "",
-            "tuning_parameters": [],
         })
 
 
@@ -978,5 +831,4 @@ __all__ = [
     "SimulationViewModel",
     "SimulationStatus",
     "DisplayMetric",
-    "TuningParameter",
 ]

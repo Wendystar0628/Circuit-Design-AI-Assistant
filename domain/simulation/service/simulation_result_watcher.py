@@ -43,11 +43,7 @@ from shared.event_types import (
     EVENT_STATE_PROJECT_OPENED,
     EVENT_STATE_PROJECT_CLOSED,
 )
-
-try:
-    from shared.constants.paths import SIM_RESULTS_DIR
-except ImportError:
-    SIM_RESULTS_DIR = ".circuit_ai/sim_results"
+from shared.constants.paths import SIM_RESULTS_DIR
 
 
 # ============================================================
@@ -234,7 +230,8 @@ class SimulationResultWatcher:
     
     def _on_project_opened(self, event_data: dict) -> None:
         """处理项目打开事件"""
-        project_path = event_data.get("path")
+        data = event_data.get("data", event_data) if isinstance(event_data, dict) else event_data
+        project_path = data.get("path") if isinstance(data, dict) else None
         if project_path:
             self.start(project_path)
     

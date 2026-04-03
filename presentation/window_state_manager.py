@@ -104,19 +104,15 @@ class WindowStateManager:
         """
         if not self.config_manager:
             return
-        
-        h_sizes = splitters.get("horizontal")
-        v_sizes = splitters.get("vertical")
-        
-        if h_sizes and v_sizes:
-            h_list = h_sizes.sizes()
-            v_list = v_sizes.sizes()
-            
-            if all(s > 0 for s in h_list) and all(s > 0 for s in v_list):
-                self.config_manager.set("splitter_sizes", {
-                    "horizontal": h_list,
-                    "vertical": v_list,
-                })
+
+        splitter_sizes = {}
+        for name, splitter in splitters.items():
+            sizes = splitter.sizes()
+            if sizes and all(isinstance(size, int) and size > 0 for size in sizes):
+                splitter_sizes[name] = sizes
+
+        if splitter_sizes:
+            self.config_manager.set("splitter_sizes", splitter_sizes)
 
     def restore_splitter_sizes(self, splitters: Dict[str, QSplitter]):
         """
@@ -131,30 +127,20 @@ class WindowStateManager:
         splitter_sizes = self.config_manager.get("splitter_sizes")
         if not splitter_sizes:
             return
-        
+
         try:
-            # 恢复水平分割器
-            if "horizontal" in splitter_sizes and "horizontal" in splitters:
-                h_sizes = splitter_sizes["horizontal"]
-                if isinstance(h_sizes, list) and len(h_sizes) == 3:
-                    min_sizes = [150, 400, 250]
-                    valid_sizes = all(
-                        isinstance(s, (int, float)) and s >= min_sizes[i] 
-                        for i, s in enumerate(h_sizes)
-                    )
-                    if valid_sizes:
-                        splitters["horizontal"].setSizes(h_sizes)
-            
-            # 恢复垂直分割器
-            if "vertical" in splitter_sizes and "vertical" in splitters:
-                v_sizes = splitter_sizes["vertical"]
-                if isinstance(v_sizes, list) and len(v_sizes) == 2:
-                    valid_sizes = (
-                        isinstance(v_sizes[0], (int, float)) and v_sizes[0] >= 400 and
-                        isinstance(v_sizes[1], (int, float)) and v_sizes[1] >= 100
-                    )
-                    if valid_sizes:
-                        splitters["vertical"].setSizes(v_sizes)
+            for name, sizes in splitter_sizes.items():
+                splitter = splitters.get(name)
+                if splitter is None:
+                    continue
+
+                if not isinstance(sizes, list) or len(sizes) != splitter.count():
+                    continue
+
+                if not all(isinstance(size, (int, float)) and size > 0 for size in sizes):
+                    continue
+
+                splitter.setSizes([int(size) for size in sizes])
         except (ValueError, TypeError):
             pass
 

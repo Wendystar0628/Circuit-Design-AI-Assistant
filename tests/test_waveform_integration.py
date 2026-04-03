@@ -62,9 +62,10 @@ class TestChartViewerPanelIntegration:
         panel = ChartViewerPanel()
         
         # 验证标签页数量
-        assert panel._tab_widget.count() == 5
+        assert panel._tab_widget.count() == 6
         
         # 验证各组件存在
+        assert panel.metrics_summary_panel is not None
         assert panel.chart_viewer is not None
         assert panel.waveform_widget is not None
         assert panel.raw_data_table is not None

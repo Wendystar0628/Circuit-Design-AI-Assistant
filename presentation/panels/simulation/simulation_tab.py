@@ -27,7 +27,6 @@ from PyQt6.QtWidgets import (
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
-    QSplitter,
     QFrame,
     QLabel,
     QPushButton,
@@ -868,11 +867,12 @@ class ChartViewerPanel(QFrame):
     """
     
     # 标签页索引常量
-    TAB_CHART = 0
-    TAB_WAVEFORM = 1
-    TAB_RAW_DATA = 2
-    TAB_LOG = 3
-    TAB_ADVANCED = 4
+    TAB_METRICS = 0
+    TAB_CHART = 1
+    TAB_WAVEFORM = 2
+    TAB_RAW_DATA = 3
+    TAB_LOG = 4
+    TAB_ADVANCED = 5
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -894,6 +894,9 @@ class ChartViewerPanel(QFrame):
         self._tab_widget = QTabWidget()
         self._tab_widget.setObjectName("chartTabWidget")
         self._tab_widget.setDocumentMode(True)
+
+        self._metrics_summary_panel = MetricsSummaryPanel()
+        self._tab_widget.addTab(self._metrics_summary_panel, "")
         
         # 图表查看器标签页
         self._chart_viewer = ChartViewer()
@@ -964,6 +967,9 @@ class ChartViewerPanel(QFrame):
     
     def _update_tab_titles(self):
         """更新标签页标题"""
+        self._tab_widget.setTabText(self.TAB_METRICS, self._get_text(
+            "simulation.tab.metrics", "仿真指标"
+        ))
         self._tab_widget.setTabText(self.TAB_CHART, self._get_text(
             "simulation.tab.chart", "图表"
         ))
@@ -984,6 +990,11 @@ class ChartViewerPanel(QFrame):
     def chart_viewer(self) -> ChartViewer:
         """获取图表查看器"""
         return self._chart_viewer
+
+    @property
+    def metrics_summary_panel(self) -> MetricsSummaryPanel:
+        """获取仿真指标标签页"""
+        return self._metrics_summary_panel
     
     @property
     def waveform_widget(self):
@@ -1002,10 +1013,15 @@ class ChartViewerPanel(QFrame):
     
     def clear(self):
         """清空所有内容"""
+        self._metrics_summary_panel.clear()
         self._chart_viewer.clear()
         self._waveform_widget.clear_waveforms()
         self._raw_data_table.clear()
         self._output_log_viewer.clear()
+
+    def switch_to_metrics(self):
+        """切换到仿真指标标签页"""
+        self._tab_widget.setCurrentIndex(self.TAB_METRICS)
     
     def switch_to_chart(self):
         """切换到图表标签页"""
@@ -1030,6 +1046,7 @@ class ChartViewerPanel(QFrame):
     def retranslate_ui(self):
         """重新翻译 UI 文本"""
         self._update_tab_titles()
+        self._metrics_summary_panel.retranslate_ui()
         self._chart_viewer.retranslate_ui()
         self._waveform_widget.retranslate_ui()
         self._raw_data_table.retranslate_ui()
@@ -1101,25 +1118,12 @@ class SimulationTab(QWidget):
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
-        
-        # 主内容区（左右分栏）
-        self._splitter = QSplitter(Qt.Orientation.Horizontal)
-        self._splitter.setObjectName("mainSplitter")
-        self._splitter.setHandleWidth(1)
-        self._splitter.setChildrenCollapsible(False)
-        
-        # 指标摘要面板
-        self._metrics_summary_panel = MetricsSummaryPanel()
-        self._splitter.addWidget(self._metrics_summary_panel)
-        
-        # 图表查看面板
+
         self._chart_viewer_panel = ChartViewerPanel()
-        self._splitter.addWidget(self._chart_viewer_panel)
-        
-        # 设置初始比例（40:60）
-        self._splitter.setSizes([400, 600])
-        
-        main_layout.addWidget(self._splitter, 1)
+        self._metrics_panel_view = self._chart_viewer_panel.metrics_summary_panel
+        self._content_panel = self._chart_viewer_panel
+
+        main_layout.addWidget(self._content_panel, 1)
         
         # 状态指示器
         self._status_indicator = StatusIndicator()
@@ -1167,14 +1171,6 @@ class SimulationTab(QWidget):
                 background-color: {COLOR_BG_PRIMARY};
             }}
             
-            #mainSplitter {{
-                background-color: {COLOR_BG_PRIMARY};
-            }}
-            
-            #mainSplitter::handle {{
-                background-color: {COLOR_BORDER};
-            }}
-            
             #emptyWidget {{
                 background-color: {COLOR_BG_PRIMARY};
             }}
@@ -1220,11 +1216,11 @@ class SimulationTab(QWidget):
         self._view_model.property_changed.connect(self._on_property_changed)
         
         # 指标摘要面板
-        self._metrics_summary_panel.history_clicked.connect(self._on_history_clicked)
-        self._metrics_summary_panel.refresh_clicked.connect(self._on_refresh_clicked)
+        self._metrics_panel_view.history_clicked.connect(self._on_history_clicked)
+        self._metrics_panel_view.refresh_clicked.connect(self._on_refresh_clicked)
         
         # 指标卡片点击
-        self._metrics_summary_panel.metrics_panel.metric_clicked.connect(self._on_metric_clicked)
+        self._metrics_panel_view.metrics_panel.metric_clicked.connect(self._on_metric_clicked)
         
         # 图表查看器波形运算回调
         self._chart_viewer_panel.chart_viewer.set_waveform_math_handler(
@@ -1290,7 +1286,7 @@ class SimulationTab(QWidget):
         if name == "metrics_list":
             self._update_metrics(value)
         elif name == "overall_score":
-            self._metrics_summary_panel.set_overall_score(value)
+            self._metrics_panel_view.set_overall_score(value)
         elif name == "simulation_status":
             self._update_status(value)
         elif name == "error_message":
@@ -1355,7 +1351,7 @@ class SimulationTab(QWidget):
         # 更新综合评分
         if total_count > 0:
             score = (success_count / total_count) * 100
-            self._metrics_summary_panel.set_overall_score(score)
+            self._metrics_panel_view.set_overall_score(score)
     
     def _on_language_changed(self, event_data: dict):
         """处理语言切换事件"""
@@ -1607,7 +1603,7 @@ class SimulationTab(QWidget):
         # 显示时间戳
         timestamp = getattr(result, 'timestamp', None)
         if timestamp:
-            self._metrics_summary_panel.set_result_timestamp(timestamp)
+            self._metrics_panel_view.set_result_timestamp(timestamp)
         
         if getattr(result, 'success', False) and getattr(result, 'data', None) is not None:
             self._load_waveform_data(result)
@@ -1709,10 +1705,10 @@ class SimulationTab(QWidget):
     def clear(self):
         """清空所有显示"""
         self._last_loaded_result_path = None
-        self._metrics_summary_panel.clear()
         self._chart_viewer_panel.clear()
         self._view_model.clear()
         self._status_indicator.hide_status()
+        self._show_empty_state()
     
     def export_waveform_data(self, format: str = "csv"):
         """
@@ -1775,7 +1771,6 @@ class SimulationTab(QWidget):
     
     def retranslate_ui(self):
         """重新翻译 UI 文本"""
-        self._metrics_summary_panel.retranslate_ui()
         self._chart_viewer_panel.retranslate_ui()
         self._status_indicator.retranslate_ui()
         
@@ -1802,10 +1797,10 @@ class SimulationTab(QWidget):
     def _update_metrics(self, metrics_list: List[DisplayMetric]):
         """更新指标显示"""
         if metrics_list:
-            self._metrics_summary_panel.update_metrics(metrics_list)
+            self._metrics_panel_view.update_metrics(metrics_list)
             self._hide_empty_state()
         else:
-            self._metrics_summary_panel.clear()
+            self._metrics_panel_view.clear()
     
     def _update_status(self, status: SimulationStatus):
         """更新状态显示"""
@@ -1825,11 +1820,11 @@ class SimulationTab(QWidget):
     
     def _show_empty_state(self):
         """显示空状态"""
-        self._splitter.hide()
+        self._content_panel.hide()
         self._empty_widget.show()
-        self._metrics_summary_panel.clear_result_timestamp()
+        self._metrics_panel_view.clear_result_timestamp()
         # 隐藏顶部信息栏
-        self._metrics_summary_panel.hide_header_bar()
+        self._metrics_panel_view.hide_header_bar()
         
         # 加载空状态图标
         self._load_empty_icon()
@@ -1853,11 +1848,11 @@ class SimulationTab(QWidget):
     
     def _show_file_missing_state(self):
         """显示文件丢失状态"""
-        self._splitter.hide()
+        self._content_panel.hide()
         self._empty_widget.show()
-        self._metrics_summary_panel.clear_result_timestamp()
+        self._metrics_panel_view.clear_result_timestamp()
         # 隐藏顶部信息栏
-        self._metrics_summary_panel.hide_header_bar()
+        self._metrics_panel_view.hide_header_bar()
         
         # 加载文件丢失图标
         self._load_file_missing_icon()
@@ -1878,13 +1873,13 @@ class SimulationTab(QWidget):
     def _hide_empty_state(self):
         """隐藏空状态"""
         self._empty_widget.hide()
-        self._splitter.show()
+        self._content_panel.show()
         # 显示顶部信息栏
-        self._metrics_summary_panel.show_header_bar()
+        self._metrics_panel_view.show_header_bar()
     
     def _set_controls_enabled(self, enabled: bool):
         """设置控件启用状态"""
-        self._metrics_summary_panel.setEnabled(enabled)
+        self._metrics_panel_view.setEnabled(enabled)
         # 图表查看器保持可用（允许查看）
     
     def _load_project_simulation_result(self):

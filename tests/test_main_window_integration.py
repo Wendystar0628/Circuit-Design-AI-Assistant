@@ -111,19 +111,22 @@ class TestToolbarManagerStructure:
         assert 'self._actions["toolbar_stop"]' in content
 
 
-class TestBottomPanelStructure:
-    """测试下栏面板结构"""
+class TestMainWindowLayoutStructure:
+    """测试主窗口布局结构"""
     
-    def test_bottom_panel_has_simulation_tab(self):
-        """测试下栏面板包含仿真标签页"""
-        bottom_panel_path = Path(__file__).parent.parent / "presentation" / "panels" / "bottom_panel.py"
-        with open(bottom_panel_path, "r", encoding="utf-8") as f:
+    def test_main_window_uses_direct_simulation_panel_layout(self):
+        """测试主窗口直接挂载仿真面板并使用新 splitter 结构"""
+        main_window_path = Path(__file__).parent.parent / "presentation" / "main_window.py"
+        with open(main_window_path, "r", encoding="utf-8") as f:
             content = f.read()
         
-        # 验证仿真标签页
-        assert "SimulationTab" in content
-        assert "get_simulation_tab" in content
-        assert "TAB_SIMULATION" in content
+        assert 'self._splitters["main_horizontal"]' in content
+        assert 'self._splitters["left_vertical"]' in content
+        assert 'self._splitters["workspace_horizontal"]' in content
+        assert 'from presentation.panels.simulation.simulation_tab import SimulationTab' in content
+        assert 'self._panels["simulation"] = simulation_tab' in content
+        assert 'from presentation.panels.bottom_panel import BottomPanel' not in content
+        assert 'bottom_panel = BottomPanel()' not in content
 
 
 # ============================================================
@@ -135,5 +138,5 @@ __all__ = [
     "TestI18nSimulationSettings",
     "TestMenuManagerStructure",
     "TestToolbarManagerStructure",
-    "TestBottomPanelStructure",
+    "TestMainWindowLayoutStructure",
 ]

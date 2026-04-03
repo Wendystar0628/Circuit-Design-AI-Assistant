@@ -203,14 +203,15 @@ class MainWindow(QMainWindow):
         main_layout = QVBoxLayout(central_widget)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
-        
-        # 外层垂直分割器（上部主区域 + 下部仿真结果）
-        self._splitters["vertical"] = QSplitter(Qt.Orientation.Vertical)
-        main_layout.addWidget(self._splitters["vertical"])
-        
-        # 上部水平分割器（左栏 + 中栏 + 右栏）
-        self._splitters["horizontal"] = QSplitter(Qt.Orientation.Horizontal)
-        self._splitters["vertical"].addWidget(self._splitters["horizontal"])
+
+        self._splitters["main_horizontal"] = QSplitter(Qt.Orientation.Horizontal)
+        main_layout.addWidget(self._splitters["main_horizontal"])
+
+        self._splitters["left_vertical"] = QSplitter(Qt.Orientation.Vertical)
+        self._splitters["workspace_horizontal"] = QSplitter(Qt.Orientation.Horizontal)
+
+        self._splitters["left_vertical"].addWidget(self._splitters["workspace_horizontal"])
+        self._splitters["main_horizontal"].addWidget(self._splitters["left_vertical"])
         
         # 创建四个面板
         self._create_panels()
@@ -224,7 +225,7 @@ class MainWindow(QMainWindow):
         from presentation.panels.file_browser_panel import FileBrowserPanel
         file_browser = FileBrowserPanel()
         file_browser.setMinimumWidth(150)
-        self._splitters["horizontal"].addWidget(file_browser)
+        self._splitters["workspace_horizontal"].addWidget(file_browser)
         self._panels["file_browser"] = file_browser
         self._panel_manager.register_panel(
             "file_browser", file_browser, PanelRegion.LEFT,
@@ -235,7 +236,7 @@ class MainWindow(QMainWindow):
         from presentation.panels.code_editor_panel import CodeEditorPanel
         code_editor = CodeEditorPanel()
         code_editor.setMinimumWidth(400)
-        self._splitters["horizontal"].addWidget(code_editor)
+        self._splitters["workspace_horizontal"].addWidget(code_editor)
         self._panels["code_editor"] = code_editor
         self._panel_manager.register_panel(
             "code_editor", code_editor, PanelRegion.CENTER,
@@ -249,14 +250,13 @@ class MainWindow(QMainWindow):
         self._create_right_panel_tabs()
         
         # 下栏 - 仿真结果面板
-        from presentation.panels.bottom_panel import BottomPanel
-        bottom_panel = BottomPanel()
-        bottom_panel.setMinimumHeight(100)
-        self._splitters["vertical"].addWidget(bottom_panel)
-        self._panels["bottom"] = bottom_panel
-        self._panels["simulation"] = bottom_panel.get_simulation_tab()
+        from presentation.panels.simulation.simulation_tab import SimulationTab
+        simulation_tab = SimulationTab()
+        simulation_tab.setMinimumHeight(100)
+        self._splitters["left_vertical"].addWidget(simulation_tab)
+        self._panels["simulation"] = simulation_tab
         self._panel_manager.register_panel(
-            "bottom", bottom_panel, PanelRegion.BOTTOM,
+            "simulation", simulation_tab, PanelRegion.BOTTOM,
             title_key="panel.simulation"
         )
 
@@ -318,7 +318,7 @@ class MainWindow(QMainWindow):
             )
         
         # 添加到分割器
-        self._splitters["horizontal"].addWidget(right_tab_widget)
+        self._splitters["main_horizontal"].addWidget(right_tab_widget)
         self._panels["right_tabs"] = right_tab_widget
 
     def _should_show_devtools(self) -> bool:
@@ -346,19 +346,24 @@ class MainWindow(QMainWindow):
 
     def _setup_splitter_sizes(self):
         """设置分割器初始比例"""
-        # 水平分割：左栏 10%、中栏 60%、右栏 30%
         total_width = 1400
-        self._splitters["horizontal"].setSizes([
-            int(total_width * 0.10),  # 左栏
-            int(total_width * 0.60),  # 中栏
-            int(total_width * 0.30),  # 右栏
+        left_width = int(total_width * 0.70)
+        right_width = int(total_width * 0.30)
+
+        self._splitters["main_horizontal"].setSizes([
+            left_width,
+            right_width,
         ])
-        
-        # 垂直分割：上部 80%、下部 20%
+
+        self._splitters["workspace_horizontal"].setSizes([
+            int(left_width * 0.15),
+            int(left_width * 0.85),
+        ])
+
         total_height = 900
-        self._splitters["vertical"].setSizes([
-            int(total_height * 0.80),  # 上部
-            int(total_height * 0.20),  # 下部
+        self._splitters["left_vertical"].setSizes([
+            int(total_height * 0.78),
+            int(total_height * 0.22),
         ])
 
     # ============================================================

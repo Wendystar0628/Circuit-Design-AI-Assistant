@@ -29,7 +29,7 @@ from presentation.panels.simulation.simulation_view_model import (
 )
 from presentation.panels.simulation.metric_card import MetricCard
 from presentation.panels.simulation.metrics_panel import MetricsPanel
-from presentation.panels.simulation.chart_viewer import ChartViewer, ZoomableImageLabel
+from presentation.panels.simulation.analysis_chart_viewer import ChartViewer
 from presentation.panels.simulation.waveform_widget import WaveformWidget, WaveformMeasurement
 from presentation.panels.simulation.raw_data_table import RawDataTable, RawDataTableModel
 from presentation.panels.simulation.output_log_viewer import OutputLogViewer, LogHighlighter
@@ -61,7 +61,6 @@ __all__ = [
     "MetricCard",
     "MetricsPanel",
     "ChartViewer",
-    "ZoomableImageLabel",
     "WaveformWidget",
     "WaveformMeasurement",
     "RawDataTable",

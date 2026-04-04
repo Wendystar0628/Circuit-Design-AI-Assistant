@@ -120,6 +120,49 @@ def mock_ac_simulation_result():
     )
 
 
+@pytest.fixture
+def mock_simulation_result_with_measurements():
+    from domain.simulation.models.simulation_result import SimulationResult, SimulationData
+    from domain.simulation.measure.measure_result import MeasureResult, MeasureStatus
+
+    time = np.linspace(0, 1e-3, 100)
+    data = SimulationData(
+        time=time,
+        signals={
+            "V(out)": np.sin(2 * np.pi * 1000 * time),
+            "V(in)": np.cos(2 * np.pi * 1000 * time),
+        },
+    )
+
+    return SimulationResult(
+        executor="spice",
+        file_path="measured_test.cir",
+        analysis_type="tran",
+        success=True,
+        data=data,
+        measurements=[
+            MeasureResult(
+                name="gain",
+                value=20.5,
+                unit="dB",
+                status=MeasureStatus.OK,
+                display_name="增益",
+                category="gain",
+            ),
+            MeasureResult(
+                name="bandwidth",
+                value=1.0e7,
+                unit="Hz",
+                status=MeasureStatus.OK,
+                display_name="带宽",
+                category="bandwidth",
+            ),
+        ],
+        timestamp="2026-01-06T12:10:00",
+        raw_output="ok",
+    )
+
+
 class TestStatusIndicator:
     """StatusIndicator 测试"""
     
@@ -301,15 +344,6 @@ class TestSimulationTab:
         assert tab._chart_viewer_panel.metrics_summary_panel is not None
         assert tab._status_indicator is not None
     
-    def test_set_project_root(self, app, mock_service_locator):
-        """测试设置项目根目录"""
-        from presentation.panels.simulation.simulation_tab import SimulationTab
-        
-        tab = SimulationTab()
-        tab.set_project_root("/test/project")
-        
-        assert tab._project_root == "/test/project"
-    
     def test_update_metrics(self, app, mock_service_locator):
         """测试更新指标"""
         from presentation.panels.simulation.simulation_tab import SimulationTab
@@ -340,7 +374,7 @@ class TestSimulationTab:
             ),
         ]
         
-        tab.update_metrics(metrics)
+        tab._update_metrics(metrics)
         
         assert tab._chart_viewer_panel.metrics_summary_panel.metrics_panel.card_count == 2
     
@@ -364,7 +398,7 @@ class TestSimulationTab:
             ),
         ]
         
-        tab.update_metrics(metrics)
+        tab._update_metrics(metrics)
         tab.clear()
         
         assert tab._chart_viewer_panel.metrics_summary_panel.metrics_panel.card_count == 0
@@ -399,7 +433,7 @@ class TestSimulationTab:
         tab = SimulationTab()
         
         # 初始应该显示空状态
-        assert tab._content_panel.isHidden()
+        assert tab._chart_viewer_panel.isHidden()
         assert not tab._empty_widget.isHidden()
     
     def test_hide_empty_state_on_metrics(self, app, mock_service_locator):
@@ -422,11 +456,11 @@ class TestSimulationTab:
             ),
         ]
         
-        tab.update_metrics(metrics)
+        tab._update_metrics(metrics)
         
         # 应该隐藏空状态（检查 isHidden 而非 isVisible）
         assert tab._empty_widget.isHidden()
-        assert not tab._content_panel.isHidden()
+        assert not tab._chart_viewer_panel.isHidden()
 
 
 class TestSimulationTabEvents:
@@ -474,7 +508,7 @@ class TestSimulationTabEvents:
                 category="gain",
             ),
         ]
-        tab.update_metrics(metrics)
+        tab._update_metrics(metrics)
         
         tab._on_project_closed({"path": "/test/project"})
         
@@ -533,6 +567,23 @@ class TestSimulationTabEvents:
         with patch.object(tab._chart_viewer_panel.raw_data_table, "load_data") as mock_load_data:
             tab.load_result(mock_simulation_result)
             mock_load_data.assert_called_once_with(mock_simulation_result)
+
+    def test_load_result_keeps_metrics_in_sync_with_waveform_and_raw_data(
+        self,
+        app,
+        mock_service_locator,
+        mock_simulation_result_with_measurements,
+    ):
+        """测试加载结果时指标、波形、原始数据同步刷新"""
+        from presentation.panels.simulation.simulation_tab import SimulationTab
+
+        tab = SimulationTab()
+
+        tab.load_result(mock_simulation_result_with_measurements)
+
+        assert tab._chart_viewer_panel.metrics_summary_panel.metrics_panel.card_count == 2
+        assert len(tab._chart_viewer_panel.waveform_widget.get_displayed_signals()) > 0
+        assert tab._chart_viewer_panel.raw_data_table._model.total_rows > 0
 
     def test_load_result_prefers_ac_display_signal(self, app, mock_service_locator, mock_ac_simulation_result):
         """测试 AC 结果默认波形优先使用可显示的幅值信号"""

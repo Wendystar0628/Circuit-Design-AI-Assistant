@@ -32,7 +32,7 @@ from typing import Optional, Dict, Any
 
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout,
-    QSplitter, QLabel, QTabWidget
+    QSplitter, QTabWidget
 )
 from PyQt6.QtCore import Qt, QTimer
 
@@ -53,10 +53,11 @@ class MainWindow(QMainWindow):
     应用程序主窗口
     
     布局结构：
-    - 外层：垂直 QSplitter，分割上部主区域和下部仿真结果区
-    - 上部：水平 QSplitter，分割左栏、中栏、右栏
+    - 外层：水平 QSplitter，分割左侧工作区与右栏标签页
+    - 左侧：垂直 QSplitter，分割上部工作区与下部仿真结果区
+    - 上部工作区：水平 QSplitter，分割文件浏览器与代码编辑器
     - 右栏：QTabWidget 承载多个标签页（对话、调试等）
-    - 初始比例：左栏 10%、中栏 60%、右栏 30%、下栏 20% 高度
+    - 初始比例：左侧约 70%、右栏约 30%、仿真结果区约 22% 高度
     """
 
     def __init__(self):
@@ -192,8 +193,9 @@ class MainWindow(QMainWindow):
         设置中央部件和布局
         
         布局结构：
-        - 外层垂直 QSplitter：上部主区域 + 下部仿真结果区
-        - 上部水平 QSplitter：左栏 + 中栏 + 右栏
+        - 外层水平 QSplitter：左侧工作区 + 右栏标签页
+        - 左侧垂直 QSplitter：上部工作区 + 下部仿真结果区
+        - 上部水平 QSplitter：文件浏览器 + 代码编辑器
         """
         # 创建中央部件
         central_widget = QWidget()
@@ -213,7 +215,6 @@ class MainWindow(QMainWindow):
         self._splitters["left_vertical"].addWidget(self._splitters["workspace_horizontal"])
         self._splitters["main_horizontal"].addWidget(self._splitters["left_vertical"])
         
-        # 创建四个面板
         self._create_panels()
         
         # 设置分割比例
@@ -326,23 +327,6 @@ class MainWindow(QMainWindow):
         if self.config_manager:
             return self.config_manager.get("debug.show_devtools_panel", True)
         return True  # 默认显示
-
-    def _create_placeholder_panel(self, title_key: str) -> QWidget:
-        """创建占位面板"""
-        panel = QWidget()
-        panel.setStyleSheet("background-color: #f5f5f5; border: 1px solid #ddd;")
-        
-        layout = QVBoxLayout(panel)
-        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        
-        # 占位标签
-        label = QLabel()
-        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        label.setStyleSheet("color: #888; font-size: 14px; border: none;")
-        label.setProperty("title_key", title_key)
-        layout.addWidget(label)
-        
-        return panel
 
     def _setup_splitter_sizes(self):
         """设置分割器初始比例"""
@@ -458,9 +442,6 @@ class MainWindow(QMainWindow):
         # 刷新右栏标签页标题
         if self._tab_controller:
             self._retranslate_tab_titles()
-        
-        # 面板占位文本
-        self._update_panel_placeholders()
 
     def _retranslate_tab_titles(self):
         """刷新右栏标签页标题"""
@@ -486,21 +467,6 @@ class MainWindow(QMainWindow):
                 TAB_DEVTOOLS,
                 self._get_text("panel.devtools", "调试")
             )
-
-    def _update_panel_placeholders(self):
-        """更新面板占位文本"""
-        # 注意：simulation 面板已替换为 BottomPanel，不再是占位面板
-        placeholder_panels = []
-        for panel_name in placeholder_panels:
-            panel = self._panels.get(panel_name)
-            if panel:
-                label = panel.findChild(QLabel)
-                if label:
-                    title_key = label.property("title_key")
-                    if title_key:
-                        title = self._get_text(title_key, panel_name)
-                        hint = self._get_text("status.open_workspace", "Please open a workspace folder")
-                        label.setText(f"{title}\n\n{hint}")
 
     # ============================================================
     # 事件订阅

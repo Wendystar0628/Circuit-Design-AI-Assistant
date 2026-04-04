@@ -55,23 +55,7 @@ CHART_CATEGORY_NAMES: Dict[str, str] = {
     "bode": "Bode 图",
     "dc": "特性曲线",
     "spectrum": "频谱分析",
-    "statistics": "统计图表",
-    "sweep": "参数扫描",
-    "sensitivity": "敏感度",
-    "pvt": "PVT 图表",
     "noise": "噪声图表",
-}
-
-CHART_CATEGORY_NAMES_EN: Dict[str, str] = {
-    "waveform": "Waveform",
-    "bode": "Bode Plot",
-    "dc": "DC Characteristics",
-    "spectrum": "Spectrum Analysis",
-    "statistics": "Statistics",
-    "sweep": "Parameter Sweep",
-    "sensitivity": "Sensitivity",
-    "pvt": "PVT Analysis",
-    "noise": "Noise Analysis",
 }
 
 
@@ -637,5 +621,4 @@ class SimulationSettingsDialog(QDialog):
 __all__ = [
     "SimulationSettingsDialog",
     "CHART_CATEGORY_NAMES",
-    "CHART_CATEGORY_NAMES_EN",
 ]

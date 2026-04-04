@@ -1,8 +1,8 @@
 # test_bottom_panel.py
 """
-底部仿真区域测试
+仿真结果面板测试
 
-测试当前主界面底部区域直接使用 SimulationTab 的结构。
+测试当前主界面直接使用 SimulationTab 的结构。
 """
 
 import pytest
@@ -38,7 +38,7 @@ def mock_service_locator(mock_event_bus):
 
 @pytest.fixture
 def simulation_tab(qapp, mock_service_locator):
-    """创建底部仿真区域实例"""
+    """创建仿真结果面板实例"""
     from presentation.panels.simulation.simulation_tab import SimulationTab
 
     tab = SimulationTab()
@@ -46,8 +46,8 @@ def simulation_tab(qapp, mock_service_locator):
     tab.close()
 
 
-class TestSimulationBottomRegion:
-    """底部仿真区域测试类"""
+class TestSimulationPanelRegion:
+    """仿真结果面板测试类"""
 
     def test_init(self, simulation_tab):
         """测试初始化"""
@@ -81,4 +81,4 @@ class TestSimulationBottomRegion:
         assert not simulation_tab._empty_widget.isHidden()
 
 
-__all__ = ["TestSimulationBottomRegion"]
+__all__ = ["TestSimulationPanelRegion"]

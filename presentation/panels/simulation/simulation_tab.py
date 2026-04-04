@@ -15,7 +15,6 @@
 - 支持国际化
 
 被调用方：
-- bottom_panel.py
 - main_window.py
 """
 
@@ -40,7 +39,7 @@ from presentation.panels.simulation.simulation_view_model import (
     DisplayMetric,
 )
 from presentation.panels.simulation.metrics_panel import MetricsPanel
-from presentation.panels.simulation.chart_viewer import ChartViewer
+from presentation.panels.simulation.analysis_chart_viewer import ChartViewer
 from resources.theme import (
     COLOR_BG_PRIMARY,
     COLOR_BG_SECONDARY,
@@ -1072,11 +1071,9 @@ class SimulationTab(QWidget):
     
     Signals:
         history_requested: 请求查看历史记录
-        settings_requested: 请求打开仿真设置
     """
     
     history_requested = pyqtSignal()
-    settings_requested = pyqtSignal()
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1121,9 +1118,7 @@ class SimulationTab(QWidget):
 
         self._chart_viewer_panel = ChartViewerPanel()
         self._metrics_panel_view = self._chart_viewer_panel.metrics_summary_panel
-        self._content_panel = self._chart_viewer_panel
-
-        main_layout.addWidget(self._content_panel, 1)
+        main_layout.addWidget(self._chart_viewer_panel, 1)
         
         # 状态指示器
         self._status_indicator = StatusIndicator()
@@ -1221,11 +1216,6 @@ class SimulationTab(QWidget):
         
         # 指标卡片点击
         self._metrics_panel_view.metrics_panel.metric_clicked.connect(self._on_metric_clicked)
-        
-        # 图表查看器波形运算回调
-        self._chart_viewer_panel.chart_viewer.set_waveform_math_handler(
-            self._on_waveform_math_request
-        )
     
     def _subscribe_events(self):
         """订阅事件"""
@@ -1422,7 +1412,7 @@ class SimulationTab(QWidget):
         处理图表选择变更事件
         
         当用户在仿真设置对话框中变更图表选择后，
-        根据当前已加载的仿真结果重新生成图表。
+        根据当前已加载的仿真结果重新加载交互式分析图。
         
         Args:
             event_data: 事件数据，包含 enabled_charts, source 等
@@ -1435,7 +1425,7 @@ class SimulationTab(QWidget):
         current_result = self._view_model.current_result
         
         if current_result is not None:
-            self._generate_and_load_charts(current_result)
+            self._load_analysis_charts(current_result)
     
     def _load_from_path(self, sim_result_path: str):
         """
@@ -1516,73 +1506,12 @@ class SimulationTab(QWidget):
 
         if normalized_path == self._last_loaded_result_path:
             return False
-
-        if self._view_model.current_result is None:
-            return True
-
         return True
     
     def _on_metric_clicked(self, metric_name: str):
         """处理指标卡片点击"""
         self._logger.debug(f"Metric clicked: {metric_name}")
         # 可以高亮对应的图表区域或显示详情
-    
-    def _on_waveform_math_request(self):
-        """处理波形数学运算请求"""
-        self._logger.info("Waveform math dialog requested")
-        
-        # 获取当前仿真结果
-        current_result = self._view_model.current_result
-        if current_result is None:
-            from PyQt6.QtWidgets import QMessageBox
-            QMessageBox.warning(
-                self,
-                self._get_text("waveform_math.title", "波形数学运算"),
-                self._get_text("waveform_math.no_data", "无仿真数据可用")
-            )
-            return
-        
-        # 打开波形数学运算对话框
-        try:
-            from presentation.panels.simulation.waveform_math_dialog import WaveformMathDialog
-            
-            dialog = WaveformMathDialog(self, current_result)
-            dialog.result_ready.connect(self._on_waveform_math_result)
-            dialog.exec()
-        except Exception as e:
-            self._logger.error(f"Failed to open waveform math dialog: {e}")
-    
-    def _on_waveform_math_result(self, waveform_data):
-        """
-        处理波形数学运算结果
-        
-        Args:
-            waveform_data: WaveformData 对象
-        """
-        self._logger.info(f"Waveform math result: {waveform_data.signal_name}")
-        
-        # 将计算结果添加到波形显示
-        # 这里可以将结果传递给 WaveformWidget 显示
-        # 或者添加到图表查看器中
-        
-        # 发布事件通知其他组件
-        event_bus = self._get_event_bus()
-        if event_bus:
-            from shared.event_types import EVENT_WAVEFORM_MATH_COMPLETE
-            event_bus.publish(EVENT_WAVEFORM_MATH_COMPLETE, {
-                "signal_name": waveform_data.signal_name,
-                "point_count": waveform_data.point_count,
-                "x_range": waveform_data.x_range,
-                "y_range": waveform_data.y_range,
-            })
-    
-    # ============================================================
-    # 公共方法
-    # ============================================================
-    
-    def set_project_root(self, project_root: str):
-        """设置项目根目录"""
-        self._project_root = project_root
     
     def load_result(self, result, result_path: Optional[str] = None):
         """
@@ -1594,11 +1523,8 @@ class SimulationTab(QWidget):
         if result_path:
             self._last_loaded_result_path = self._normalize_result_path(result_path)
 
-        self._view_model.load_result(result)
         self._chart_viewer_panel.clear()
-        self._chart_viewer_panel.chart_viewer.set_simulation_data(
-            getattr(result, 'data', None)
-        )
+        self._view_model.load_result(result)
         
         # 显示时间戳
         timestamp = getattr(result, 'timestamp', None)
@@ -1651,18 +1577,17 @@ class SimulationTab(QWidget):
         if default_signal:
             self._chart_viewer_panel.waveform_widget.load_waveform(result, default_signal)
         
-        # 生成图表并加载到图表查看器
-        self._generate_and_load_charts(result)
+        # 加载交互式分析图
+        self._load_analysis_charts(result)
     
-    def _generate_and_load_charts(self, result):
+    def _load_analysis_charts(self, result):
         """
-        根据仿真结果和用户图表选择生成图表，并加载到 ChartViewer
+        根据仿真结果和用户图表选择加载交互式分析图
         
         流程：
         1. 从 ChartSelector 获取用户启用的图表类型
-        2. ChartGeneratorService 根据 analysis_type 判断适用的图表
-        3. 取交集后批量生成 matplotlib 图表
-        4. 将生成的图表路径传给 ChartViewer 显示
+        2. 过滤为当前支持的交互式分析图类型
+        3. 直接基于仿真结果数据加载图表视图
         
         Args:
             result: SimulationResult 对象
@@ -1671,36 +1596,14 @@ class SimulationTab(QWidget):
             return
         
         try:
-            from domain.simulation.data.chart_generator import chart_generator
-            from domain.simulation.service.chart_selector import chart_selector, ChartType
+            from domain.simulation.service.chart_selector import chart_selector
             
-            # 获取用户启用的图表类型
             enabled_selections = chart_selector.get_selected_charts()
             enabled_types = [s.chart_type for s in enabled_selections]
-            
-            # 批量生成（只生成适用且启用的图表）
-            chart_paths = chart_generator.generate_for_result(result, enabled_types)
-            
-            if chart_paths:
-                self._chart_viewer_panel.chart_viewer.load_charts(chart_paths)
-                self._logger.info(
-                    f"Loaded {len(chart_paths)} charts: "
-                    f"{', '.join(chart_paths.keys())}"
-                )
-            else:
-                self._logger.debug("No applicable charts generated")
+            self._chart_viewer_panel.chart_viewer.load_result(result, enabled_types)
                 
         except Exception as e:
-            self._logger.warning(f"Chart generation failed: {e}")
-    
-    def update_metrics(self, metrics_list: List[DisplayMetric]):
-        """
-        更新指标显示
-        
-        Args:
-            metrics_list: 指标列表
-        """
-        self._update_metrics(metrics_list)
+            self._logger.warning(f"Interactive chart loading failed: {e}")
     
     def clear(self):
         """清空所有显示"""
@@ -1820,7 +1723,7 @@ class SimulationTab(QWidget):
     
     def _show_empty_state(self):
         """显示空状态"""
-        self._content_panel.hide()
+        self._chart_viewer_panel.hide()
         self._empty_widget.show()
         self._metrics_panel_view.clear_result_timestamp()
         # 隐藏顶部信息栏
@@ -1848,7 +1751,7 @@ class SimulationTab(QWidget):
     
     def _show_file_missing_state(self):
         """显示文件丢失状态"""
-        self._content_panel.hide()
+        self._chart_viewer_panel.hide()
         self._empty_widget.show()
         self._metrics_panel_view.clear_result_timestamp()
         # 隐藏顶部信息栏
@@ -1873,7 +1776,7 @@ class SimulationTab(QWidget):
     def _hide_empty_state(self):
         """隐藏空状态"""
         self._empty_widget.hide()
-        self._content_panel.show()
+        self._chart_viewer_panel.show()
         # 显示顶部信息栏
         self._metrics_panel_view.show_header_bar()
     

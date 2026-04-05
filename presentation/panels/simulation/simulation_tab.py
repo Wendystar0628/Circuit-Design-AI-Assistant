@@ -1259,11 +1259,11 @@ class SimulationTab(QWidget):
 
     def _load_analysis_charts(self, result):
         """
-        根据仿真结果和用户图表选择加载交互式分析图
+        根据仿真结果加载交互式分析图
 
         流程：
-        1. 从 ChartSelector 获取用户启用的图表类型
-        2. 过滤为当前支持的交互式分析图类型
+        1. 根据仿真结果识别分析类型
+        2. 为当前分析自动生成对应交互式图表
         3. 直接基于仿真结果数据加载图表视图
 
         Args:

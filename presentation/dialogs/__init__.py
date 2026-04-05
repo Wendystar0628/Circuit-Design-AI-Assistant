@@ -10,7 +10,6 @@
 - iteration_history_dialog.py: 迭代历史记录对话框
 - design_goals_dialog.py: 设计目标编辑对话框
 - select_simulation_file_dialog.py: 选择仿真文件对话框
-- simulation_settings_dialog.py: 仿真设置对话框
 """
 
 from .model_config_dialog import ModelConfigDialog, PROVIDER_DISPLAY_NAMES

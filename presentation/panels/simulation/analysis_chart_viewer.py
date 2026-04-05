@@ -26,8 +26,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from domain.simulation.models.chart_type import ChartType
 from domain.simulation.models.simulation_result import SimulationResult
-from domain.simulation.service.chart_selector import ChartType
 from presentation.panels.simulation.ltspice_plot_interaction import (
     LTSpiceViewBox,
     apply_dynamic_tick_spacing,

@@ -3,39 +3,16 @@
 仿真服务层模块
 
 职责：
-- 提供仿真配置管理服务
-- 提供分析类型选择服务
-- 提供图表类型选择服务
 - 提供参数提取服务
 - 提供快速调参服务
 
 设计原则：
 - 服务层负责业务逻辑编排
 - 数据类仅定义结构，服务层处理读写、校验、持久化
+
+旧的 UI 驱动仿真设置、图表选择、参数配置服务已被移除，
+当前仅保留仍服务于网表权威架构的能力。
 """
-
-from domain.simulation.service.simulation_config_service import (
-    SimulationConfigService,
-    ValidationResult,
-    ValidationError,
-    simulation_config_service,
-)
-
-from domain.simulation.service.analysis_selector import (
-    AnalysisType,
-    AnalysisSelection,
-    AnalysisSelector,
-    SelectionValidationResult,
-    analysis_selector,
-)
-
-from domain.simulation.service.chart_selector import (
-    ChartType,
-    ChartSelection,
-    ChartSelector,
-    ChartValidationResult,
-    chart_selector,
-)
 
 from domain.simulation.service.parameter_extractor import (
     ParameterExtractor,
@@ -52,23 +29,6 @@ from domain.simulation.service.tuning_service import (
 )
 
 __all__ = [
-    # 仿真配置服务
-    "SimulationConfigService",
-    "ValidationResult",
-    "ValidationError",
-    "simulation_config_service",
-    # 分析类型选择器
-    "AnalysisType",
-    "AnalysisSelection",
-    "AnalysisSelector",
-    "SelectionValidationResult",
-    "analysis_selector",
-    # 图表类型选择器
-    "ChartType",
-    "ChartSelection",
-    "ChartSelector",
-    "ChartValidationResult",
-    "chart_selector",
     # 参数提取服务
     "ParameterExtractor",
     "ParameterType",

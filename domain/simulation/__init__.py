@@ -14,7 +14,8 @@
   - python_executor.py: Python 执行器（基础进程隔离）
   - circuit_analyzer.py: 电路文件分析器（含文件扫描功能）
 - service/: 仿真服务层
-  - simulation_config_service.py: 配置管理服务（读写、校验、持久化）
+  - parameter_extractor.py: 参数提取服务
+  - tuning_service.py: 调参服务
 
 服务层（位于 domain/services/）：
 - simulation_service.py: 仿真服务（统一入口）
@@ -23,6 +24,5 @@
 - SPICE 执行器采用工作目录切换策略，利用 ngspice 原生的相对路径解析能力
 - Python 执行器采用基础进程隔离，不实现完整沙箱
 - CircuitAnalyzer 提供电路文件扫描和依赖关系分析功能
-- SimulationService 作为仿真域的统一入口，协调执行器和配置
-- SimulationConfigService 管理配置的读写、校验、持久化，发布配置变更事件
+- SimulationService 作为仿真域的统一入口，协调执行器和结果产物
 """

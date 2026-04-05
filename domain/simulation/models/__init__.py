@@ -36,6 +36,7 @@ from domain.simulation.models.simulation_result import (
     create_error_result,
     create_success_result,
 )
+from domain.simulation.models.chart_type import ChartType
 
 __all__ = [
     # Simulation Result
@@ -43,6 +44,7 @@ __all__ = [
     "SimulationResult",
     "create_success_result",
     "create_error_result",
+    "ChartType",
     # Simulation Error
     "SimulationError",
     "SimulationErrorType",

@@ -8,7 +8,7 @@
 - MetricsPanel: 指标显示面板
 - ChartViewer: 图表查看器
 - WaveformWidget: 交互式波形图表组件
-- RawDataTable: 原始数据表格（虚拟滚动）
+- RawDataTable: 原始数据表格（结果快照绑定）
 - OutputLogViewer: 仿真输出日志查看器
 - TuningPanel: 快速调参面板
 - SimulationTab: 仿真结果标签页主类

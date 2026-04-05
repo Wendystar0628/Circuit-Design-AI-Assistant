@@ -1,16 +1,16 @@
-# RawDataTable - Virtual Scrolling Data Table for Simulation Results
+# RawDataTable - Snapshot-backed Data Table for Simulation Results
 """
 原始数据表格
 
 职责：
 - 以表格形式显示仿真原始数据
-- 使用虚拟滚动技术支持大数据量显示
+- 以当前仿真结果快照稳定显示完整数据
 - 支持跳转、搜索、导出功能
 
 技术选型：
 - QTableView + 自定义 QAbstractTableModel
-- 仅渲染可见行（约 30-50 行）
-- 滚动时动态加载数据块
+- 模型直接绑定当前仿真结果快照
+- 表格滚动不触发数据重排或懒加载补块
 
 使用示例：
     from presentation.panels.simulation.raw_data_table import RawDataTable
@@ -23,7 +23,7 @@
 
 import logging
 import os
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 import numpy as np
 
@@ -53,7 +53,6 @@ from PyQt6.QtWidgets import (
 
 from domain.simulation.data.waveform_data_service import (
     WaveformDataService,
-    TableRow,
     TableSnapshot,
     waveform_data_service,
 )
@@ -87,7 +86,7 @@ DEFAULT_TOLERANCE = 1e-9
 
 
 # ============================================================
-# RawDataTableModel - 虚拟滚动数据模型
+# RawDataTableModel - 快照数据模型
 # ============================================================
 
 class RawDataTableModel(QAbstractTableModel):
@@ -174,7 +173,7 @@ class RawDataTableModel(QAbstractTableModel):
         """
         获取指定 X 轴值对应的行号
         
-        使用二分查找在缓存或数据中定位。
+        在当前快照中查找最接近的行号。
         
         Args:
             x_value: X 轴值
@@ -223,36 +222,6 @@ class RawDataTableModel(QAbstractTableModel):
         if len(matches) == 0:
             return -1
         return start_row + int(matches[0])
-
-        return -1
-    
-    def get_row_data(self, row: int) -> Optional[TableRow]:
-        if self._snapshot is None or row < 0 or row >= self._snapshot.total_rows:
-            return None
-
-        values: Dict[str, float] = {}
-        for signal_name in self._snapshot.signal_names:
-            column = self._snapshot.signal_columns.get(signal_name)
-            if column is None or row >= len(column):
-                continue
-            value = column[row]
-            if np.isfinite(value):
-                values[signal_name] = float(value)
-
-        return TableRow(index=row, x_value=float(self._snapshot.x_values[row]), values=values)
-    
-    def get_column_values(self, column: int, start_row: int, count: int) -> List[float]:
-        """获取指定列的值列表"""
-        if self._snapshot is None or count <= 0:
-            return []
-
-        column_values = self._get_column_array(column)
-        if column_values is None:
-            return []
-
-        end_row = min(start_row + count, len(column_values))
-        sliced = column_values[max(0, start_row):end_row]
-        return [float(value) for value in sliced if np.isfinite(value)]
     
     @property
     def signal_names(self) -> List[str]:
@@ -312,7 +281,7 @@ class RawDataTable(QWidget):
     原始数据表格组件
     
     以表格形式显示仿真原始数据，支持：
-    - 虚拟滚动（大数据量）
+    - 基于结果快照的稳定表格显示
     - 跳转到指定行/X 轴值
     - 搜索特定值
     - 导出选中数据
@@ -325,9 +294,6 @@ class RawDataTable(QWidget):
         
         # 数据模型
         self._model = RawDataTableModel()
-        
-        # 当前仿真结果
-        self._result: Optional[SimulationResult] = None
         
         # 初始化 UI
         self._setup_ui()
@@ -562,7 +528,6 @@ class RawDataTable(QWidget):
         Args:
             result: 仿真结果对象
         """
-        self._result = result
         self._model.load_result(result)
         self._table_view.clearSelection()
         self._table_view.scrollToTop()
@@ -578,7 +543,6 @@ class RawDataTable(QWidget):
     
     def clear(self):
         """清空数据"""
-        self._result = None
         self._model.clear()
         self._table_view.clearSelection()
         self._table_view.scrollToTop()
@@ -675,16 +639,25 @@ class RawDataTable(QWidget):
                 f.write(delimiter.join(headers) + "\n")
                 
                 # 写入数据
+                snapshot = self._model.snapshot
+                if snapshot is None:
+                    return False
+
                 for index in selection:
                     row = index.row()
-                    row_data = self._model.get_row_data(row)
-                    
-                    if row_data:
-                        values = [str(row_data.x_value)]
-                        for signal in self._model.signal_names:
-                            val = row_data.values.get(signal)
-                            values.append(str(val) if val is not None else "")
-                        f.write(delimiter.join(values) + "\n")
+                    if row < 0 or row >= snapshot.total_rows:
+                        continue
+
+                    values = [str(float(snapshot.x_values[row]))]
+                    for signal in self._model.signal_names:
+                        column = snapshot.signal_columns.get(signal)
+                        cell = None
+                        if column is not None and row < len(column):
+                            raw_value = column[row]
+                            if np.isfinite(raw_value):
+                                cell = float(raw_value)
+                        values.append(str(cell) if cell is not None else "")
+                    f.write(delimiter.join(values) + "\n")
             
             self._logger.info(f"Exported {len(selection)} rows to {path}")
             return True

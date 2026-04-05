@@ -1,11 +1,16 @@
 import numpy as np
 import pytest
+import importlib
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication
 
+import domain.simulation.data as simulation_data_package
 from domain.simulation.data.waveform_data_service import WaveformDataService
 from domain.simulation.models.simulation_result import SimulationData, SimulationResult
 from presentation.panels.simulation.raw_data_table import RawDataTable, RawDataTableModel
+
+
+waveform_data_service_module = importlib.import_module("domain.simulation.data.waveform_data_service")
 
 
 @pytest.fixture(scope="session")
@@ -55,6 +60,15 @@ def test_waveform_data_service_builds_stable_table_snapshot(sample_result: Simul
     np.testing.assert_allclose(snapshot.x_values, np.array([0.0, 0.1, 0.2, 0.3]))
     np.testing.assert_allclose(snapshot.signal_columns["V(out)"], np.array([1.0, 2.0, 3.0, 4.0]))
     np.testing.assert_allclose(snapshot.signal_columns["V(in)"], np.array([0.5, 0.6, 0.7, 0.8]))
+    assert waveform_data_service_module.__all__ == [
+        "WaveformData",
+        "TableSnapshot",
+        "WaveformDataService",
+        "waveform_data_service",
+    ]
+    assert {"WaveformData", "TableSnapshot", "WaveformDataService", "waveform_data_service"}.issubset(
+        set(simulation_data_package.__all__)
+    )
 
 
 def test_raw_data_table_model_keeps_row_identity_stable(sample_result: SimulationResult):
@@ -78,12 +92,10 @@ def test_raw_data_table_model_keeps_row_identity_stable(sample_result: Simulatio
     assert model.data(model.index(0, 1), Qt.ItemDataRole.DisplayRole) == "1"
     assert model.search_value(1, 3.0, tolerance=1e-9) == 2
     assert model.get_row_for_x_value(0.29) == 3
-
-    row_data = model.get_row_data(2)
-    assert row_data is not None
-    assert row_data.index == 2
-    assert row_data.x_value == 0.2
-    assert row_data.values["V(out)"] == 3.0
+    snapshot = model.snapshot
+    assert snapshot is not None
+    assert float(snapshot.x_values[2]) == 0.2
+    assert float(snapshot.signal_columns["V(out)"][2]) == 3.0
 
 
 def test_raw_data_table_widget_shows_current_result_binding(qapp, sample_result: SimulationResult):
@@ -109,3 +121,17 @@ def test_raw_data_table_widget_shows_current_result_binding(qapp, sample_result:
     table.clear()
     assert table._result_binding_label.text() == ""
     assert table._row_count_label.text() == "Total: 0 rows"
+
+
+def test_raw_data_table_exports_selected_rows_from_snapshot(qapp, sample_result: SimulationResult, tmp_path):
+    table = RawDataTable()
+    table.load_data(sample_result)
+    table.jump_to_row(1)
+
+    export_path = tmp_path / "raw_data.csv"
+
+    assert table.export_selection(str(export_path), "csv") is True
+
+    exported = export_path.read_text(encoding="utf-8").splitlines()
+    assert exported[0] == "Time (s),V(out),V(in)"
+    assert exported[1] == "0.1,2.0,0.6"

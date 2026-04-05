@@ -24,8 +24,8 @@
     # 获取视口范围数据（缩放时调用）
     data = service.get_viewport_data(result, "V(out)", x_min=0.0, x_max=0.001, target_points=1000)
     
-    # 获取表格数据（虚拟滚动）
-    table = service.get_table_data(result, start_row=0, count=100)
+    # 构建原始数据表格快照
+    table_snapshot = service.build_table_snapshot(result)
 """
 
 from dataclasses import dataclass, field
@@ -82,14 +82,6 @@ class WaveformData:
             self.y_range = (0.0, 0.0)
         if self.original_points == 0:
             self.original_points = self.point_count
-
-
-@dataclass
-class TableRow:
-    """表格行数据"""
-    index: int
-    x_value: float
-    values: Dict[str, float]
 
 
 @dataclass
@@ -778,7 +770,6 @@ waveform_data_service = WaveformDataService()
 __all__ = [
     # 数据类
     "WaveformData",
-    "TableRow",
     "TableSnapshot",
     # 服务类
     "WaveformDataService",

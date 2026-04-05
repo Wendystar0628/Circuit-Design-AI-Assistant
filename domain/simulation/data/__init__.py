@@ -30,7 +30,6 @@ from domain.simulation.data.resolution_pyramid import (
 )
 from domain.simulation.data.waveform_data_service import (
     WaveformData,
-    TableRow,
     TableSnapshot,
     WaveformDataService,
     waveform_data_service,
@@ -63,7 +62,6 @@ __all__ = [
     "get_optimal_data",
     # Waveform Data Service
     "WaveformData",
-    "TableRow",
     "TableSnapshot",
     "WaveformDataService",
     "waveform_data_service",

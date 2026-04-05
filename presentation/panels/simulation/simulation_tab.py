@@ -39,6 +39,7 @@ from presentation.panels.simulation.simulation_view_model import (
     DisplayMetric,
 )
 from presentation.panels.simulation.metrics_panel import MetricsPanel
+from presentation.panels.simulation.analysis_info_panel import AnalysisInfoPanel
 from presentation.panels.simulation.analysis_chart_viewer import ChartViewer
 from resources.theme import (
     COLOR_BG_PRIMARY,
@@ -64,13 +65,11 @@ from shared.event_types import (
     EVENT_SIM_COMPLETE,
     EVENT_SIM_STARTED,
     EVENT_SIM_ERROR,
-    EVENT_ALL_ANALYSES_COMPLETE,
     EVENT_LANGUAGE_CHANGED,
     EVENT_ITERATION_AWAITING_CONFIRMATION,
     EVENT_ITERATION_USER_CONFIRMED,
     EVENT_SIM_RESULT_FILE_CREATED,
     EVENT_SESSION_CHANGED,
-    EVENT_CHART_SELECTION_CHANGED,
 )
 
 
@@ -530,8 +529,9 @@ class ChartViewerPanel(QFrame):
     TAB_METRICS = 0
     TAB_CHART = 1
     TAB_WAVEFORM = 2
-    TAB_RAW_DATA = 3
-    TAB_LOG = 4
+    TAB_ANALYSIS_INFO = 3
+    TAB_RAW_DATA = 4
+    TAB_LOG = 5
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -566,6 +566,9 @@ class ChartViewerPanel(QFrame):
         self._waveform_widget = WaveformWidget()
         self._tab_widget.addTab(self._waveform_widget, "")
         
+        self._analysis_info_panel = AnalysisInfoPanel()
+        self._tab_widget.addTab(self._analysis_info_panel, "")
+
         # 原始数据表格标签页
         from presentation.panels.simulation.raw_data_table import RawDataTable
         self._raw_data_table = RawDataTable()
@@ -631,6 +634,9 @@ class ChartViewerPanel(QFrame):
         self._tab_widget.setTabText(self.TAB_WAVEFORM, self._get_text(
             "simulation.tab.waveform", "波形"
         ))
+        self._tab_widget.setTabText(self.TAB_ANALYSIS_INFO, self._get_text(
+            "simulation.tab.analysis_info", "分析信息"
+        ))
         self._tab_widget.setTabText(self.TAB_RAW_DATA, self._get_text(
             "simulation.tab.raw_data", "原始数据"
         ))
@@ -654,6 +660,10 @@ class ChartViewerPanel(QFrame):
         return self._waveform_widget
     
     @property
+    def analysis_info_panel(self):
+        return self._analysis_info_panel
+
+    @property
     def raw_data_table(self):
         """获取原始数据表格"""
         return self._raw_data_table
@@ -668,6 +678,7 @@ class ChartViewerPanel(QFrame):
         self._metrics_summary_panel.clear()
         self._chart_viewer.clear()
         self._waveform_widget.clear_waveforms()
+        self._analysis_info_panel.clear()
         self._raw_data_table.clear()
         self._output_log_viewer.clear()
 
@@ -683,6 +694,9 @@ class ChartViewerPanel(QFrame):
         """切换到波形标签页"""
         self._tab_widget.setCurrentIndex(self.TAB_WAVEFORM)
     
+    def switch_to_analysis_info(self):
+        self._tab_widget.setCurrentIndex(self.TAB_ANALYSIS_INFO)
+
     def switch_to_raw_data(self):
         """切换到原始数据标签页"""
         self._tab_widget.setCurrentIndex(self.TAB_RAW_DATA)
@@ -697,6 +711,7 @@ class ChartViewerPanel(QFrame):
         self._metrics_summary_panel.retranslate_ui()
         self._chart_viewer.retranslate_ui()
         self._waveform_widget.retranslate_ui()
+        self._analysis_info_panel.retranslate_ui()
         self._raw_data_table.retranslate_ui()
         self._output_log_viewer.retranslate_ui()
     
@@ -877,13 +892,11 @@ class SimulationTab(QWidget):
             (EVENT_SIM_STARTED, self._on_simulation_started),
             (EVENT_SIM_COMPLETE, self._on_simulation_complete),
             (EVENT_SIM_ERROR, self._on_simulation_error),
-            (EVENT_ALL_ANALYSES_COMPLETE, self._on_all_analyses_complete),
             (EVENT_LANGUAGE_CHANGED, self._on_language_changed),
             (EVENT_ITERATION_AWAITING_CONFIRMATION, self._on_awaiting_confirmation),
             (EVENT_ITERATION_USER_CONFIRMED, self._on_user_confirmed),
             (EVENT_SIM_RESULT_FILE_CREATED, self._on_sim_result_file_created),
             (EVENT_SESSION_CHANGED, self._on_session_changed),
-            (EVENT_CHART_SELECTION_CHANGED, self._on_chart_selection_changed),
         ]
         
         for event_type, handler in subscriptions:
@@ -966,33 +979,13 @@ class SimulationTab(QWidget):
         if result_path and self._project_root:
             self._load_simulation_result(result_path)
         elif not result_path:
-            # 如果没有 result_path，尝试加载最新的仿真结果
             self._logger.warning("No result_path in event, trying to load latest result")
             self._load_project_simulation_result()
-    
-    def _on_all_analyses_complete(self, event_data: dict):
-        """处理所有分析完成事件"""
-        # 事件数据在 "data" 字段中
-        data = event_data.get("data", event_data)
-        results = data.get("results", {})
-        success_count = data.get("success_count", 0)
-        total_count = data.get("total_count", 0)
-        
-        self._logger.info(f"All analyses complete: {success_count}/{total_count}")
-        
-        # 隐藏运行状态
-        self._status_indicator.hide_status()
-        self._set_controls_enabled(True)
-        
-        # 更新综合评分
-        if total_count > 0:
-            score = (success_count / total_count) * 100
-            self._metrics_panel_view.set_overall_score(score)
-    
+
     def _on_language_changed(self, event_data: dict):
         """处理语言切换事件"""
         self.retranslate_ui()
-    
+
     def _on_awaiting_confirmation(self, event_data: dict):
         """处理等待确认事件"""
         self._status_indicator.show_awaiting_confirmation()
@@ -1055,26 +1048,6 @@ class SimulationTab(QWidget):
         if action == "switch":
             self.clear()
             self._show_empty_state()
-    
-    def _on_chart_selection_changed(self, event_data: dict):
-        """
-        处理图表选择变更事件
-        
-        当用户在仿真设置对话框中变更图表选择后，
-        根据当前已加载的仿真结果重新加载交互式分析图。
-        
-        Args:
-            event_data: 事件数据，包含 enabled_charts, source 等
-        """
-        data = event_data.get("data", event_data)
-        source = data.get("source", "")
-        self._logger.debug(f"Chart selection changed (source={source})")
-        
-        # 获取当前已加载的仿真结果
-        current_result = self._view_model.current_result
-        
-        if current_result is not None:
-            self._load_analysis_charts(current_result)
     
     def _load_from_path(self, sim_result_path: str):
         """
@@ -1175,6 +1148,7 @@ class SimulationTab(QWidget):
 
         self._chart_viewer_panel.clear()
         self._view_model.load_result(result)
+        self._chart_viewer_panel.analysis_info_panel.load_result(result)
         
         # 显示时间戳
         timestamp = getattr(result, 'timestamp', None)
@@ -1299,11 +1273,7 @@ class SimulationTab(QWidget):
             return
 
         try:
-            from domain.simulation.service.chart_selector import chart_selector
-
-            enabled_selections = chart_selector.get_selected_charts()
-            enabled_types = [s.chart_type for s in enabled_selections]
-            self._chart_viewer_panel.chart_viewer.load_result(result, enabled_types)
+            self._chart_viewer_panel.chart_viewer.load_result(result)
 
         except Exception as e:
             self._logger.warning(f"Interactive chart loading failed: {e}")

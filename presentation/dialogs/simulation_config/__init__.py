@@ -11,11 +11,7 @@
 from presentation.dialogs.simulation_config.simulation_config_view_model import (
     SimulationConfigViewModel,
 )
-from presentation.dialogs.simulation_config.simulation_config_dialog import (
-    SimulationConfigDialog,
-)
 
 __all__ = [
     "SimulationConfigViewModel",
-    "SimulationConfigDialog",
 ]

@@ -140,16 +140,11 @@ class WaveformMeasurement:
     frequency: Optional[float] = None
     signal_values_a: Optional[Dict[str, float]] = None
     signal_values_b: Optional[Dict[str, float]] = None
-    
-    def has_dual_cursor(self) -> bool:
-        """是否有双光标数据"""
-        return self.cursor_a_x is not None and self.cursor_b_x is not None
 
 
 @dataclass
 class PlotItem:
     """绘图项数据"""
-    signal_name: str
     plot_data_item: pg.PlotDataItem
     color: str
     waveform_data: Optional[WaveformData] = None
@@ -207,8 +202,6 @@ class WaveformWidget(QWidget):
         
         # 右侧 Y 轴 ViewBox（电流）
         self._right_vb: Optional[pg.ViewBox] = None
-
-        self._syncing_view = False
         self._x_domain: Optional[Tuple[float, float]] = None
         self._left_y_domain: Optional[Tuple[float, float]] = None
         self._right_y_domain: Optional[Tuple[float, float]] = None
@@ -605,7 +598,6 @@ class WaveformWidget(QWidget):
         
         # 保存绘图项
         self._plot_items[resolved_signal_name] = PlotItem(
-            signal_name=resolved_signal_name,
             plot_data_item=plot_data_item,
             color=color,
             waveform_data=waveform_data,
@@ -615,7 +607,6 @@ class WaveformWidget(QWidget):
         # 同步信号树复选框状态
         self._set_signal_tree_checked(resolved_signal_name, True)
         self._refresh_legend()
-        self._update_measurement()
         self.fit_to_view()
         
         self._logger.debug(
@@ -656,12 +647,12 @@ class WaveformWidget(QWidget):
         # 同步信号树复选框状态
         self._set_signal_tree_checked(signal_name, False)
         self._refresh_legend()
-        self._update_measurement()
         if not self._plot_items:
             self._color_index = 0
             self._x_domain = None
             self._left_y_domain = None
             self._right_y_domain = None
+            self._update_measurement()
         else:
             self.fit_to_view()
         
@@ -745,10 +736,6 @@ class WaveformWidget(QWidget):
                         measurement.frequency = 1.0 / abs(measurement.delta_x)
         
         return measurement
-    
-    def get_displayed_signals(self) -> List[str]:
-        """获取当前显示的信号列表"""
-        return list(self._plot_items.keys())
 
     def fit_to_view(self):
         if self._current_result is None or not self._plot_items:
@@ -913,20 +900,16 @@ class WaveformWidget(QWidget):
         if base_y_range is None:
             return
 
-        self._syncing_view = True
-        try:
-            plot_item = self._plot_widget.getPlotItem()
-            plot_item.setXRange(x_range[0], x_range[1], padding=0.0)
-            plot_item.setYRange(base_y_range[0], base_y_range[1], padding=0.0)
-            if self._right_vb is not None:
-                applied_right_y = right_y_range or base_y_range
-                self._right_vb.setYRange(applied_right_y[0], applied_right_y[1], padding=0.0)
-            apply_dynamic_tick_spacing(plot_item.getAxis('bottom'), x_range, log_enabled=self._is_log_x_enabled())
-            apply_dynamic_tick_spacing(plot_item.getAxis('left'), base_y_range, log_enabled=False)
-            if self._right_vb is not None:
-                apply_dynamic_tick_spacing(plot_item.getAxis('right'), right_y_range or base_y_range, log_enabled=False)
-        finally:
-            self._syncing_view = False
+        plot_item = self._plot_widget.getPlotItem()
+        plot_item.setXRange(x_range[0], x_range[1], padding=0.0)
+        plot_item.setYRange(base_y_range[0], base_y_range[1], padding=0.0)
+        if self._right_vb is not None:
+            applied_right_y = right_y_range or base_y_range
+            self._right_vb.setYRange(applied_right_y[0], applied_right_y[1], padding=0.0)
+        apply_dynamic_tick_spacing(plot_item.getAxis('bottom'), x_range, log_enabled=self._is_log_x_enabled())
+        apply_dynamic_tick_spacing(plot_item.getAxis('left'), base_y_range, log_enabled=False)
+        if self._right_vb is not None:
+            apply_dynamic_tick_spacing(plot_item.getAxis('right'), right_y_range or base_y_range, log_enabled=False)
 
     def _apply_full_viewport(self):
         if self._x_domain is None:

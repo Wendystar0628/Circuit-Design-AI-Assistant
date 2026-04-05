@@ -47,7 +47,6 @@ from shared.event_types import (
     EVENT_SIM_COMPLETE,
     EVENT_SIM_ERROR,
     EVENT_SIM_CANCELLED,
-    EVENT_ALL_ANALYSES_COMPLETE,
 )
 
 
@@ -202,7 +201,6 @@ class SimulationViewModel(BaseViewModel):
         self.subscribe(EVENT_SIM_COMPLETE, self._on_simulation_complete)
         self.subscribe(EVENT_SIM_ERROR, self._on_simulation_error)
         self.subscribe(EVENT_SIM_CANCELLED, self._on_simulation_cancelled)
-        self.subscribe(EVENT_ALL_ANALYSES_COMPLETE, self._on_all_analyses_complete)
         
         self._logger.info("SimulationViewModel initialized")
 
@@ -258,25 +256,6 @@ class SimulationViewModel(BaseViewModel):
         self.notify_property_changed("simulation_status", self._simulation_status)
         
         self._logger.info("Simulation cancelled")
-    
-    def _on_all_analyses_complete(self, event_data: Dict[str, Any]):
-        """处理所有分析完成事件"""
-        self._set_status(SimulationStatus.COMPLETE)
-        self._progress = 100.0
-        
-        # 计算综合评分
-        success_count = event_data.get("success_count", 0)
-        total_count = event_data.get("total_count", 1)
-        if total_count > 0:
-            self._overall_score = (success_count / total_count) * 100
-        
-        self.notify_property_changed("simulation_status", self._simulation_status)
-        self.notify_property_changed("progress", self._progress)
-        self.notify_property_changed("overall_score", self._overall_score)
-        
-        self._logger.info(
-            f"All analyses complete: {success_count}/{total_count} succeeded"
-        )
     
     def _set_status(self, status: SimulationStatus):
         """设置仿真状态"""
@@ -545,59 +524,6 @@ class SimulationViewModel(BaseViewModel):
             
         except Exception as e:
             self._logger.exception(f"Simulation request failed: {e}")
-            self._set_status(SimulationStatus.ERROR)
-            self._error_message = str(e)
-            self.notify_properties_changed({
-                "simulation_status": self._simulation_status,
-                "error_message": self._error_message,
-            })
-    
-    def request_batch_simulation(self, project_root: str, file_path: str):
-        """
-        请求执行批量仿真（执行用户选中的所有分析类型）
-        
-        Args:
-            project_root: 项目根目录
-            file_path: 电路文件路径
-        """
-        if self.simulation_service is None:
-            self._logger.error("SimulationService not available")
-            self._set_status(SimulationStatus.ERROR)
-            self._error_message = "仿真服务不可用"
-            self.notify_property_changed("error_message", self._error_message)
-            return
-        
-        # 重置状态
-        self._set_status(SimulationStatus.RUNNING)
-        self._progress = 0.0
-        self._error_message = ""
-        
-        self.notify_properties_changed({
-            "simulation_status": self._simulation_status,
-            "progress": self._progress,
-            "error_message": self._error_message,
-        })
-        
-        try:
-            results = self.simulation_service.run_selected_analyses(
-                file_path=file_path,
-                project_root=project_root,
-            )
-            
-            # 加载最后一个成功的分析结果
-            for analysis_type, result in reversed(list(results.items())):
-                if hasattr(result, 'success') and result.success:
-                    self.load_result(result)
-                    break
-            else:
-                # 所有分析都失败，尝试加载第一个结果
-                for analysis_type, result in results.items():
-                    if hasattr(result, 'success'):
-                        self.load_result(result)
-                        break
-                    
-        except Exception as e:
-            self._logger.exception(f"Batch simulation failed: {e}")
             self._set_status(SimulationStatus.ERROR)
             self._error_message = str(e)
             self.notify_properties_changed({

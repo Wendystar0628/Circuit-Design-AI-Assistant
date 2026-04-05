@@ -152,6 +152,93 @@ def _default_x_axis_scale(analysis_type: str, kind: str) -> str:
     return X_AXIS_SCALE_LINEAR
 
 
+def _split_analysis_command(command: str) -> list[str]:
+    if not isinstance(command, str):
+        return []
+    stripped = command.strip()
+    return stripped.split() if stripped else []
+
+
+def _infer_analysis_parameters(analysis_type: str, analysis_command: str) -> Dict[str, Any]:
+    analysis = (analysis_type or "").lower()
+    tokens = _split_analysis_command(analysis_command)
+    if not analysis or not tokens or tokens[0].lower() != f".{analysis}":
+        return {}
+
+    if analysis == "ac":
+        return {
+            "sweep_type": tokens[1] if len(tokens) > 1 else "",
+            "points_per_decade": tokens[2] if len(tokens) > 2 else "",
+            "start_frequency": tokens[3] if len(tokens) > 3 else "",
+            "stop_frequency": tokens[4] if len(tokens) > 4 else "",
+        }
+
+    if analysis == "dc":
+        return {
+            "source_name": tokens[1] if len(tokens) > 1 else "",
+            "start_value": tokens[2] if len(tokens) > 2 else "",
+            "stop_value": tokens[3] if len(tokens) > 3 else "",
+            "step": tokens[4] if len(tokens) > 4 else "",
+        }
+
+    if analysis == "tran":
+        extra_tokens = [token for token in tokens[3:] if token.lower() != "uic"]
+        parameters = {
+            "step_time": tokens[1] if len(tokens) > 1 else "",
+            "stop_time": tokens[2] if len(tokens) > 2 else "",
+            "start_time": extra_tokens[0] if len(extra_tokens) > 0 else "",
+            "max_step": extra_tokens[1] if len(extra_tokens) > 1 else "",
+        }
+        if any(token.lower() == "uic" for token in tokens[3:]):
+            parameters["use_initial_conditions"] = "uic"
+        return parameters
+
+    if analysis == "noise":
+        return {
+            "output_node": tokens[1] if len(tokens) > 1 else "",
+            "input_source": tokens[2] if len(tokens) > 2 else "",
+            "sweep_type": tokens[3] if len(tokens) > 3 else "",
+            "points_per_decade": tokens[4] if len(tokens) > 4 else "",
+            "start_frequency": tokens[5] if len(tokens) > 5 else "",
+            "stop_frequency": tokens[6] if len(tokens) > 6 else "",
+        }
+
+    return {}
+
+
+def _normalize_analysis_info(
+    value: Any,
+    *,
+    analysis_type: str,
+    analysis_command: str,
+    x_axis_kind: str,
+    x_axis_label: str,
+    x_axis_scale: str,
+    requested_x_range: Optional[tuple[float, float]],
+    actual_x_range: Optional[tuple[float, float]],
+) -> Dict[str, Any]:
+    info = value if isinstance(value, dict) else {}
+    resolved_analysis_type = str(info.get("analysis_type") or analysis_type or "").lower()
+    resolved_analysis_command = str(info.get("analysis_command") or analysis_command or "")
+    requested_range = _normalize_axis_range(info.get("requested_x_range"))
+    actual_range = _normalize_axis_range(info.get("actual_x_range"))
+    parameters = info.get("parameters")
+    resolved_parameters = dict(parameters) if isinstance(parameters, dict) else _infer_analysis_parameters(
+        resolved_analysis_type,
+        resolved_analysis_command,
+    )
+    return {
+        "analysis_type": resolved_analysis_type,
+        "analysis_command": resolved_analysis_command,
+        "x_axis_kind": str(info.get("x_axis_kind") or x_axis_kind or ""),
+        "x_axis_label": str(info.get("x_axis_label") or x_axis_label or ""),
+        "x_axis_scale": str(info.get("x_axis_scale") or x_axis_scale or ""),
+        "requested_x_range": requested_range if requested_range is not None else requested_x_range,
+        "actual_x_range": actual_range if actual_range is not None else actual_x_range,
+        "parameters": resolved_parameters,
+    }
+
+
 def infer_result_axis_metadata(
     analysis_type: str,
     data: Optional["SimulationData"],
@@ -446,6 +533,7 @@ class SimulationResult:
     requested_x_range: Optional[tuple[float, float]] = None
     actual_x_range: Optional[tuple[float, float]] = None
     analysis_command: str = ""
+    analysis_info: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self):
         if self.measurements is not None:
@@ -466,6 +554,16 @@ class SimulationResult:
         self.requested_x_range = axis_metadata["requested_x_range"]
         self.actual_x_range = axis_metadata["actual_x_range"]
         self.analysis_command = axis_metadata["analysis_command"]
+        self.analysis_info = _normalize_analysis_info(
+            self.analysis_info,
+            analysis_type=self.analysis_type,
+            analysis_command=self.analysis_command,
+            x_axis_kind=self.x_axis_kind,
+            x_axis_label=self.x_axis_label,
+            x_axis_scale=self.x_axis_scale,
+            requested_x_range=self.requested_x_range,
+            actual_x_range=self.actual_x_range,
+        )
 
     # ============================================================
     # 序列化方法
@@ -486,6 +584,12 @@ class SimulationResult:
                 for m in self.measurements
             ]
 
+        analysis_info_data = dict(self.analysis_info) if self.analysis_info else {}
+        if analysis_info_data.get("requested_x_range") is not None:
+            analysis_info_data["requested_x_range"] = list(analysis_info_data["requested_x_range"])
+        if analysis_info_data.get("actual_x_range") is not None:
+            analysis_info_data["actual_x_range"] = list(analysis_info_data["actual_x_range"])
+
         return {
             "executor": self.executor,
             "file_path": self.file_path,
@@ -505,6 +609,7 @@ class SimulationResult:
             "requested_x_range": list(self.requested_x_range) if self.requested_x_range is not None else None,
             "actual_x_range": list(self.actual_x_range) if self.actual_x_range is not None else None,
             "analysis_command": self.analysis_command,
+            "analysis_info": analysis_info_data,
         }
 
     @classmethod
@@ -563,6 +668,7 @@ class SimulationResult:
             requested_x_range=_normalize_axis_range(data.get("requested_x_range")),
             actual_x_range=_normalize_axis_range(data.get("actual_x_range")),
             analysis_command=data.get("analysis_command", ""),
+            analysis_info=data.get("analysis_info", {}),
         )
 
     # ============================================================
@@ -689,7 +795,8 @@ def create_error_result(
     raw_output: Optional[str] = None,
     duration_seconds: float = 0.0,
     version: int = 1,
-    session_id: str = ""
+    session_id: str = "",
+    analysis_command: str = "",
 ) -> SimulationResult:
     """
     创建失败的仿真结果
@@ -719,6 +826,7 @@ def create_error_result(
         duration_seconds=duration_seconds,
         version=version,
         session_id=session_id,
+        analysis_command=analysis_command,
     )
 
 

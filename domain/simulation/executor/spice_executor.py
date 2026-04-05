@@ -487,6 +487,7 @@ class SpiceExecutor(SimulationExecutor):
                         file_path=file_path,
                         recovery_suggestion=recovery_suggestion,
                     ),
+                    analysis_command=analysis_command,
                 )
             modified_netlist = self._inject_analysis_command(modified_netlist, analysis_command)
         else:
@@ -526,6 +527,7 @@ class SpiceExecutor(SimulationExecutor):
                 analysis_type=analysis_type,
                 error=parsed_error,
                 raw_output=combined_output,
+                analysis_command=analysis_command,
             )
         
         # 执行仿真
@@ -547,6 +549,7 @@ class SpiceExecutor(SimulationExecutor):
                 analysis_type=analysis_type,
                 error=parsed_error,
                 raw_output=combined_output,
+                analysis_command=analysis_command,
             )
         
         # 找到最匹配 analysis_type 的 plot 并激活，确保 ngGet_Vec_Info 在正确上下文中工作

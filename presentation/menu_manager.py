@@ -342,25 +342,6 @@ class MenuManager:
     def _setup_settings_menu(self) -> None:
         """设置设置菜单"""
         menu = self._menus["settings"]
-        
-        # 仿真设置（分析类型和图表选择）
-        self._actions["settings_simulation"] = QAction(self._main_window)
-        self._actions["settings_simulation"].setShortcut("Ctrl+Shift+,")
-        if "on_simulation_settings" in self._callbacks:
-            self._actions["settings_simulation"].triggered.connect(
-                self._callbacks["on_simulation_settings"]
-            )
-        menu.addAction(self._actions["settings_simulation"])
-        
-        # 仿真参数配置（AC/DC/瞬态/噪声/收敛参数）
-        self._actions["settings_simulation_config"] = QAction(self._main_window)
-        self._actions["settings_simulation_config"].setShortcut("Ctrl+Alt+,")
-        if "on_simulation_config" in self._callbacks:
-            self._actions["settings_simulation_config"].triggered.connect(
-                self._callbacks["on_simulation_config"]
-            )
-        menu.addAction(self._actions["settings_simulation_config"])
-        
 
     def _setup_tools_menu(self) -> None:
         """设置工具菜单"""
@@ -538,14 +519,6 @@ class MenuManager:
         # 模型菜单项
         self._actions["model_config"].setText(
             self._get_text("menu.model.config", "Model Configuration")
-        )
-        
-        # 设置菜单项
-        self._actions["settings_simulation"].setText(
-            self._get_text("menu.settings.simulation", "Simulation Settings...")
-        )
-        self._actions["settings_simulation_config"].setText(
-            self._get_text("menu.settings.simulation_config", "Simulation Parameters...")
         )
         # 工具菜单项
         self._actions["tools_compress"].setText(

@@ -1,6 +1,5 @@
 import csv
 import json
-import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -172,7 +171,6 @@ class MeasurementBar(QFrame):
 class ChartPage(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._logger = logging.getLogger(__name__)
         self._spec: Optional[ChartSpec] = None
         self._cursor_a: Optional[pg.InfiniteLine] = None
         self._cursor_b: Optional[pg.InfiniteLine] = None
@@ -183,7 +181,6 @@ class ChartPage(QWidget):
         self._plot_items: Dict[str, pg.PlotDataItem] = {}
         self._series_items: Dict[str, QTreeWidgetItem] = {}
         self._updating_tree = False
-        self._syncing_view = False
         self._x_domain: Optional[Tuple[float, float]] = None
         self._y_domain: Optional[Tuple[float, float]] = None
 
@@ -559,15 +556,11 @@ class ChartPage(QWidget):
     ):
         if x_range is None or y_range is None:
             return
-        self._syncing_view = True
-        try:
-            plot_item = self._plot_widget.getPlotItem()
-            plot_item.setXRange(x_range[0], x_range[1], padding=0.0)
-            plot_item.setYRange(y_range[0], y_range[1], padding=0.0)
-            apply_dynamic_tick_spacing(plot_item.getAxis('bottom'), x_range, log_enabled=self._spec.log_x if self._spec is not None else False)
-            apply_dynamic_tick_spacing(plot_item.getAxis('left'), y_range, log_enabled=self._spec.log_y if self._spec is not None else False)
-        finally:
-            self._syncing_view = False
+        plot_item = self._plot_widget.getPlotItem()
+        plot_item.setXRange(x_range[0], x_range[1], padding=0.0)
+        plot_item.setYRange(y_range[0], y_range[1], padding=0.0)
+        apply_dynamic_tick_spacing(plot_item.getAxis('bottom'), x_range, log_enabled=self._spec.log_x if self._spec is not None else False)
+        apply_dynamic_tick_spacing(plot_item.getAxis('left'), y_range, log_enabled=self._spec.log_y if self._spec is not None else False)
 
     def _apply_full_viewport(self):
         if self._x_domain is None or self._y_domain is None:
@@ -627,7 +620,6 @@ class ChartViewer(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._logger = logging.getLogger(__name__)
         self._result: Optional[SimulationResult] = None
         self._chart_specs: List[ChartSpec] = []
         self._pages: List[ChartPage] = []
@@ -799,10 +791,10 @@ class ChartViewer(QWidget):
             }}
         """)
 
-    def load_result(self, result: SimulationResult, enabled_chart_types: List[ChartType]):
+    def load_result(self, result: SimulationResult):
         self._result = result
         self._action_measure.setChecked(False)
-        self._chart_specs = self._build_chart_specs(result, enabled_chart_types)
+        self._chart_specs = self._build_chart_specs(result)
         self._rebuild_pages()
 
     def clear(self):
@@ -862,24 +854,35 @@ class ChartViewer(QWidget):
     def _build_chart_specs(
         self,
         result: SimulationResult,
-        enabled_chart_types: List[ChartType],
     ) -> List[ChartSpec]:
         if result is None or not result.success or result.data is None:
             return []
 
-        enabled_supported = [ct for ct in enabled_chart_types if ct in SUPPORTED_CHART_TYPES]
-        if not enabled_supported:
+        resolved_chart_types = self._get_chart_types_for_result(result)
+        if not resolved_chart_types:
             return []
 
         specs: List[ChartSpec] = []
         analysis = (result.analysis_type or "").lower()
-        for chart_type in enabled_supported:
+        for chart_type in resolved_chart_types:
             spec = self._build_chart_spec(result, analysis, chart_type)
             if spec is not None:
                 spec.series = self._deduplicate_series(spec.series)
             if spec is not None and spec.series:
                 specs.append(spec)
         return specs
+
+    def _get_chart_types_for_result(self, result: SimulationResult) -> List[ChartType]:
+        analysis = (result.analysis_type or "").lower()
+        if analysis == "tran":
+            return [ChartType.WAVEFORM_TIME]
+        if analysis == "ac":
+            return [ChartType.BODE_MAGNITUDE, ChartType.BODE_PHASE]
+        if analysis == "dc":
+            return [ChartType.DC_SWEEP]
+        if analysis == "noise":
+            return [ChartType.NOISE_SPECTRUM]
+        return []
 
     def _deduplicate_series(self, series_list: List[ChartSeries]) -> List[ChartSeries]:
         deduplicated: List[ChartSeries] = []

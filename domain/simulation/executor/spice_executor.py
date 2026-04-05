@@ -457,6 +457,30 @@ class SpiceExecutor(SimulationExecutor):
         config_has_analysis = analysis_config and analysis_config.get("analysis_type")
         if config_has_analysis:
             analysis_command = self._generate_analysis_command(analysis_type, analysis_config)
+            if not analysis_command:
+                if analysis_type == "dc":
+                    error_message = "DC 分析缺少扫描源名称 source_name"
+                    recovery_suggestion = "请在 DC 分析配置中指定源名称，例如 Vin 或 Vdd"
+                elif analysis_type == "noise":
+                    error_message = "噪声分析缺少输出节点或输入源"
+                    recovery_suggestion = "请在噪声分析配置中同时指定 output_node 和 input_source"
+                else:
+                    error_message = f"分析配置不完整，无法生成 {analysis_type} 分析命令"
+                    recovery_suggestion = "请检查当前分析配置中的必填项"
+
+                return create_error_result(
+                    executor=self.get_name(),
+                    file_path=file_path,
+                    analysis_type=analysis_type,
+                    error=SimulationError(
+                        code="E010",
+                        type=SimulationErrorType.PARAMETER_INVALID,
+                        severity=ErrorSeverity.HIGH,
+                        message=error_message,
+                        file_path=file_path,
+                        recovery_suggestion=recovery_suggestion,
+                    ),
+                )
             modified_netlist = self._inject_analysis_command(modified_netlist, analysis_command)
         
         # 注入仿真选项（收敛参数和温度）
@@ -567,13 +591,56 @@ class SpiceExecutor(SimulationExecutor):
             if self._detect_analysis_from_plot(p) == preferred_type
         ]
         if matches:
-            return sorted(matches)[-1]
+            scored_matches = []
+            for plot_name in matches:
+                axis_length = self._get_plot_axis_length(plot_name, preferred_type)
+                scored_matches.append((axis_length, plot_name))
+            scored_matches.sort(key=lambda item: (item[0], item[1]))
+            return scored_matches[-1][1]
 
         non_const = [p for p in all_plots if p.lower() != 'const']
         if non_const:
             return sorted(non_const)[-1]
 
         return all_plots[0] if all_plots else None
+
+    def _get_plot_axis_length(self, plot_name: str, analysis_type: str) -> int:
+        """
+        返回指定 plot 的主坐标轴长度。
+
+        对 AC/NOISE 优先识别 frequency 轴，对 TRAN 识别 time 轴，对 DC 识别 sweep 轴。
+        若无法识别坐标轴，则返回该 plot 中最长向量长度作为回退。
+        """
+        current_plot = self._ngspice.get_current_plot()
+        try:
+            self._ngspice.execute_command(f"setplot {plot_name}")
+            vectors = self._ngspice.get_all_vectors()
+            axis_length = 0
+            fallback_length = 0
+
+            for vec_name in vectors:
+                vec_info = self._ngspice.get_vector_info(vec_name)
+                if not vec_info:
+                    continue
+
+                fallback_length = max(fallback_length, vec_info.length)
+                vec_name_lower = vec_name.lower()
+
+                if analysis_type in {"ac", "noise"} and vec_info.type == VectorType.SV_FREQUENCY:
+                    axis_length = max(axis_length, vec_info.length)
+                    continue
+
+                if analysis_type == "tran" and vec_info.type == VectorType.SV_TIME:
+                    axis_length = max(axis_length, vec_info.length)
+                    continue
+
+                if analysis_type == "dc" and "sweep" in vec_name_lower:
+                    axis_length = max(axis_length, vec_info.length)
+
+            return axis_length if axis_length > 0 else fallback_length
+        finally:
+            if current_plot:
+                self._ngspice.execute_command(f"setplot {current_plot}")
 
     def _is_critical_error(self, output: str) -> bool:
         """

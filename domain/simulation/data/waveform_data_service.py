@@ -93,22 +93,20 @@ class TableRow:
 
 
 @dataclass
-class TableData:
-    """
-    表格数据容器（用于虚拟滚动）
-    
-    Attributes:
-        rows: 数据行列表
-        total_rows: 总行数
-        start_index: 起始索引
-        signal_names: 信号名称列表（列头）
-        x_label: X 轴标签（"Time" / "Frequency" / "Sweep"）
-    """
-    rows: List[TableRow]
-    total_rows: int
-    start_index: int
+class TableSnapshot:
+    result_path: str
+    analysis_type: str
+    version: int
+    session_id: str
+    timestamp: str
+    x_label: str
     signal_names: List[str]
-    x_label: str = "Time"
+    x_values: np.ndarray
+    signal_columns: Dict[str, np.ndarray]
+
+    @property
+    def total_rows(self) -> int:
+        return int(len(self.x_values))
 
 
 TABLE_COMPLEX_SUFFIXES = ("_mag", "_phase", "_real", "_imag")
@@ -517,70 +515,44 @@ class WaveformDataService:
             return result.data.sweep_name or "Sweep"
         return "X"
 
-    def get_table_data(
+    def build_table_snapshot(
         self,
         result: SimulationResult,
-        start_row: int,
-        count: int,
         signal_names: Optional[List[str]] = None,
-    ) -> Optional[TableData]:
-        """
-        获取表格数据（用于虚拟滚动）
-        
-        Args:
-            result: 仿真结果对象
-            start_row: 起始行索引
-            count: 请求行数
-            signal_names: 要包含的信号列表（None 表示全部）
-            
-        Returns:
-            TableData: 表格数据，若无数据返回 None
-        """
+    ) -> Optional[TableSnapshot]:
         if not result.success or result.data is None:
             return None
-        
+
         x_data, x_label = self._get_table_x_axis(result.data)
         if x_data is None:
             return None
-        
-        total_rows = len(x_data)
-        if start_row >= total_rows:
-            return TableData(
-                rows=[],
-                total_rows=total_rows,
-                start_index=start_row,
-                signal_names=[],
-                x_label=x_label,
-            )
-        
-        signal_names = self.get_table_signal_names(result, signal_names)
-        
-        # 计算实际范围
-        end_row = min(start_row + count, total_rows)
-        
-        # 构建行数据
-        rows: List[TableRow] = []
-        for i in range(start_row, end_row):
-            values = {}
-            for sig_name in signal_names:
-                sig_data = result.data.get_signal(sig_name)
-                if sig_data is not None and i < len(sig_data):
-                    scalar_value = self._to_table_scalar_value(sig_data[i])
+
+        x_values = np.asarray(x_data, dtype=float).copy()
+        resolved_signal_names = self.get_table_signal_names(result, signal_names)
+        signal_columns: Dict[str, np.ndarray] = {}
+        total_rows = len(x_values)
+
+        for signal_name in resolved_signal_names:
+            signal_data = result.data.get_signal(signal_name)
+            column = np.full(total_rows, np.nan, dtype=float)
+            if signal_data is not None:
+                limit = min(len(signal_data), total_rows)
+                for row in range(limit):
+                    scalar_value = self._to_table_scalar_value(signal_data[row])
                     if scalar_value is not None:
-                        values[sig_name] = scalar_value
-            
-            rows.append(TableRow(
-                index=i,
-                x_value=float(x_data[i]),
-                values=values,
-            ))
-        
-        return TableData(
-            rows=rows,
-            total_rows=total_rows,
-            start_index=start_row,
-            signal_names=signal_names,
+                        column[row] = scalar_value
+            signal_columns[signal_name] = column
+
+        return TableSnapshot(
+            result_path=result.file_path,
+            analysis_type=result.analysis_type,
+            version=result.version,
+            session_id=result.session_id,
+            timestamp=result.timestamp,
             x_label=x_label,
+            signal_names=resolved_signal_names,
+            x_values=x_values,
+            signal_columns=signal_columns,
         )
 
     def get_signal_statistics(
@@ -807,7 +779,7 @@ __all__ = [
     # 数据类
     "WaveformData",
     "TableRow",
-    "TableData",
+    "TableSnapshot",
     # 服务类
     "WaveformDataService",
     # 单例

@@ -211,7 +211,6 @@ class ChartPage(QWidget):
             pen = pg.mkPen(series.color, width=1.6)
             item = pg.PlotDataItem(x_data, y_data, pen=pen, name=series.name)
             plot_item.addItem(item)
-            self._legend.addItem(item, series.name)
             self._series_colors[series.name] = series.color
 
         plot_item.enableAutoRange()
@@ -618,9 +617,21 @@ class ChartViewer(QWidget):
         analysis = (result.analysis_type or "").lower()
         for chart_type in enabled_supported:
             spec = self._build_chart_spec(result, analysis, chart_type)
+            if spec is not None:
+                spec.series = self._deduplicate_series(spec.series)
             if spec is not None and spec.series:
                 specs.append(spec)
         return specs
+
+    def _deduplicate_series(self, series_list: List[ChartSeries]) -> List[ChartSeries]:
+        deduplicated: List[ChartSeries] = []
+        seen_names = set()
+        for series in series_list:
+            if series.name in seen_names:
+                continue
+            deduplicated.append(series)
+            seen_names.add(series.name)
+        return deduplicated
 
     def _build_chart_spec(
         self,

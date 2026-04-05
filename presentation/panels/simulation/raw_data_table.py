@@ -22,7 +22,10 @@
 """
 
 import logging
+import os
 from typing import Dict, List, Optional
+
+import numpy as np
 
 from PyQt6.QtCore import (
     Qt,
@@ -51,6 +54,7 @@ from PyQt6.QtWidgets import (
 from domain.simulation.data.waveform_data_service import (
     WaveformDataService,
     TableRow,
+    TableSnapshot,
     waveform_data_service,
 )
 from domain.simulation.models.simulation_result import SimulationResult
@@ -75,12 +79,6 @@ from resources.theme import (
 # 常量定义
 # ============================================================
 
-# 每次加载的行数
-CHUNK_SIZE = 100
-
-# 预加载缓冲区大小（可见行数的倍数）
-BUFFER_MULTIPLIER = 2
-
 # 数值显示精度
 VALUE_PRECISION = 6
 
@@ -93,139 +91,61 @@ DEFAULT_TOLERANCE = 1e-9
 # ============================================================
 
 class RawDataTableModel(QAbstractTableModel):
-    """
-    原始数据表格模型
-    
-    实现虚拟滚动：
-    - 仅缓存可见区域附近的数据
-    - 滚动时动态加载新数据块
-    - 使用 LRU 策略管理缓存
-    """
-    
     def __init__(self, parent=None):
         super().__init__(parent)
         
         self._logger = logging.getLogger(__name__)
-        
-        # 数据服务
         self._data_service: WaveformDataService = waveform_data_service
-        
-        # 当前仿真结果
-        self._result: Optional[SimulationResult] = None
-        
-        # 表格元数据
-        self._total_rows: int = 0
-        self._signal_names: List[str] = []
-        self._x_label: str = "Time"
-        
-        # 数据缓存：row_index -> TableRow
-        self._cache: Dict[int, TableRow] = {}
-        self._cache_start: int = 0
-        self._cache_end: int = 0
+        self._snapshot: Optional[TableSnapshot] = None
     
     def load_result(self, result: SimulationResult):
-        """
-        加载仿真结果
-        
-        Args:
-            result: 仿真结果对象
-        """
         self.beginResetModel()
-        
-        self._result = result
-        self._cache.clear()
-        self._cache_start = 0
-        self._cache_end = 0
-        
-        # 获取初始数据以确定总行数和列名
-        initial_data = self._data_service.get_table_data(
-            result, start_row=0, count=CHUNK_SIZE
-        )
-        
-        if initial_data:
-            self._total_rows = initial_data.total_rows
-            self._signal_names = initial_data.signal_names
-            self._x_label = initial_data.x_label
-            
-            # 缓存初始数据
-            for row in initial_data.rows:
-                self._cache[row.index] = row
-            
-            self._cache_start = 0
-            self._cache_end = len(initial_data.rows)
-        else:
-            self._total_rows = 0
-            self._signal_names = []
-            self._x_label = "Time"
-        
+        self._snapshot = self._data_service.build_table_snapshot(result)
         self.endResetModel()
         
-        self._logger.debug(
-            f"Loaded result: {self._total_rows} rows, "
-            f"{len(self._signal_names)} signals"
-        )
+        total_rows = self._snapshot.total_rows if self._snapshot else 0
+        signal_count = len(self._snapshot.signal_names) if self._snapshot else 0
+        self._logger.debug(f"Loaded result snapshot: {total_rows} rows, {signal_count} signals")
     
     def clear(self):
-        """清空数据"""
         self.beginResetModel()
-        
-        self._result = None
-        self._total_rows = 0
-        self._signal_names = []
-        self._x_label = "Time"
-        self._cache.clear()
-        self._cache_start = 0
-        self._cache_end = 0
-        
+        self._snapshot = None
         self.endResetModel()
     
     def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
-        """返回行数"""
         if parent.isValid():
             return 0
-        return self._total_rows
+        if self._snapshot is None:
+            return 0
+        return self._snapshot.total_rows
     
     def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:
-        """返回列数（X 轴 + 信号列）"""
         if parent.isValid():
             return 0
-        return 1 + len(self._signal_names)
+        if self._snapshot is None:
+            return 1
+        return 1 + len(self._snapshot.signal_names)
     
     def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole):
-        """获取单元格数据"""
-        if not index.isValid():
+        if not index.isValid() or self._snapshot is None:
             return None
         
         row = index.row()
         col = index.column()
         
-        if row < 0 or row >= self._total_rows:
+        if row < 0 or row >= self._snapshot.total_rows:
             return None
         
         if col < 0 or col >= self.columnCount():
             return None
         
-        # 确保数据已加载
-        self._ensure_row_loaded(row)
-        
-        if row not in self._cache:
-            return None
-        
-        table_row = self._cache[row]
-        
         if role == Qt.ItemDataRole.DisplayRole:
-            if col == 0:
-                # X 轴值
-                return self._format_value(table_row.x_value)
-            else:
-                # 信号值
-                signal_name = self._signal_names[col - 1]
-                value = table_row.values.get(signal_name)
-                if value is not None:
-                    return self._format_value(value)
+            value = self._get_cell_value(row, col)
+            if value is None:
                 return "--"
-        
-        elif role == Qt.ItemDataRole.TextAlignmentRole:
+            return self._format_value(value)
+
+        if role == Qt.ItemDataRole.TextAlignmentRole:
             return Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
         
         return None
@@ -236,18 +156,17 @@ class RawDataTableModel(QAbstractTableModel):
         orientation: Qt.Orientation,
         role: int = Qt.ItemDataRole.DisplayRole
     ):
-        """获取表头数据"""
         if role != Qt.ItemDataRole.DisplayRole:
             return None
         
         if orientation == Qt.Orientation.Horizontal:
             if section == 0:
-                return self._x_label
-            elif section - 1 < len(self._signal_names):
-                return self._signal_names[section - 1]
+                return self.x_label
+            if self._snapshot and section - 1 < len(self._snapshot.signal_names):
+                return self._snapshot.signal_names[section - 1]
         
         elif orientation == Qt.Orientation.Vertical:
-            return str(section)
+            return str(section + 1)
         
         return None
     
@@ -263,40 +182,11 @@ class RawDataTableModel(QAbstractTableModel):
         Returns:
             int: 行号，未找到返回 -1
         """
-        if self._result is None or self._total_rows == 0:
+        if self._snapshot is None or self._snapshot.total_rows == 0:
             return -1
-        
-        # 加载足够的数据进行搜索
-        # 简化实现：线性搜索缓存，如果不在缓存中则加载更多数据
-        
-        # 首先检查缓存
-        for row_idx, row in self._cache.items():
-            if abs(row.x_value - x_value) < DEFAULT_TOLERANCE:
-                return row_idx
-        
-        # 二分查找：加载数据块进行搜索
-        low, high = 0, self._total_rows - 1
-        
-        while low <= high:
-            mid = (low + high) // 2
-            
-            # 确保 mid 行已加载
-            self._ensure_row_loaded(mid)
-            
-            if mid not in self._cache:
-                break
-            
-            mid_value = self._cache[mid].x_value
-            
-            if abs(mid_value - x_value) < DEFAULT_TOLERANCE:
-                return mid
-            elif mid_value < x_value:
-                low = mid + 1
-            else:
-                high = mid - 1
-        
-        # 返回最接近的行
-        return low if low < self._total_rows else self._total_rows - 1
+
+        distances = np.abs(self._snapshot.x_values - x_value)
+        return int(np.argmin(distances))
     
     def search_value(
         self,
@@ -317,138 +207,97 @@ class RawDataTableModel(QAbstractTableModel):
         Returns:
             int: 找到的行号，未找到返回 -1
         """
-        if self._result is None or self._total_rows == 0:
+        if self._snapshot is None or self._snapshot.total_rows == 0:
             return -1
         
         if column < 0 or column >= self.columnCount():
             return -1
-        
-        # 逐块搜索
-        for chunk_start in range(start_row, self._total_rows, CHUNK_SIZE):
-            chunk_end = min(chunk_start + CHUNK_SIZE, self._total_rows)
-            
-            # 加载数据块
-            self._load_chunk(chunk_start, chunk_end - chunk_start)
-            
-            # 在缓存中搜索
-            for row_idx in range(chunk_start, chunk_end):
-                if row_idx not in self._cache:
-                    continue
-                
-                row = self._cache[row_idx]
-                
-                if column == 0:
-                    cell_value = row.x_value
-                else:
-                    signal_name = self._signal_names[column - 1]
-                    cell_value = row.values.get(signal_name)
-                
-                if cell_value is not None and abs(cell_value - value) <= tolerance:
-                    return row_idx
-        
+
+        start_row = max(0, start_row)
+        column_values = self._get_column_array(column)
+        if column_values is None or start_row >= len(column_values):
+            return -1
+
+        scan_values = column_values[start_row:]
+        matches = np.where(np.isfinite(scan_values) & (np.abs(scan_values - value) <= tolerance))[0]
+        if len(matches) == 0:
+            return -1
+        return start_row + int(matches[0])
+
         return -1
     
     def get_row_data(self, row: int) -> Optional[TableRow]:
-        """获取指定行的数据"""
-        self._ensure_row_loaded(row)
-        return self._cache.get(row)
+        if self._snapshot is None or row < 0 or row >= self._snapshot.total_rows:
+            return None
+
+        values: Dict[str, float] = {}
+        for signal_name in self._snapshot.signal_names:
+            column = self._snapshot.signal_columns.get(signal_name)
+            if column is None or row >= len(column):
+                continue
+            value = column[row]
+            if np.isfinite(value):
+                values[signal_name] = float(value)
+
+        return TableRow(index=row, x_value=float(self._snapshot.x_values[row]), values=values)
     
     def get_column_values(self, column: int, start_row: int, count: int) -> List[float]:
         """获取指定列的值列表"""
-        values = []
-        
-        for row_idx in range(start_row, min(start_row + count, self._total_rows)):
-            self._ensure_row_loaded(row_idx)
-            
-            if row_idx not in self._cache:
-                continue
-            
-            row = self._cache[row_idx]
-            
-            if column == 0:
-                values.append(row.x_value)
-            else:
-                signal_name = self._signal_names[column - 1]
-                value = row.values.get(signal_name)
-                if value is not None:
-                    values.append(value)
-        
-        return values
+        if self._snapshot is None or count <= 0:
+            return []
+
+        column_values = self._get_column_array(column)
+        if column_values is None:
+            return []
+
+        end_row = min(start_row + count, len(column_values))
+        sliced = column_values[max(0, start_row):end_row]
+        return [float(value) for value in sliced if np.isfinite(value)]
     
     @property
     def signal_names(self) -> List[str]:
-        """获取信号名称列表"""
-        return self._signal_names.copy()
+        if self._snapshot is None:
+            return []
+        return self._snapshot.signal_names.copy()
     
     @property
     def total_rows(self) -> int:
-        """获取总行数"""
-        return self._total_rows
+        if self._snapshot is None:
+            return 0
+        return self._snapshot.total_rows
     
     @property
     def x_label(self) -> str:
         """获取 X 轴标签"""
-        return self._x_label
-    
-    def _ensure_row_loaded(self, row: int):
-        """确保指定行已加载到缓存"""
-        if row in self._cache:
-            return
-        
-        # 计算需要加载的数据块
-        chunk_start = max(0, row - CHUNK_SIZE // 2)
-        self._load_chunk(chunk_start, CHUNK_SIZE)
-    
-    def _load_chunk(self, start_row: int, count: int):
-        """加载数据块到缓存"""
-        if self._result is None:
-            return
-        
-        # 检查是否已在缓存中
-        all_cached = all(
-            i in self._cache
-            for i in range(start_row, min(start_row + count, self._total_rows))
-        )
-        
-        if all_cached:
-            return
-        
-        # 加载数据
-        table_data = self._data_service.get_table_data(
-            self._result,
-            start_row=start_row,
-            count=count,
-        )
-        
-        if table_data:
-            for row in table_data.rows:
-                self._cache[row.index] = row
-            
-            # 更新缓存范围
-            self._cache_start = min(self._cache_start, start_row)
-            self._cache_end = max(self._cache_end, start_row + len(table_data.rows))
-            
-            # 清理过大的缓存
-            self._trim_cache()
-    
-    def _trim_cache(self):
-        """清理过大的缓存"""
-        max_cache_size = CHUNK_SIZE * BUFFER_MULTIPLIER * 2
-        
-        if len(self._cache) <= max_cache_size:
-            return
-        
-        # 保留最近访问的数据（简化实现：保留中间部分）
-        sorted_keys = sorted(self._cache.keys())
-        
-        if len(sorted_keys) > max_cache_size:
-            # 移除最旧的数据
-            keys_to_remove = sorted_keys[:len(sorted_keys) - max_cache_size]
-            for key in keys_to_remove:
-                del self._cache[key]
-    
+        if self._snapshot is None:
+            return "X"
+        return self._snapshot.x_label
+
+    @property
+    def snapshot(self) -> Optional[TableSnapshot]:
+        return self._snapshot
+
+    def _get_column_array(self, column: int) -> Optional[np.ndarray]:
+        if self._snapshot is None:
+            return None
+        if column == 0:
+            return self._snapshot.x_values
+        signal_index = column - 1
+        if signal_index < 0 or signal_index >= len(self._snapshot.signal_names):
+            return None
+        signal_name = self._snapshot.signal_names[signal_index]
+        return self._snapshot.signal_columns.get(signal_name)
+
+    def _get_cell_value(self, row: int, column: int) -> Optional[float]:
+        column_values = self._get_column_array(column)
+        if column_values is None or row < 0 or row >= len(column_values):
+            return None
+        value = float(column_values[row])
+        if not np.isfinite(value):
+            return None
+        return value
+
     def _format_value(self, value: float) -> str:
-        """格式化数值显示"""
         if abs(value) < 1e-3 or abs(value) >= 1e6:
             return f"{value:.{VALUE_PRECISION}e}"
         return f"{value:.{VALUE_PRECISION}g}"
@@ -511,8 +360,7 @@ class RawDataTable(QWidget):
         # 跳转到行
         self._jump_row_label = QLabel()
         self._jump_row_spin = QSpinBox()
-        self._jump_row_spin.setMinimum(0)
-        self._jump_row_spin.setMaximum(0)
+        self._jump_row_spin.setRange(0, 0)
         self._jump_row_spin.setFixedWidth(80)
         self._jump_row_btn = QPushButton()
         self._jump_row_btn.setObjectName("jumpBtn")
@@ -603,9 +451,11 @@ class RawDataTable(QWidget):
         status_layout.setSpacing(SPACING_NORMAL)
         
         self._row_count_label = QLabel()
+        self._result_binding_label = QLabel()
         self._selection_label = QLabel()
         
         status_layout.addWidget(self._row_count_label)
+        status_layout.addWidget(self._result_binding_label)
         status_layout.addStretch()
         status_layout.addWidget(self._selection_label)
         
@@ -714,6 +564,8 @@ class RawDataTable(QWidget):
         """
         self._result = result
         self._model.load_result(result)
+        self._table_view.clearSelection()
+        self._table_view.scrollToTop()
         
         # 更新 UI
         self._update_controls()
@@ -728,6 +580,8 @@ class RawDataTable(QWidget):
         """清空数据"""
         self._result = None
         self._model.clear()
+        self._table_view.clearSelection()
+        self._table_view.scrollToTop()
         self._update_controls()
         self._update_status()
     
@@ -861,7 +715,12 @@ class RawDataTable(QWidget):
         self._update_axis_labels()
         
         # 更新行号范围
-        self._jump_row_spin.setMaximum(max(0, total_rows - 1))
+        if total_rows > 0:
+            self._jump_row_spin.setRange(1, total_rows)
+            if self._jump_row_spin.value() <= 0:
+                self._jump_row_spin.setValue(1)
+        else:
+            self._jump_row_spin.setRange(0, 0)
         
         # 更新搜索列下拉框
         self._search_column_combo.clear()
@@ -897,6 +756,7 @@ class RawDataTable(QWidget):
         self._row_count_label.setText(
             self._tr("Total: {count} rows").format(count=total_rows)
         )
+        self._result_binding_label.setText(self._build_result_binding_text())
         
         selection = self._table_view.selectionModel().selectedRows()
         if selection:
@@ -908,7 +768,7 @@ class RawDataTable(QWidget):
     
     def _on_jump_to_row(self):
         """跳转到行按钮点击"""
-        row = self._jump_row_spin.value()
+        row = max(0, self._jump_row_spin.value() - 1)
         self.jump_to_row(row)
     
     def _on_jump_to_x_value(self):
@@ -988,6 +848,20 @@ class RawDataTable(QWidget):
         """双击行"""
         row = index.row()
         self.jump_to_row(row)
+
+    def _build_result_binding_text(self) -> str:
+        snapshot = self._model.snapshot
+        if snapshot is None:
+            return ""
+
+        result_name = os.path.basename(snapshot.result_path) if snapshot.result_path else ""
+        parts = [
+            snapshot.analysis_type.upper() if snapshot.analysis_type else "",
+            f"v{snapshot.version}" if snapshot.version else "",
+            snapshot.timestamp or "",
+            result_name,
+        ]
+        return " | ".join(part for part in parts if part)
     
     def _tr(self, text: str) -> str:
         """翻译文本"""

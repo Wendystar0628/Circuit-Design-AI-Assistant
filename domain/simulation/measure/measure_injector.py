@@ -196,7 +196,17 @@ class MeasureInjector:
 
         # 检查分析类型
         analysis_type = parts[1].upper()
-        valid_types = {"AC", "DC", "TRAN", "OP", "NOISE"}
+        if analysis_type == "NOISE":
+            return [
+                MeasureValidationError(
+                    statement=statement,
+                    error_type="UNSUPPORTED_ANALYSIS_TYPE",
+                    message="当前 ngspice 共享库路径不支持 .MEASURE NOISE",
+                    suggestion="请移除 .MEASURE NOISE 语句，仅保留 .noise 分析结果，并在仿真后读取噪声频谱数据",
+                )
+            ]
+
+        valid_types = {"AC", "DC", "TRAN", "OP"}
         if analysis_type not in valid_types:
             errors.append(
                 MeasureValidationError(

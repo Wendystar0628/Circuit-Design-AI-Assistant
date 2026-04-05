@@ -176,6 +176,7 @@ class SessionStateManager:
                     "created_at": datetime.now().isoformat(),
                     "updated_at": datetime.now().isoformat(),
                     "message_count": 0,
+                    "sim_result_path": "",
                 },
                 set_current=True
             )
@@ -252,6 +253,7 @@ class SessionStateManager:
             metadata = context_service.get_session_metadata(project_root, session_id)
             if metadata:
                 new_state["conversation_summary"] = metadata.get("summary", "")
+                new_state["sim_result_path"] = metadata.get("sim_result_path", "")
             
             # 更新会话索引中的当前会话
             context_service.set_current_session_id(project_root, session_id)
@@ -363,6 +365,7 @@ class SessionStateManager:
                     "message_count": len(messages),
                     "preview": preview,
                     "summary": state.get("conversation_summary", ""),
+                    "sim_result_path": state.get("sim_result_path", ""),
                 }
             )
             
@@ -695,11 +698,24 @@ class SessionStateManager:
                     "session_name": self._get_current_session_name(),
                     "action": action,
                     "previous_session_id": previous_session_id,
+                    "sim_result_path": self._get_current_sim_result_path(),
                 })
             except ImportError:
                 if self.logger:
                     self.logger.warning("EVENT_SESSION_CHANGED not defined")
-    
+
+    def _get_current_sim_result_path(self) -> str:
+        if not self._current_session_id or not self._project_root:
+            return ""
+
+        from domain.services import context_service
+
+        metadata = context_service.get_session_metadata(
+            self._project_root, self._current_session_id
+        )
+
+        return metadata.get("sim_result_path", "") if metadata else ""
+
     def _get_current_session_name(self) -> str:
         """获取当前会话名称"""
         if not self._current_session_id or not self._project_root:

@@ -1292,10 +1292,8 @@ class SimulationTab(QWidget):
         
         # 清空当前显示
         self.clear()
-        
-        # 显示空状态，等待会话变更事件或用户操作
-        # 根据 4.0.7 节设计：新会话不自动加载历史结果
-        self._show_empty_state()
+
+        QTimer.singleShot(250, self._restore_last_result_after_project_opened)
     
     def _on_project_closed(self, event_data: dict):
         """处理项目关闭事件"""
@@ -1397,15 +1395,18 @@ class SimulationTab(QWidget):
             f"sim_result_path={sim_result_path}"
         )
         
-        # 新会话：显示空状态，不加载历史结果
-        if action == "new" or not sim_result_path:
+        if action == "new":
             self.clear()
             self._show_empty_state()
             return
         
-        # 切换到已有会话：检查文件是否存在
         if self._project_root and sim_result_path:
             self._load_from_path(sim_result_path)
+            return
+
+        if action == "switch":
+            self.clear()
+            self._show_empty_state()
     
     def _on_chart_selection_changed(self, event_data: dict):
         """
@@ -1522,6 +1523,7 @@ class SimulationTab(QWidget):
         """
         if result_path:
             self._last_loaded_result_path = self._normalize_result_path(result_path)
+            self._persist_current_session_result_path(result_path)
 
         self._chart_viewer_panel.clear()
         self._view_model.load_result(result)
@@ -1544,27 +1546,82 @@ class SimulationTab(QWidget):
 
         if not getattr(result, 'success', False):
             self._chart_viewer_panel.switch_to_log()
-    
+
+    def _restore_last_result_after_project_opened(self):
+        if not self._project_root:
+            return
+
+        if self._view_model.current_result is not None or self._last_loaded_result_path:
+            return
+
+        try:
+            from domain.services import context_service
+
+            session_id = context_service.get_current_session_id(self._project_root)
+            metadata = context_service.get_session_metadata(self._project_root, session_id) if session_id else None
+            sim_result_path = metadata.get("sim_result_path", "") if metadata else ""
+
+            if sim_result_path:
+                self._load_from_path(sim_result_path)
+                return
+        except Exception as e:
+            self._logger.debug(f"Failed to restore session-bound simulation result: {e}")
+
+        self._load_project_simulation_result()
+
+    def _persist_current_session_result_path(self, result_path: str):
+        if not self._project_root or not result_path:
+            return
+
+        persisted_path = result_path.replace('\\', '/')
+
+        try:
+            from domain.services import context_service
+
+            session_id = context_service.get_current_session_id(self._project_root)
+            if session_id:
+                metadata = context_service.get_session_metadata(self._project_root, session_id) or {}
+                if metadata.get("sim_result_path") != persisted_path:
+                    context_service.update_session_index(
+                        self._project_root,
+                        session_id,
+                        {"sim_result_path": persisted_path},
+                    )
+        except Exception as e:
+            self._logger.debug(f"Failed to persist simulation result path for session: {e}")
+
+        try:
+            from shared.service_locator import ServiceLocator
+            from shared.service_names import SVC_CONTEXT_MANAGER
+
+            context_manager = ServiceLocator.get_optional(SVC_CONTEXT_MANAGER)
+            if context_manager:
+                current_state = context_manager.get_current_state() or {}
+                if current_state.get("sim_result_path") != persisted_path:
+                    new_state = dict(current_state)
+                    new_state["sim_result_path"] = persisted_path
+                    context_manager.sync_state(new_state)
+        except Exception as e:
+            self._logger.debug(f"Failed to sync simulation result path into context state: {e}")
+
     def _load_waveform_data(self, result):
         """
         加载波形数据到各组件
-        
+
         默认选择第一个电压信号显示；若无电压信号则选第一个可用信号。
-        
+
         Args:
             result: SimulationResult 对象
         """
         if result is None:
             return
-        
-        # 获取可用信号列表
+
         data = getattr(result, 'data', None)
         if data is None:
             return
-        
+
         signal_names = data.get_signal_names() if hasattr(data, 'get_signal_names') else []
-        
-        # 选择默认信号：优先电压信号
+
         default_signal = None
         if signal_names:
             try:
@@ -1572,36 +1629,34 @@ class SimulationTab(QWidget):
                 default_signal = waveform_data_service.get_preferred_display_signal(result)
             except Exception:
                 default_signal = signal_names[0]
-        
-        # 加载到波形查看器
+
         if default_signal:
             self._chart_viewer_panel.waveform_widget.load_waveform(result, default_signal)
-        
-        # 加载交互式分析图
+
         self._load_analysis_charts(result)
-    
+
     def _load_analysis_charts(self, result):
         """
         根据仿真结果和用户图表选择加载交互式分析图
-        
+
         流程：
         1. 从 ChartSelector 获取用户启用的图表类型
         2. 过滤为当前支持的交互式分析图类型
         3. 直接基于仿真结果数据加载图表视图
-        
+
         Args:
             result: SimulationResult 对象
         """
         if result is None or result.data is None:
             return
-        
+
         try:
             from domain.simulation.service.chart_selector import chart_selector
-            
+
             enabled_selections = chart_selector.get_selected_charts()
             enabled_types = [s.chart_type for s in enabled_selections]
             self._chart_viewer_panel.chart_viewer.load_result(result, enabled_types)
-                
+
         except Exception as e:
             self._logger.warning(f"Interactive chart loading failed: {e}")
     

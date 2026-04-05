@@ -5,6 +5,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication
 
 import domain.simulation.data as simulation_data_package
+from domain.simulation.data.simulation_artifact_exporter import simulation_artifact_exporter
 from domain.simulation.data.waveform_data_service import WaveformDataService
 from domain.simulation.models.simulation_result import SimulationData, SimulationResult
 from presentation.panels.simulation.raw_data_table import RawDataTable, RawDataTableModel
@@ -41,6 +42,9 @@ def sample_result() -> SimulationResult:
         timestamp="2026-04-05T17:00:00",
         version=7,
         session_id="session-raw-7",
+        x_axis_kind="time",
+        x_axis_label="Time (s)",
+        x_axis_scale="linear",
     )
 
 
@@ -123,15 +127,12 @@ def test_raw_data_table_widget_shows_current_result_binding(qapp, sample_result:
     assert table._row_count_label.text() == "Total: 0 rows"
 
 
-def test_raw_data_table_exports_selected_rows_from_snapshot(qapp, sample_result: SimulationResult, tmp_path):
-    table = RawDataTable()
-    table.load_data(sample_result)
-    table.jump_to_row(1)
+def test_simulation_artifact_exporter_exports_full_raw_data_snapshot(sample_result: SimulationResult, tmp_path):
+    export_root = simulation_artifact_exporter.create_export_root(str(tmp_path), sample_result)
 
-    export_path = tmp_path / "raw_data.csv"
+    exported_files = simulation_artifact_exporter.export_raw_data(export_root, sample_result)
 
-    assert table.export_selection(str(export_path), "csv") is True
-
-    exported = export_path.read_text(encoding="utf-8").splitlines()
-    assert exported[0] == "Time (s),V(out),V(in)"
-    assert exported[1] == "0.1,2.0,0.6"
+    assert len(exported_files) == 2
+    exported_csv = (export_root / "raw_data" / "raw_data.csv").read_text(encoding="utf-8").splitlines()
+    assert exported_csv[0] == "Time (s),V(out),V(in)"
+    assert exported_csv[2] == "0.1,2.0,0.6"

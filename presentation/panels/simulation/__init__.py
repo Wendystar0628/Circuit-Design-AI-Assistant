@@ -25,6 +25,7 @@ from presentation.panels.simulation.analysis_chart_viewer import ChartViewer
 from presentation.panels.simulation.waveform_widget import WaveformWidget, WaveformMeasurement
 from presentation.panels.simulation.raw_data_table import RawDataTable, RawDataTableModel
 from presentation.panels.simulation.output_log_viewer import OutputLogViewer, LogHighlighter
+from presentation.panels.simulation.simulation_export_panel import SimulationExportPanel
 from presentation.panels.simulation.tuning_panel import TuningPanel, ParameterSliderWidget
 from presentation.panels.simulation.simulation_tab import (
     SimulationTab,
@@ -46,6 +47,7 @@ __all__ = [
     "RawDataTableModel",
     "OutputLogViewer",
     "LogHighlighter",
+    "SimulationExportPanel",
     "TuningPanel",
     "ParameterSliderWidget",
     "SimulationTab",

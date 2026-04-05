@@ -34,11 +34,9 @@ from domain.simulation.data.waveform_data_service import (
     WaveformDataService,
     waveform_data_service,
 )
-from domain.simulation.data.data_exporter import (
-    ExportFormat,
-    ExportResult,
-    DataExporter,
-    data_exporter,
+from domain.simulation.data.simulation_artifact_exporter import (
+    SimulationArtifactExporter,
+    simulation_artifact_exporter,
 )
 from domain.simulation.data.simulation_output_reader import (
     LogLevel,
@@ -65,11 +63,8 @@ __all__ = [
     "TableSnapshot",
     "WaveformDataService",
     "waveform_data_service",
-    # Data Exporter
-    "ExportFormat",
-    "ExportResult",
-    "DataExporter",
-    "data_exporter",
+    "SimulationArtifactExporter",
+    "simulation_artifact_exporter",
     # Simulation Output Reader
     "LogLevel",
     "LogLine",

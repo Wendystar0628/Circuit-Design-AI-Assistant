@@ -1,17 +1,13 @@
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QHeaderView, QLabel, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QHeaderView, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget
 
 from domain.simulation.models.simulation_result import SimulationResult
 from resources.theme import (
     COLOR_BG_PRIMARY,
-    COLOR_BG_TERTIARY,
     COLOR_BORDER,
     COLOR_TEXT_PRIMARY,
-    COLOR_TEXT_SECONDARY,
-    FONT_SIZE_SMALL,
     SPACING_NORMAL,
     SPACING_SMALL,
 )
@@ -79,19 +75,6 @@ class AnalysisInfoPanel(QWidget):
         layout.setContentsMargins(SPACING_NORMAL, SPACING_NORMAL, SPACING_NORMAL, SPACING_NORMAL)
         layout.setSpacing(SPACING_SMALL)
 
-        self._summary_label = QLabel()
-        self._summary_label.setWordWrap(True)
-        layout.addWidget(self._summary_label)
-
-        self._command_title = QLabel()
-        layout.addWidget(self._command_title)
-
-        self._command_value = QLabel()
-        self._command_value.setObjectName("analysisCommandValue")
-        self._command_value.setWordWrap(True)
-        self._command_value.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        layout.addWidget(self._command_value)
-
         self._tree = QTreeWidget()
         self._tree.setColumnCount(2)
         self._tree.setRootIsDecorated(False)
@@ -110,11 +93,8 @@ class AnalysisInfoPanel(QWidget):
     def clear(self):
         self._result = None
         self._tree.clear()
-        self._command_value.clear()
-        self._summary_label.clear()
 
     def retranslate_ui(self):
-        self._command_title.setText(self._get_text("simulation.analysis_info.command", "仿真语句"))
         self._tree.setHeaderLabels([
             self._get_text("simulation.analysis_info.field", "字段"),
             self._get_text("simulation.analysis_info.value", "值"),
@@ -125,23 +105,11 @@ class AnalysisInfoPanel(QWidget):
         self._tree.clear()
         result = self._result
         if result is None:
-            self._summary_label.setText(self._get_text(
-                "simulation.analysis_info.empty",
-                "当前没有可显示的分析信息。",
-            ))
-            self._command_value.clear()
             return
 
         info = result.analysis_info if isinstance(result.analysis_info, dict) else {}
         analysis_type = str(info.get("analysis_type") or result.analysis_type or "").lower()
-        analysis_command = str(info.get("analysis_command") or result.analysis_command or "")
         parameters = info.get("parameters") if isinstance(info.get("parameters"), dict) else {}
-
-        self._summary_label.setText(self._get_text(
-            "simulation.analysis_info.summary",
-            "本页只展示本次仿真结果中携带的权威分析信息；若网表中没有对应字段，则保持为空。",
-        ))
-        self._command_value.setText(analysis_command)
 
         self._add_section(
             self._get_text("simulation.analysis_info.section.analysis", "分析信息"),
@@ -206,17 +174,6 @@ class AnalysisInfoPanel(QWidget):
         self.setStyleSheet(f"""
             AnalysisInfoPanel {{
                 background-color: {COLOR_BG_PRIMARY};
-            }}
-            QLabel {{
-                color: {COLOR_TEXT_PRIMARY};
-            }}
-            #analysisCommandValue {{
-                color: {COLOR_TEXT_SECONDARY};
-                font-size: {FONT_SIZE_SMALL}px;
-                font-family: Consolas, monospace;
-                background-color: {COLOR_BG_TERTIARY};
-                border: 1px solid {COLOR_BORDER};
-                padding: 8px;
             }}
             QTreeWidget {{
                 background-color: {COLOR_BG_PRIMARY};

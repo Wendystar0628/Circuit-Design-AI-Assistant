@@ -129,11 +129,6 @@ class ActionHandlers:
             "on_run_auto_simulation": self.on_run_auto_simulation,
             "on_run_select_simulation": self.on_run_select_simulation,
             "on_stop_simulation": self.on_stop_simulation,
-            # 数据导出回调
-            "on_export_csv": self.on_export_csv,
-            "on_export_json": self.on_export_json,
-            "on_export_matlab": self.on_export_matlab,
-            "on_export_numpy": self.on_export_numpy,
         }
 
     # ============================================================
@@ -727,38 +722,5 @@ class ActionHandlers:
                 self._get_text("dialog.warning.title", "Warning"),
                 self._get_text("simulation.cancel_failed", "无法取消仿真")
             )
-
-    # ============================================================
-    # 数据导出回调
-    # ============================================================
-
-    def _get_simulation_tab(self):
-        """获取仿真标签页"""
-        return self._panels.get("simulation")
-
-    def on_export_csv(self):
-        """导出波形数据为 CSV 格式"""
-        sim_tab = self._get_simulation_tab()
-        if sim_tab:
-            sim_tab.export_waveform_data("csv")
-
-    def on_export_json(self):
-        """导出波形数据为 JSON 格式"""
-        sim_tab = self._get_simulation_tab()
-        if sim_tab:
-            sim_tab.export_waveform_data("json")
-
-    def on_export_matlab(self):
-        """导出波形数据为 MATLAB 格式"""
-        sim_tab = self._get_simulation_tab()
-        if sim_tab:
-            sim_tab.export_waveform_data("mat")
-
-    def on_export_numpy(self):
-        """导出波形数据为 NumPy 格式"""
-        sim_tab = self._get_simulation_tab()
-        if sim_tab:
-            sim_tab.export_waveform_data("npz")
-
 
 __all__ = ["ActionHandlers"]

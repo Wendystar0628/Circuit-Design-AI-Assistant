@@ -41,6 +41,7 @@ from presentation.panels.simulation.simulation_view_model import (
 from presentation.panels.simulation.metrics_panel import MetricsPanel
 from presentation.panels.simulation.analysis_info_panel import AnalysisInfoPanel
 from presentation.panels.simulation.analysis_chart_viewer import ChartViewer
+from presentation.panels.simulation.simulation_export_panel import SimulationExportPanel
 from resources.theme import (
     COLOR_BG_PRIMARY,
     COLOR_BG_SECONDARY,
@@ -532,6 +533,7 @@ class ChartViewerPanel(QFrame):
     TAB_ANALYSIS_INFO = 3
     TAB_RAW_DATA = 4
     TAB_LOG = 5
+    TAB_EXPORT = 6
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -578,6 +580,9 @@ class ChartViewerPanel(QFrame):
         from presentation.panels.simulation.output_log_viewer import OutputLogViewer
         self._output_log_viewer = OutputLogViewer()
         self._tab_widget.addTab(self._output_log_viewer, "")
+
+        self._export_panel = SimulationExportPanel(self._chart_viewer, self._waveform_widget)
+        self._tab_widget.addTab(self._export_panel, "")
         
         layout.addWidget(self._tab_widget)
         
@@ -643,6 +648,9 @@ class ChartViewerPanel(QFrame):
         self._tab_widget.setTabText(self.TAB_LOG, self._get_text(
             "simulation.tab.log", "输出日志"
         ))
+        self._tab_widget.setTabText(self.TAB_EXPORT, self._get_text(
+            "simulation.tab.export", "数据导出"
+        ))
     
     @property
     def chart_viewer(self) -> ChartViewer:
@@ -672,6 +680,10 @@ class ChartViewerPanel(QFrame):
     def output_log_viewer(self):
         """获取输出日志查看器"""
         return self._output_log_viewer
+
+    @property
+    def export_panel(self):
+        return self._export_panel
     
     def clear(self):
         """清空所有内容"""
@@ -681,6 +693,7 @@ class ChartViewerPanel(QFrame):
         self._analysis_info_panel.clear()
         self._raw_data_table.clear()
         self._output_log_viewer.clear()
+        self._export_panel.clear()
 
     def switch_to_metrics(self):
         """切换到仿真指标标签页"""
@@ -714,6 +727,7 @@ class ChartViewerPanel(QFrame):
         self._analysis_info_panel.retranslate_ui()
         self._raw_data_table.retranslate_ui()
         self._output_log_viewer.retranslate_ui()
+        self._export_panel.retranslate_ui()
     
     def _get_text(self, key: str, default: str) -> str:
         """获取国际化文本"""
@@ -749,6 +763,7 @@ class SimulationTab(QWidget):
         # 项目状态
         self._project_root: Optional[str] = None
         self._last_loaded_result_path: Optional[str] = None
+        self._last_shown_op_dialog_signature: str = ""
         
         # EventBus 引用
         self._event_bus = None
@@ -938,6 +953,7 @@ class SimulationTab(QWidget):
             self._update_metrics(value)
         elif name == "overall_score":
             self._metrics_panel_view.set_overall_score(value)
+            self._chart_viewer_panel.export_panel.set_overall_score(value)
         elif name == "simulation_status":
             self._update_status(value)
         elif name == "error_message":
@@ -977,10 +993,10 @@ class SimulationTab(QWidget):
         
         # 加载仿真结果
         if result_path and self._project_root:
-            self._load_simulation_result(result_path)
+            self._load_simulation_result(result_path, show_op_dialog=True)
         elif not result_path:
             self._logger.warning("No result_path in event, trying to load latest result")
-            self._load_project_simulation_result()
+            self._load_project_simulation_result(show_op_dialog=True)
 
     def _on_language_changed(self, event_data: dict):
         """处理语言切换事件"""
@@ -1135,7 +1151,7 @@ class SimulationTab(QWidget):
         self._logger.debug(f"Metric clicked: {metric_name}")
         # 可以高亮对应的图表区域或显示详情
     
-    def load_result(self, result, result_path: Optional[str] = None):
+    def load_result(self, result, result_path: Optional[str] = None, show_op_dialog: bool = False):
         """
         加载仿真结果
         
@@ -1149,6 +1165,7 @@ class SimulationTab(QWidget):
         self._chart_viewer_panel.clear()
         self._view_model.load_result(result)
         self._chart_viewer_panel.analysis_info_panel.load_result(result)
+        self._chart_viewer_panel.export_panel.set_result(result)
         
         # 显示时间戳
         timestamp = getattr(result, 'timestamp', None)
@@ -1168,6 +1185,9 @@ class SimulationTab(QWidget):
 
         if not getattr(result, 'success', False):
             self._chart_viewer_panel.switch_to_log()
+
+        if show_op_dialog:
+            self._maybe_show_op_result_dialog(result, result_path=result_path)
 
     def _restore_last_result_after_project_opened(self):
         if not self._project_root:
@@ -1281,65 +1301,12 @@ class SimulationTab(QWidget):
     def clear(self):
         """清空所有显示"""
         self._last_loaded_result_path = None
+        self._last_shown_op_dialog_signature = ""
         self._chart_viewer_panel.clear()
         self._view_model.clear()
         self._status_indicator.hide_status()
         self._show_empty_state()
-    
-    def export_waveform_data(self, format: str = "csv"):
-        """
-        导出波形数据
-        
-        Args:
-            format: 导出格式（csv/json/mat/npy/npz）
-        """
-        current_result = self._view_model.current_result
-        if current_result is None:
-            from PyQt6.QtWidgets import QMessageBox
-            QMessageBox.warning(
-                self,
-                self._get_text("export.title", "导出数据"),
-                self._get_text("export.no_data", "无仿真数据可导出")
-            )
-            return
-        
-        # 获取导出路径
-        from PyQt6.QtWidgets import QFileDialog
-        from domain.simulation.data.data_exporter import data_exporter
-        
-        ext = data_exporter.get_format_extension(format)
-        filter_str = f"{format.upper()} Files (*{ext})"
-        
-        path, _ = QFileDialog.getSaveFileName(
-            self,
-            self._get_text("export.title", "导出数据"),
-            f"simulation_data{ext}",
-            filter_str
-        )
-        
-        if not path:
-            return
-        
-        # 执行导出
-        result = data_exporter.export(
-            current_result, format, path
-        )
-        
-        if result.success:
-            from PyQt6.QtWidgets import QMessageBox
-            QMessageBox.information(
-                self,
-                self._get_text("export.title", "导出数据"),
-                self._get_text("export.success", "数据导出成功：{path}").format(path=path)
-            )
-        else:
-            from PyQt6.QtWidgets import QMessageBox
-            QMessageBox.warning(
-                self,
-                self._get_text("export.title", "导出数据"),
-                self._get_text("export.failed", "导出失败：{error}").format(error=result.error_message)
-            )
-    
+
     def refresh(self):
         """刷新显示"""
         if self._project_root:
@@ -1372,6 +1339,7 @@ class SimulationTab(QWidget):
     
     def _update_metrics(self, metrics_list: List[DisplayMetric]):
         """更新指标显示"""
+        self._chart_viewer_panel.export_panel.set_metrics(metrics_list)
         if metrics_list:
             self._metrics_panel_view.update_metrics(metrics_list)
             self._hide_empty_state()
@@ -1458,7 +1426,7 @@ class SimulationTab(QWidget):
         self._metrics_panel_view.setEnabled(enabled)
         # 图表查看器保持可用（允许查看）
     
-    def _load_project_simulation_result(self):
+    def _load_project_simulation_result(self, show_op_dialog: bool = False):
         """加载项目的仿真结果"""
         if not self._project_root:
             return
@@ -1471,7 +1439,7 @@ class SimulationTab(QWidget):
             load_result = service.get_latest_sim_result(self._project_root)
             if load_result.success and load_result.data:
                 self._last_loaded_result_path = self._normalize_result_path(load_result.file_path)
-                self.load_result(load_result.data, load_result.file_path)
+                self.load_result(load_result.data, load_result.file_path, show_op_dialog=show_op_dialog)
                 self._logger.info(f"Loaded simulation result: {load_result.file_path}")
             else:
                 self._logger.info(f"No simulation result found: {load_result.error_message}")
@@ -1481,7 +1449,7 @@ class SimulationTab(QWidget):
             self._logger.warning(f"Failed to load simulation result: {e}")
             self._show_empty_state()
     
-    def _load_simulation_result(self, result_path: str):
+    def _load_simulation_result(self, result_path: str, show_op_dialog: bool = False):
         """加载指定的仿真结果"""
         if not self._project_root:
             return
@@ -1494,12 +1462,35 @@ class SimulationTab(QWidget):
             if load_result.success and load_result.data:
                 # load_result.data 已经是 SimulationResult 对象
                 self._last_loaded_result_path = self._normalize_result_path(result_path)
-                self.load_result(load_result.data, result_path)
+                self.load_result(load_result.data, result_path, show_op_dialog=show_op_dialog)
             else:
                 self._logger.warning(f"Failed to load result: {load_result.error_message}")
                 
         except Exception as e:
             self._logger.warning(f"Failed to load simulation result: {e}")
+
+    def _maybe_show_op_result_dialog(self, result, result_path: Optional[str] = None):
+        analysis_type = str(getattr(result, "analysis_type", "") or "").lower()
+        if analysis_type != "op":
+            return
+
+        if not getattr(result, "success", False) or getattr(result, "data", None) is None:
+            return
+
+        normalized_result_path = self._normalize_result_path(result_path or "")
+        signature = f"{normalized_result_path}|{getattr(result, 'timestamp', '')}"
+        if signature == self._last_shown_op_dialog_signature:
+            return
+
+        try:
+            from presentation.dialogs.op_result_dialog import OPResultDialog
+
+            dialog = OPResultDialog(self)
+            dialog.load_result(result)
+            self._last_shown_op_dialog_signature = signature
+            dialog.exec()
+        except Exception as e:
+            self._logger.warning(f"Failed to show OP result dialog: {e}")
 
     def _normalize_result_path(self, result_path: str) -> str:
         if not result_path:

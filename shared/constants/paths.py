@@ -29,12 +29,6 @@ SIM_RESULTS_DIR = f"{SYSTEM_DIR}/sim_results"
 # 仿真配置文件（相对于项目根目录）
 SIM_CONFIG_FILE = f"{SYSTEM_DIR}/simulation_config.json"
 
-# 分析选择配置文件（相对于项目根目录）
-ANALYSIS_SELECTION_FILE = f"{SYSTEM_DIR}/analysis_selection.json"
-
-# 图表选择配置文件（相对于项目根目录）
-CHART_SELECTION_FILE = f"{SYSTEM_DIR}/chart_selection.json"
-
 # ============================================================
 # 设计相关路径
 # ============================================================
@@ -84,8 +78,6 @@ __all__ = [
     "SYSTEM_DIR",
     "SIM_RESULTS_DIR",
     "SIM_CONFIG_FILE",
-    "ANALYSIS_SELECTION_FILE",
-    "CHART_SELECTION_FILE",
     "DESIGN_GOALS_FILE",
     "ITERATION_HISTORY_FILE",
     "UNDO_SNAPSHOTS_DIR",

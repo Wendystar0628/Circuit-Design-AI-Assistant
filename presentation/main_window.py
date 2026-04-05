@@ -10,7 +10,6 @@
 委托关系：
 - 菜单栏创建委托给 MenuManager
 - 工具栏创建委托给 ToolbarManager
-- 状态栏创建委托给 StatusbarManager
 - 窗口状态管理委托给 WindowStateManager
 - 会话管理委托给 SessionManager
 - 动作处理委托给 ActionHandlers
@@ -38,7 +37,6 @@ from PyQt6.QtCore import Qt, QTimer
 
 from presentation.menu_manager import MenuManager
 from presentation.toolbar_manager import ToolbarManager
-from presentation.statusbar_manager import StatusbarManager
 from presentation.window_state_manager import WindowStateManager
 from presentation.session_manager import SessionManager
 from presentation.action_handlers import ActionHandlers
@@ -82,7 +80,6 @@ class MainWindow(QMainWindow):
         # 管理器实例（延迟初始化）
         self._menu_manager: Optional[MenuManager] = None
         self._toolbar_manager: Optional[ToolbarManager] = None
-        self._statusbar_manager: Optional[StatusbarManager] = None
         self._window_state_manager: Optional[WindowStateManager] = None
         self._session_manager: Optional[SessionManager] = None
         self._action_handlers: Optional[ActionHandlers] = None
@@ -378,10 +375,6 @@ class MainWindow(QMainWindow):
         self._toolbar_manager = ToolbarManager(self)
         self._toolbar_manager.setup_toolbar(callbacks)
         
-        # 状态栏管理器
-        self._statusbar_manager = StatusbarManager(self)
-        self._statusbar_manager.setup_statusbar()
-        
         # 窗口状态管理器
         self._window_state_manager = WindowStateManager(self)
         
@@ -394,6 +387,9 @@ class MainWindow(QMainWindow):
 
     def _connect_panel_signals(self):
         """连接面板信号"""
+        if self._action_handlers is None:
+            return
+
         # 连接代码编辑器面板信号
         if "code_editor" in self._panels:
             editor = self._panels["code_editor"]
@@ -406,11 +402,11 @@ class MainWindow(QMainWindow):
             editor.editable_file_state_changed.connect(
                 self._on_editable_file_state_changed
             )
-        
+
         # 连接对话面板信号
         # 注意：不在这里调用 chat_panel.initialize()
         # 对话面板的初始化延迟到 EVENT_INIT_COMPLETE 事件后执行
-        # 因为 ContextManager 在 Phase 3.4 才注册，此时（Phase 2.2）还不可用
+        # 因为 ContextManager 在 Phase 3.4 才注册，此时还不可用
         if "chat" in self._panels:
             chat_panel = self._panels["chat"]
             chat_panel.file_clicked.connect(self._on_file_clicked)
@@ -435,10 +431,7 @@ class MainWindow(QMainWindow):
         
         if self._toolbar_manager:
             self._toolbar_manager.retranslate_ui()
-        
-        if self._statusbar_manager:
-            self._statusbar_manager.retranslate_ui()
-        
+
         # 刷新右栏标签页标题
         if self._tab_controller:
             self._retranslate_tab_titles()
@@ -540,10 +533,6 @@ class MainWindow(QMainWindow):
             self._toolbar_manager.set_action_enabled("toolbar_save", True)
             self._toolbar_manager.set_action_enabled("toolbar_save_all", True)
         
-        # 更新状态栏
-        if self._statusbar_manager:
-            self._statusbar_manager.set_project_info(project_path)
-        
         # 更新最近打开菜单
         self._update_recent_menu()
         
@@ -566,10 +555,6 @@ class MainWindow(QMainWindow):
         if self._toolbar_manager:
             self._toolbar_manager.set_action_enabled("toolbar_save", False)
             self._toolbar_manager.set_action_enabled("toolbar_save_all", False)
-        
-        # 更新状态栏
-        if self._statusbar_manager:
-            self._statusbar_manager.set_project_info(None)
         
         # 关闭代码编辑器中的所有文件
         if "code_editor" in self._panels:
@@ -821,10 +806,6 @@ class MainWindow(QMainWindow):
         if self._panel_manager:
             return self._panel_manager.get_panel(panel_id)
         return None
-
-    def get_statusbar_manager(self) -> Optional[StatusbarManager]:
-        """获取状态栏管理器"""
-        return self._statusbar_manager
 
 
 # ============================================================

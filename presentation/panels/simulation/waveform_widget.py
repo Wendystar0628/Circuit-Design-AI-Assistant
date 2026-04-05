@@ -28,8 +28,11 @@
     measurement = widget.get_measurement()
 """
 
+import csv
+import json
 import logging
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from PyQt6.QtCore import Qt, pyqtSignal
@@ -736,6 +739,102 @@ class WaveformWidget(QWidget):
                         measurement.frequency = 1.0 / abs(measurement.delta_x)
         
         return measurement
+
+    def export_image(self, path: str) -> bool:
+        pixmap = self._plot_widget.grab()
+        if pixmap.isNull():
+            return False
+        return pixmap.save(path)
+
+    def export_bundle(self, output_dir: str) -> List[str]:
+        target_dir = Path(output_dir)
+        target_dir.mkdir(parents=True, exist_ok=True)
+
+        exported_files: List[str] = []
+        image_path = target_dir / "waveform.png"
+        csv_path = target_dir / "waveform.csv"
+        json_path = target_dir / "waveform.json"
+
+        if self.export_image(str(image_path)):
+            exported_files.append(str(image_path))
+
+        rows = self._build_export_rows()
+        with csv_path.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.writer(handle)
+            headers = [self._get_x_axis_label(), *self.get_displayed_signal_names()]
+            writer.writerow(headers)
+            for row in rows:
+                writer.writerow([row.get(header, "") for header in headers])
+        exported_files.append(str(csv_path))
+
+        payload = {
+            "x_axis_label": self._get_x_axis_label(),
+            "displayed_signals": self.get_displayed_signal_names(),
+            "measurement": self._measurement_to_payload(self.get_measurement()),
+            "signals": self._build_signal_payloads(),
+        }
+        json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        exported_files.append(str(json_path))
+
+        return exported_files
+
+    def get_displayed_signal_names(self) -> List[str]:
+        return list(self._plot_items.keys())
+
+    def _build_export_rows(self) -> List[Dict[str, float]]:
+        signal_names = self.get_displayed_signal_names()
+        if not signal_names:
+            return []
+
+        primary_signal = self._plot_items.get(signal_names[0])
+        if primary_signal is None or primary_signal.waveform_data is None:
+            return []
+
+        primary_x = primary_signal.waveform_data.x_data
+        rows: List[Dict[str, float]] = []
+        x_label = self._get_x_axis_label()
+        for index, x_value in enumerate(primary_x):
+            row: Dict[str, float] = {x_label: float(x_value)}
+            for signal_name in signal_names:
+                plot_item = self._plot_items.get(signal_name)
+                waveform_data = plot_item.waveform_data if plot_item is not None else None
+                if waveform_data is None or index >= len(waveform_data.y_data):
+                    continue
+                row[signal_name] = float(waveform_data.y_data[index])
+            rows.append(row)
+        return rows
+
+    def _build_signal_payloads(self) -> Dict[str, Dict[str, List[float] | str]]:
+        payloads: Dict[str, Dict[str, List[float] | str]] = {}
+        for signal_name, plot_item in self._plot_items.items():
+            waveform_data = plot_item.waveform_data
+            if waveform_data is None:
+                continue
+            payloads[signal_name] = {
+                "axis": plot_item.axis,
+                "x": [float(value) for value in waveform_data.x_data],
+                "y": [float(value) for value in waveform_data.y_data],
+            }
+        return payloads
+
+    def _measurement_to_payload(self, measurement: WaveformMeasurement) -> Dict[str, object]:
+        return {
+            "cursor_a_x": measurement.cursor_a_x,
+            "cursor_a_y": measurement.cursor_a_y,
+            "cursor_b_x": measurement.cursor_b_x,
+            "cursor_b_y": measurement.cursor_b_y,
+            "delta_x": measurement.delta_x,
+            "delta_y": measurement.delta_y,
+            "slope": measurement.slope,
+            "frequency": measurement.frequency,
+            "signal_values_a": measurement.signal_values_a or {},
+            "signal_values_b": measurement.signal_values_b or {},
+        }
+
+    def _get_x_axis_label(self) -> str:
+        if self._current_result is None:
+            return "X"
+        return self._current_result.get_x_axis_label()
 
     def fit_to_view(self):
         if self._current_result is None or not self._plot_items:

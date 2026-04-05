@@ -7,13 +7,11 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import pyqtgraph as pg
 from PyQt6.QtCore import Qt, QSize, pyqtSignal
-from PyQt6.QtGui import QAction, QGuiApplication
+from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import (
-    QFileDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
-    QMessageBox,
     QPushButton,
     QSizePolicy,
     QSplitter,
@@ -316,13 +314,6 @@ class ChartPage(QWidget):
             return False
         return pixmap.save(path)
 
-    def copy_image(self) -> bool:
-        pixmap = self._plot_widget.grab()
-        if pixmap.isNull():
-            return False
-        QGuiApplication.clipboard().setPixmap(pixmap)
-        return True
-
     def export_chart_data(self, path: str, format_name: str) -> bool:
         visible_series = self._visible_series()
         if self._spec is None or not visible_series:
@@ -495,7 +486,6 @@ class ChartPage(QWidget):
                 np.asarray(series.x_data, dtype=float),
                 np.asarray(series.y_data, dtype=float),
                 pen=pen,
-                name=series.name,
             )
             plot_item.addItem(item)
             self._plot_items[series.name] = item
@@ -616,7 +606,6 @@ class ChartPage(QWidget):
 
 class ChartViewer(QWidget):
     tab_changed = pyqtSignal(str)
-    data_exported = pyqtSignal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -655,14 +644,6 @@ class ChartViewer(QWidget):
         self._setup_toolbar()
         layout.addWidget(self._toolbar)
 
-        status_row = QHBoxLayout()
-        status_row.setContentsMargins(SPACING_NORMAL, SPACING_SMALL, SPACING_NORMAL, SPACING_SMALL)
-        self._hint_label = QLabel()
-        self._hint_label.setObjectName("hintLabel")
-        status_row.addStretch()
-        status_row.addWidget(self._hint_label)
-        layout.addLayout(status_row)
-
     def _setup_toolbar(self):
         self._action_fit = QAction("Fit", self)
         self._action_fit.triggered.connect(self._on_fit_to_view)
@@ -674,20 +655,6 @@ class ChartViewer(QWidget):
         self._action_measure.setCheckable(True)
         self._action_measure.triggered.connect(self._on_toggle_measurement)
         self._toolbar.addAction(self._action_measure)
-
-        self._toolbar.addSeparator()
-
-        self._action_save = QAction("Save", self)
-        self._action_save.triggered.connect(self._on_save_chart)
-        self._toolbar.addAction(self._action_save)
-
-        self._action_copy = QAction("Copy", self)
-        self._action_copy.triggered.connect(self._on_copy_chart)
-        self._toolbar.addAction(self._action_copy)
-
-        self._action_export_data = QAction("Export Data", self)
-        self._action_export_data.triggered.connect(self._on_export_data)
-        self._toolbar.addAction(self._action_export_data)
 
     def _apply_style(self):
         self.setStyleSheet(f"""
@@ -771,7 +738,7 @@ class ChartViewer(QWidget):
                 background-color: {COLOR_ACCENT};
                 color: white;
             }}
-            #emptyLabel, #hintLabel {{
+            #emptyLabel {{
                 color: {COLOR_TEXT_SECONDARY};
                 font-size: {FONT_SIZE_SMALL}px;
             }}
@@ -813,13 +780,33 @@ class ChartViewer(QWidget):
     def retranslate_ui(self):
         self._action_fit.setText(self._tr("Fit"))
         self._action_measure.setText(self._tr("Measure"))
-        self._action_save.setText(self._tr("Save"))
-        self._action_copy.setText(self._tr("Copy"))
-        self._action_export_data.setText(self._tr("Export Data"))
-        self._hint_label.setText(self._tr("Left-drag to zoom selected traces. Use Fit to restore the full selected range."))
         self._empty_label.setText(self._tr("No interactive chart available for the current result."))
         for page in self._pages:
             page.retranslate_ui()
+
+    def export_bundle(self, output_dir: str) -> List[str]:
+        target_dir = Path(output_dir)
+        target_dir.mkdir(parents=True, exist_ok=True)
+
+        exported_files: List[str] = []
+        for index, page in enumerate(self._pages, start=1):
+            if not page.has_chart():
+                continue
+
+            spec = self._chart_specs[index - 1]
+            base_name = f"{index:02d}_{spec.chart_type.value}"
+            image_path = target_dir / f"{base_name}.png"
+            csv_path = target_dir / f"{base_name}.csv"
+            json_path = target_dir / f"{base_name}.json"
+
+            if page.export_image(str(image_path)):
+                exported_files.append(str(image_path))
+            if page.export_chart_data(str(csv_path), "csv"):
+                exported_files.append(str(csv_path))
+            if page.export_chart_data(str(json_path), "json"):
+                exported_files.append(str(json_path))
+
+        return exported_files
 
     def _rebuild_pages(self):
         while self._tab_bar.count() > 0:
@@ -1117,49 +1104,6 @@ class ChartViewer(QWidget):
         page = self._current_page()
         if page is not None:
             page.set_measurement_enabled(checked)
-
-    def _on_save_chart(self):
-        page = self._current_page()
-        if page is None or not page.has_chart():
-            return
-        path, _ = QFileDialog.getSaveFileName(
-            self,
-            self._tr("Save Chart"),
-            "",
-            "PNG Files (*.png);;All Files (*)",
-        )
-        if path and not page.export_image(path):
-            QMessageBox.warning(self, self._tr("Save Chart"), self._tr("Failed to save chart image."))
-
-    def _on_copy_chart(self):
-        page = self._current_page()
-        if page is None or not page.has_chart():
-            return
-        if not page.copy_image():
-            QMessageBox.warning(self, self._tr("Copy"), self._tr("Failed to copy chart image."))
-
-    def _on_export_data(self):
-        page = self._current_page()
-        if page is None or not page.has_chart():
-            return
-        path, selected_filter = QFileDialog.getSaveFileName(
-            self,
-            self._tr("Export Data"),
-            "",
-            "CSV Files (*.csv);;JSON Files (*.json);;All Files (*)",
-        )
-        if not path:
-            return
-        if path.endswith(".json") or "JSON" in selected_filter:
-            format_name = "json"
-        else:
-            format_name = "csv"
-            if not path.endswith(".csv"):
-                path += ".csv"
-        if page.export_chart_data(path, format_name):
-            self.data_exported.emit(path)
-        else:
-            QMessageBox.warning(self, self._tr("Export Data"), self._tr("Failed to export chart data."))
 
     def _show_empty_state(self):
         self._stack.hide()

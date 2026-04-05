@@ -10,7 +10,6 @@
 - action_handlers.py: 动作处理器集合（菜单/工具栏回调）
 - menu_manager.py: 菜单栏管理器
 - toolbar_manager.py: 工具栏管理器
-- statusbar_manager.py: 状态栏管理器
 - panels/: UI面板（文件浏览器、代码编辑器、对话面板、仿真结果）
 - dialogs/: 对话框（API配置、关于、设置等）
 - widgets/: 自定义控件
@@ -34,7 +33,6 @@ from presentation.ui_state import (
 )
 from presentation.menu_manager import MenuManager
 from presentation.toolbar_manager import ToolbarManager
-from presentation.statusbar_manager import StatusbarManager
 from presentation.window_state_manager import WindowStateManager
 from presentation.session_manager import SessionManager
 from presentation.action_handlers import ActionHandlers
@@ -52,7 +50,6 @@ __all__ = [
     # 管理器
     "MenuManager",
     "ToolbarManager",
-    "StatusbarManager",
     "WindowStateManager",
     "SessionManager",
     "ActionHandlers",

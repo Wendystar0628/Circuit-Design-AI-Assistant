@@ -18,7 +18,6 @@
     table = RawDataTable()
     table.load_data(simulation_result)
     table.jump_to_x_value(0.001)
-    table.export_selection("output.csv", "csv")
 """
 
 import logging
@@ -45,7 +44,6 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QSpinBox,
     QDoubleSpinBox,
-    QFileDialog,
     QMessageBox,
     QSizePolicy,
     QAbstractItemView,
@@ -373,12 +371,6 @@ class RawDataTable(QWidget):
         
         toolbar_layout.addStretch()
         
-        # 导出按钮
-        self._export_btn = QPushButton()
-        self._export_btn.setObjectName("exportBtn")
-        self._export_btn.clicked.connect(self._on_export)
-        toolbar_layout.addWidget(self._export_btn)
-        
         main_layout.addWidget(self._toolbar)
         
         # 表格视图
@@ -451,7 +443,7 @@ class RawDataTable(QWidget):
                 min-height: 20px;
             }}
             
-            #jumpBtn, #searchBtn, #exportBtn {{
+            #jumpBtn, #searchBtn {{
                 background-color: {COLOR_BG_SECONDARY};
                 color: {COLOR_TEXT_PRIMARY};
                 border: 1px solid {COLOR_BORDER};
@@ -460,12 +452,12 @@ class RawDataTable(QWidget):
                 min-height: 20px;
             }}
             
-            #jumpBtn:hover, #searchBtn:hover, #exportBtn:hover {{
+            #jumpBtn:hover, #searchBtn:hover {{
                 background-color: {COLOR_ACCENT_LIGHT};
                 border-color: {COLOR_ACCENT};
             }}
             
-            #jumpBtn:pressed, #searchBtn:pressed, #exportBtn:pressed {{
+            #jumpBtn:pressed, #searchBtn:pressed {{
                 background-color: {COLOR_ACCENT};
                 color: white;
             }}
@@ -613,59 +605,6 @@ class RawDataTable(QWidget):
         
         return False
     
-    def export_selection(self, path: str, format: str = "csv") -> bool:
-        """
-        导出选中数据
-        
-        Args:
-            path: 导出路径
-            format: 导出格式（csv, tsv）
-            
-        Returns:
-            bool: 是否成功
-        """
-        selection = self._table_view.selectionModel().selectedRows()
-        
-        if not selection:
-            self._logger.warning("No rows selected for export")
-            return False
-        
-        try:
-            delimiter = "," if format == "csv" else "\t"
-            
-            with open(path, "w", encoding="utf-8") as f:
-                # 写入表头
-                headers = [self._model.x_label] + self._model.signal_names
-                f.write(delimiter.join(headers) + "\n")
-                
-                # 写入数据
-                snapshot = self._model.snapshot
-                if snapshot is None:
-                    return False
-
-                for index in selection:
-                    row = index.row()
-                    if row < 0 or row >= snapshot.total_rows:
-                        continue
-
-                    values = [str(float(snapshot.x_values[row]))]
-                    for signal in self._model.signal_names:
-                        column = snapshot.signal_columns.get(signal)
-                        cell = None
-                        if column is not None and row < len(column):
-                            raw_value = column[row]
-                            if np.isfinite(raw_value):
-                                cell = float(raw_value)
-                        values.append(str(cell) if cell is not None else "")
-                    f.write(delimiter.join(values) + "\n")
-            
-            self._logger.info(f"Exported {len(selection)} rows to {path}")
-            return True
-            
-        except Exception as e:
-            self._logger.error(f"Export failed: {e}")
-            return False
-    
     def retranslate_ui(self):
         """重新翻译 UI 文本"""
         self._jump_row_label.setText(self._tr("Row:"))
@@ -673,7 +612,6 @@ class RawDataTable(QWidget):
         self._jump_x_btn.setText(self._tr("Go"))
         self._search_label.setText(self._tr("Search:"))
         self._search_btn.setText(self._tr("Find"))
-        self._export_btn.setText(self._tr("Export"))
         
         self._update_axis_labels()
         self._update_status()
@@ -710,7 +648,6 @@ class RawDataTable(QWidget):
         self._search_column_combo.setEnabled(has_data)
         self._search_value_edit.setEnabled(has_data)
         self._search_btn.setEnabled(has_data)
-        self._export_btn.setEnabled(has_data)
 
     def _update_axis_labels(self):
         axis_name = self._get_x_axis_name()
@@ -774,43 +711,6 @@ class RawDataTable(QWidget):
                 self,
                 self._tr("Not Found"),
                 self._tr("Value not found in the selected column.")
-            )
-    
-    def _on_export(self):
-        """导出按钮点击"""
-        selection = self._table_view.selectionModel().selectedRows()
-        
-        if not selection:
-            QMessageBox.warning(
-                self,
-                self._tr("No Selection"),
-                self._tr("Please select rows to export.")
-            )
-            return
-        
-        path, _ = QFileDialog.getSaveFileName(
-            self,
-            self._tr("Export Data"),
-            "",
-            "CSV Files (*.csv);;TSV Files (*.tsv)"
-        )
-        
-        if not path:
-            return
-        
-        format = "tsv" if path.endswith(".tsv") else "csv"
-        
-        if self.export_selection(path, format):
-            QMessageBox.information(
-                self,
-                self._tr("Export Complete"),
-                self._tr("Data exported successfully.")
-            )
-        else:
-            QMessageBox.critical(
-                self,
-                self._tr("Export Failed"),
-                self._tr("Failed to export data.")
             )
     
     def _on_selection_changed(self, selected, deselected):

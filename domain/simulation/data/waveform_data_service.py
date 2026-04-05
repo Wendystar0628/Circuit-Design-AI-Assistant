@@ -200,11 +200,11 @@ class WaveformDataService:
         if not result.success or result.data is None:
             return None
 
-        resolved_signal_name = self.resolve_display_signal_name(result, signal_name)
+        resolved_signal_name = self.resolve_signal_name(result, signal_name)
         if resolved_signal_name is None:
             return None
         
-        x_data = self._get_x_axis(result.data)
+        x_data = result.get_x_axis_data()
         y_data = result.data.get_signal(resolved_signal_name)
         
         if x_data is None or y_data is None:
@@ -248,11 +248,11 @@ class WaveformDataService:
         if not result.success or result.data is None:
             return None
 
-        resolved_signal_name = self.resolve_display_signal_name(result, signal_name)
+        resolved_signal_name = self.resolve_signal_name(result, signal_name)
         if resolved_signal_name is None:
             return None
         
-        x_data = self._get_x_axis(result.data)
+        x_data = result.get_x_axis_data()
         y_data = result.data.get_signal(resolved_signal_name)
         
         if x_data is None or y_data is None:
@@ -293,60 +293,8 @@ class WaveformDataService:
             is_downsampled=len(x_out) < pyramid.original_points,
             original_points=pyramid.original_points,
         )
-
-    def get_full_resolution_data(
-        self,
-        result: SimulationResult,
-        signal_name: str,
-    ) -> Optional[WaveformData]:
-        """
-        获取原始分辨率数据
-        
-        用于数据导出或精确测量。
-        
-        Args:
-            result: 仿真结果对象
-            signal_name: 信号名称
-            
-        Returns:
-            WaveformData: 完整分辨率的波形数据
-        """
-        if not result.success or result.data is None:
-            return None
-
-        resolved_signal_name = self.resolve_display_signal_name(result, signal_name)
-        if resolved_signal_name is None:
-            return None
-        
-        x_data = self._get_x_axis(result.data)
-        y_data = result.data.get_signal(resolved_signal_name)
-        
-        if x_data is None or y_data is None:
-            return None
-        
-        return WaveformData(
-            signal_name=resolved_signal_name,
-            x_data=x_data.copy(),
-            y_data=y_data.copy(),
-            is_downsampled=False,
-            original_points=len(x_data),
-        )
     
-    def get_available_signals(self, result: SimulationResult) -> List[str]:
-        """
-        获取可用信号列表
-        
-        Args:
-            result: 仿真结果对象
-            
-        Returns:
-            List[str]: 信号名称列表
-        """
-        if not result.success or result.data is None:
-            return []
-        return result.data.get_signal_names()
-
-    def get_display_signal_names(
+    def get_resolved_signal_names(
         self,
         result: SimulationResult,
         signal_names: Optional[List[str]] = None,
@@ -361,24 +309,24 @@ class WaveformDataService:
         resolved: List[str] = []
         seen = set()
         for signal_name in requested_signals:
-            for resolved_name in self._expand_table_signal_name(data, signal_name):
+            for resolved_name in self._expand_signal_name(data, signal_name):
                 if resolved_name not in seen:
                     resolved.append(resolved_name)
                     seen.add(resolved_name)
 
         if signal_names is None:
             for signal_name in available_signals:
-                for resolved_name in self._expand_table_signal_name(data, signal_name):
+                for resolved_name in self._expand_signal_name(data, signal_name):
                     if resolved_name not in seen:
                         resolved.append(resolved_name)
                         seen.add(resolved_name)
 
         return sorted(
             resolved,
-            key=lambda name: self._get_table_signal_sort_key(data, name),
+            key=lambda name: self._get_signal_sort_key(data, name),
         )
 
-    def resolve_display_signal_name(
+    def resolve_signal_name(
         self,
         result: SimulationResult,
         signal_name: str,
@@ -386,30 +334,30 @@ class WaveformDataService:
         if not result.success or result.data is None:
             return None
 
-        resolved_names = self._expand_table_signal_name(result.data, signal_name)
+        resolved_names = self._expand_signal_name(result.data, signal_name)
         if not resolved_names:
             return None
 
         return sorted(
             resolved_names,
-            key=lambda name: self._get_table_signal_sort_key(result.data, name),
+            key=lambda name: self._get_signal_sort_key(result.data, name),
         )[0]
 
-    def get_preferred_display_signal(self, result: SimulationResult) -> Optional[str]:
+    def get_preferred_signal(self, result: SimulationResult) -> Optional[str]:
         if not result.success or result.data is None:
             return None
 
-        display_signals = self.get_display_signal_names(result)
-        if not display_signals:
+        resolved_signals = self.get_resolved_signal_names(result)
+        if not resolved_signals:
             return None
 
         signal_types = getattr(result.data, 'signal_types', {})
 
-        for signal_name in display_signals:
+        for signal_name in resolved_signals:
             if self.get_signal_type(signal_name, signal_types) == "voltage":
                 return signal_name
 
-        return display_signals[0]
+        return resolved_signals[0]
     
     def get_classified_signals(self, result: SimulationResult) -> Dict[str, List[str]]:
         """
@@ -435,7 +383,7 @@ class WaveformDataService:
         
         signal_types = getattr(result.data, 'signal_types', {})
         
-        for name in self.get_display_signal_names(result):
+        for name in self.get_resolved_signal_names(result):
             sig_type = self.get_signal_type(name, signal_types)
             classified[sig_type].append(name)
         
@@ -485,27 +433,6 @@ class WaveformDataService:
     def is_current_signal(name: str, signal_types: Optional[Dict[str, str]] = None) -> bool:
         """判断是否为电流信号"""
         return WaveformDataService.get_signal_type(name, signal_types) == "current"
-    
-    def get_x_axis_label(self, result: SimulationResult) -> str:
-        """
-        获取 X 轴标签
-        
-        Args:
-            result: 仿真结果对象
-            
-        Returns:
-            str: "Time (s)" / "Frequency (Hz)" / "Sweep"
-        """
-        if not result.success or result.data is None:
-            return "X"
-        
-        if result.data.time is not None:
-            return "Time (s)"
-        elif result.data.frequency is not None:
-            return "Frequency (Hz)"
-        elif result.data.sweep is not None:
-            return result.data.sweep_name or "Sweep"
-        return "X"
 
     def build_table_snapshot(
         self,
@@ -515,12 +442,12 @@ class WaveformDataService:
         if not result.success or result.data is None:
             return None
 
-        x_data, x_label = self._get_table_x_axis(result.data)
+        x_data, x_label = self._get_table_x_axis(result)
         if x_data is None:
             return None
 
         x_values = np.asarray(x_data, dtype=float).copy()
-        resolved_signal_names = self.get_table_signal_names(result, signal_names)
+        resolved_signal_names = self.get_resolved_signal_names(result, signal_names)
         signal_columns: Dict[str, np.ndarray] = {}
         total_rows = len(x_values)
 
@@ -547,82 +474,11 @@ class WaveformDataService:
             signal_columns=signal_columns,
         )
 
-    def get_signal_statistics(
-        self,
-        result: SimulationResult,
-        signal_name: str,
-    ) -> Optional[Dict[str, float]]:
-        """
-        获取信号统计信息
-        
-        Args:
-            result: 仿真结果对象
-            signal_name: 信号名称
-            
-        Returns:
-            Dict: 统计信息字典，包含 min, max, mean, std, rms
-        """
-        if not result.success or result.data is None:
-            return None
-        
-        y_data = result.data.get_signal(signal_name)
-        if y_data is None or len(y_data) == 0:
-            return None
-        
-        return {
-            "min": float(np.min(y_data)),
-            "max": float(np.max(y_data)),
-            "mean": float(np.mean(y_data)),
-            "std": float(np.std(y_data)),
-            "rms": float(np.sqrt(np.mean(y_data ** 2))),
-            "peak_to_peak": float(np.max(y_data) - np.min(y_data)),
-        }
-    
-    def clear_cache(self) -> None:
-        """清空金字塔缓存"""
-        self._pyramid_cache.clear()
-    
-    def get_cache_size(self) -> int:
-        """获取当前缓存大小"""
-        return self._pyramid_cache.size()
-
-    def get_table_signal_names(
-        self,
-        result: SimulationResult,
-        signal_names: Optional[List[str]] = None,
-    ) -> List[str]:
-        if not result.success or result.data is None:
-            return []
-
-        data = result.data
-        available_signals = data.get_signal_names()
-        requested_signals = signal_names or available_signals
-
-        resolved: List[str] = []
-        seen = set()
-        for signal_name in requested_signals:
-            for resolved_name in self._expand_table_signal_name(data, signal_name):
-                if resolved_name not in seen:
-                    resolved.append(resolved_name)
-                    seen.add(resolved_name)
-
-        if signal_names is None:
-            for signal_name in available_signals:
-                for resolved_name in self._expand_table_signal_name(data, signal_name):
-                    if resolved_name not in seen:
-                        resolved.append(resolved_name)
-                        seen.add(resolved_name)
-
-        return sorted(
-            resolved,
-            key=lambda name: self._get_table_signal_sort_key(data, name),
-        )
-
     # ============================================================
     # 内部辅助方法
     # ============================================================
 
-    def _expand_table_signal_name(
+    def _expand_signal_name(
         self,
         data: SimulationData,
         signal_name: str,
@@ -650,13 +506,13 @@ class WaveformDataService:
 
         return [signal_name]
 
-    def _get_table_signal_sort_key(
+    def _get_signal_sort_key(
         self,
         data: SimulationData,
         signal_name: str,
     ) -> Tuple[int, int, str, int, str]:
         signal_types = getattr(data, 'signal_types', {})
-        base_name = self._get_table_signal_base_name(signal_name)
+        base_name = self._get_signal_base_name(signal_name)
         component_suffix = signal_name[len(base_name):] if signal_name.startswith(base_name) else ""
         signal_type = self.get_signal_type(base_name, signal_types)
 
@@ -677,7 +533,7 @@ class WaveformDataService:
         component_rank = TABLE_COMPLEX_SUFFIX_PRIORITY.get(component_suffix, len(TABLE_COMPLEX_SUFFIX_PRIORITY))
         return (role_rank, type_rank, base_name.lower(), component_rank, signal_name.lower())
 
-    def _get_table_signal_base_name(self, signal_name: str) -> str:
+    def _get_signal_base_name(self, signal_name: str) -> str:
         for suffix in TABLE_COMPLEX_SUFFIXES:
             if signal_name.endswith(suffix):
                 return signal_name[:-len(suffix)]
@@ -698,13 +554,14 @@ class WaveformDataService:
         except (TypeError, ValueError):
             return None
 
-    def _get_table_x_axis(self, data: SimulationData) -> Tuple[Optional[np.ndarray], str]:
-        if data.time is not None:
-            return data.time, "Time (s)"
-        if data.frequency is not None:
-            return data.frequency, "Frequency (Hz)"
-        if data.sweep is not None:
-            return data.sweep, data.sweep_name or "Sweep"
+    def _get_table_x_axis(self, result: SimulationResult) -> Tuple[Optional[np.ndarray], str]:
+        x_axis_data = result.get_x_axis_data()
+        if x_axis_data is not None:
+            return x_axis_data, result.get_x_axis_label()
+
+        data = result.data
+        if data is None:
+            return None, "X"
 
         row_count = 0
         for signal_name in data.get_signal_names():
@@ -716,17 +573,7 @@ class WaveformDataService:
             return np.arange(row_count, dtype=float), "Index"
 
         return None, "X"
-    
-    def _get_x_axis(self, data: SimulationData) -> Optional[np.ndarray]:
-        """获取 X 轴数据（时间、频率或 DC 扫描轴）"""
-        if data.time is not None:
-            return data.time
-        elif data.frequency is not None:
-            return data.frequency
-        elif data.sweep is not None:
-            return data.sweep
-        return None
-    
+
     def _get_or_build_pyramid(
         self,
         result: SimulationResult,

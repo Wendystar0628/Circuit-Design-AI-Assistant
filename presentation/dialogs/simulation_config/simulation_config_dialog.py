@@ -99,6 +99,8 @@ class SimulationConfigDialog(QDialog):
         # 噪声配置组件
         self._noise_output_edit: Optional[QLineEdit] = None
         self._noise_input_edit: Optional[QLineEdit] = None
+        self._noise_sweep_combo: Optional[QComboBox] = None
+        self._noise_points_spin: Optional[QSpinBox] = None
         self._noise_start_freq_spin: Optional[QDoubleSpinBox] = None
         self._noise_stop_freq_spin: Optional[QDoubleSpinBox] = None
         
@@ -433,6 +435,23 @@ class SimulationConfigDialog(QDialog):
             self._get_text("sim_config_input_source", "输入源:"),
             self._noise_input_edit
         )
+
+        self._noise_sweep_combo = QComboBox()
+        self._noise_sweep_combo.addItem("十倍频程 (dec)", "dec")
+        self._noise_sweep_combo.addItem("八倍频程 (oct)", "oct")
+        self._noise_sweep_combo.addItem("线性 (lin)", "lin")
+        form.addRow(
+            self._get_text("sim_config_sweep_type", "扫描类型:"),
+            self._noise_sweep_combo
+        )
+
+        self._noise_points_spin = QSpinBox()
+        self._noise_points_spin.setRange(1, 1000)
+        self._noise_points_spin.setValue(10)
+        form.addRow(
+            self._get_text("sim_config_points_per_decade", "每十倍频程点数:"),
+            self._noise_points_spin
+        )
         
         # 起始频率
         self._noise_start_freq_spin = self._create_scientific_spinbox(1e-3, 1e15, 1.0)
@@ -695,6 +714,16 @@ class SimulationConfigDialog(QDialog):
             self._noise_input_edit.textChanged.connect(
                 lambda v: self._view_model.update_noise_config("input_source", v)
             )
+        if self._noise_sweep_combo:
+            self._noise_sweep_combo.currentIndexChanged.connect(
+                lambda: self._view_model.update_noise_config(
+                    "sweep_type", self._noise_sweep_combo.currentData()
+                )
+            )
+        if self._noise_points_spin:
+            self._noise_points_spin.valueChanged.connect(
+                lambda v: self._view_model.update_noise_config("points_per_decade", v)
+            )
         if self._noise_start_freq_spin:
             self._noise_start_freq_spin.valueChanged.connect(
                 lambda v: self._view_model.update_noise_config("start_freq", v)
@@ -793,6 +822,12 @@ class SimulationConfigDialog(QDialog):
                 self._noise_output_edit.setText(noise.output_node)
             if self._noise_input_edit:
                 self._noise_input_edit.setText(noise.input_source)
+            if self._noise_sweep_combo:
+                idx = self._noise_sweep_combo.findData(noise.sweep_type)
+                if idx >= 0:
+                    self._noise_sweep_combo.setCurrentIndex(idx)
+            if self._noise_points_spin:
+                self._noise_points_spin.setValue(noise.points_per_decade)
             if self._noise_start_freq_spin:
                 self._noise_start_freq_spin.setValue(noise.start_freq)
             if self._noise_stop_freq_spin:
@@ -834,6 +869,7 @@ class SimulationConfigDialog(QDialog):
             self._tran_start_spin, self._tran_max_step_spin,
             self._tran_uic_check,
             self._noise_output_edit, self._noise_input_edit,
+            self._noise_sweep_combo, self._noise_points_spin,
             self._noise_start_freq_spin, self._noise_stop_freq_spin,
             self._conv_gmin_spin, self._conv_abstol_spin,
             self._conv_reltol_spin, self._conv_vntol_spin,

@@ -55,6 +55,135 @@ from domain.simulation.measure.measure_metadata import (
 )
 
 
+X_AXIS_KIND_NONE = "none"
+X_AXIS_KIND_TIME = "time"
+X_AXIS_KIND_FREQUENCY = "frequency"
+X_AXIS_KIND_SWEEP = "sweep"
+
+X_AXIS_SCALE_NONE = "none"
+X_AXIS_SCALE_LINEAR = "linear"
+X_AXIS_SCALE_LOG = "log"
+
+_VALID_X_AXIS_KINDS = {
+    X_AXIS_KIND_NONE,
+    X_AXIS_KIND_TIME,
+    X_AXIS_KIND_FREQUENCY,
+    X_AXIS_KIND_SWEEP,
+}
+_VALID_X_AXIS_SCALES = {
+    X_AXIS_SCALE_NONE,
+    X_AXIS_SCALE_LINEAR,
+    X_AXIS_SCALE_LOG,
+}
+
+
+def _normalize_x_axis_kind(value: Optional[str]) -> str:
+    candidate = (value or X_AXIS_KIND_NONE).lower()
+    return candidate if candidate in _VALID_X_AXIS_KINDS else X_AXIS_KIND_NONE
+
+
+def _normalize_x_axis_scale(value: Optional[str]) -> str:
+    candidate = (value or X_AXIS_SCALE_NONE).lower()
+    return candidate if candidate in _VALID_X_AXIS_SCALES else X_AXIS_SCALE_NONE
+
+
+def _normalize_axis_range(value: Any) -> Optional[tuple[float, float]]:
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        return None
+    try:
+        start = float(value[0])
+        end = float(value[1])
+    except (TypeError, ValueError):
+        return None
+    if not np.isfinite(start) or not np.isfinite(end):
+        return None
+    return (start, end)
+
+
+def _infer_x_axis_kind(data: Optional["SimulationData"]) -> str:
+    if data is None:
+        return X_AXIS_KIND_NONE
+    if data.time is not None:
+        return X_AXIS_KIND_TIME
+    if data.frequency is not None:
+        return X_AXIS_KIND_FREQUENCY
+    if data.sweep is not None:
+        return X_AXIS_KIND_SWEEP
+    return X_AXIS_KIND_NONE
+
+
+def _infer_x_axis_label(kind: str, data: Optional["SimulationData"]) -> str:
+    if kind == X_AXIS_KIND_TIME:
+        return "Time (s)"
+    if kind == X_AXIS_KIND_FREQUENCY:
+        return "Frequency (Hz)"
+    if kind == X_AXIS_KIND_SWEEP:
+        return data.sweep_name if data is not None and data.sweep_name else "Sweep"
+    return "X"
+
+
+def _get_x_axis_array(data: Optional["SimulationData"], kind: str) -> Optional[np.ndarray]:
+    if data is None:
+        return None
+    if kind == X_AXIS_KIND_TIME:
+        return data.time
+    if kind == X_AXIS_KIND_FREQUENCY:
+        return data.frequency
+    if kind == X_AXIS_KIND_SWEEP:
+        return data.sweep
+    return None
+
+
+def _infer_actual_x_range(
+    data: Optional["SimulationData"],
+    kind: str,
+) -> Optional[tuple[float, float]]:
+    axis_data = _get_x_axis_array(data, kind)
+    if axis_data is None or len(axis_data) == 0:
+        return None
+    return (float(np.min(axis_data)), float(np.max(axis_data)))
+
+
+def _default_x_axis_scale(analysis_type: str, kind: str) -> str:
+    if kind == X_AXIS_KIND_NONE:
+        return X_AXIS_SCALE_NONE
+    if (analysis_type or "").lower() in {"ac", "noise"} and kind == X_AXIS_KIND_FREQUENCY:
+        return X_AXIS_SCALE_LOG
+    return X_AXIS_SCALE_LINEAR
+
+
+def infer_result_axis_metadata(
+    analysis_type: str,
+    data: Optional["SimulationData"],
+    *,
+    x_axis_kind: Optional[str] = None,
+    x_axis_label: Optional[str] = None,
+    x_axis_scale: Optional[str] = None,
+    requested_x_range: Optional[tuple[float, float]] = None,
+    actual_x_range: Optional[tuple[float, float]] = None,
+    analysis_command: str = "",
+) -> Dict[str, Any]:
+    resolved_kind = _normalize_x_axis_kind(x_axis_kind)
+    if resolved_kind == X_AXIS_KIND_NONE:
+        resolved_kind = _infer_x_axis_kind(data)
+    resolved_label = x_axis_label or _infer_x_axis_label(resolved_kind, data)
+    resolved_scale = _normalize_x_axis_scale(x_axis_scale)
+    if resolved_scale == X_AXIS_SCALE_NONE and resolved_kind != X_AXIS_KIND_NONE:
+        resolved_scale = _default_x_axis_scale(analysis_type, resolved_kind)
+    resolved_requested_range = _normalize_axis_range(requested_x_range)
+    resolved_actual_range = _normalize_axis_range(actual_x_range)
+    if resolved_actual_range is None:
+        resolved_actual_range = _infer_actual_x_range(data, resolved_kind)
+    return {
+        "x_axis_kind": resolved_kind,
+        "x_axis_label": resolved_label,
+        "x_axis_scale": resolved_scale,
+        "requested_x_range": resolved_requested_range,
+        "actual_x_range": resolved_actual_range,
+        "analysis_command": analysis_command or "",
+    }
+
+
 # ============================================================
 # SimulationData - 仿真数据容器
 # ============================================================
@@ -310,15 +439,38 @@ class SimulationResult:
     - 支持跨会话的结果查询
     - 便于清理过期数据
     """
+    
+    x_axis_kind: str = X_AXIS_KIND_NONE
+    x_axis_label: str = "X"
+    x_axis_scale: str = X_AXIS_SCALE_NONE
+    requested_x_range: Optional[tuple[float, float]] = None
+    actual_x_range: Optional[tuple[float, float]] = None
+    analysis_command: str = ""
 
     def __post_init__(self):
         if self.measurements is not None:
             self.measurements = normalize_measurements_payload(self.measurements)
-    
+        axis_metadata = infer_result_axis_metadata(
+            self.analysis_type,
+            self.data,
+            x_axis_kind=self.x_axis_kind,
+            x_axis_label=self.x_axis_label,
+            x_axis_scale=self.x_axis_scale,
+            requested_x_range=self.requested_x_range,
+            actual_x_range=self.actual_x_range,
+            analysis_command=self.analysis_command,
+        )
+        self.x_axis_kind = axis_metadata["x_axis_kind"]
+        self.x_axis_label = axis_metadata["x_axis_label"]
+        self.x_axis_scale = axis_metadata["x_axis_scale"]
+        self.requested_x_range = axis_metadata["requested_x_range"]
+        self.actual_x_range = axis_metadata["actual_x_range"]
+        self.analysis_command = axis_metadata["analysis_command"]
+
     # ============================================================
     # 序列化方法
     # ============================================================
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """
         序列化为字典
@@ -333,7 +485,7 @@ class SimulationResult:
                 m.to_dict() if hasattr(m, 'to_dict') else m
                 for m in self.measurements
             ]
-        
+
         return {
             "executor": self.executor,
             "file_path": self.file_path,
@@ -347,8 +499,14 @@ class SimulationResult:
             "duration_seconds": self.duration_seconds,
             "version": self.version,
             "session_id": self.session_id,
+            "x_axis_kind": self.x_axis_kind,
+            "x_axis_label": self.x_axis_label,
+            "x_axis_scale": self.x_axis_scale,
+            "requested_x_range": list(self.requested_x_range) if self.requested_x_range is not None else None,
+            "actual_x_range": list(self.actual_x_range) if self.actual_x_range is not None else None,
+            "analysis_command": self.analysis_command,
         }
-    
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "SimulationResult":
         """
@@ -364,12 +522,12 @@ class SimulationResult:
         sim_data = None
         if data.get("data") is not None:
             sim_data = SimulationData.from_dict(data["data"])
-        
+
         # 反序列化 measurements
         measurements = None
         if data.get("measurements") is not None:
             measurements = data["measurements"]
-        
+
         # 反序列化错误信息
         error = None
         error_data = data.get("error")
@@ -385,7 +543,7 @@ class SimulationResult:
             else:
                 # 字符串或其他类型，直接保留
                 error = error_data
-        
+
         return cls(
             executor=data["executor"],
             file_path=data["file_path"],
@@ -399,12 +557,18 @@ class SimulationResult:
             duration_seconds=data.get("duration_seconds", 0.0),
             version=data.get("version", 1),
             session_id=data.get("session_id", ""),
+            x_axis_kind=data.get("x_axis_kind", X_AXIS_KIND_NONE),
+            x_axis_label=data.get("x_axis_label", "X"),
+            x_axis_scale=data.get("x_axis_scale", X_AXIS_SCALE_NONE),
+            requested_x_range=_normalize_axis_range(data.get("requested_x_range")),
+            actual_x_range=_normalize_axis_range(data.get("actual_x_range")),
+            analysis_command=data.get("analysis_command", ""),
         )
-    
+
     # ============================================================
     # 辅助方法
     # ============================================================
-    
+
     def get_signal(self, name: str) -> Optional[np.ndarray]:
         """
         获取指定信号数据
@@ -418,6 +582,20 @@ class SimulationResult:
         if not self.success or self.data is None:
             return None
         return self.data.get_signal(name)
+
+    def get_x_axis_data(self) -> Optional[np.ndarray]:
+        if not self.success or self.data is None:
+            return None
+        axis_data = _get_x_axis_array(self.data, self.x_axis_kind)
+        if axis_data is not None:
+            return axis_data
+        return _get_x_axis_array(self.data, _infer_x_axis_kind(self.data))
+
+    def get_x_axis_label(self) -> str:
+        return self.x_axis_label or _infer_x_axis_label(self.x_axis_kind, self.data)
+
+    def is_x_axis_log(self) -> bool:
+        return self.x_axis_scale == X_AXIS_SCALE_LOG
 
     @property
     def metric_values(self) -> Dict[str, float]:
@@ -450,7 +628,9 @@ def create_success_result(
     raw_output: Optional[str] = None,
     duration_seconds: float = 0.0,
     version: int = 1,
-    session_id: str = ""
+    session_id: str = "",
+    axis_metadata: Optional[Dict[str, Any]] = None,
+    analysis_command: str = "",
 ) -> SimulationResult:
     """
     创建成功的仿真结果
@@ -469,6 +649,16 @@ def create_success_result(
     Returns:
         SimulationResult: 成功的仿真结果
     """
+    resolved_axis_metadata = infer_result_axis_metadata(
+        analysis_type,
+        data,
+        x_axis_kind=axis_metadata.get("x_axis_kind") if axis_metadata else None,
+        x_axis_label=axis_metadata.get("x_axis_label") if axis_metadata else None,
+        x_axis_scale=axis_metadata.get("x_axis_scale") if axis_metadata else None,
+        requested_x_range=axis_metadata.get("requested_x_range") if axis_metadata else None,
+        actual_x_range=axis_metadata.get("actual_x_range") if axis_metadata else None,
+        analysis_command=analysis_command or (axis_metadata.get("analysis_command") if axis_metadata else ""),
+    )
     return SimulationResult(
         executor=executor,
         file_path=file_path,
@@ -482,6 +672,12 @@ def create_success_result(
         duration_seconds=duration_seconds,
         version=version,
         session_id=session_id,
+        x_axis_kind=resolved_axis_metadata["x_axis_kind"],
+        x_axis_label=resolved_axis_metadata["x_axis_label"],
+        x_axis_scale=resolved_axis_metadata["x_axis_scale"],
+        requested_x_range=resolved_axis_metadata["requested_x_range"],
+        actual_x_range=resolved_axis_metadata["actual_x_range"],
+        analysis_command=resolved_axis_metadata["analysis_command"],
     )
 
 
@@ -533,6 +729,7 @@ def create_error_result(
 __all__ = [
     "SimulationData",
     "SimulationResult",
+    "infer_result_axis_metadata",
     "create_success_result",
     "create_error_result",
 ]

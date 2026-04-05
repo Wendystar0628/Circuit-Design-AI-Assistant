@@ -342,7 +342,8 @@ class SpiceExecutor(SimulationExecutor):
         step_time: float,
         end_time: float,
         start_time: float = 0.0,
-        max_step: Optional[float] = None
+        max_step: Optional[float] = None,
+        use_initial_conditions: bool = False,
     ) -> SimulationResult:
         """执行瞬态分析"""
         config = {
@@ -351,6 +352,7 @@ class SpiceExecutor(SimulationExecutor):
             "end_time": end_time,
             "start_time": start_time,
             "max_step": max_step,
+            "use_initial_conditions": use_initial_conditions,
         }
         return self.execute(file_path, config)
     
@@ -359,6 +361,8 @@ class SpiceExecutor(SimulationExecutor):
         file_path: str,
         output_node: str,
         input_source: str,
+        sweep_type: str = "dec",
+        points_per_decade: int = 10,
         start_freq: float = 1.0,
         stop_freq: float = 1e6
     ) -> SimulationResult:
@@ -367,6 +371,8 @@ class SpiceExecutor(SimulationExecutor):
             "analysis_type": "noise",
             "output_node": output_node,
             "input_source": input_source,
+            "sweep_type": sweep_type,
+            "points_per_decade": points_per_decade,
             "start_freq": start_freq,
             "stop_freq": stop_freq,
         }
@@ -454,6 +460,7 @@ class SpiceExecutor(SimulationExecutor):
         
         # 仅在 analysis_config 显式指定了 analysis_type 时才注入分析命令
         modified_netlist = netlist_content
+        analysis_command = ""
         config_has_analysis = analysis_config and analysis_config.get("analysis_type")
         if config_has_analysis:
             analysis_command = self._generate_analysis_command(analysis_type, analysis_config)
@@ -482,6 +489,11 @@ class SpiceExecutor(SimulationExecutor):
                     ),
                 )
             modified_netlist = self._inject_analysis_command(modified_netlist, analysis_command)
+        else:
+            analysis_command = self._extract_analysis_command_from_netlist(
+                modified_netlist,
+                analysis_type,
+            )
         
         # 注入仿真选项（收敛参数和温度）
         modified_netlist = self._inject_simulation_options(modified_netlist, analysis_config)
@@ -567,6 +579,8 @@ class SpiceExecutor(SimulationExecutor):
             data=sim_data,
             measurements=measurements,
             raw_output=raw_output,
+            axis_metadata=self._build_axis_metadata(analysis_type, analysis_config, analysis_command),
+            analysis_command=analysis_command,
         )
     
     def _find_best_analysis_plot(self, preferred_type: str) -> Optional[str]:
@@ -701,12 +715,15 @@ class SpiceExecutor(SimulationExecutor):
                     end_time=analysis_config.get("end_time", config.end_time),
                     start_time=analysis_config.get("start_time", config.start_time),
                     max_step=analysis_config.get("max_step", config.max_step),
+                    use_initial_conditions=analysis_config.get("use_initial_conditions", config.use_initial_conditions),
                 )
             cmd = f".tran {config.step_time} {config.end_time}"
             if config.start_time > 0 or config.max_step:
                 cmd += f" {config.start_time}"
             if config.max_step:
                 cmd += f" {config.max_step}"
+            if config.use_initial_conditions:
+                cmd += " uic"
             return cmd
         
         elif analysis_type == "noise":
@@ -715,17 +732,109 @@ class SpiceExecutor(SimulationExecutor):
                 config = NoiseConfig(
                     output_node=analysis_config.get("output_node", config.output_node),
                     input_source=analysis_config.get("input_source", config.input_source),
+                    sweep_type=analysis_config.get("sweep_type", config.sweep_type),
+                    points_per_decade=analysis_config.get("points_per_decade", config.points_per_decade),
                     start_freq=analysis_config.get("start_freq", config.start_freq),
                     stop_freq=analysis_config.get("stop_freq", config.stop_freq),
                 )
             if not config.output_node or not config.input_source:
                 return ""
-            return f".noise v({config.output_node}) {config.input_source} dec 10 {config.start_freq} {config.stop_freq}"
+            return f".noise v({config.output_node}) {config.input_source} {config.sweep_type} {config.points_per_decade} {config.start_freq} {config.stop_freq}"
         
         elif analysis_type == "op":
             return ".op"
         
         return ""
+
+    def _build_axis_metadata(
+        self,
+        analysis_type: str,
+        analysis_config: Optional[Dict[str, Any]],
+        analysis_command: str,
+    ) -> Dict[str, Any]:
+        command_tokens = analysis_command.split()
+
+        if analysis_type == "ac":
+            sweep_type = self._resolve_frequency_sweep_type(analysis_config, command_tokens, sweep_type_index=1)
+            return {
+                "x_axis_kind": "frequency",
+                "x_axis_label": "Frequency (Hz)",
+                "x_axis_scale": self._resolve_frequency_axis_scale(sweep_type),
+                "requested_x_range": self._build_requested_range(
+                    analysis_config.get("start_freq") if analysis_config else self._get_command_token(command_tokens, 3),
+                    analysis_config.get("stop_freq") if analysis_config else self._get_command_token(command_tokens, 4),
+                ),
+            }
+
+        if analysis_type == "dc":
+            source_name = (analysis_config.get("source_name") if analysis_config else None) or self._get_command_token(command_tokens, 1) or "Sweep"
+            return {
+                "x_axis_kind": "sweep",
+                "x_axis_label": source_name,
+                "requested_x_range": self._build_requested_range(
+                    analysis_config.get("start_value") if analysis_config else self._get_command_token(command_tokens, 2),
+                    analysis_config.get("stop_value") if analysis_config else self._get_command_token(command_tokens, 3),
+                ),
+            }
+
+        if analysis_type == "tran":
+            return {
+                "x_axis_kind": "time",
+                "x_axis_label": "Time (s)",
+                "requested_x_range": self._build_requested_range(
+                    analysis_config.get("start_time", 0.0) if analysis_config else (self._get_command_token(command_tokens, 3) or 0.0),
+                    analysis_config.get("end_time") if analysis_config else self._get_command_token(command_tokens, 2),
+                ),
+            }
+
+        if analysis_type == "noise":
+            sweep_type = self._resolve_frequency_sweep_type(analysis_config, command_tokens, sweep_type_index=3)
+            return {
+                "x_axis_kind": "frequency",
+                "x_axis_label": "Frequency (Hz)",
+                "x_axis_scale": self._resolve_frequency_axis_scale(sweep_type),
+                "requested_x_range": self._build_requested_range(
+                    analysis_config.get("start_freq") if analysis_config else self._get_command_token(command_tokens, 5),
+                    analysis_config.get("stop_freq") if analysis_config else self._get_command_token(command_tokens, 6),
+                ),
+            }
+
+        return {}
+
+    def _resolve_frequency_sweep_type(
+        self,
+        analysis_config: Optional[Dict[str, Any]],
+        command_tokens: List[str],
+        *,
+        sweep_type_index: int,
+    ) -> str:
+        sweep_type = (analysis_config.get("sweep_type") if analysis_config else None) or self._get_command_token(command_tokens, sweep_type_index) or "dec"
+        sweep_type = str(sweep_type).lower()
+        return sweep_type if sweep_type in {"dec", "oct", "lin"} else "dec"
+
+    def _resolve_frequency_axis_scale(self, sweep_type: str) -> str:
+        return "linear" if sweep_type == "lin" else "log"
+
+    def _get_command_token(self, command_tokens: List[str], index: int) -> Optional[str]:
+        if 0 <= index < len(command_tokens):
+            return command_tokens[index]
+        return None
+
+    def _build_requested_range(
+        self,
+        start_value: Any,
+        stop_value: Any,
+    ) -> Optional[Tuple[float, float]]:
+        try:
+            start = float(start_value)
+            stop = float(stop_value)
+        except (TypeError, ValueError):
+            return None
+
+        if not np.isfinite(start) or not np.isfinite(stop):
+            return None
+
+        return (start, stop)
     
     def _inject_analysis_command(self, netlist: str, analysis_command: str) -> str:
         """将分析命令注入到网表中"""
@@ -762,6 +871,29 @@ class SpiceExecutor(SimulationExecutor):
             result_lines.append(".end")
         
         return '\n'.join(result_lines)
+
+    def _extract_analysis_command_from_netlist(
+        self,
+        netlist: str,
+        analysis_type: str,
+    ) -> str:
+        command_prefix = f".{(analysis_type or '').lower()}"
+        if command_prefix == ".":
+            return ""
+
+        resolved_command = ""
+        for line in netlist.splitlines():
+            stripped = line.strip()
+            lowered = stripped.lower()
+            if not stripped or lowered.startswith("*"):
+                continue
+            if lowered == command_prefix or (
+                lowered.startswith(command_prefix)
+                and len(lowered) > len(command_prefix)
+                and lowered[len(command_prefix)] in (" ", "\t")
+            ):
+                resolved_command = stripped
+        return resolved_command
 
     def _inject_simulation_options(
         self,

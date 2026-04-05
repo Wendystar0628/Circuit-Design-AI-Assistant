@@ -85,8 +85,8 @@ from domain.simulation.models.simulation_error import (
 # 支持的文件扩展名
 SUPPORTED_EXTENSIONS = [".py"]
 
-# 支持的分析类型（Python 脚本可以实现任意分析类型）
-SUPPORTED_ANALYSES = ["custom", "ac", "dc", "tran", "noise", "op", "monte_carlo", "parameter_sweep"]
+# 支持的分析类型
+SUPPORTED_ANALYSES = ["custom", "ac", "dc", "tran", "noise", "op"]
 
 # 默认超时时间（秒）
 DEFAULT_TIMEOUT = 600

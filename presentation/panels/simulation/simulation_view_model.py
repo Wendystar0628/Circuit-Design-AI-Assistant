@@ -584,15 +584,13 @@ class SimulationViewModel(BaseViewModel):
                 project_root=project_root,
             )
             
-            # 加载最后一个成功的基础分析结果
-            # 高级分析结果由各自的结果标签页通过事件处理
+            # 加载最后一个成功的分析结果
             for analysis_type, result in reversed(list(results.items())):
-                # 检查是否为基础分析结果（SimulationResult 类型）
                 if hasattr(result, 'success') and result.success:
                     self.load_result(result)
                     break
             else:
-                # 所有基础分析都失败，尝试加载第一个基础分析结果
+                # 所有分析都失败，尝试加载第一个结果
                 for analysis_type, result in results.items():
                     if hasattr(result, 'success'):
                         self.load_result(result)
@@ -616,163 +614,7 @@ class SimulationViewModel(BaseViewModel):
             self.simulation_service.cancel_simulation()
             self._set_status(SimulationStatus.CANCELLED)
             self.notify_property_changed("simulation_status", self._simulation_status)
-    
-    # ============================================================
-    # 数据导出方法
-    # ============================================================
-    
-    def export_result(
-        self,
-        format: str,
-        path: str,
-        signals: Optional[List[str]] = None,
-    ) -> bool:
-        """
-        导出仿真结果
-        
-        Args:
-            format: 导出格式（"csv", "json", "mat"）
-            path: 导出文件路径
-            signals: 要导出的信号列表（None 表示全部）
-            
-        Returns:
-            bool: 是否导出成功
-        """
-        if self._current_result is None or self._current_result.data is None:
-            self._logger.warning("No simulation result to export")
-            return False
-        
-        try:
-            data = self._current_result.data
-            
-            if format == "csv":
-                return self._export_csv(path, data, signals)
-            elif format == "json":
-                return self._export_json(path, data, signals)
-            elif format == "mat":
-                return self._export_mat(path, data, signals)
-            else:
-                self._logger.error(f"Unsupported export format: {format}")
-                return False
-                
-        except Exception as e:
-            self._logger.exception(f"Export failed: {e}")
-            return False
-    
-    def _export_csv(
-        self,
-        path: str,
-        data,
-        signals: Optional[List[str]],
-    ) -> bool:
-        """导出为 CSV 格式"""
-        import csv
-        
-        # 确定 X 轴数据
-        if data.time is not None:
-            x_data = data.time
-            x_name = "time"
-        elif data.frequency is not None:
-            x_data = data.frequency
-            x_name = "frequency"
-        elif data.sweep is not None:
-            x_data = data.sweep
-            x_name = data.sweep_name or "sweep"
-        else:
-            x_data = None
-            x_name = "x"
-        
-        if x_data is None:
-            self._logger.error("No x-axis data available")
-            return False
-        
-        # 确定要导出的信号
-        signal_names = signals or list(data.signals.keys())
-        
-        with open(path, "w", newline="", encoding="utf-8") as f:
-            writer = csv.writer(f)
-            
-            # 写入表头
-            header = [x_name] + signal_names
-            writer.writerow(header)
-            
-            # 写入数据
-            for i, x_val in enumerate(x_data):
-                row = [x_val]
-                for sig_name in signal_names:
-                    sig_data = data.signals.get(sig_name)
-                    if sig_data is not None and i < len(sig_data):
-                        row.append(sig_data[i])
-                    else:
-                        row.append("")
-                writer.writerow(row)
-        
-        self._logger.info(f"Exported to CSV: {path}")
-        return True
-    
-    def _export_json(
-        self,
-        path: str,
-        data,
-        signals: Optional[List[str]],
-    ) -> bool:
-        """导出为 JSON 格式"""
-        import json
-        
-        export_data = {
-            "time": data.time.tolist() if data.time is not None else None,
-            "frequency": data.frequency.tolist() if data.frequency is not None else None,
-            "sweep": data.sweep.tolist() if data.sweep is not None else None,
-            "sweep_name": data.sweep_name,
-            "signals": {},
-        }
-        
-        signal_names = signals or list(data.signals.keys())
-        for sig_name in signal_names:
-            sig_data = data.signals.get(sig_name)
-            if sig_data is not None:
-                export_data["signals"][sig_name] = sig_data.tolist()
-        
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(export_data, f, indent=2)
-        
-        self._logger.info(f"Exported to JSON: {path}")
-        return True
-    
-    def _export_mat(
-        self,
-        path: str,
-        data,
-        signals: Optional[List[str]],
-    ) -> bool:
-        """导出为 MATLAB .mat 格式"""
-        try:
-            from scipy.io import savemat
-        except ImportError:
-            self._logger.error("scipy not available for .mat export")
-            return False
-        
-        export_data = {}
-        
-        if data.time is not None:
-            export_data["time"] = data.time
-        if data.frequency is not None:
-            export_data["frequency"] = data.frequency
-        if data.sweep is not None:
-            export_data["sweep"] = data.sweep
-        
-        signal_names = signals or list(data.signals.keys())
-        for sig_name in signal_names:
-            sig_data = data.signals.get(sig_name)
-            if sig_data is not None:
-                # MATLAB 变量名不能包含括号
-                safe_name = sig_name.replace("(", "_").replace(")", "")
-                export_data[safe_name] = sig_data
-        
-        savemat(path, export_data)
-        self._logger.info(f"Exported to MAT: {path}")
-        return True
-    
+
     # ============================================================
     # 辅助方法
     # ============================================================

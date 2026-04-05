@@ -289,6 +289,12 @@ class NoiseConfig:
     input_source: str = ""
     """输入源（如 "Vin", "Vsig"），默认为空（需用户指定）"""
     
+    sweep_type: str = "dec"
+    """扫描类型（dec=十倍频程, oct=八倍频程, lin=线性），默认 dec"""
+
+    points_per_decade: int = 10
+    """扫描点数（dec/oct 为每区间点数，lin 为总点数），默认 10"""
+
     start_freq: float = 1.0
     """起始频率（Hz），默认 1 Hz"""
     
@@ -309,6 +315,8 @@ class NoiseConfig:
         return {
             "output_node": self.output_node,
             "input_source": self.input_source,
+            "sweep_type": self.sweep_type,
+            "points_per_decade": self.points_per_decade,
             "start_freq": self.start_freq,
             "stop_freq": self.stop_freq,
         }
@@ -327,6 +335,8 @@ class NoiseConfig:
         return cls(
             output_node=data.get("output_node", ""),
             input_source=data.get("input_source", ""),
+            sweep_type=data.get("sweep_type", "dec"),
+            points_per_decade=data.get("points_per_decade", 10),
             start_freq=data.get("start_freq", 1.0),
             stop_freq=data.get("stop_freq", 1e6),
         )

@@ -54,7 +54,6 @@ CHART_CATEGORY_NAMES: Dict[str, str] = {
     "waveform": "波形图表",
     "bode": "Bode 图",
     "dc": "特性曲线",
-    "spectrum": "频谱分析",
     "noise": "噪声图表",
 }
 
@@ -68,7 +67,7 @@ class SimulationSettingsDialog(QDialog):
     仿真设置对话框
     
     功能：
-    - 分析类型选择（基础分析 + 高级分析）
+    - 分析类型选择
     - 图表显示选择（分类树形结构）
     - 快捷操作（全选、推荐图表等）
     - 配置持久化
@@ -100,7 +99,6 @@ class SimulationSettingsDialog(QDialog):
         
         # 分析类型标签页组件
         self._basic_group: Optional[QGroupBox] = None
-        self._advanced_group: Optional[QGroupBox] = None
         self._analysis_checkboxes: Dict[AnalysisType, QCheckBox] = {}
         self._execution_order_label: Optional[QLabel] = None
         
@@ -199,10 +197,6 @@ class SimulationSettingsDialog(QDialog):
             self._basic_group.setTitle(
                 self._get_text("sim_settings_basic_group", "基础分析")
             )
-        if self._advanced_group:
-            self._advanced_group.setTitle(
-                self._get_text("sim_settings_advanced_group", "高级分析")
-            )
         
         # 分析类型复选框文本
         for at, cb in self._analysis_checkboxes.items():
@@ -273,26 +267,6 @@ class SimulationSettingsDialog(QDialog):
         basic_layout.addLayout(basic_btn_layout)
         
         layout.addWidget(self._basic_group)
-        
-        # 高级分析组
-        self._advanced_group = QGroupBox("高级分析")
-        advanced_layout = QVBoxLayout(self._advanced_group)
-        
-        for at in self._analysis_selector.get_advanced_analyses():
-            cb = QCheckBox(AnalysisType.get_display_name(at))
-            cb.stateChanged.connect(self._on_analysis_changed)
-            self._analysis_checkboxes[at] = cb
-            advanced_layout.addWidget(cb)
-        
-        # 高级分析快捷按钮
-        advanced_btn_layout = QHBoxLayout()
-        select_all_advanced_btn = QPushButton("全选高级")
-        select_all_advanced_btn.clicked.connect(self._on_select_all_advanced)
-        advanced_btn_layout.addWidget(select_all_advanced_btn)
-        advanced_btn_layout.addStretch()
-        advanced_layout.addLayout(advanced_btn_layout)
-        
-        layout.addWidget(self._advanced_group)
         
         # 执行顺序显示
         order_group = QGroupBox("执行顺序")
@@ -527,12 +501,6 @@ class SimulationSettingsDialog(QDialog):
     def _on_select_all_basic(self) -> None:
         """全选基础分析"""
         for at in self._analysis_selector.get_basic_analyses():
-            if at in self._analysis_checkboxes:
-                self._analysis_checkboxes[at].setChecked(True)
-    
-    def _on_select_all_advanced(self) -> None:
-        """全选高级分析"""
-        for at in self._analysis_selector.get_advanced_analyses():
             if at in self._analysis_checkboxes:
                 self._analysis_checkboxes[at].setChecked(True)
     

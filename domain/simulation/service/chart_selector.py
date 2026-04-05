@@ -69,7 +69,6 @@ class ChartType(Enum):
     BODE_MAGNITUDE = "bode_mag"
     BODE_PHASE = "bode_phase"
     DC_SWEEP = "dc_sweep"
-    FFT_SPECTRUM = "fft_spectrum"
     NOISE_SPECTRUM = "noise_spectrum"
     
     @classmethod
@@ -80,7 +79,6 @@ class ChartType(Enum):
             cls.BODE_MAGNITUDE: "Bode 幅度图",
             cls.BODE_PHASE: "Bode 相位图",
             cls.DC_SWEEP: "DC 扫描曲线",
-            cls.FFT_SPECTRUM: "FFT 频谱图",
             cls.NOISE_SPECTRUM: "噪声频谱图",
         }
         return names.get(chart_type, chart_type.value)
@@ -93,7 +91,6 @@ class ChartType(Enum):
             cls.BODE_MAGNITUDE: "bode",
             cls.BODE_PHASE: "bode",
             cls.DC_SWEEP: "dc",
-            cls.FFT_SPECTRUM: "spectrum",
             cls.NOISE_SPECTRUM: "noise",
         }
         return categories.get(chart_type, "other")
@@ -190,7 +187,6 @@ def _build_chart_analysis_mapping() -> Dict[str, List[ChartType]]:
         ],
         "tran": [
             ChartType.WAVEFORM_TIME,
-            ChartType.FFT_SPECTRUM,
         ],
         "noise": [
             ChartType.NOISE_SPECTRUM,
@@ -209,8 +205,7 @@ def _get_default_selections() -> List[ChartSelection]:
         ChartSelection(ChartType.BODE_MAGNITUDE, enabled=True, display_order=2),
         ChartSelection(ChartType.BODE_PHASE, enabled=True, display_order=3),
         ChartSelection(ChartType.DC_SWEEP, enabled=True, display_order=4),
-        ChartSelection(ChartType.FFT_SPECTRUM, enabled=True, display_order=5),
-        ChartSelection(ChartType.NOISE_SPECTRUM, enabled=True, display_order=6),
+        ChartSelection(ChartType.NOISE_SPECTRUM, enabled=True, display_order=5),
     ]
 
 
@@ -272,7 +267,7 @@ class ChartSelector:
         获取指定类别的图表类型
         
         Args:
-            category: 类别名称（waveform/bode/dc/spectrum/statistics/sweep/sensitivity/pvt/noise）
+            category: 类别名称（waveform/bode/dc/noise）
             
         Returns:
             List[ChartType]: 该类别的图表类型列表

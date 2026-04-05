@@ -83,345 +83,6 @@ CHART_PANEL_MIN_WIDTH = 400
 STATUS_BAR_HEIGHT = 48
 
 
-# ============================================================
-# 高级分析标签页组
-# ============================================================
-
-class AdvancedAnalysisTabGroup(QWidget):
-    """
-    高级分析标签页组
-    
-    包含 PVT、蒙特卡洛、参数扫描、最坏情况、敏感度、FFT、拓扑识别、收敛诊断 8个子标签页
-    """
-    
-    # 子标签页索引常量
-    TAB_PVT = 0
-    TAB_MONTE_CARLO = 1
-    TAB_SWEEP = 2
-    TAB_WORST_CASE = 3
-    TAB_SENSITIVITY = 4
-    TAB_FFT = 5
-    TAB_DIAGNOSIS = 6
-    
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        
-        self._logger = logging.getLogger(__name__)
-        self._event_bus = None
-        self._subscriptions: List[tuple] = []
-        
-        self._setup_ui()
-        self._apply_style()
-        self._subscribe_events()
-    
-    def _setup_ui(self):
-        """初始化 UI"""
-        from PyQt6.QtWidgets import QTabWidget
-        
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-        
-        # 子标签页容器
-        self._tab_widget = QTabWidget()
-        self._tab_widget.setObjectName("advancedTabWidget")
-        self._tab_widget.setDocumentMode(True)
-        self._tab_widget.setTabPosition(QTabWidget.TabPosition.West)
-        
-        # PVT 角点分析
-        from presentation.panels.simulation.pvt_result_tab import PVTResultTab
-        self._pvt_tab = PVTResultTab()
-        self._tab_widget.addTab(self._pvt_tab, "")
-        
-        # 蒙特卡洛分析
-        from presentation.panels.simulation.monte_carlo_result_tab import MonteCarloResultTab
-        self._monte_carlo_tab = MonteCarloResultTab()
-        self._tab_widget.addTab(self._monte_carlo_tab, "")
-        
-        # 参数扫描
-        from presentation.panels.simulation.sweep_result_tab import SweepResultTab
-        self._sweep_tab = SweepResultTab()
-        self._tab_widget.addTab(self._sweep_tab, "")
-        
-        # 最坏情况分析
-        from presentation.panels.simulation.worst_case_result_tab import WorstCaseResultTab
-        self._worst_case_tab = WorstCaseResultTab()
-        self._tab_widget.addTab(self._worst_case_tab, "")
-        
-        # 敏感度分析
-        from presentation.panels.simulation.sensitivity_result_tab import SensitivityResultTab
-        self._sensitivity_tab = SensitivityResultTab()
-        self._tab_widget.addTab(self._sensitivity_tab, "")
-        
-        # FFT 频谱分析
-        from presentation.panels.simulation.fft_result_tab import FFTResultTab
-        self._fft_tab = FFTResultTab()
-        self._tab_widget.addTab(self._fft_tab, "")
-        
-        # 收敛诊断
-        from presentation.panels.simulation.diagnosis_panel import DiagnosisPanel
-        self._diagnosis_tab = DiagnosisPanel()
-        self._tab_widget.addTab(self._diagnosis_tab, "")
-        
-        layout.addWidget(self._tab_widget)
-        
-        # 初始化标签页标题
-        self._update_tab_titles()
-    
-    def _apply_style(self):
-        """应用样式"""
-        self.setStyleSheet(f"""
-            #advancedTabWidget {{
-                background-color: {COLOR_BG_PRIMARY};
-            }}
-            
-            #advancedTabWidget::pane {{
-                border: none;
-            }}
-            
-            #advancedTabWidget::tab-bar {{
-                alignment: top;
-            }}
-            
-            #advancedTabWidget QTabBar::tab {{
-                background-color: {COLOR_BG_TERTIARY};
-                color: {COLOR_TEXT_SECONDARY};
-                padding: 8px 6px;
-                margin-bottom: 2px;
-                border: none;
-                border-right: 2px solid transparent;
-                min-width: 24px;
-            }}
-            
-            #advancedTabWidget QTabBar::tab:selected {{
-                color: {COLOR_ACCENT};
-                border-right: 2px solid {COLOR_ACCENT};
-                background-color: {COLOR_BG_PRIMARY};
-            }}
-            
-            #advancedTabWidget QTabBar::tab:hover:!selected {{
-                color: {COLOR_TEXT_PRIMARY};
-                background-color: {COLOR_ACCENT_LIGHT};
-            }}
-        """)
-    
-    def _update_tab_titles(self):
-        """更新标签页标题"""
-        self._tab_widget.setTabText(self.TAB_PVT, self._get_text(
-            "advanced.tab.pvt", "PVT"
-        ))
-        self._tab_widget.setTabText(self.TAB_MONTE_CARLO, self._get_text(
-            "advanced.tab.monte_carlo", "MC"
-        ))
-        self._tab_widget.setTabText(self.TAB_SWEEP, self._get_text(
-            "advanced.tab.sweep", "扫描"
-        ))
-        self._tab_widget.setTabText(self.TAB_WORST_CASE, self._get_text(
-            "advanced.tab.worst_case", "WC"
-        ))
-        self._tab_widget.setTabText(self.TAB_SENSITIVITY, self._get_text(
-            "advanced.tab.sensitivity", "敏感度"
-        ))
-        self._tab_widget.setTabText(self.TAB_FFT, self._get_text(
-            "advanced.tab.fft", "FFT"
-        ))
-        self._tab_widget.setTabText(self.TAB_DIAGNOSIS, self._get_text(
-            "advanced.tab.diagnosis", "诊断"
-        ))
-    
-    def _subscribe_events(self):
-        """订阅事件"""
-        event_bus = self._get_event_bus()
-        if not event_bus:
-            return
-        
-        from shared.event_types import (
-            EVENT_PVT_COMPLETE,
-            EVENT_MC_COMPLETE,
-            EVENT_SWEEP_COMPLETE,
-            EVENT_WORST_CASE_COMPLETE,
-            EVENT_SENSITIVITY_COMPLETE,
-            EVENT_FFT_COMPLETE,
-            EVENT_CONVERGENCE_DIAGNOSED,
-        )
-        
-        subscriptions = [
-            (EVENT_PVT_COMPLETE, self._on_pvt_complete),
-            (EVENT_MC_COMPLETE, self._on_mc_complete),
-            (EVENT_SWEEP_COMPLETE, self._on_sweep_complete),
-            (EVENT_WORST_CASE_COMPLETE, self._on_wc_complete),
-            (EVENT_SENSITIVITY_COMPLETE, self._on_sens_complete),
-            (EVENT_FFT_COMPLETE, self._on_fft_complete),
-            (EVENT_CONVERGENCE_DIAGNOSED, self._on_convergence_diagnosed),
-        ]
-        
-        for event_type, handler in subscriptions:
-            try:
-                event_bus.subscribe(event_type, handler)
-                self._subscriptions.append((event_type, handler))
-            except Exception as e:
-                self._logger.debug(f"Event {event_type} not defined: {e}")
-    
-    def _unsubscribe_events(self):
-        """取消事件订阅"""
-        event_bus = self._get_event_bus()
-        if not event_bus:
-            return
-        
-        for event_type, handler in self._subscriptions:
-            try:
-                event_bus.unsubscribe(event_type, handler)
-            except Exception:
-                pass
-        
-        self._subscriptions.clear()
-    
-    def _get_event_bus(self):
-        """获取 EventBus"""
-        if self._event_bus is None:
-            try:
-                from shared.service_locator import ServiceLocator
-                from shared.service_names import SVC_EVENT_BUS
-                self._event_bus = ServiceLocator.get_optional(SVC_EVENT_BUS)
-            except Exception:
-                pass
-        return self._event_bus
-    
-    # ============================================================
-    # 事件处理 - 自动切换到对应标签页
-    # ============================================================
-    
-    def _on_pvt_complete(self, event_data: dict):
-        """PVT 分析完成"""
-        self._tab_widget.setCurrentIndex(self.TAB_PVT)
-    
-    def _on_mc_complete(self, event_data: dict):
-        """蒙特卡洛分析完成"""
-        self._tab_widget.setCurrentIndex(self.TAB_MONTE_CARLO)
-    
-    def _on_sweep_complete(self, event_data: dict):
-        """参数扫描完成"""
-        self._tab_widget.setCurrentIndex(self.TAB_SWEEP)
-    
-    def _on_wc_complete(self, event_data: dict):
-        """最坏情况分析完成"""
-        self._tab_widget.setCurrentIndex(self.TAB_WORST_CASE)
-    
-    def _on_sens_complete(self, event_data: dict):
-        """敏感度分析完成"""
-        self._tab_widget.setCurrentIndex(self.TAB_SENSITIVITY)
-    
-    def _on_fft_complete(self, event_data: dict):
-        """FFT 分析完成"""
-        self._tab_widget.setCurrentIndex(self.TAB_FFT)
-    
-    def _on_convergence_diagnosed(self, event_data: dict):
-        """收敛诊断完成"""
-        self._tab_widget.setCurrentIndex(self.TAB_DIAGNOSIS)
-    
-    # ============================================================
-    # 公开方法
-    # ============================================================
-    
-    def switch_to_pvt(self):
-        """切换到 PVT 标签页"""
-        self._tab_widget.setCurrentIndex(self.TAB_PVT)
-    
-    def switch_to_monte_carlo(self):
-        """切换到蒙特卡洛标签页"""
-        self._tab_widget.setCurrentIndex(self.TAB_MONTE_CARLO)
-    
-    def switch_to_sweep(self):
-        """切换到参数扫描标签页"""
-        self._tab_widget.setCurrentIndex(self.TAB_SWEEP)
-    
-    def switch_to_worst_case(self):
-        """切换到最坏情况标签页"""
-        self._tab_widget.setCurrentIndex(self.TAB_WORST_CASE)
-    
-    def switch_to_sensitivity(self):
-        """切换到敏感度标签页"""
-        self._tab_widget.setCurrentIndex(self.TAB_SENSITIVITY)
-    
-    def switch_to_fft(self):
-        """切换到 FFT 标签页"""
-        self._tab_widget.setCurrentIndex(self.TAB_FFT)
-    
-    def switch_to_diagnosis(self):
-        """切换到收敛诊断标签页"""
-        self._tab_widget.setCurrentIndex(self.TAB_DIAGNOSIS)
-    
-    @property
-    def pvt_tab(self):
-        """获取 PVT 标签页"""
-        return self._pvt_tab
-    
-    @property
-    def monte_carlo_tab(self):
-        """获取蒙特卡洛标签页"""
-        return self._monte_carlo_tab
-    
-    @property
-    def sweep_tab(self):
-        """获取参数扫描标签页"""
-        return self._sweep_tab
-    
-    @property
-    def worst_case_tab(self):
-        """获取最坏情况标签页"""
-        return self._worst_case_tab
-    
-    @property
-    def sensitivity_tab(self):
-        """获取敏感度标签页"""
-        return self._sensitivity_tab
-    
-    @property
-    def fft_tab(self):
-        """获取 FFT 标签页"""
-        return self._fft_tab
-    
-    @property
-    def diagnosis_tab(self):
-        """获取收敛诊断标签页"""
-        return self._diagnosis_tab
-    
-    def clear(self):
-        """清空所有子标签页"""
-        self._pvt_tab.clear()
-        self._monte_carlo_tab.clear()
-        self._sweep_tab.clear()
-        self._worst_case_tab.clear()
-        self._sensitivity_tab.clear()
-        self._fft_tab.clear()
-        self._diagnosis_tab.clear()
-    
-    def retranslate_ui(self):
-        """重新翻译 UI 文本"""
-        self._update_tab_titles()
-        self._pvt_tab.retranslate_ui()
-        self._monte_carlo_tab.retranslate_ui()
-        self._sweep_tab.retranslate_ui()
-        self._worst_case_tab.retranslate_ui()
-        self._sensitivity_tab.retranslate_ui()
-        self._fft_tab.retranslate_ui()
-        self._diagnosis_tab.retranslate_ui()
-    
-    def _get_text(self, key: str, default: str) -> str:
-        """获取国际化文本"""
-        try:
-            from shared.i18n_manager import I18nManager
-            i18n = I18nManager()
-            return i18n.get_text(key, default)
-        except ImportError:
-            return default
-    
-    def closeEvent(self, event):
-        """处理关闭事件"""
-        self._unsubscribe_events()
-        super().closeEvent(event)
-
-
 class StatusIndicator(QFrame):
     """
     状态指示器
@@ -862,7 +523,7 @@ class ChartViewerPanel(QFrame):
     """
     图表查看面板
     
-    包含多个标签页：图表视图、波形视图、原始数据、输出日志、高级分析
+    包含多个标签页：指标、图表视图、波形视图、原始数据、输出日志
     """
     
     # 标签页索引常量
@@ -871,7 +532,6 @@ class ChartViewerPanel(QFrame):
     TAB_WAVEFORM = 2
     TAB_RAW_DATA = 3
     TAB_LOG = 4
-    TAB_ADVANCED = 5
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -915,10 +575,6 @@ class ChartViewerPanel(QFrame):
         from presentation.panels.simulation.output_log_viewer import OutputLogViewer
         self._output_log_viewer = OutputLogViewer()
         self._tab_widget.addTab(self._output_log_viewer, "")
-        
-        # 高级分析标签页组
-        self._advanced_analysis_widget = AdvancedAnalysisTabGroup()
-        self._tab_widget.addTab(self._advanced_analysis_widget, "")
         
         layout.addWidget(self._tab_widget)
         
@@ -981,9 +637,6 @@ class ChartViewerPanel(QFrame):
         self._tab_widget.setTabText(self.TAB_LOG, self._get_text(
             "simulation.tab.log", "输出日志"
         ))
-        self._tab_widget.setTabText(self.TAB_ADVANCED, self._get_text(
-            "simulation.tab.advanced", "高级分析"
-        ))
     
     @property
     def chart_viewer(self) -> ChartViewer:
@@ -1038,10 +691,6 @@ class ChartViewerPanel(QFrame):
         """切换到输出日志标签页"""
         self._tab_widget.setCurrentIndex(self.TAB_LOG)
     
-    def switch_to_advanced(self):
-        """切换到高级分析标签页"""
-        self._tab_widget.setCurrentIndex(self.TAB_ADVANCED)
-    
     def retranslate_ui(self):
         """重新翻译 UI 文本"""
         self._update_tab_titles()
@@ -1050,7 +699,6 @@ class ChartViewerPanel(QFrame):
         self._waveform_widget.retranslate_ui()
         self._raw_data_table.retranslate_ui()
         self._output_log_viewer.retranslate_ui()
-        self._advanced_analysis_widget.retranslate_ui()
     
     def _get_text(self, key: str, default: str) -> str:
         """获取国际化文本"""
@@ -1626,7 +1274,7 @@ class SimulationTab(QWidget):
         if signal_names:
             try:
                 from domain.simulation.data.waveform_data_service import waveform_data_service
-                default_signal = waveform_data_service.get_preferred_display_signal(result)
+                default_signal = waveform_data_service.get_preferred_signal(result)
             except Exception:
                 default_signal = signal_names[0]
 
@@ -1703,7 +1351,7 @@ class SimulationTab(QWidget):
             return
         
         # 执行导出
-        result = data_exporter.export_with_result(
+        result = data_exporter.export(
             current_result, format, path
         )
         

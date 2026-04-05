@@ -24,7 +24,7 @@
     # 从 SimulationResult 对象导出
     exporter = DataExporter()
     success = exporter.export(
-        data=simulation_result.data,
+        data=simulation_result,
         format="csv",
         path="/path/to/output.csv",
         signals=["V(out)", "I(R1)"]
@@ -40,11 +40,11 @@ import logging
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 
-from domain.simulation.models.simulation_result import SimulationData, SimulationResult
+from domain.simulation.models.simulation_result import SimulationResult
 
 
 class ExportFormat(Enum):
@@ -123,25 +123,6 @@ class DataExporter:
         """
         return [fmt.value for fmt in ExportFormat]
     
-    def get_format_description(self, format: str) -> str:
-        """
-        获取格式描述
-        
-        Args:
-            format: 格式名称
-            
-        Returns:
-            str: 格式描述
-        """
-        descriptions = {
-            "csv": "CSV (Comma-Separated Values) - 通用表格格式",
-            "json": "JSON (JavaScript Object Notation) - 结构化数据格式",
-            "mat": "MATLAB (.mat) - MATLAB/Octave 兼容格式",
-            "npy": "NumPy (.npy) - 单数组二进制格式",
-            "npz": "NumPy (.npz) - 多数组压缩格式",
-        }
-        return descriptions.get(format, f"Unknown format: {format}")
-    
     def get_format_extension(self, format: str) -> str:
         """
         获取格式对应的文件扩展名
@@ -163,29 +144,7 @@ class DataExporter:
     
     def export(
         self,
-        data: Union[SimulationData, SimulationResult],
-        format: str,
-        path: str,
-        signals: Optional[List[str]] = None,
-    ) -> bool:
-        """
-        导出仿真数据
-        
-        Args:
-            data: SimulationData 或 SimulationResult 对象
-            format: 导出格式（csv/json/mat/npy/npz）
-            path: 导出文件路径
-            signals: 要导出的信号列表（None 表示全部）
-            
-        Returns:
-            bool: 是否导出成功
-        """
-        result = self.export_with_result(data, format, path, signals)
-        return result.success
-    
-    def export_with_result(
-        self,
-        data: Union[SimulationData, SimulationResult],
+        data: SimulationResult,
         format: str,
         path: str,
         signals: Optional[List[str]] = None,
@@ -202,9 +161,7 @@ class DataExporter:
         Returns:
             ExportResult: 导出结果
         """
-        # 提取 SimulationData
-        sim_data = self._extract_simulation_data(data)
-        if sim_data is None:
+        if data is None or data.data is None:
             return ExportResult.error(path, format, "Invalid data: no simulation data")
         
         # 验证格式
@@ -221,43 +178,34 @@ class DataExporter:
         # 分发到具体导出方法
         try:
             if format_lower == "csv":
-                return self._export_csv(sim_data, str(output_path), signals)
+                return self._export_csv(data, str(output_path), signals)
             elif format_lower == "json":
-                return self._export_json(sim_data, str(output_path), signals)
+                return self._export_json(data, str(output_path), signals)
             elif format_lower == "mat":
-                return self._export_matlab(sim_data, str(output_path), signals)
+                return self._export_matlab(data, str(output_path), signals)
             elif format_lower == "npy":
-                return self._export_numpy(sim_data, str(output_path), signals)
+                return self._export_numpy(data, str(output_path), signals)
             elif format_lower == "npz":
-                return self._export_numpy_compressed(sim_data, str(output_path), signals)
+                return self._export_numpy_compressed(data, str(output_path), signals)
             else:
                 return ExportResult.error(path, format, f"Unsupported format: {format}")
         except Exception as e:
             self._logger.error(f"Export failed: {e}")
             return ExportResult.error(path, format, str(e))
-    
-    def _extract_simulation_data(
-        self, data: Union[SimulationData, SimulationResult]
-    ) -> Optional[SimulationData]:
-        """从输入中提取 SimulationData"""
-        if isinstance(data, SimulationResult):
-            return data.data
-        elif isinstance(data, SimulationData):
-            return data
-        return None
-    
-    def _get_x_axis(self, data: SimulationData) -> tuple[Optional[np.ndarray], str]:
-        """获取 X 轴数据和名称"""
-        if data.time is not None:
-            return data.time, "time"
-        elif data.frequency is not None:
-            return data.frequency, "frequency"
-        return None, ""
+
+    def _get_x_axis(self, result: SimulationResult) -> tuple[Optional[np.ndarray], str]:
+        """获取权威 X 轴数据和名称"""
+        x_data = result.get_x_axis_data()
+        x_name = (result.x_axis_kind or "x").lower()
+        return x_data, x_name if x_name and x_name != "none" else "x"
     
     def _filter_signals(
-        self, data: SimulationData, signals: Optional[List[str]]
+        self, result: SimulationResult, signals: Optional[List[str]]
     ) -> List[str]:
         """过滤要导出的信号列表"""
+        data = result.data
+        if data is None:
+            return []
         all_signals = data.get_signal_names()
         if signals is None:
             return all_signals
@@ -265,16 +213,19 @@ class DataExporter:
     
     def _export_csv(
         self,
-        data: SimulationData,
+        result: SimulationResult,
         path: str,
         signals: Optional[List[str]],
     ) -> ExportResult:
         """导出为 CSV 格式"""
-        x_data, x_name = self._get_x_axis(data)
+        data = result.data
+        if data is None:
+            return ExportResult.error(path, "csv", "No simulation data")
+        x_data, _ = self._get_x_axis(result)
         if x_data is None:
-            return ExportResult.error(path, "csv", "No x-axis data (time/frequency)")
+            return ExportResult.error(path, "csv", "No x-axis data")
         
-        signal_names = self._filter_signals(data, signals)
+        signal_names = self._filter_signals(result, signals)
         if not signal_names:
             return ExportResult.error(path, "csv", "No signals to export")
         
@@ -284,7 +235,7 @@ class DataExporter:
             writer = csv.writer(f)
             
             # 写入表头
-            header = [x_name] + signal_names
+            header = [result.get_x_axis_label()] + signal_names
             writer.writerow(header)
             
             # 写入数据
@@ -303,32 +254,34 @@ class DataExporter:
     
     def _export_json(
         self,
-        data: SimulationData,
+        result: SimulationResult,
         path: str,
         signals: Optional[List[str]],
     ) -> ExportResult:
         """导出为 JSON 格式"""
-        signal_names = self._filter_signals(data, signals)
+        data = result.data
+        if data is None:
+            return ExportResult.error(path, "json", "No simulation data")
+        signal_names = self._filter_signals(result, signals)
+        x_data, x_name = self._get_x_axis(result)
         
         export_dict: Dict[str, Any] = {
-            "time": None,
-            "frequency": None,
+            "x_axis_kind": result.x_axis_kind,
+            "x_axis_label": result.get_x_axis_label(),
+            "x_axis_scale": result.x_axis_scale,
+            "x": x_data.tolist() if x_data is not None else None,
+            "x_name": x_name,
             "signals": {},
             "metadata": {
                 "signal_count": len(signal_names),
                 "point_count": 0,
+                "requested_x_range": list(result.requested_x_range) if result.requested_x_range is not None else None,
+                "actual_x_range": list(result.actual_x_range) if result.actual_x_range is not None else None,
+                "analysis_command": result.analysis_command,
             },
         }
         
-        # X 轴数据
-        point_count = 0
-        if data.time is not None:
-            export_dict["time"] = data.time.tolist()
-            point_count = len(data.time)
-        if data.frequency is not None:
-            export_dict["frequency"] = data.frequency.tolist()
-            point_count = max(point_count, len(data.frequency))
-        
+        point_count = len(x_data) if x_data is not None else 0
         export_dict["metadata"]["point_count"] = point_count
         
         # 信号数据
@@ -345,7 +298,7 @@ class DataExporter:
     
     def _export_matlab(
         self,
-        data: SimulationData,
+        result: SimulationResult,
         path: str,
         signals: Optional[List[str]],
     ) -> ExportResult:
@@ -357,18 +310,20 @@ class DataExporter:
                 path, "mat", "scipy not installed. Run: pip install scipy"
             )
         
-        signal_names = self._filter_signals(data, signals)
+        data = result.data
+        if data is None:
+            return ExportResult.error(path, "mat", "No simulation data")
+        signal_names = self._filter_signals(result, signals)
         
         mat_dict: Dict[str, Any] = {}
+        x_data, x_name = self._get_x_axis(result)
         point_count = 0
         
-        # X 轴数据
-        if data.time is not None:
-            mat_dict["time"] = data.time
-            point_count = len(data.time)
-        if data.frequency is not None:
-            mat_dict["frequency"] = data.frequency
-            point_count = max(point_count, len(data.frequency))
+        if x_data is not None:
+            mat_dict[x_name] = x_data
+            point_count = len(x_data)
+        mat_dict["x_axis_label"] = np.array([result.get_x_axis_label()], dtype=object)
+        mat_dict["x_axis_scale"] = np.array([result.x_axis_scale], dtype=object)
         
         # 信号数据（MATLAB 变量名需要合法化）
         for sig_name in signal_names:
@@ -410,17 +365,20 @@ class DataExporter:
     
     def _export_numpy(
         self,
-        data: SimulationData,
+        result: SimulationResult,
         path: str,
         signals: Optional[List[str]],
     ) -> ExportResult:
         """导出为 NumPy .npy 格式（单个结构化数组）"""
-        signal_names = self._filter_signals(data, signals)
+        data = result.data
+        if data is None:
+            return ExportResult.error(path, "npy", "No simulation data")
+        signal_names = self._filter_signals(result, signals)
         
         # 确定数据点数量
-        x_data, x_name = self._get_x_axis(data)
+        x_data, x_name = self._get_x_axis(result)
         if x_data is None:
-            return ExportResult.error(path, "npy", "No x-axis data (time/frequency)")
+            return ExportResult.error(path, "npy", "No x-axis data")
         
         point_count = len(x_data)
         
@@ -448,23 +406,25 @@ class DataExporter:
     
     def _export_numpy_compressed(
         self,
-        data: SimulationData,
+        result: SimulationResult,
         path: str,
         signals: Optional[List[str]],
     ) -> ExportResult:
         """导出为 NumPy .npz 压缩格式（多个数组）"""
-        signal_names = self._filter_signals(data, signals)
+        data = result.data
+        if data is None:
+            return ExportResult.error(path, "npz", "No simulation data")
+        signal_names = self._filter_signals(result, signals)
         
         arrays: Dict[str, np.ndarray] = {}
+        x_data, x_name = self._get_x_axis(result)
         point_count = 0
         
-        # X 轴数据
-        if data.time is not None:
-            arrays["time"] = data.time
-            point_count = len(data.time)
-        if data.frequency is not None:
-            arrays["frequency"] = data.frequency
-            point_count = max(point_count, len(data.frequency))
+        if x_data is not None:
+            arrays[x_name] = x_data
+            point_count = len(x_data)
+        arrays["x_axis_label"] = np.array([result.get_x_axis_label()], dtype=object)
+        arrays["x_axis_scale"] = np.array([result.x_axis_scale], dtype=object)
         
         # 信号数据
         for sig_name in signal_names:

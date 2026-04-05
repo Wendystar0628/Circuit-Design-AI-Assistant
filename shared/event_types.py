@@ -312,7 +312,6 @@ EVENT_MAIN_CIRCUIT_CHANGED = "main_circuit_changed"
 #   - circuit_file: str - 电路文件路径
 #   - analysis_type: str - 分析类型
 #   - components: dict - 元件统计
-#   - topology: str - 拓扑类型（若识别）
 EVENT_CIRCUIT_ANALYSIS_COMPLETE = "circuit_analysis_complete"
 
 # 仿真执行失败（错误已收集，准备下一轮修复）
@@ -401,144 +400,6 @@ EVENT_ALL_ANALYSES_COMPLETE = "all_analyses_complete"
 #   - disabled_charts: list - 禁用的图表类型列表
 #   - source: str - 变更来源（"dialog", "api", "load"）
 EVENT_CHART_SELECTION_CHANGED = "chart_selection_changed"
-
-# ============================================================
-# 高级仿真事件（PVT/蒙特卡洛/参数扫描）
-# ============================================================
-
-# PVT 分析完成（所有角点完成）
-# 携带数据：
-#   - circuit_file: str - 电路文件路径
-#   - analysis_type: str - 分析类型
-#   - all_passed: bool - 是否所有角点都通过
-#   - worst_corner: str - 最差角点名称
-#   - corner_count: int - 角点数量
-#   - passed_count: int - 通过的角点数量
-#   - duration_seconds: float - 总耗时
-#   - result: PVTAnalysisResult - 完整结果对象
-EVENT_PVT_COMPLETE = "sim_pvt_complete"
-
-# PVT 角点仿真完成
-# 携带数据：
-#   - corner_name: str - 角点名称（如 "TT", "FF", "SS"）
-#   - process: str - 工艺角（"typical", "fast", "slow"）
-#   - voltage: float - 电压值
-#   - temperature: float - 温度值
-#   - result_path: str - 该角点结果文件路径
-#   - metrics: dict - 该角点性能指标
-#   - corner_index: int - 当前角点索引
-#   - total_corners: int - 总角点数
-EVENT_PVT_CORNER_COMPLETE = "sim_pvt_corner_complete"
-
-# 蒙特卡洛单次运行完成
-# 携带数据：
-#   - run_index: int - 当前运行索引
-#   - total_runs: int - 总运行次数
-#   - seed: int - 随机种子
-#   - result_path: str - 该次运行结果文件路径
-#   - metrics: dict - 该次运行性能指标
-EVENT_MONTE_CARLO_RUN_COMPLETE = "sim_monte_carlo_run_complete"
-
-# 蒙特卡洛分析完成
-# 携带数据：
-#   - circuit_file: str - 电路文件路径
-#   - analysis_type: str - 分析类型
-#   - num_runs: int - 总运行次数
-#   - successful_runs: int - 成功运行次数
-#   - yield_percent: float - 良率百分比
-#   - statistics: dict - 各指标统计数据
-#   - sensitive_params: list - 敏感参数列表
-#   - duration_seconds: float - 总耗时
-EVENT_MC_COMPLETE = "sim_monte_carlo_complete"
-
-# 参数扫描点完成
-# 携带数据：
-#   - param_name: str - 参数名称
-#   - param_value: float - 当前参数值
-#   - point_index: int - 当前扫描点索引
-#   - total_points: int - 总扫描点数
-#   - result_path: str - 该扫描点结果文件路径
-#   - metrics: dict - 该扫描点性能指标
-EVENT_SWEEP_POINT_COMPLETE = "sim_sweep_point_complete"
-
-# 参数扫描完成
-# 携带数据：
-#   - result: SweepAnalysisResult - 扫描分析结果对象
-#   - circuit_file: str - 电路文件路径
-#   - total_points: int - 总扫描点数
-#   - successful_points: int - 成功扫描点数
-#   - optimal_point: dict - 最优点参数和指标
-#   - duration_seconds: float - 总耗时
-EVENT_SWEEP_COMPLETE = "sim_sweep_complete"
-
-# 最坏情况分析完成
-# 携带数据：
-#   - circuit_file: str - 电路文件路径
-#   - method: str - 分析方法（"rss" 或 "eva"）
-#   - metric: str - 分析的指标名称
-#   - nominal_value: float - 标称值
-#   - worst_case_max: float - 最坏情况最大值
-#   - worst_case_min: float - 最坏情况最小值
-#   - design_margin_percent: float - 设计裕度百分比
-#   - critical_params: list - 关键参数列表
-#   - simulation_count: int - 仿真次数
-EVENT_WORST_CASE_COMPLETE = "sim_worst_case_complete"
-
-# 收敛诊断完成
-# 携带数据：
-#   - diagnosis: ConvergenceDiagnosis - 诊断结果对象
-#   - file_path: str - 电路文件路径
-#   - issue_type: str - 问题类型（dc_convergence/tran_convergence/floating_node）
-#   - severity: str - 严重程度（low/medium/high/critical）
-#   - auto_fix_available: bool - 是否可自动修复
-EVENT_CONVERGENCE_DIAGNOSED = "sim_convergence_diagnosed"
-
-# 敏感度分析开始
-# 携带数据：
-#   - circuit_file: str - 电路文件路径
-#   - metric: str - 分析的指标名称
-#   - param_count: int - 参数数量
-#   - perturbation_percent: float - 扰动百分比
-EVENT_SENSITIVITY_STARTED = "sim_sensitivity_started"
-
-# 敏感度分析进度（每完成一个参数）
-# 携带数据：
-#   - param_name: str - 当前参数名称
-#   - param_index: int - 当前参数索引
-#   - total_params: int - 总参数数量
-#   - sensitivity: float - 该参数的敏感度值
-EVENT_SENSITIVITY_PROGRESS = "sim_sensitivity_progress"
-
-# 敏感度分析完成
-# 携带数据：
-#   - circuit_file: str - 电路文件路径
-#   - metric: str - 分析的指标名称
-#   - param_count: int - 参数数量
-#   - critical_params: list - 关键参数列表（按敏感度排序）
-#   - duration_seconds: float - 总耗时
-EVENT_SENSITIVITY_COMPLETE = "sim_sensitivity_complete"
-
-# 拓扑识别完成
-# 携带数据：
-#   - circuit_file: str - 电路文件路径
-#   - topology_type: str - 拓扑类型（amplifier/filter/power/oscillator/comparator/converter）
-#   - sub_type: str - 子类型（如 common_source/differential_pair）
-#   - confidence: float - 置信度（0-1）
-#   - recommended_analyses: list - 推荐的分析类型
-#   - key_metrics: list - 关键性能指标
-#   - critical_nodes: list - 关键节点列表
-EVENT_TOPOLOGY_DETECTED = "sim_topology_detected"
-
-# FFT 频谱分析完成
-# 携带数据：
-#   - result: FFTResult - FFT 分析结果对象
-#   - signal_name: str - 信号名称
-#   - fundamental_frequency: float - 基波频率
-#   - thd_db: float - 总谐波失真（dB）
-#   - sfdr_db: float - 无杂散动态范围（dB）
-#   - sndr_db: float - 信噪失真比（dB）
-#   - enob: float - 有效位数
-EVENT_FFT_COMPLETE = "sim_fft_complete"
 
 # ============================================================
 # 电路图事件
@@ -1142,20 +1003,6 @@ __all__ = [
     "EVENT_ANALYSIS_COMPLETE",
     "EVENT_ALL_ANALYSES_COMPLETE",
     "EVENT_CHART_SELECTION_CHANGED",
-    # 高级仿真事件
-    "EVENT_PVT_COMPLETE",
-    "EVENT_PVT_CORNER_COMPLETE",
-    "EVENT_MONTE_CARLO_RUN_COMPLETE",
-    "EVENT_MC_COMPLETE",
-    "EVENT_SWEEP_POINT_COMPLETE",
-    "EVENT_SWEEP_COMPLETE",
-    "EVENT_WORST_CASE_COMPLETE",
-    "EVENT_CONVERGENCE_DIAGNOSED",
-    "EVENT_SENSITIVITY_STARTED",
-    "EVENT_SENSITIVITY_PROGRESS",
-    "EVENT_SENSITIVITY_COMPLETE",
-    "EVENT_TOPOLOGY_DETECTED",
-    "EVENT_FFT_COMPLETE",
     # 电路图事件
     "EVENT_SCHEMATIC_LOADED",
     "EVENT_SCHEMATIC_ELEMENT_SELECTED",

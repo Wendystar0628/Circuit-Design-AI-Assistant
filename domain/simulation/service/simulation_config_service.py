@@ -417,6 +417,18 @@ class SimulationConfigService:
         result: ValidationResult,
     ) -> None:
         """校验噪声配置"""
+        if config.points_per_decade <= 0:
+            result.add_error(
+                "noise.points_per_decade",
+                "扫描点数必须大于 0",
+                config.points_per_decade,
+            )
+        if config.sweep_type not in ("dec", "oct", "lin"):
+            result.add_error(
+                "noise.sweep_type",
+                "扫描类型必须是 dec、oct 或 lin",
+                config.sweep_type,
+            )
         if config.start_freq <= 0:
             result.add_error("noise.start_freq", "起始频率必须大于 0", config.start_freq)
         if config.stop_freq <= config.start_freq:

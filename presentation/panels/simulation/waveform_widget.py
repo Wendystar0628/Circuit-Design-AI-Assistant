@@ -4,14 +4,14 @@
 
 职责：
 - 渲染交互式波形图表（基于 pyqtgraph）
-- 支持缩放、平移、双光标测量
+- 支持框选放大、Fit 全显示、双光标测量
 - 支持多信号叠加显示
 - 动态加载不同分辨率数据
 
 技术选型：
 - pyqtgraph.PlotWidget：纯 Qt 实现，高性能
 - 原生支持大数据量（百万点）
-- 内置缩放、平移、光标功能
+- 配合自定义 ViewBox 提供 LTspice 风格交互
 
 使用示例：
     from presentation.panels.simulation.waveform_widget import WaveformWidget
@@ -32,23 +32,19 @@ import logging
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QColor, QPen
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
-    QToolBar,
     QToolButton,
     QLabel,
-    QComboBox,
     QCheckBox,
     QFrame,
     QSizePolicy,
     QSplitter,
     QTreeWidget,
     QTreeWidgetItem,
-    QScrollArea,
     QPushButton,
 )
 
@@ -61,6 +57,14 @@ from domain.simulation.data.waveform_data_service import (
     waveform_data_service,
 )
 from domain.simulation.models.simulation_result import SimulationResult
+from presentation.panels.simulation.ltspice_plot_interaction import (
+    LTSpiceViewBox,
+    apply_dynamic_tick_spacing,
+    clamp_range,
+    finite_range,
+    merge_ranges,
+    normalize_range,
+)
 
 from resources.theme import (
     COLOR_BG_PRIMARY,
@@ -103,9 +107,6 @@ INITIAL_POINTS = 500
 
 # 缩放时加载点数
 VIEWPORT_POINTS = 1000
-
-# 防抖延迟（毫秒）
-DEBOUNCE_DELAY_MS = 100
 
 
 # ============================================================
@@ -165,7 +166,7 @@ class WaveformWidget(QWidget):
     
     基于 pyqtgraph 实现，支持：
     - 高性能波形渲染（百万点）
-    - 鼠标缩放和平移
+    - 左键框选放大与 Fit
     - 双光标测量
     - 多信号叠加显示
     - 动态分辨率加载
@@ -206,18 +207,17 @@ class WaveformWidget(QWidget):
         
         # 右侧 Y 轴 ViewBox（电流）
         self._right_vb: Optional[pg.ViewBox] = None
+
+        self._syncing_view = False
+        self._x_domain: Optional[Tuple[float, float]] = None
+        self._left_y_domain: Optional[Tuple[float, float]] = None
+        self._right_y_domain: Optional[Tuple[float, float]] = None
         
         # 信号类型缓存
         self._signal_types: Dict[str, str] = {}
         
         # 信号树更新锁（防止递归触发）
         self._updating_tree = False
-        
-        # 防抖定时器
-        self._debounce_timer = QTimer()
-        self._debounce_timer.setSingleShot(True)
-        self._debounce_timer.timeout.connect(self._on_debounced_range_change)
-        self._pending_range: Optional[Tuple[float, float]] = None
         
         # 初始化 UI
         self._setup_ui()
@@ -319,19 +319,19 @@ class WaveformWidget(QWidget):
         
         toolbar_layout.addSpacing(SPACING_NORMAL)
         
-        # 自动缩放按钮
-        self._auto_range_btn = QToolButton()
-        self._auto_range_btn.setText("Auto")
-        self._auto_range_btn.setToolTip("Auto Range")
-        self._auto_range_btn.clicked.connect(self._on_auto_range)
-        toolbar_layout.addWidget(self._auto_range_btn)
+        # Fit 按钮
+        self._fit_btn = QToolButton()
+        self._fit_btn.setText("Fit")
+        self._fit_btn.setToolTip("Fit")
+        self._fit_btn.clicked.connect(self._on_fit_view)
+        toolbar_layout.addWidget(self._fit_btn)
         
         toolbar_layout.addStretch()
         
         right_layout.addWidget(self._toolbar)
         
         # 图表区域
-        self._plot_widget = pg.PlotWidget()
+        self._plot_widget = pg.PlotWidget(viewBox=LTSpiceViewBox())
         self._plot_widget.setBackground(COLOR_BG_PRIMARY)
         right_layout.addWidget(self._plot_widget, 1)
         
@@ -377,7 +377,7 @@ class WaveformWidget(QWidget):
         
         # 左侧 Y 轴：电压
         plot_item.setLabel('left', 'Voltage (V)')
-        plot_item.setLabel('bottom', 'Time (s)')
+        plot_item.setLabel('bottom', 'X')
         
         # 右侧 Y 轴：电流 —— 使用独立 ViewBox
         plot_item.showAxis('right')
@@ -387,18 +387,20 @@ class WaveformWidget(QWidget):
         plot_item.scene().addItem(self._right_vb)
         plot_item.getAxis('right').linkToView(self._right_vb)
         self._right_vb.setXLink(plot_item)
+        self._right_vb.setMenuEnabled(False)
+        self._right_vb.setMouseEnabled(x=False, y=False)
         
         # 当主视图几何变化时同步右侧 ViewBox
         plot_item.vb.sigResized.connect(self._sync_right_viewbox)
         
         # 启用网格
         plot_item.showGrid(x=True, y=True, alpha=0.3)
-        
-        # 启用自动范围
-        plot_item.enableAutoRange()
-        
-        # 连接范围变化信号
-        plot_item.sigRangeChanged.connect(self._on_range_changed)
+
+        plot_item.disableAutoRange()
+
+        view_box = plot_item.vb
+        if isinstance(view_box, LTSpiceViewBox):
+            view_box.rect_selected.connect(self._on_rect_selected)
         
         # 创建图例
         self._legend = plot_item.addLegend()
@@ -563,7 +565,11 @@ class WaveformWidget(QWidget):
             self._clear_displayed_waveforms(preserve_result_context=True)
             self._set_result_context(result)
         
-        waveform_data = self._get_display_waveform_data(result, signal_name)
+        waveform_data = self._data_service.get_initial_data(
+            result,
+            signal_name,
+            target_points=INITIAL_POINTS,
+        )
         
         if waveform_data is None:
             self._logger.warning(f"Failed to load waveform: {signal_name}")
@@ -582,7 +588,7 @@ class WaveformWidget(QWidget):
         sig_type = WaveformDataService.get_signal_type(resolved_signal_name, self._signal_types)
         use_right = (sig_type == "current")
         
-        pen = pg.mkPen(color=color, width=1)
+        pen = pg.mkPen(color=color, width=1.2, style=Qt.PenStyle.SolidLine)
         plot_data_item = pg.PlotDataItem(
             waveform_data.x_data,
             waveform_data.y_data,
@@ -610,10 +616,7 @@ class WaveformWidget(QWidget):
         self._set_signal_tree_checked(resolved_signal_name, True)
         self._refresh_legend()
         self._update_measurement()
-        
-        # 自动调整右侧 ViewBox 范围
-        if use_right and self._right_vb is not None:
-            self._right_vb.autoRange()
+        self.fit_to_view()
         
         self._logger.debug(
             f"Waveform added: {resolved_signal_name} [{axis_label}], "
@@ -632,7 +635,7 @@ class WaveformWidget(QWidget):
             bool: 是否移除成功
         """
         if signal_name not in self._plot_items and self._current_result is not None:
-            resolved_signal_name = self._data_service.resolve_display_signal_name(
+            resolved_signal_name = self._data_service.resolve_signal_name(
                 self._current_result,
                 signal_name,
             )
@@ -656,6 +659,11 @@ class WaveformWidget(QWidget):
         self._update_measurement()
         if not self._plot_items:
             self._color_index = 0
+            self._x_domain = None
+            self._left_y_domain = None
+            self._right_y_domain = None
+        else:
+            self.fit_to_view()
         
         self._logger.debug(f"Waveform removed: {signal_name}")
         return True
@@ -673,6 +681,8 @@ class WaveformWidget(QWidget):
         """
         if self._cursor_a is None:
             self._create_cursor_a()
+        if self._x_domain is not None:
+            x_position = min(max(x_position, self._x_domain[0]), self._x_domain[1])
         
         self._cursor_a.setValue(x_position)
         self._cursor_a_pos = x_position
@@ -688,6 +698,8 @@ class WaveformWidget(QWidget):
         """
         if self._cursor_b is None:
             self._create_cursor_b()
+        if self._x_domain is not None:
+            x_position = min(max(x_position, self._x_domain[0]), self._x_domain[1])
         
         self._cursor_b.setValue(x_position)
         self._cursor_b_pos = x_position
@@ -704,15 +716,15 @@ class WaveformWidget(QWidget):
         measurement = WaveformMeasurement()
         
         if self._cursor_a_pos is not None:
-            measurement.cursor_a_x = self._cursor_a_pos
-            all_y_a = self._get_all_y_at_x(self._cursor_a_pos)
+            measurement.cursor_a_x = self._from_view_x_value(self._cursor_a_pos)
+            all_y_a = self._get_all_y_at_x(measurement.cursor_a_x)
             measurement.signal_values_a = all_y_a
             if all_y_a:
                 measurement.cursor_a_y = next(iter(all_y_a.values()))
         
         if self._cursor_b_pos is not None:
-            measurement.cursor_b_x = self._cursor_b_pos
-            all_y_b = self._get_all_y_at_x(self._cursor_b_pos)
+            measurement.cursor_b_x = self._from_view_x_value(self._cursor_b_pos)
+            all_y_b = self._get_all_y_at_x(measurement.cursor_b_x)
             measurement.signal_values_b = all_y_b
             if all_y_b:
                 measurement.cursor_b_y = next(iter(all_y_b.values()))
@@ -725,19 +737,37 @@ class WaveformWidget(QWidget):
                 
                 if measurement.delta_x != 0:
                     measurement.slope = measurement.delta_y / measurement.delta_x
-                    measurement.frequency = 1.0 / abs(measurement.delta_x)
+                    if (
+                        self._current_result is not None
+                        and self._current_result.x_axis_kind == "time"
+                        and not self._current_result.is_x_axis_log()
+                    ):
+                        measurement.frequency = 1.0 / abs(measurement.delta_x)
         
         return measurement
     
     def get_displayed_signals(self) -> List[str]:
         """获取当前显示的信号列表"""
         return list(self._plot_items.keys())
-    
-    def auto_range(self):
-        """自动调整范围（包括右侧电流轴）"""
-        self._plot_widget.getPlotItem().autoRange()
-        if self._right_vb is not None:
-            self._right_vb.autoRange()
+
+    def fit_to_view(self):
+        if self._current_result is None or not self._plot_items:
+            return
+
+        for signal_name, plot_item in self._plot_items.items():
+            waveform_data = self._data_service.get_initial_data(
+                self._current_result,
+                signal_name,
+                target_points=INITIAL_POINTS,
+            )
+            if waveform_data is None:
+                continue
+            plot_item.waveform_data = waveform_data
+            plot_item.plot_data_item.setData(waveform_data.x_data, waveform_data.y_data)
+
+        self._rebuild_domains()
+        self._apply_full_viewport()
+        self._update_measurement()
 
     def _get_result_signature(self, result: Optional[SimulationResult]) -> Optional[Tuple[str, str, str]]:
         if result is None:
@@ -752,9 +782,14 @@ class WaveformWidget(QWidget):
         self._current_result = result
         self._current_result_signature = self._get_result_signature(result)
         self._signal_types = getattr(result.data, 'signal_types', {}) if result.data is not None else {}
+        self._x_domain = None
+        self._left_y_domain = None
+        self._right_y_domain = None
         self._update_signal_tree(result)
-        x_label = self._data_service.get_x_axis_label(result)
-        self._plot_widget.getPlotItem().setLabel('bottom', x_label)
+        x_label = result.get_x_axis_label()
+        plot_item = self._plot_widget.getPlotItem()
+        plot_item.setLabel('bottom', x_label)
+        plot_item.setLogMode(x=result.is_x_axis_log(), y=False)
 
     def _clear_displayed_waveforms(self, preserve_result_context: bool):
         for plot_item in list(self._plot_items.values()):
@@ -765,7 +800,9 @@ class WaveformWidget(QWidget):
 
         self._plot_items.clear()
         self._color_index = 0
-        self._pending_range = None
+        self._x_domain = None
+        self._left_y_domain = None
+        self._right_y_domain = None
         self._refresh_legend()
         self._signal_values_label.setText("")
         self._remove_cursor_a()
@@ -778,35 +815,24 @@ class WaveformWidget(QWidget):
             self._current_result_signature = None
             self._signal_types = {}
             self._signal_tree.clear()
+            self._plot_widget.getPlotItem().setLogMode(x=False, y=False)
 
-    def _get_display_waveform_data(self, result: SimulationResult, signal_name: str) -> Optional[WaveformData]:
-        x_range = self._pending_range
-        if x_range is None:
-            try:
-                view_range = self._plot_widget.getPlotItem().viewRange()
-                if view_range and view_range[0]:
-                    x_range = (view_range[0][0], view_range[0][1])
-            except Exception:
-                x_range = None
+    def _is_log_x_enabled(self) -> bool:
+        return self._current_result is not None and self._current_result.is_x_axis_log()
 
-        if self._plot_items and x_range is not None:
-            x_min, x_max = x_range
-            if np.isfinite(x_min) and np.isfinite(x_max) and x_max > x_min:
-                waveform_data = self._data_service.get_viewport_data(
-                    result,
-                    signal_name,
-                    x_min,
-                    x_max,
-                    target_points=VIEWPORT_POINTS
-                )
-                if waveform_data is not None:
-                    return waveform_data
+    def _to_view_x_data(self, values: np.ndarray) -> np.ndarray:
+        array = np.asarray(values, dtype=float)
+        if not self._is_log_x_enabled():
+            return array
+        transformed = np.full(array.shape, np.nan, dtype=float)
+        mask = np.isfinite(array) & (array > 0)
+        transformed[mask] = np.log10(array[mask])
+        return transformed
 
-        return self._data_service.get_initial_data(
-            result,
-            signal_name,
-            target_points=INITIAL_POINTS
-        )
+    def _from_view_x_value(self, value: float) -> float:
+        if not self._is_log_x_enabled():
+            return float(value)
+        return float(10 ** value)
 
     def _refresh_legend(self):
         if self._legend is None:
@@ -822,6 +848,211 @@ class WaveformWidget(QWidget):
 
         for signal_name, plot_item in self._plot_items.items():
             self._legend.addItem(plot_item.plot_data_item, signal_name)
+
+    def _rebuild_domains(self):
+        if self._current_result is None or self._current_result.data is None or not self._plot_items:
+            self._x_domain = None
+            self._left_y_domain = None
+            self._right_y_domain = None
+            return
+
+        requested_domain = None
+        if self._current_result.requested_x_range is not None:
+            requested_domain = finite_range(
+                self._to_view_x_data(np.asarray(self._current_result.requested_x_range, dtype=float))
+            )
+
+        actual_x_data = self._current_result.get_x_axis_data()
+        actual_domain = None
+        if actual_x_data is not None:
+            actual_domain = finite_range(self._to_view_x_data(actual_x_data))
+
+        self._x_domain = requested_domain or actual_domain
+
+        left_y_ranges = []
+        right_y_ranges = []
+        for signal_name, plot_item in self._plot_items.items():
+            signal_data = self._current_result.data.get_signal(signal_name)
+            if signal_data is None:
+                continue
+            y_range = finite_range(signal_data)
+            if y_range is None:
+                continue
+            if plot_item.axis == "right":
+                right_y_ranges.append(y_range)
+            else:
+                left_y_ranges.append(y_range)
+
+        self._left_y_domain = merge_ranges(left_y_ranges)
+        self._right_y_domain = merge_ranges(right_y_ranges)
+
+    def _apply_domain_limits(self):
+        plot_item = self._plot_widget.getPlotItem()
+        view_box = plot_item.vb
+        if self._x_domain is not None:
+            x_min, x_max = self._x_domain
+            view_box.setLimits(xMin=x_min, xMax=x_max)
+
+        base_y_domain = self._left_y_domain or self._right_y_domain
+        if base_y_domain is not None:
+            view_box.setLimits(yMin=base_y_domain[0], yMax=base_y_domain[1])
+
+        if self._right_vb is not None and self._right_y_domain is not None:
+            self._right_vb.setLimits(yMin=self._right_y_domain[0], yMax=self._right_y_domain[1])
+
+    def _apply_viewport(
+        self,
+        x_range: Optional[Tuple[float, float]],
+        left_y_range: Optional[Tuple[float, float]],
+        right_y_range: Optional[Tuple[float, float]],
+    ):
+        if x_range is None:
+            return
+
+        base_y_range = left_y_range or right_y_range
+        if base_y_range is None:
+            return
+
+        self._syncing_view = True
+        try:
+            plot_item = self._plot_widget.getPlotItem()
+            plot_item.setXRange(x_range[0], x_range[1], padding=0.0)
+            plot_item.setYRange(base_y_range[0], base_y_range[1], padding=0.0)
+            if self._right_vb is not None:
+                applied_right_y = right_y_range or base_y_range
+                self._right_vb.setYRange(applied_right_y[0], applied_right_y[1], padding=0.0)
+            apply_dynamic_tick_spacing(plot_item.getAxis('bottom'), x_range, log_enabled=self._is_log_x_enabled())
+            apply_dynamic_tick_spacing(plot_item.getAxis('left'), base_y_range, log_enabled=False)
+            if self._right_vb is not None:
+                apply_dynamic_tick_spacing(plot_item.getAxis('right'), right_y_range or base_y_range, log_enabled=False)
+        finally:
+            self._syncing_view = False
+
+    def _apply_full_viewport(self):
+        if self._x_domain is None:
+            return
+
+        self._apply_domain_limits()
+        self._apply_viewport(self._x_domain, self._left_y_domain, self._right_y_domain)
+        self._emit_viewport_changed()
+
+    def _get_current_view_x_range(self) -> Optional[Tuple[float, float]]:
+        try:
+            view_range = self._plot_widget.getPlotItem().viewRange()
+        except Exception:
+            return None
+        if not view_range or not view_range[0]:
+            return None
+        return normalize_range((view_range[0][0], view_range[0][1]))
+
+    def _get_current_left_view_range(self) -> Optional[Tuple[float, float]]:
+        try:
+            view_range = self._plot_widget.getPlotItem().viewRange()
+        except Exception:
+            return None
+        if not view_range or not view_range[1]:
+            return None
+        return normalize_range((view_range[1][0], view_range[1][1]))
+
+    def _get_current_right_view_range(self) -> Optional[Tuple[float, float]]:
+        if self._right_vb is None:
+            return None
+        try:
+            view_range = self._right_vb.viewRange()
+        except Exception:
+            return None
+        if not view_range or not view_range[1]:
+            return None
+        return normalize_range((view_range[1][0], view_range[1][1]))
+
+    def _map_parallel_y_range(
+        self,
+        source_range: Tuple[float, float],
+        target_range: Tuple[float, float],
+        requested_source_range: Tuple[float, float],
+    ) -> Tuple[float, float]:
+        source_span = source_range[1] - source_range[0]
+        target_span = target_range[1] - target_range[0]
+        if source_span <= 0 or target_span <= 0:
+            return target_range
+
+        start_ratio = (requested_source_range[0] - source_range[0]) / source_span
+        end_ratio = (requested_source_range[1] - source_range[0]) / source_span
+        mapped_range = (
+            target_range[0] + start_ratio * target_span,
+            target_range[0] + end_ratio * target_span,
+        )
+        normalized_mapped = normalize_range(mapped_range)
+        return normalized_mapped if normalized_mapped is not None else target_range
+
+    def _reload_viewport_data(self, view_x_range: Tuple[float, float]):
+        if self._current_result is None:
+            return
+
+        actual_x_min = self._from_view_x_value(view_x_range[0])
+        actual_x_max = self._from_view_x_value(view_x_range[1])
+        for signal_name, plot_item in self._plot_items.items():
+            waveform_data = self._data_service.get_viewport_data(
+                self._current_result,
+                signal_name,
+                actual_x_min,
+                actual_x_max,
+                target_points=VIEWPORT_POINTS,
+            )
+            if waveform_data is None:
+                continue
+            plot_item.waveform_data = waveform_data
+            plot_item.plot_data_item.setData(waveform_data.x_data, waveform_data.y_data)
+
+    def _emit_viewport_changed(self):
+        current_x = self._get_current_view_x_range()
+        current_left_y = self._get_current_left_view_range()
+        if current_x is None or current_left_y is None:
+            return
+        self.viewport_changed.emit(
+            self._from_view_x_value(current_x[0]),
+            self._from_view_x_value(current_x[1]),
+            current_left_y[0],
+            current_left_y[1],
+        )
+
+    def _on_rect_selected(
+        self,
+        requested_x_range: Tuple[float, float],
+        requested_y_range: Tuple[float, float],
+    ):
+        if self._current_result is None or not self._plot_items or self._x_domain is None:
+            return
+
+        clamped_x_range = clamp_range(
+            requested_x_range,
+            self._x_domain,
+            positive_only=self._is_log_x_enabled(),
+        )
+        base_y_domain = self._left_y_domain or self._right_y_domain
+        if clamped_x_range is None or base_y_domain is None:
+            return
+
+        clamped_left_y_range = clamp_range(requested_y_range, base_y_domain)
+        if clamped_left_y_range is None:
+            return
+
+        current_left_view = self._get_current_left_view_range() or base_y_domain
+        current_right_view = self._get_current_right_view_range() or self._right_y_domain
+        applied_right_y_range = self._right_y_domain
+        if current_right_view is not None and self._right_y_domain is not None:
+            mapped_right = self._map_parallel_y_range(
+                current_left_view,
+                current_right_view,
+                clamped_left_y_range,
+            )
+            applied_right_y_range = clamp_range(mapped_right, self._right_y_domain)
+
+        self._reload_viewport_data(clamped_x_range)
+        self._apply_domain_limits()
+        self._apply_viewport(clamped_x_range, clamped_left_y_range, applied_right_y_range)
+        self._update_measurement()
+        self._emit_viewport_changed()
 
     
     # ============================================================
@@ -976,12 +1207,12 @@ class WaveformWidget(QWidget):
         if self._updating_tree:
             return
         if item.childCount() > 0:
-            return  # 忽略分类根节点
-        
+            return
+
         signal_name = item.text(0)
         if self._current_result is None:
             return
-        
+
         checked = item.checkState(0) == Qt.CheckState.Checked
         if checked:
             if signal_name not in self._plot_items:
@@ -990,16 +1221,16 @@ class WaveformWidget(QWidget):
         else:
             if signal_name in self._plot_items:
                 self.remove_waveform(signal_name)
-    
+
     def _on_clear_all_signals(self):
         """清除所有已显示的信号（保留信号树）"""
         self._clear_displayed_waveforms(preserve_result_context=True)
-    
+
     def _on_grid_changed(self, state: int):
         """网格显示变化"""
         show = state == Qt.CheckState.Checked.value
         self._plot_widget.getPlotItem().showGrid(x=show, y=show, alpha=0.3)
-    
+
     def _on_legend_changed(self, state: int):
         """图例显示变化"""
         if state == Qt.CheckState.Checked.value:
@@ -1009,107 +1240,62 @@ class WaveformWidget(QWidget):
         else:
             if self._legend is not None:
                 self._legend.clear()
-    
+
     def _on_toggle_cursor_a(self, checked: bool):
         """切换光标 A"""
         if checked:
-            # 在视口中心创建光标
             view_range = self._plot_widget.getPlotItem().viewRange()
             x_center = (view_range[0][0] + view_range[0][1]) / 2
             self.set_cursor_a(x_center)
         else:
             self._remove_cursor_a()
-    
+
     def _on_toggle_cursor_b(self, checked: bool):
         """切换光标 B"""
         if checked:
-            # 在视口中心偏右创建光标
             view_range = self._plot_widget.getPlotItem().viewRange()
             x_center = (view_range[0][0] + view_range[0][1]) / 2
             x_offset = (view_range[0][1] - view_range[0][0]) * 0.1
             self.set_cursor_b(x_center + x_offset)
         else:
             self._remove_cursor_b()
-    
-    def _on_auto_range(self):
-        """自动范围按钮"""
-        self.auto_range()
-    
-    def _on_range_changed(self, view_box, ranges):
-        """视口范围变化（带防抖）"""
-        x_range = ranges[0]
-        self._pending_range = (x_range[0], x_range[1])
-        
-        # 重启防抖定时器
-        self._debounce_timer.start(DEBOUNCE_DELAY_MS)
-    
-    def _on_debounced_range_change(self):
-        """防抖后的范围变化处理"""
-        if self._pending_range is None or self._current_result is None:
-            return
-        
-        x_min, x_max = self._pending_range
-        self._pending_range = None
-        
-        # 更新所有信号的数据
-        for signal_name, plot_item in self._plot_items.items():
-            waveform_data = self._data_service.get_viewport_data(
-                self._current_result,
-                signal_name,
-                x_min,
-                x_max,
-                target_points=VIEWPORT_POINTS
-            )
-            
-            if waveform_data is not None:
-                plot_item.plot_data_item.setData(
-                    waveform_data.x_data,
-                    waveform_data.y_data
-                )
-                plot_item.waveform_data = waveform_data
 
-        self._update_measurement()
-        
-        # 发出视口变化信号
-        view_range = self._plot_widget.getPlotItem().viewRange()
-        self.viewport_changed.emit(
-            view_range[0][0], view_range[0][1],
-            view_range[1][0], view_range[1][1]
-        )
-    
+    def _on_fit_view(self):
+        """Fit 按钮"""
+        self.fit_to_view()
+
     def _update_signal_tree(self, result: SimulationResult):
         """更新信号树（分类显示：电压 / 电流 / 其他）"""
         self._updating_tree = True
         self._signal_tree.clear()
-        
+
         classified = self._data_service.get_classified_signals(result)
-        
         category_labels = {
-            "voltage": "\u26a1 Voltage",
-            "current": "\U0001f50c Current",
-            "other": "\u2699 Other",
+            "voltage": "⚡ Voltage",
+            "current": "🔌 Current",
+            "other": "⚙ Other",
         }
-        
+
         for cat_key in ("voltage", "current", "other"):
             signals = classified.get(cat_key, [])
             if not signals:
                 continue
-            
+
             root = QTreeWidgetItem(self._signal_tree, [category_labels[cat_key]])
             root.setFlags(root.flags() & ~Qt.ItemFlag.ItemIsUserCheckable)
             root.setExpanded(True)
-            
+
             for sig_name in signals:
                 child = QTreeWidgetItem(root, [sig_name])
                 child.setFlags(child.flags() | Qt.ItemFlag.ItemIsUserCheckable)
                 is_displayed = sig_name in self._plot_items
                 child.setCheckState(
                     0,
-                    Qt.CheckState.Checked if is_displayed else Qt.CheckState.Unchecked
+                    Qt.CheckState.Checked if is_displayed else Qt.CheckState.Unchecked,
                 )
-        
+
         self._updating_tree = False
-    
+
     def _set_signal_tree_checked(self, signal_name: str, checked: bool):
         """同步信号树中某个信号的复选框状态"""
         self._updating_tree = True
@@ -1121,16 +1307,16 @@ class WaveformWidget(QWidget):
                 if child.text(0) == signal_name:
                     child.setCheckState(
                         0,
-                        Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
+                        Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked,
                     )
                     self._updating_tree = False
                     return
         self._updating_tree = False
-    
+
     # ============================================================
     # 国际化支持
     # ============================================================
-    
+
     def retranslate_ui(self):
         """重新翻译 UI 文本"""
         self._signal_title_label.setText(self._tr("Signals"))
@@ -1139,8 +1325,9 @@ class WaveformWidget(QWidget):
         self._legend_checkbox.setText(self._tr("Legend"))
         self._cursor_a_btn.setToolTip(self._tr("Toggle Cursor A"))
         self._cursor_b_btn.setToolTip(self._tr("Toggle Cursor B"))
-        self._auto_range_btn.setToolTip(self._tr("Auto Range"))
-    
+        self._fit_btn.setText(self._tr("Fit"))
+        self._fit_btn.setToolTip(self._tr("Fit"))
+
     def _tr(self, text: str) -> str:
         """翻译文本"""
         try:

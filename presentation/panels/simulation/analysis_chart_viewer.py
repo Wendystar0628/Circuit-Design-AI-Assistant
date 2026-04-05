@@ -3,7 +3,7 @@ import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pyqtgraph as pg
@@ -15,16 +15,27 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMessageBox,
+    QPushButton,
     QSizePolicy,
+    QSplitter,
     QStackedWidget,
     QTabBar,
     QToolBar,
+    QTreeWidget,
+    QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
 from domain.simulation.models.simulation_result import SimulationResult
 from domain.simulation.service.chart_selector import ChartType
+from presentation.panels.simulation.ltspice_plot_interaction import (
+    LTSpiceViewBox,
+    apply_dynamic_tick_spacing,
+    clamp_range,
+    finite_range,
+    merge_ranges,
+)
 from resources.theme import (
     BORDER_RADIUS_NORMAL,
     COLOR_ACCENT,
@@ -57,7 +68,6 @@ SUPPORTED_CHART_TYPES = (
     ChartType.BODE_MAGNITUDE,
     ChartType.BODE_PHASE,
     ChartType.DC_SWEEP,
-    ChartType.FFT_SPECTRUM,
     ChartType.NOISE_SPECTRUM,
 )
 
@@ -79,6 +89,7 @@ class ChartSpec:
     series: List[ChartSeries]
     log_x: bool = False
     log_y: bool = False
+    x_domain: Optional[Tuple[float, float]] = None
 
 
 class MeasurementBar(QFrame):
@@ -169,30 +180,91 @@ class ChartPage(QWidget):
         self._cursor_b_pos: Optional[float] = None
         self._series_colors: Dict[str, str] = {}
 
+        self._plot_items: Dict[str, pg.PlotDataItem] = {}
+        self._series_items: Dict[str, QTreeWidgetItem] = {}
+        self._updating_tree = False
+        self._syncing_view = False
+        self._x_domain: Optional[Tuple[float, float]] = None
+        self._y_domain: Optional[Tuple[float, float]] = None
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        self._plot_widget = pg.PlotWidget()
+        self._main_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._main_splitter.setHandleWidth(1)
+        self._main_splitter.setChildrenCollapsible(True)
+
+        self._signal_panel = QFrame()
+        self._signal_panel.setObjectName("signalPanel")
+        signal_layout = QVBoxLayout(self._signal_panel)
+        signal_layout.setContentsMargins(0, 0, 0, 0)
+        signal_layout.setSpacing(0)
+
+        signal_header = QFrame()
+        signal_header.setObjectName("signalHeader")
+        signal_header_layout = QHBoxLayout(signal_header)
+        signal_header_layout.setContentsMargins(SPACING_SMALL, SPACING_SMALL, SPACING_SMALL, SPACING_SMALL)
+        self._signal_title_label = QLabel("Signals")
+        self._signal_title_label.setObjectName("signalTitle")
+        signal_header_layout.addWidget(self._signal_title_label)
+        signal_header_layout.addStretch()
+
+        self._clear_all_btn = QPushButton("Clear")
+        self._clear_all_btn.setObjectName("clearAllBtn")
+        self._clear_all_btn.setFixedHeight(22)
+        self._clear_all_btn.clicked.connect(self._on_clear_all_series)
+        signal_header_layout.addWidget(self._clear_all_btn)
+        signal_layout.addWidget(signal_header)
+
+        self._signal_tree = QTreeWidget()
+        self._signal_tree.setObjectName("signalTree")
+        self._signal_tree.setHeaderHidden(True)
+        self._signal_tree.setRootIsDecorated(False)
+        self._signal_tree.itemChanged.connect(self._on_signal_item_changed)
+        signal_layout.addWidget(self._signal_tree)
+
+        self._main_splitter.addWidget(self._signal_panel)
+
+        right_panel = QFrame()
+        right_layout = QVBoxLayout(right_panel)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(0)
+
+        self._plot_widget = pg.PlotWidget(viewBox=LTSpiceViewBox())
         self._plot_widget.setBackground(COLOR_BG_PRIMARY)
         plot_item = self._plot_widget.getPlotItem()
         plot_item.showGrid(x=True, y=True, alpha=0.25)
+        plot_item.disableAutoRange()
+        view_box = plot_item.vb
+        if isinstance(view_box, LTSpiceViewBox):
+            view_box.rect_selected.connect(self._on_rect_selected)
         self._legend = plot_item.addLegend()
-        layout.addWidget(self._plot_widget, 1)
+        right_layout.addWidget(self._plot_widget, 1)
 
         self._measurement_bar = MeasurementBar()
-        layout.addWidget(self._measurement_bar)
+        right_layout.addWidget(self._measurement_bar)
+
+        self._main_splitter.addWidget(right_panel)
+        self._main_splitter.setSizes([180, 620])
+        layout.addWidget(self._main_splitter, 1)
 
     def clear(self):
         self._plot_widget.clear()
         plot_item = self._plot_widget.getPlotItem()
         plot_item.showGrid(x=True, y=True, alpha=0.25)
+        plot_item.disableAutoRange()
         self._legend = plot_item.addLegend()
         self._remove_cursors()
         self._measurement_bar.clear_values()
         self._measurement_bar.hide()
         self._spec = None
         self._series_colors = {}
+        self._plot_items = {}
+        self._series_items = {}
+        self._x_domain = None
+        self._y_domain = None
+        self._signal_tree.clear()
 
     def set_chart(self, spec: ChartSpec):
         self.clear()
@@ -203,33 +275,30 @@ class ChartPage(QWidget):
         plot_item.setLabel("left", spec.y_label)
         plot_item.setLogMode(x=spec.log_x, y=spec.log_y)
 
+        valid_series: List[ChartSeries] = []
+        self._updating_tree = True
+        self._signal_tree.clear()
+        self._series_items = {}
         for series in spec.series:
             x_data = np.asarray(series.x_data, dtype=float)
             y_data = np.asarray(series.y_data, dtype=float)
             if len(x_data) == 0 or len(y_data) == 0 or len(x_data) != len(y_data):
                 continue
-            pen = pg.mkPen(series.color, width=1.6)
-            item = pg.PlotDataItem(x_data, y_data, pen=pen, name=series.name)
-            plot_item.addItem(item)
-            self._series_colors[series.name] = series.color
+            valid_series.append(series)
+            item = QTreeWidgetItem(self._signal_tree, [series.name])
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(0, Qt.CheckState.Checked)
+            self._series_items[series.name] = item
+        self._updating_tree = False
 
-        plot_item.enableAutoRange()
-        self._plot_widget.autoRange()
+        self._spec.series = valid_series
+        self._rebuild_plot()
 
     def has_chart(self) -> bool:
-        return self._spec is not None and bool(self._spec.series)
-
-    def zoom_in(self):
-        self._plot_widget.getPlotItem().getViewBox().scaleBy((0.85, 0.85))
-
-    def zoom_out(self):
-        self._plot_widget.getPlotItem().getViewBox().scaleBy((1.18, 1.18))
-
-    def reset_view(self):
-        self._plot_widget.autoRange()
+        return bool(self._plot_items)
 
     def fit_to_view(self):
-        self._plot_widget.autoRange()
+        self._rebuild_plot()
 
     def set_measurement_enabled(self, enabled: bool):
         if enabled:
@@ -258,10 +327,11 @@ class ChartPage(QWidget):
         return True
 
     def export_chart_data(self, path: str, format_name: str) -> bool:
-        if self._spec is None or not self._spec.series:
+        visible_series = self._visible_series()
+        if self._spec is None or not visible_series:
             return False
 
-        rows = self._build_data_rows()
+        rows = self._build_data_rows(visible_series)
         if format_name == "json":
             payload = {
                 "chart_type": self._spec.chart_type.value,
@@ -275,27 +345,27 @@ class ChartPage(QWidget):
 
         with open(path, "w", newline="", encoding="utf-8") as handle:
             writer = csv.writer(handle)
-            headers = [self._spec.x_label] + [series.name for series in self._spec.series]
+            headers = [self._spec.x_label] + [series.name for series in visible_series]
             writer.writerow(headers)
             for row in rows:
                 writer.writerow([row.get(header, "") for header in headers])
         return True
 
-    def _build_data_rows(self) -> List[Dict[str, float]]:
-        if self._spec is None or not self._spec.series:
+    def _build_data_rows(self, series_list: List[ChartSeries]) -> List[Dict[str, float]]:
+        if self._spec is None or not series_list:
             return []
-        primary_x = self._spec.series[0].x_data
+        primary_x = series_list[0].x_data
         rows: List[Dict[str, float]] = []
         for index, x_value in enumerate(primary_x):
             row: Dict[str, float] = {self._spec.x_label: float(x_value)}
-            for series in self._spec.series:
+            for series in series_list:
                 if index < len(series.y_data):
                     row[series.name] = float(series.y_data[index])
             rows.append(row)
         return rows
 
     def _ensure_cursors(self):
-        if self._spec is None or not self._spec.series:
+        if self._spec is None or not self._plot_items:
             return
         if self._cursor_a is None:
             pen = pg.mkPen("#ff6b6b", width=1, style=Qt.PenStyle.DashLine)
@@ -365,7 +435,7 @@ class ChartPage(QWidget):
         if self._spec is None:
             return {}
         sampled: Dict[str, float] = {}
-        for series in self._spec.series:
+        for series in self._visible_series():
             x_data = np.asarray(series.x_data, dtype=float)
             if self._spec.log_x:
                 x_data = np.log10(np.maximum(x_data, 1e-30))
@@ -386,6 +456,169 @@ class ChartPage(QWidget):
         if self._spec is None:
             return False
         return "time" in self._spec.x_label.lower() and not self._spec.log_x
+
+    def retranslate_ui(self):
+        self._signal_title_label.setText(self._tr("Signals"))
+        self._clear_all_btn.setText(self._tr("Clear"))
+
+    def _tr(self, text: str) -> str:
+        try:
+            from shared.i18n_manager import I18nManager
+            i18n = I18nManager()
+            return i18n.get_text(f"chart_viewer.{text}", default=text)
+        except ImportError:
+            return text
+
+    def _visible_series(self) -> List[ChartSeries]:
+        if self._spec is None:
+            return []
+        visible_names = {
+            name
+            for name, item in self._series_items.items()
+            if item.checkState(0) == Qt.CheckState.Checked
+        }
+        return [series for series in self._spec.series if series.name in visible_names]
+
+    def _rebuild_plot(self):
+        plot_item = self._plot_widget.getPlotItem()
+        for item in list(self._plot_items.values()):
+            plot_item.removeItem(item)
+        self._plot_items.clear()
+
+        try:
+            self._legend.clear()
+        except Exception:
+            self._legend = plot_item.addLegend()
+
+        self._series_colors = {}
+        visible_series = self._visible_series()
+        for series in visible_series:
+            pen = pg.mkPen(series.color, width=1.6, style=Qt.PenStyle.SolidLine)
+            item = pg.PlotDataItem(
+                np.asarray(series.x_data, dtype=float),
+                np.asarray(series.y_data, dtype=float),
+                pen=pen,
+                name=series.name,
+            )
+            plot_item.addItem(item)
+            self._plot_items[series.name] = item
+            self._series_colors[series.name] = series.color
+            self._legend.addItem(item, series.name)
+
+        if not visible_series:
+            self._measurement_bar.clear_values()
+            self._remove_cursors()
+            self._measurement_bar.hide()
+            self._x_domain = None
+            self._y_domain = None
+            return
+
+        self._rebuild_domains()
+        self._apply_full_viewport()
+
+        if self.is_measurement_enabled():
+            self._update_measurement()
+
+    def _rebuild_domains(self):
+        if self._spec is None:
+            self._x_domain = None
+            self._y_domain = None
+            return
+
+        x_ranges = []
+        y_ranges = []
+        for series in self._visible_series():
+            x_range = finite_range(
+                self._to_view_axis_data(series.x_data, log_enabled=self._spec.log_x),
+                positive_only=self._spec.log_x,
+            )
+            y_range = finite_range(
+                self._to_view_axis_data(series.y_data, log_enabled=self._spec.log_y),
+                positive_only=self._spec.log_y,
+            )
+            if x_range is not None:
+                x_ranges.append(x_range)
+            if y_range is not None:
+                y_ranges.append(y_range)
+
+        self._x_domain = self._spec.x_domain or merge_ranges(x_ranges)
+        self._y_domain = merge_ranges(y_ranges)
+
+    def _apply_domain_limits(self):
+        plot_item = self._plot_widget.getPlotItem()
+        view_box = plot_item.vb
+        if self._x_domain is not None:
+            view_box.setLimits(xMin=self._x_domain[0], xMax=self._x_domain[1])
+        if self._y_domain is not None:
+            view_box.setLimits(yMin=self._y_domain[0], yMax=self._y_domain[1])
+
+    def _apply_viewport(
+        self,
+        x_range: Optional[Tuple[float, float]],
+        y_range: Optional[Tuple[float, float]],
+    ):
+        if x_range is None or y_range is None:
+            return
+        self._syncing_view = True
+        try:
+            plot_item = self._plot_widget.getPlotItem()
+            plot_item.setXRange(x_range[0], x_range[1], padding=0.0)
+            plot_item.setYRange(y_range[0], y_range[1], padding=0.0)
+            apply_dynamic_tick_spacing(plot_item.getAxis('bottom'), x_range, log_enabled=self._spec.log_x if self._spec is not None else False)
+            apply_dynamic_tick_spacing(plot_item.getAxis('left'), y_range, log_enabled=self._spec.log_y if self._spec is not None else False)
+        finally:
+            self._syncing_view = False
+
+    def _apply_full_viewport(self):
+        if self._x_domain is None or self._y_domain is None:
+            return
+        self._apply_domain_limits()
+        self._apply_viewport(self._x_domain, self._y_domain)
+
+    def _on_signal_item_changed(self, item: QTreeWidgetItem, column: int):
+        if self._updating_tree or self._spec is None:
+            return
+        self._rebuild_plot()
+
+    def _on_clear_all_series(self):
+        self._updating_tree = True
+        for item in self._series_items.values():
+            item.setCheckState(0, Qt.CheckState.Unchecked)
+        self._updating_tree = False
+        self._rebuild_plot()
+
+    def _on_rect_selected(
+        self,
+        requested_x_range: Tuple[float, float],
+        requested_y_range: Tuple[float, float],
+    ):
+        if self._spec is None or not self._plot_items:
+            return
+        clamped_x_range = clamp_range(
+            requested_x_range,
+            self._x_domain,
+            positive_only=self._spec.log_x,
+        )
+        clamped_y_range = clamp_range(
+            requested_y_range,
+            self._y_domain,
+            positive_only=self._spec.log_y,
+        )
+        if clamped_x_range is None or clamped_y_range is None:
+            return
+        self._apply_domain_limits()
+        self._apply_viewport(clamped_x_range, clamped_y_range)
+        if self.is_measurement_enabled():
+            self._update_measurement()
+
+    def _to_view_axis_data(self, values: np.ndarray, *, log_enabled: bool) -> np.ndarray:
+        array = np.asarray(values, dtype=float)
+        if not log_enabled:
+            return array
+        transformed = np.full(array.shape, np.nan, dtype=float)
+        mask = np.isfinite(array) & (array > 0)
+        transformed[mask] = np.log10(array[mask])
+        return transformed
 
 
 class ChartViewer(QWidget):
@@ -439,18 +672,6 @@ class ChartViewer(QWidget):
         layout.addLayout(status_row)
 
     def _setup_toolbar(self):
-        self._action_zoom_in = QAction("Zoom In", self)
-        self._action_zoom_in.triggered.connect(self._on_zoom_in)
-        self._toolbar.addAction(self._action_zoom_in)
-
-        self._action_zoom_out = QAction("Zoom Out", self)
-        self._action_zoom_out.triggered.connect(self._on_zoom_out)
-        self._toolbar.addAction(self._action_zoom_out)
-
-        self._action_reset = QAction("Reset", self)
-        self._action_reset.triggered.connect(self._on_reset_view)
-        self._toolbar.addAction(self._action_reset)
-
         self._action_fit = QAction("Fit", self)
         self._action_fit.triggered.connect(self._on_fit_to_view)
         self._toolbar.addAction(self._action_fit)
@@ -480,6 +701,43 @@ class ChartViewer(QWidget):
         self.setStyleSheet(f"""
             ChartViewer {{
                 background-color: {COLOR_BG_SECONDARY};
+            }}
+            #signalPanel {{
+                background-color: {COLOR_BG_SECONDARY};
+                border-right: 1px solid {COLOR_BORDER};
+            }}
+            #signalHeader {{
+                background-color: {COLOR_BG_TERTIARY};
+                border-bottom: 1px solid {COLOR_BORDER};
+            }}
+            #signalTitle {{
+                color: {COLOR_TEXT_PRIMARY};
+                font-size: {FONT_SIZE_SMALL}px;
+                font-weight: bold;
+            }}
+            #clearAllBtn {{
+                background-color: transparent;
+                color: {COLOR_TEXT_SECONDARY};
+                border: 1px solid {COLOR_BORDER};
+                border-radius: 3px;
+                padding: 1px 6px;
+                font-size: {FONT_SIZE_SMALL}px;
+            }}
+            #clearAllBtn:hover {{
+                background-color: {COLOR_BG_PRIMARY};
+                color: {COLOR_TEXT_PRIMARY};
+            }}
+            #signalTree {{
+                background-color: {COLOR_BG_SECONDARY};
+                color: {COLOR_TEXT_PRIMARY};
+                border: none;
+                font-size: {FONT_SIZE_SMALL}px;
+            }}
+            #signalTree::item {{
+                padding: 2px 0px;
+            }}
+            #signalTree::item:hover {{
+                background-color: {COLOR_BG_TERTIARY};
             }}
             #chartTabBar {{
                 background-color: {COLOR_BG_TERTIARY};
@@ -561,16 +819,15 @@ class ChartViewer(QWidget):
         self._show_empty_state()
 
     def retranslate_ui(self):
-        self._action_zoom_in.setText(self._tr("Zoom In"))
-        self._action_zoom_out.setText(self._tr("Zoom Out"))
-        self._action_reset.setText(self._tr("Reset"))
         self._action_fit.setText(self._tr("Fit"))
         self._action_measure.setText(self._tr("Measure"))
         self._action_save.setText(self._tr("Save"))
         self._action_copy.setText(self._tr("Copy"))
         self._action_export_data.setText(self._tr("Export Data"))
-        self._hint_label.setText(self._tr("Interactive analysis charts"))
+        self._hint_label.setText(self._tr("Left-drag to zoom selected traces. Use Fit to restore the full selected range."))
         self._empty_label.setText(self._tr("No interactive chart available for the current result."))
+        for page in self._pages:
+            page.retranslate_ui()
 
     def _rebuild_pages(self):
         while self._tab_bar.count() > 0:
@@ -584,6 +841,7 @@ class ChartViewer(QWidget):
         for spec in self._chart_specs:
             page = ChartPage()
             page.set_chart(spec)
+            page.retranslate_ui()
             self._pages.append(page)
             self._stack.addWidget(page)
             self._tab_bar.addTab(ChartType.get_display_name(spec.chart_type))
@@ -643,46 +901,77 @@ class ChartViewer(QWidget):
         if data is None:
             return None
 
+        resolved_x_data = result.get_x_axis_data()
+        resolved_x_label = result.get_x_axis_label()
+        resolved_log_x = result.is_x_axis_log()
+        resolved_x_domain = self._resolve_chart_x_domain(result, resolved_x_data, resolved_log_x)
+
         if chart_type == ChartType.WAVEFORM_TIME and analysis == "tran":
-            x_data = data.time
+            x_data = resolved_x_data
             if x_data is None:
                 return None
             series = self._build_real_signal_series(result, x_data, include_derived=False)
-            return ChartSpec(chart_type, "Transient Waveforms", "Time (s)", "Value", series)
+            return ChartSpec(chart_type, "Transient Waveforms", resolved_x_label, "Value", series, log_x=resolved_log_x, x_domain=resolved_x_domain)
 
         if chart_type == ChartType.BODE_MAGNITUDE and analysis == "ac":
-            x_data = data.frequency
+            x_data = resolved_x_data
             if x_data is None:
                 return None
             series = self._build_bode_series(result, x_data, component="magnitude")
-            return ChartSpec(chart_type, "Bode Magnitude", "Frequency (Hz)", "Magnitude (dB)", series, log_x=True)
+            return ChartSpec(chart_type, "Bode Magnitude", resolved_x_label, "Magnitude (dB)", series, log_x=resolved_log_x, x_domain=resolved_x_domain)
 
         if chart_type == ChartType.BODE_PHASE and analysis == "ac":
-            x_data = data.frequency
+            x_data = resolved_x_data
             if x_data is None:
                 return None
             series = self._build_bode_series(result, x_data, component="phase")
-            return ChartSpec(chart_type, "Bode Phase", "Frequency (Hz)", "Phase (°)", series, log_x=True)
+            return ChartSpec(chart_type, "Bode Phase", resolved_x_label, "Phase (°)", series, log_x=resolved_log_x, x_domain=resolved_x_domain)
 
         if chart_type == ChartType.DC_SWEEP and analysis == "dc":
-            x_data = data.sweep if data.sweep is not None else data.time
+            x_data = resolved_x_data
             if x_data is None:
                 return None
-            x_label = data.sweep_name or "Sweep"
             series = self._build_real_signal_series(result, x_data, include_derived=False)
-            return ChartSpec(chart_type, "DC Sweep", x_label, "Value", series)
-
-        if chart_type == ChartType.FFT_SPECTRUM and analysis == "tran":
-            return self._build_fft_spec(result)
+            return ChartSpec(chart_type, "DC Sweep", resolved_x_label, "Value", series, log_x=resolved_log_x, x_domain=resolved_x_domain)
 
         if chart_type == ChartType.NOISE_SPECTRUM and analysis == "noise":
-            x_data = data.frequency
+            x_data = resolved_x_data
             if x_data is None:
                 return None
             series = self._build_noise_series(result, x_data)
-            return ChartSpec(chart_type, "Noise Spectrum", "Frequency (Hz)", "Noise Spectral Density", series, log_x=True, log_y=True)
+            return ChartSpec(chart_type, "Noise Spectrum", resolved_x_label, "Noise Spectral Density", series, log_x=resolved_log_x, log_y=True, x_domain=resolved_x_domain)
 
         return None
+
+    def _resolve_chart_x_domain(
+        self,
+        result: SimulationResult,
+        x_data: Optional[np.ndarray],
+        log_enabled: bool,
+    ) -> Optional[Tuple[float, float]]:
+        requested_range = result.requested_x_range
+        if requested_range is not None:
+            requested_array = np.asarray(requested_range, dtype=float)
+            if log_enabled:
+                transformed = np.full(requested_array.shape, np.nan, dtype=float)
+                mask = np.isfinite(requested_array) & (requested_array > 0)
+                transformed[mask] = np.log10(requested_array[mask])
+                requested_domain = finite_range(transformed)
+            else:
+                requested_domain = finite_range(requested_array)
+            if requested_domain is not None:
+                return requested_domain
+
+        if x_data is None:
+            return None
+
+        if log_enabled:
+            transformed = np.full(x_data.shape, np.nan, dtype=float)
+            mask = np.isfinite(x_data) & (x_data > 0)
+            transformed[mask] = np.log10(x_data[mask])
+            return finite_range(transformed)
+
+        return finite_range(np.asarray(x_data, dtype=float))
 
     def _build_real_signal_series(
         self,
@@ -756,43 +1045,6 @@ class ChartViewer(QWidget):
             color_index += 1
         return series
 
-    def _build_fft_spec(self, result: SimulationResult) -> Optional[ChartSpec]:
-        data = result.data
-        if data is None or data.time is None or len(data.time) < 2:
-            return None
-
-        dt = float(np.mean(np.diff(data.time)))
-        if dt <= 0:
-            return None
-        freqs = np.fft.rfftfreq(len(data.time), d=dt)
-        if len(freqs) <= 1:
-            return None
-
-        series: List[ChartSeries] = []
-        for index, signal_name in enumerate(self._get_base_signal_names(result, include_derived=False)):
-            signal = data.get_signal(signal_name)
-            if signal is None or np.iscomplexobj(signal) or len(signal) != len(data.time):
-                continue
-            spectrum = np.abs(np.fft.rfft(np.asarray(signal, dtype=float))) / len(signal) * 2
-            if len(spectrum) == 0:
-                continue
-            spectrum[0] /= 2
-            y_data = 20 * np.log10(np.maximum(spectrum[1:], 1e-30))
-            x_data = freqs[1:]
-            if len(x_data) == 0 or len(y_data) != len(x_data):
-                continue
-            series.append(
-                ChartSeries(
-                    name=signal_name,
-                    x_data=np.asarray(x_data, dtype=float),
-                    y_data=np.asarray(y_data, dtype=float),
-                    color=SERIES_COLORS[index % len(SERIES_COLORS)],
-                )
-            )
-        if not series:
-            return None
-        return ChartSpec(ChartType.FFT_SPECTRUM, "FFT Spectrum", "Frequency (Hz)", "Magnitude (dB)", series, log_x=True)
-
     def _build_noise_series(self, result: SimulationResult, x_data: np.ndarray) -> List[ChartSeries]:
         data = result.data
         if data is None:
@@ -852,21 +1104,6 @@ class ChartViewer(QWidget):
         for page in self._pages:
             page.set_measurement_enabled(False)
         self.tab_changed.emit(self._chart_specs[index].chart_type.value)
-
-    def _on_zoom_in(self):
-        page = self._current_page()
-        if page is not None:
-            page.zoom_in()
-
-    def _on_zoom_out(self):
-        page = self._current_page()
-        if page is not None:
-            page.zoom_out()
-
-    def _on_reset_view(self):
-        page = self._current_page()
-        if page is not None:
-            page.reset_view()
 
     def _on_fit_to_view(self):
         page = self._current_page()

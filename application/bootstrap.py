@@ -798,6 +798,7 @@ def refresh_llm_runtime_services() -> bool:
         from shared.service_names import (
             SVC_CONFIG_MANAGER,
             SVC_CREDENTIAL_MANAGER,
+            SVC_EVENT_BUS,
             SVC_LLM_CLIENT,
             SVC_EXTERNAL_SERVICE_MANAGER,
             SVC_LLM_EXECUTOR,
@@ -874,7 +875,13 @@ def refresh_llm_runtime_services() -> bool:
         llm_executor = ServiceLocator.get_optional(SVC_LLM_EXECUTOR)
         if llm_executor is None:
             from domain.llm.llm_executor import LLMExecutor
-            llm_executor = LLMExecutor()
+            from domain.llm.agent.tool_effect_dispatcher import ToolEffectDispatcher
+
+            llm_executor = LLMExecutor(
+                tool_effect_dispatcher=ToolEffectDispatcher(
+                    event_bus=ServiceLocator.get_optional(SVC_EVENT_BUS),
+                )
+            )
             ServiceLocator.register(SVC_LLM_EXECUTOR, llm_executor)
 
         if _logger:

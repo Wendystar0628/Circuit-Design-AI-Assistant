@@ -810,12 +810,12 @@ class CodeEditorPanel(QWidget):
         if self.event_bus:
             from shared.event_types import (
                 EVENT_LANGUAGE_CHANGED, EVENT_STATE_PROJECT_OPENED,
-                EVENT_STATE_PROJECT_CLOSED, EVENT_FILE_EXTERNALLY_MODIFIED,
+                EVENT_STATE_PROJECT_CLOSED, EVENT_AGENT_FILE_MODIFIED,
             )
             self.event_bus.subscribe(EVENT_LANGUAGE_CHANGED, self._on_language_changed)
             self.event_bus.subscribe(EVENT_STATE_PROJECT_OPENED, self._on_project_opened)
             self.event_bus.subscribe(EVENT_STATE_PROJECT_CLOSED, self._on_project_closed)
-            self.event_bus.subscribe(EVENT_FILE_EXTERNALLY_MODIFIED, self._on_file_externally_modified)
+            self.event_bus.subscribe(EVENT_AGENT_FILE_MODIFIED, self._on_agent_file_modified)
 
     def _on_language_changed(self, event_data: Dict[str, Any]):
         self.retranslate_ui()
@@ -828,8 +828,8 @@ class CodeEditorPanel(QWidget):
         self.close_all_tabs()
         self._update_empty_state()
 
-    def _on_file_externally_modified(self, event_data: Dict[str, Any]):
-        """处理文件被外部工具修改的事件，自动刷新编辑器内容"""
+    def _on_agent_file_modified(self, event_data: Dict[str, Any]):
+        """处理 Agent 工具修改文件事件，自动刷新编辑器内容"""
         data = event_data.get("data", event_data)
         file_path = data.get("path", "")
         if file_path:

@@ -148,6 +148,12 @@ class RewriteFileTool(BaseTool):
                     "lines": line_count,
                     "path": abs_path,
                 },
+                effects=[
+                    {
+                        "type": "file_modified",
+                        "path": abs_path,
+                    }
+                ],
             )
         except PermissionError:
             return ToolResult(

@@ -43,6 +43,7 @@ from infrastructure.llm_adapters.base_client import (
     RateLimitError,
     ContextOverflowError,
 )
+from domain.llm.agent.tool_effect_dispatcher import ToolEffectDispatcher
 
 
 # ============================================================
@@ -76,13 +77,14 @@ class LLMExecutor(QObject):
     tool_execution_started = pyqtSignal(str, str, str, dict)  # (task_id, tool_call_id, tool_name, arguments)
     tool_execution_finished = pyqtSignal(str, str, str, bool)  # (task_id, tool_call_id, result_content, is_error)
     
-    def __init__(self, parent: Optional[QObject] = None):
+    def __init__(self, parent: Optional[QObject] = None, tool_effect_dispatcher: Optional[ToolEffectDispatcher] = None):
         """初始化 LLM 执行器"""
         super().__init__(parent)
         
         # 延迟获取的服务
         self._logger = None
         self._stop_controller = None
+        self._tool_effect_dispatcher = tool_effect_dispatcher
     
     # ============================================================
     # 延迟获取服务
@@ -182,7 +184,7 @@ class LLMExecutor(QObject):
                 project_root=project_root,
                 rag_query_service=self._get_rag_query_service(),
             )
-            registry = create_default_tools(context)
+            registry = create_default_tools()
 
             if self.logger:
                 self.logger.info(f"Agent tools registered: {registry.get_names()}")
@@ -312,6 +314,7 @@ class LLMExecutor(QObject):
             tool_call_id = data.get("tool_call_id", "")
             result_content = data.get("result_content", "")
             is_error = data.get("is_error", False)
+            tool_name = data.get("tool_name", "")
             self.tool_execution_finished.emit(
                 task_id,
                 tool_call_id,
@@ -319,17 +322,11 @@ class LLMExecutor(QObject):
                 is_error,
             )
 
-            # 文件修改工具成功时，通知编辑器刷新
-            tool_name = data.get("tool_name", "")
-            if not is_error and tool_name in ("patch_file", "rewrite_file"):
-                details = data.get("details") or {}
-                file_path = details.get("path", "")
-                if file_path:
-                    from shared.event_types import EVENT_FILE_EXTERNALLY_MODIFIED
-                    self._publish_event(EVENT_FILE_EXTERNALLY_MODIFIED, {
-                        "path": file_path,
-                        "tool_name": tool_name,
-                    })
+            if not is_error and self._tool_effect_dispatcher is not None:
+                self._tool_effect_dispatcher.dispatch(
+                    tool_name=tool_name,
+                    effects=data.get("effects"),
+                )
 
     def _get_project_root(self) -> str:
         """
@@ -363,23 +360,6 @@ class LLMExecutor(QObject):
                 self.logger.debug(f"Failed to get RAG query service: {e}")
             return None
 
-    def _publish_event(self, event_name: str, data: Dict[str, Any]) -> None:
-        """
-        通过 EventBus 发布事件
-
-        Args:
-            event_name: 事件名称
-            data: 事件数据
-        """
-        try:
-            from shared.service_locator import ServiceLocator
-            from shared.service_names import SVC_EVENT_BUS
-            event_bus = ServiceLocator.get_optional(SVC_EVENT_BUS)
-            if event_bus:
-                event_bus.publish(event_name, data)
-        except Exception as e:
-            logging.getLogger(__name__).warning(f"Failed to publish event '{event_name}': {e}")
-    
     # ============================================================
     # 辅助方法
     # ============================================================

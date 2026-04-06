@@ -3,7 +3,7 @@
 文件变更检测
 
 职责：
-- 订阅 EVENT_FILE_EXTERNALLY_MODIFIED 事件
+- 订阅 EVENT_AGENT_FILE_MODIFIED 事件
 - 2 秒防抖，批量处理累积变更
 - 仅在 RAG 模式开启时响应
 - 仅处理符合扫描规则的扩展名
@@ -18,7 +18,7 @@ import asyncio
 import logging
 from typing import Optional, Set
 
-from shared.event_types import EVENT_FILE_EXTERNALLY_MODIFIED
+from shared.event_types import EVENT_AGENT_FILE_MODIFIED
 
 
 logger = logging.getLogger(__name__)
@@ -51,7 +51,7 @@ class DocumentWatcher:
 
         try:
             self._event_bus.subscribe(
-                EVENT_FILE_EXTERNALLY_MODIFIED,
+                EVENT_AGENT_FILE_MODIFIED,
                 self._on_file_modified,
             )
             self._subscribed = True
@@ -68,7 +68,7 @@ class DocumentWatcher:
         if self._subscribed and self._event_bus is not None:
             try:
                 self._event_bus.unsubscribe(
-                    EVENT_FILE_EXTERNALLY_MODIFIED,
+                    EVENT_AGENT_FILE_MODIFIED,
                     self._on_file_modified,
                 )
             except Exception:

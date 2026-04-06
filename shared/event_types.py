@@ -786,7 +786,7 @@ EVENT_AUTO_SIMULATION_CHANGED = "tuning.auto_simulation_changed"
 # 携带数据：
 #   - path: str - 被修改文件的绝对路径
 #   - tool_name: str - 修改文件的工具名称
-EVENT_FILE_EXTERNALLY_MODIFIED = "agent.file_modified"
+EVENT_AGENT_FILE_MODIFIED = "agent.file_modified"
 
 # ============================================================
 # 关键事件列表（需要特殊保护）
@@ -933,7 +933,7 @@ __all__ = [
     "EVENT_TUNING_RESTORED",
     "EVENT_TUNING_REQUEST_SIMULATION",
     "EVENT_AUTO_SIMULATION_CHANGED",
-    "EVENT_FILE_EXTERNALLY_MODIFIED",
+    "EVENT_AGENT_FILE_MODIFIED",
     # 关键事件列表
     "CRITICAL_EVENTS",
 ]

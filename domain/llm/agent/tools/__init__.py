@@ -9,7 +9,7 @@ Agent 工具实现模块
 - grep_search    : 按正则/字面模式搜索文件内容
 - find_files     : 按 glob 模式查找文件
 - list_directory : 列出目录内容
-- rag_search     : RAG 知识库检索（条件性注册）
+- rag_search     : 项目索引库检索
 """
 
 from domain.llm.agent.tools.read_file import ReadFileTool

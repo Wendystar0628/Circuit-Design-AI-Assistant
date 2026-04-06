@@ -48,8 +48,7 @@ Agent 工具调用基础类型定义
 """
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
-from enum import Enum
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 
@@ -74,10 +73,14 @@ class ToolResult:
         details: 供 UI 展示的结构化详情（可选）
             - 不会发送给 LLM，仅供前端渲染
             - 例如：diff 信息、行号、文件统计等
+        effects: 工具执行产生的外部副作用列表（可选）
+            - 不会发送给 LLM，仅供协调层消费
+            - 例如：文件已修改、资源已创建等
     """
     content: str
     is_error: bool = False
     details: Optional[Dict[str, Any]] = None
+    effects: Optional[List[Dict[str, Any]]] = None
 
 
 # ============================================================
@@ -247,26 +250,6 @@ class ToolCallInfo:
             ToolCallInfo 实例列表
         """
         return [cls.from_api_format(raw) for raw in raw_list]
-
-
-# ============================================================
-# 工具执行状态枚举
-# ============================================================
-
-class ToolExecutionStatus(Enum):
-    """
-    工具执行状态枚举
-    
-    用于 Agent 循环中跟踪工具调用的生命周期。
-    对应 pi-mono agent-loop.ts 中的三阶段执行。
-    """
-    PENDING = "pending"          # 等待执行
-    PREPARING = "preparing"      # prepare 阶段（查找工具、校验参数）
-    EXECUTING = "executing"      # execute 阶段（实际执行工具逻辑）
-    FINALIZING = "finalizing"    # finalize 阶段（后置处理、记录操作）
-    COMPLETED = "completed"      # 执行完成
-    BLOCKED = "blocked"          # 被前置拦截阻止
-    ERROR = "error"              # 执行出错
 
 
 # ============================================================
@@ -472,6 +455,7 @@ class BaseTool(ABC):
 def create_error_result(
     error_message: str,
     details: Optional[Dict[str, Any]] = None,
+    effects: Optional[List[Dict[str, Any]]] = None,
 ) -> ToolResult:
     """
     创建错误工具结果的工厂函数
@@ -490,12 +474,14 @@ def create_error_result(
         content=error_message,
         is_error=True,
         details=details,
+        effects=effects,
     )
 
 
 def create_success_result(
     content: str,
     details: Optional[Dict[str, Any]] = None,
+    effects: Optional[List[Dict[str, Any]]] = None,
 ) -> ToolResult:
     """
     创建成功工具结果的工厂函数
@@ -511,6 +497,7 @@ def create_success_result(
         content=content,
         is_error=False,
         details=details,
+        effects=effects,
     )
 
 
@@ -524,7 +511,6 @@ __all__ = [
     "ToolSchema",
     "ToolContext",
     "ToolCallInfo",
-    "ToolExecutionStatus",
     "BaseTool",
     # 工厂函数
     "create_error_result",

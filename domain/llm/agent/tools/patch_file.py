@@ -258,6 +258,12 @@ class PatchFileTool(BaseTool):
                 "first_changed_line": diff_result.first_changed_line,
                 "path": abs_path,
             },
+            effects=[
+                {
+                    "type": "file_modified",
+                    "path": abs_path,
+                }
+            ],
         )
 
 

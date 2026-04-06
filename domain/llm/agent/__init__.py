@@ -23,7 +23,7 @@ Agent 工具调用模块
 - tools/               : 具体工具实现
     read_file, patch_file, rewrite_file  — 文件操作
     grep_search, find_files, list_directory — 搜索导航
-    rag_search — 知识库检索（条件性注册）
+    rag_search — 索引库检索
 - utils/               : 工具函数（path_utils、truncate、edit_diff、file_mutex）
 """
 
@@ -36,8 +36,6 @@ from domain.llm.agent.types import (
     ToolContext,
     # 工具调用信息（从 LLM 响应解析）
     ToolCallInfo,
-    # 工具执行状态
-    ToolExecutionStatus,
     # 工具基类
     BaseTool,
     # 工厂函数
@@ -45,12 +43,7 @@ from domain.llm.agent.types import (
     create_success_result,
 )
 
-from domain.llm.agent.tool_registry import (
-    ToolRegistry,
-    GROUP_FILE_OPS,
-    GROUP_SEARCH,
-    GROUP_ALL,
-)
+from domain.llm.agent.tool_registry import ToolRegistry
 
 from domain.llm.agent.tool_factory import create_default_tools
 
@@ -79,15 +72,11 @@ __all__ = [
     "ToolSchema",
     "ToolContext",
     "ToolCallInfo",
-    "ToolExecutionStatus",
     "BaseTool",
     "create_error_result",
     "create_success_result",
     # 注册表
     "ToolRegistry",
-    "GROUP_FILE_OPS",
-    "GROUP_SEARCH",
-    "GROUP_ALL",
     # 工具工厂
     "create_default_tools",
     # 工具（文件操作）

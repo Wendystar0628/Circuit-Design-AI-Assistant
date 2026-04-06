@@ -73,6 +73,8 @@ class LLMExecutor(QObject):
     stream_chunk = pyqtSignal(str, str, dict)  # (task_id, chunk_type, chunk_data)
     generation_complete = pyqtSignal(str, dict)  # (task_id, result)
     generation_error = pyqtSignal(str, str)  # (task_id, error_msg)
+    tool_execution_started = pyqtSignal(str, str, str, dict)  # (task_id, tool_call_id, tool_name, arguments)
+    tool_execution_finished = pyqtSignal(str, str, str, bool)  # (task_id, tool_call_id, result_content, is_error)
     
     def __init__(self, parent: Optional[QObject] = None):
         """初始化 LLM 执行器"""
@@ -197,16 +199,6 @@ class LLMExecutor(QObject):
                     "content": system_prompt,
                 })
 
-            # 发布 Agent 循环开始事件
-            from shared.event_types import (
-                EVENT_AGENT_LOOP_STARTED,
-            )
-            self._publish_event(EVENT_AGENT_LOOP_STARTED, {
-                "task_id": task_id,
-                "model": model,
-                "tool_count": registry.count,
-            })
-
             # 创建并运行 Agent 循环
             loop = AgentLoop(
                 client=client,
@@ -223,6 +215,15 @@ class LLMExecutor(QObject):
                     task_id, evt, data
                 ),
             )
+
+            if agent_result.is_error:
+                error_msg = agent_result.error_message or "Agent loop failed"
+                if self.logger:
+                    self.logger.error(
+                        f"Agent execution failed: task_id={task_id}, error={error_msg}"
+                    )
+                self.generation_error.emit(task_id, error_msg)
+                return None
 
             # 构建最终结果
             result = {
@@ -294,21 +295,29 @@ class LLMExecutor(QObject):
                 })
 
         elif event_type == "tool_execution_start":
-            from shared.event_types import EVENT_AGENT_TOOL_START
-            self._publish_event(EVENT_AGENT_TOOL_START, {
-                "task_id": task_id,
-                **data,
-            })
+            tool_call_id = data.get("tool_call_id", "")
+            tool_name = data.get("tool_name", "")
+            arguments = data.get("arguments", {})
+            self.tool_execution_started.emit(
+                task_id,
+                tool_call_id,
+                tool_name,
+                arguments,
+            )
 
         elif event_type == "tool_execution_end":
-            from shared.event_types import EVENT_AGENT_TOOL_END
-            self._publish_event(EVENT_AGENT_TOOL_END, {
-                "task_id": task_id,
-                **data,
-            })
+            tool_call_id = data.get("tool_call_id", "")
+            result_content = data.get("result_content", "")
+            is_error = data.get("is_error", False)
+            self.tool_execution_finished.emit(
+                task_id,
+                tool_call_id,
+                result_content,
+                is_error,
+            )
+
             # 文件修改工具成功时，通知编辑器刷新
             tool_name = data.get("tool_name", "")
-            is_error = data.get("is_error", False)
             if not is_error and tool_name in ("patch_file", "rewrite_file"):
                 details = data.get("details") or {}
                 file_path = details.get("path", "")
@@ -318,27 +327,6 @@ class LLMExecutor(QObject):
                         "path": file_path,
                         "tool_name": tool_name,
                     })
-
-        elif event_type == "turn_end":
-            from shared.event_types import EVENT_AGENT_TURN_END
-            self._publish_event(EVENT_AGENT_TURN_END, {
-                "task_id": task_id,
-                **data,
-            })
-
-        elif event_type == "agent_end":
-            from shared.event_types import EVENT_AGENT_LOOP_END
-            self._publish_event(EVENT_AGENT_LOOP_END, {
-                "task_id": task_id,
-                **data,
-            })
-
-        elif event_type == "agent_error":
-            from shared.event_types import EVENT_AGENT_LOOP_ERROR
-            self._publish_event(EVENT_AGENT_LOOP_ERROR, {
-                "task_id": task_id,
-                **data,
-            })
 
     def _get_project_root(self) -> str:
         """

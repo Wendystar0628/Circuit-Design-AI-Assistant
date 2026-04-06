@@ -30,12 +30,11 @@ ReAct 循环控制器
 import json
 import logging
 import asyncio
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Callable, Coroutine, Dict, List, Optional, Union
 
 from infrastructure.llm_adapters.base_client import BaseLLMClient
 from domain.llm.agent.types import (
-    BaseTool,
     ToolCallInfo,
     ToolContext,
     ToolResult,
@@ -55,9 +54,6 @@ AgentEventCallback = Callable[[str, Dict[str, Any]], Union[None, Coroutine]]
 EVENT_STREAM_CHUNK = "stream_chunk"          # LLM 流式文本块
 EVENT_TOOL_START = "tool_execution_start"    # 工具开始执行
 EVENT_TOOL_END = "tool_execution_end"        # 工具执行结束
-EVENT_TURN_END = "turn_end"                  # 一轮结束
-EVENT_AGENT_END = "agent_end"                # 整个 Agent 循环结束
-EVENT_AGENT_ERROR = "agent_error"            # Agent 循环错误
 
 
 @dataclass
@@ -196,12 +192,6 @@ class AgentLoop:
                         "tool_call_id": tc_id,
                         "content": tr.content,
                     })
-
-                # 发射 turn_end 事件
-                await self._emit(on_event, EVENT_TURN_END, {
-                    "turn": turn,
-                    "tool_calls_count": len(turn_result.tool_calls),
-                })
             else:
                 # 达到最大轮次
                 self._logger.warning(
@@ -215,16 +205,6 @@ class AgentLoop:
             self._logger.error(f"Agent loop error: {e}")
             result.is_error = True
             result.error_message = str(e)
-            await self._emit(on_event, EVENT_AGENT_ERROR, {
-                "error": str(e),
-            })
-
-        # 发射 agent_end 事件
-        await self._emit(on_event, EVENT_AGENT_END, {
-            "total_turns": result.total_turns,
-            "tool_calls_count": result.tool_calls_count,
-            "content_length": len(result.content),
-        })
 
         return result
 
@@ -492,7 +472,4 @@ __all__ = [
     "EVENT_STREAM_CHUNK",
     "EVENT_TOOL_START",
     "EVENT_TOOL_END",
-    "EVENT_TURN_END",
-    "EVENT_AGENT_END",
-    "EVENT_AGENT_ERROR",
 ]

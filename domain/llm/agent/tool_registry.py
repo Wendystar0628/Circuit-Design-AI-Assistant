@@ -46,7 +46,6 @@ from domain.llm.agent.types import BaseTool, ToolContext, ToolSchema
 
 GROUP_FILE_OPS = "file_ops"       # 文件操作类：read_file, patch_file, rewrite_file
 GROUP_SEARCH = "search"           # 搜索类：grep, find, ls
-GROUP_SIMULATION = "simulation"   # 仿真类（后续扩展）
 GROUP_ALL = "all"                 # 所有工具
 
 
@@ -286,6 +285,5 @@ __all__ = [
     "ToolRegistry",
     "GROUP_FILE_OPS",
     "GROUP_SEARCH",
-    "GROUP_SIMULATION",
     "GROUP_ALL",
 ]

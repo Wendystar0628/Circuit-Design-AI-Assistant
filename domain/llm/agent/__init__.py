@@ -49,7 +49,6 @@ from domain.llm.agent.tool_registry import (
     ToolRegistry,
     GROUP_FILE_OPS,
     GROUP_SEARCH,
-    GROUP_SIMULATION,
     GROUP_ALL,
 )
 
@@ -88,7 +87,6 @@ __all__ = [
     "ToolRegistry",
     "GROUP_FILE_OPS",
     "GROUP_SEARCH",
-    "GROUP_SIMULATION",
     "GROUP_ALL",
     # 工具工厂
     "create_default_tools",

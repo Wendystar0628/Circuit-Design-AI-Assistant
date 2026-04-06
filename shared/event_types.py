@@ -132,66 +132,6 @@ EVENT_TASK_FAILED = "task_failed"
 EVENT_TASK_CANCELLED = "task_cancelled"
 
 # ============================================================
-# LLM 事件
-# ============================================================
-
-# LLM 错误
-EVENT_LLM_ERROR = "llm_error"
-
-# LLM 工具调用
-EVENT_LLM_TOOL_CALL = "llm_tool_call"
-
-# LLM 配置变更请求
-# 由界面层在保存配置后发布，由应用层（bootstrap）订阅并刷新 LLM 运行时。
-# 携带数据：
-#   - provider: str - LLM 厂商 ID
-#   - model: str - 模型名称
-#   - host: str - Ollama 本地地址（云端模型时为空字符串）
-#   - source: str - 触发来源
-EVENT_LLM_CONFIG_CHANGED = "llm_config_changed"
-
-# LLM 客户端重新初始化（结果通知）
-# 由应用层（bootstrap）在运行时刷新完成后发布。
-# 携带数据：
-#   - provider: str - LLM 厂商 ID
-#   - model: str - 模型名称
-#   - host: str - Ollama 本地地址（云端模型时为空字符串）
-#   - source: str - 触发来源
-EVENT_LLM_CLIENT_REINITIALIZED = "llm_client_reinitialized"
-
-# 模型切换
-# 携带数据：
-#   - new_model_id: str - 新模型 ID（格式: "provider:model_name"）
-#   - old_model_id: str - 旧模型 ID（可能为 None）
-#   - provider: str - 厂商 ID
-#   - model_name: str - 模型名称
-#   - supports_thinking: bool - 是否支持深度思考
-#   - supports_vision: bool - 是否支持视觉
-EVENT_MODEL_CHANGED = "model_changed"
-
-# LLM 厂商切换
-# 携带数据：
-#   - old_provider: str - 旧厂商 ID
-#   - new_provider: str - 新厂商 ID
-EVENT_LLM_PROVIDER_CHANGED = "llm_provider_changed"
-
-# ============================================================
-# 嵌入模型事件
-# ============================================================
-
-# 嵌入模型厂商切换
-# 携带数据：
-#   - old_provider: str - 旧厂商 ID
-#   - new_provider: str - 新厂商 ID
-EVENT_EMBEDDING_PROVIDER_CHANGED = "embedding_provider_changed"
-
-# 嵌入模型就绪
-# 携带数据：
-#   - provider: str - 厂商 ID
-#   - model: str - 模型名称
-EVENT_EMBEDDING_MODEL_READY = "embedding_model_ready"
-
-# ============================================================
 # 联网搜索事件
 # ============================================================
 
@@ -812,51 +752,6 @@ EVENT_AUTO_SIMULATION_CHANGED = "tuning.auto_simulation_changed"
 # Agent 循环事件
 # ============================================================
 
-# Agent 循环开始
-# 携带数据：
-#   - task_id: str - 任务 ID
-#   - model: str - 模型名称
-#   - tool_count: int - 可用工具数量
-EVENT_AGENT_LOOP_STARTED = "agent.loop_started"
-
-# Agent 工具执行开始
-# 携带数据：
-#   - task_id: str - 任务 ID
-#   - tool_call_id: str - 工具调用 ID
-#   - tool_name: str - 工具名称
-#   - arguments: dict - 工具参数
-EVENT_AGENT_TOOL_START = "agent.tool_start"
-
-# Agent 工具执行结束
-# 携带数据：
-#   - task_id: str - 任务 ID
-#   - tool_call_id: str - 工具调用 ID
-#   - tool_name: str - 工具名称
-#   - is_error: bool - 是否出错
-#   - result_content: str - 结果内容（截断至 200 字符）
-EVENT_AGENT_TOOL_END = "agent.tool_end"
-
-# Agent 单轮结束
-# 携带数据：
-#   - task_id: str - 任务 ID
-#   - turn: int - 轮次号
-#   - tool_calls_count: int - 本轮工具调用数
-EVENT_AGENT_TURN_END = "agent.turn_end"
-
-# Agent 循环结束
-# 携带数据：
-#   - task_id: str - 任务 ID
-#   - total_turns: int - 总轮次数
-#   - tool_calls_count: int - 总工具调用数
-#   - content_length: int - 最终内容长度
-EVENT_AGENT_LOOP_END = "agent.loop_end"
-
-# Agent 循环错误
-# 携带数据：
-#   - task_id: str - 任务 ID
-#   - error: str - 错误信息
-EVENT_AGENT_LOOP_ERROR = "agent.loop_error"
-
 # Agent 工具修改了文件（通知编辑器刷新）
 # 携带数据：
 #   - path: str - 被修改文件的绝对路径
@@ -904,9 +799,6 @@ __all__ = [
     "EVENT_TASK_COMPLETED",
     "EVENT_TASK_FAILED",
     "EVENT_TASK_CANCELLED",
-    # LLM 事件
-    "EVENT_LLM_ERROR",
-    "EVENT_LLM_TOOL_CALL",
     "EVENT_LLM_CONFIG_CHANGED",
     "EVENT_LLM_CLIENT_REINITIALIZED",
     "EVENT_MODEL_CHANGED",
@@ -1019,13 +911,6 @@ __all__ = [
     "EVENT_TUNING_RESTORED",
     "EVENT_TUNING_REQUEST_SIMULATION",
     "EVENT_AUTO_SIMULATION_CHANGED",
-    # Agent 循环事件
-    "EVENT_AGENT_LOOP_STARTED",
-    "EVENT_AGENT_TOOL_START",
-    "EVENT_AGENT_TOOL_END",
-    "EVENT_AGENT_TURN_END",
-    "EVENT_AGENT_LOOP_END",
-    "EVENT_AGENT_LOOP_ERROR",
     "EVENT_FILE_EXTERNALLY_MODIFIED",
     # 关键事件列表
     "CRITICAL_EVENTS",

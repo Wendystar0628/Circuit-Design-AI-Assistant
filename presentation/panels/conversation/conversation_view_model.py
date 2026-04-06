@@ -299,69 +299,63 @@ class ConversationViewModel(QObject):
     
     def _subscribe_events(self) -> None:
         """订阅事件"""
-        if self.event_bus is None:
-            return
-        
+        if self.event_bus is not None:
+            try:
+                from shared.event_types import (
+                    EVENT_ITERATION_AWAITING_CONFIRMATION,
+                    EVENT_CONTEXT_COMPRESS_COMPLETE,
+                    EVENT_SESSION_CHANGED,
+                )
+                
+                self.event_bus.subscribe(
+                    EVENT_ITERATION_AWAITING_CONFIRMATION,
+                    self._on_iteration_awaiting
+                )
+                self.event_bus.subscribe(
+                    EVENT_CONTEXT_COMPRESS_COMPLETE,
+                    self._on_compress_complete
+                )
+                self.event_bus.subscribe(EVENT_SESSION_CHANGED, self._on_session_changed)
+                
+            except ImportError:
+                if self.logger:
+                    self.logger.warning("无法导入事件类型，事件订阅跳过")
+
         try:
-            from shared.event_types import (
-                EVENT_ITERATION_AWAITING_CONFIRMATION,
-                EVENT_CONTEXT_COMPRESS_COMPLETE,
-                EVENT_SESSION_CHANGED,
-                EVENT_STOP_REQUESTED,
-                EVENT_STOP_COMPLETED,
-                EVENT_AGENT_TOOL_START,
-                EVENT_AGENT_TOOL_END,
-            )
-            
-            self.event_bus.subscribe(
-                EVENT_ITERATION_AWAITING_CONFIRMATION,
-                self._on_iteration_awaiting
-            )
-            self.event_bus.subscribe(
-                EVENT_CONTEXT_COMPRESS_COMPLETE,
-                self._on_compress_complete
-            )
-            self.event_bus.subscribe(EVENT_SESSION_CHANGED, self._on_session_changed)
-            self.event_bus.subscribe(EVENT_STOP_REQUESTED, self._on_stop_requested_event)
-            self.event_bus.subscribe(EVENT_STOP_COMPLETED, self._on_stop_completed_event)
-            self.event_bus.subscribe(EVENT_AGENT_TOOL_START, self._on_agent_tool_start)
-            self.event_bus.subscribe(EVENT_AGENT_TOOL_END, self._on_agent_tool_end)
-            
-        except ImportError:
-            if self.logger:
-                self.logger.warning("无法导入事件类型，事件订阅跳过")
+            if self.stop_controller:
+                self.stop_controller.stop_requested.connect(self._on_stop_requested_signal)
+                self.stop_controller.stop_completed.connect(self._on_stop_completed_signal)
+        except Exception:
+            pass
     
     def _unsubscribe_events(self) -> None:
         """取消事件订阅"""
-        if self.event_bus is None:
-            return
-        
+        if self.event_bus is not None:
+            try:
+                from shared.event_types import (
+                    EVENT_ITERATION_AWAITING_CONFIRMATION,
+                    EVENT_CONTEXT_COMPRESS_COMPLETE,
+                    EVENT_SESSION_CHANGED,
+                )
+                
+                self.event_bus.unsubscribe(
+                    EVENT_ITERATION_AWAITING_CONFIRMATION,
+                    self._on_iteration_awaiting
+                )
+                self.event_bus.unsubscribe(
+                    EVENT_CONTEXT_COMPRESS_COMPLETE,
+                    self._on_compress_complete
+                )
+                self.event_bus.unsubscribe(EVENT_SESSION_CHANGED, self._on_session_changed)
+                
+            except ImportError:
+                pass
+
         try:
-            from shared.event_types import (
-                EVENT_ITERATION_AWAITING_CONFIRMATION,
-                EVENT_CONTEXT_COMPRESS_COMPLETE,
-                EVENT_SESSION_CHANGED,
-                EVENT_STOP_REQUESTED,
-                EVENT_STOP_COMPLETED,
-                EVENT_AGENT_TOOL_START,
-                EVENT_AGENT_TOOL_END,
-            )
-            
-            self.event_bus.unsubscribe(
-                EVENT_ITERATION_AWAITING_CONFIRMATION,
-                self._on_iteration_awaiting
-            )
-            self.event_bus.unsubscribe(
-                EVENT_CONTEXT_COMPRESS_COMPLETE,
-                self._on_compress_complete
-            )
-            self.event_bus.unsubscribe(EVENT_SESSION_CHANGED, self._on_session_changed)
-            self.event_bus.unsubscribe(EVENT_STOP_REQUESTED, self._on_stop_requested_event)
-            self.event_bus.unsubscribe(EVENT_STOP_COMPLETED, self._on_stop_completed_event)
-            self.event_bus.unsubscribe(EVENT_AGENT_TOOL_START, self._on_agent_tool_start)
-            self.event_bus.unsubscribe(EVENT_AGENT_TOOL_END, self._on_agent_tool_end)
-            
-        except ImportError:
+            if self.stop_controller:
+                self.stop_controller.stop_requested.disconnect(self._on_stop_requested_signal)
+                self.stop_controller.stop_completed.disconnect(self._on_stop_completed_signal)
+        except Exception:
             pass
     
     # ============================================================
@@ -712,6 +706,8 @@ class ConversationViewModel(QObject):
             llm_executor.stream_chunk.connect(self._on_llm_stream_chunk)
             llm_executor.generation_complete.connect(self._on_llm_generation_complete)
             llm_executor.generation_error.connect(self._on_llm_generation_error)
+            llm_executor.tool_execution_started.connect(self._on_tool_execution_started)
+            llm_executor.tool_execution_finished.connect(self._on_tool_execution_finished)
             
             # 默认使用 Agent 模式
             # @asyncSlot() 装饰器会自动将协程调度到 qasync 事件循环中执行
@@ -762,6 +758,8 @@ class ConversationViewModel(QObject):
                 llm_executor.stream_chunk.disconnect(self._on_llm_stream_chunk)
                 llm_executor.generation_complete.disconnect(self._on_llm_generation_complete)
                 llm_executor.generation_error.disconnect(self._on_llm_generation_error)
+                llm_executor.tool_execution_started.disconnect(self._on_tool_execution_started)
+                llm_executor.tool_execution_finished.disconnect(self._on_tool_execution_finished)
         except Exception:
             pass
     
@@ -867,39 +865,25 @@ class ConversationViewModel(QObject):
         # 发出信号
         self.stream_finished.emit()
         self.can_send_changed.emit(True)
-        
-        # 发布错误事件
-        if self.event_bus:
-            try:
-                from shared.event_types import EVENT_LLM_ERROR
-                self.event_bus.publish(EVENT_LLM_ERROR, {
-                    "error": error_msg,
-                    "source": "conversation_view_model",
-                })
-            except ImportError:
-                pass
     
     # ============================================================
     # Agent 工具事件处理
     # ============================================================
 
-    def _on_agent_tool_start(self, event_data: Dict[str, Any]) -> None:
+    def _on_tool_execution_started(
+        self,
+        task_id: str,
+        tool_call_id: str,
+        tool_name: str,
+        arguments: Dict[str, Any],
+    ) -> None:
         """
-        处理 Agent 工具开始执行事件（来自 EventBus）
-
-        EventBus 数据格式: {"type": ..., "data": {payload}, ...}
-        payload: {"task_id", "tool_call_id", "tool_name", "arguments"}
+        处理执行器发出的工具开始执行信号
         """
-        data = event_data.get("data", {}) or {}
-        if data.get("task_id") != self._current_task_id:
+        if task_id != self._current_task_id:
             return
 
-        tool_call_id = data.get("tool_call_id", "")
-        tool_name = data.get("tool_name", "")
-        arguments = data.get("arguments", {})
-
         if tool_call_id and tool_name:
-            # 累积工具记录
             self._current_tool_records.append({
                 "tool_call_id": tool_call_id,
                 "tool_name": tool_name,
@@ -909,22 +893,20 @@ class ConversationViewModel(QObject):
             })
             self.tool_call_started.emit(tool_call_id, tool_name, arguments)
 
-    def _on_agent_tool_end(self, event_data: Dict[str, Any]) -> None:
+    def _on_tool_execution_finished(
+        self,
+        task_id: str,
+        tool_call_id: str,
+        result_content: str,
+        is_error: bool,
+    ) -> None:
         """
-        处理 Agent 工具执行结束事件（来自 EventBus）
-
-        payload: {"task_id", "tool_call_id", "tool_name", "result_content", "is_error"}
+        处理执行器发出的工具执行结束信号
         """
-        data = event_data.get("data", {}) or {}
-        if data.get("task_id") != self._current_task_id:
+        if task_id != self._current_task_id:
             return
 
-        tool_call_id = data.get("tool_call_id", "")
-        result_content = data.get("result_content", "")
-        is_error = data.get("is_error", False)
-
         if tool_call_id:
-            # 更新累积的工具记录
             for rec in self._current_tool_records:
                 if rec["tool_call_id"] == tool_call_id:
                     rec["is_error"] = is_error
@@ -1200,7 +1182,6 @@ class ConversationViewModel(QObject):
                 if success:
                     if self.logger:
                         self.logger.info("Stop requested by user")
-                    self.stop_requested.emit()
                 return success
             except Exception as e:
                 if self.logger:
@@ -1210,29 +1191,22 @@ class ConversationViewModel(QObject):
         if self.logger:
             self.logger.warning("StopController not available")
         return False
-    
-    def _on_stop_requested_event(self, event_data: Dict[str, Any]) -> None:
-        """
-        处理停止请求事件（由 StopController 发布）
-        
-        更新 UI 状态，显示"正在停止"。
-        """
-        data = event_data.get("data", event_data)
-        task_id = data.get("task_id", "")
-        reason = data.get("reason", "")
 
+    def _on_stop_requested_signal(self, task_id: str, reason: str) -> None:
+        """
+        处理 StopController 的停止请求信号。
+        """
         if task_id and task_id != self._current_task_id:
             return
-        
+
         if self.logger:
-            self.logger.debug(f"Stop requested event: task_id={task_id}, reason={reason}")
-        
-        # 发出信号通知 UI 更新按钮状态
+            self.logger.debug(f"Stop requested: task_id={task_id}, reason={reason}")
+
         self.stop_requested.emit()
-    
-    def _on_stop_completed_event(self, event_data: Dict[str, Any]) -> None:
+
+    def _on_stop_completed_signal(self, task_id: str, result_data: Dict[str, Any]) -> None:
         """
-        处理停止完成事件（由 StopController 发布）
+        处理 StopController 的停止完成信号
         
         处理部分响应，更新消息列表，恢复 UI 状态。
         
@@ -1242,11 +1216,9 @@ class ConversationViewModel(QObject):
         3. 调用 StopController.reset() 重置状态为 IDLE
         4. 发出信号通知 UI 恢复
         """
-        data = event_data.get("data", event_data)
-        task_id = data.get("task_id", "")
-        reason = data.get("reason", "")
-        is_partial = data.get("is_partial", True)
-        partial_content = data.get("partial_content", "")
+        reason = result_data.get("reason", "")
+        is_partial = result_data.get("is_partial", True)
+        partial_content = result_data.get("partial_content", "")
 
         if task_id and task_id != self._current_task_id:
             return

@@ -424,7 +424,7 @@ class ConversationPanel(QWidget):
     
     def _on_model_changed(self, event_data: Dict[str, Any]) -> None:
         """
-        处理模型变更事件（由 ModelRegistry 或 ModelConfigDialog 发布）
+        处理模型变更事件（由应用层统一发布）
         
         更新输入区域的模型卡片显示。
         """
@@ -494,8 +494,7 @@ class ConversationPanel(QWidget):
         
         此时 ViewModel 已经：
         1. 处理了部分响应
-        2. 重置了 StopController
-        3. 发出了 can_send_changed(True) 信号
+        2. 发出了 can_send_changed(True) 信号
         
         这里只需要刷新显示。
         """

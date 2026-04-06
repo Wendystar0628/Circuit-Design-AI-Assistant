@@ -262,13 +262,12 @@ class LLMExecutor(QObject):
                 )
 
             if self.stop_controller:
-                self.stop_controller.mark_stopping()
-                self.stop_controller.mark_stopped({
+                self.stop_controller.complete_stop({
                     "is_partial": True,
                     "cleanup_success": True,
                 })
 
-            raise
+            return None
 
         except Exception as e:
             error_msg = self._format_error_message(e)

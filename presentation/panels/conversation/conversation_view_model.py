@@ -1213,8 +1213,7 @@ class ConversationViewModel(QObject):
         关键步骤：
         1. 处理部分响应（保存或丢弃）
         2. 清空流式状态
-        3. 调用 StopController.reset() 重置状态为 IDLE
-        4. 发出信号通知 UI 恢复
+        3. 发出信号通知 UI 恢复
         """
         reason = result_data.get("reason", "")
         is_partial = result_data.get("is_partial", True)
@@ -1255,12 +1254,6 @@ class ConversationViewModel(QObject):
         self._is_loading = False
         self._current_task_id = None  # 清除任务 ID
         self._current_tool_records = []  # 清空工具记录
-        
-        # 重置 StopController 状态为 IDLE，允许新任务注册
-        if self.stop_controller:
-            self.stop_controller.reset()
-            if self.logger:
-                self.logger.debug("StopController reset to IDLE")
         
         # 发出信号
         result = {

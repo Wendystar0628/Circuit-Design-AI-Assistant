@@ -16,7 +16,7 @@
     config = EmbeddingModelRegistry.get_current_model()
     
     # 查询模型列表
-    models = EmbeddingModelRegistry.list_models("local")
+    models = EmbeddingModelRegistry.list_models("zhipu")
 """
 
 import logging
@@ -234,7 +234,7 @@ class EmbeddingModelRegistry:
         return [m.name for m in cls._models.values() if m.provider == provider_id]
     
     # ============================================================
-    # 当前模型查询
+    # 当前配置查询
     # ============================================================
     
     @classmethod

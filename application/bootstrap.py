@@ -626,27 +626,62 @@ def _delayed_init():
         # 3.6.1 订阅 LLM 配置变更事件
         # 依赖：EventBus
         # 职责：当界面层发布 EVENT_LLM_CONFIG_CHANGED 后，由应用层统一负责
-        #       刷新 LLM 运行时并发布 EVENT_LLM_CLIENT_REINITIALIZED 结果通知
+        #       刷新 LLM 运行时，并在模型选择发生变化时统一发布 EVENT_MODEL_CHANGED
         # --------------------------------------------------------
         from shared.service_names import SVC_EVENT_BUS
-        from shared.event_types import EVENT_LLM_CONFIG_CHANGED, EVENT_LLM_CLIENT_REINITIALIZED
+        from shared.event_types import EVENT_LLM_CONFIG_CHANGED, EVENT_MODEL_CHANGED
         _event_bus = ServiceLocator.get_optional(SVC_EVENT_BUS)
         if _event_bus:
             def _on_llm_config_changed(data):
+                payload = data if isinstance(data, dict) else {}
                 success = refresh_llm_runtime_services()
-                if success:
+
+                provider = payload.get("provider", "")
+                model_name = payload.get("model", "")
+                old_model_id = payload.get("old_model_id", "") or ""
+                new_model_id = (
+                    f"{provider}:{model_name}"
+                    if provider and model_name else ""
+                )
+
+                if new_model_id and new_model_id != old_model_id:
+                    display_name = model_name
+                    supports_thinking = False
+                    supports_vision = False
+
+                    try:
+                        from shared.model_registry import ModelRegistry
+
+                        model_config = ModelRegistry.get_model(new_model_id)
+                        if model_config:
+                            display_name = model_config.display_name
+                            supports_thinking = model_config.supports_thinking
+                            supports_vision = model_config.supports_vision
+                    except Exception:
+                        pass
+
                     _event_bus.publish(
-                        EVENT_LLM_CLIENT_REINITIALIZED,
+                        EVENT_MODEL_CHANGED,
                         data={
-                            "provider": data.get("provider", ""),
-                            "model": data.get("model", ""),
-                            "host": data.get("host", ""),
-                            "source": data.get("source", "config_change"),
-                        }
+                            "new_model_id": new_model_id,
+                            "old_model_id": old_model_id,
+                            "provider": provider,
+                            "model_name": model_name,
+                            "display_name": display_name,
+                            "supports_thinking": supports_thinking,
+                            "supports_vision": supports_vision,
+                        },
+                        source="bootstrap",
                     )
-                    if _logger:
+
+                if _logger:
+                    if success:
                         _logger.info(
-                            f"Phase 3.6.1 LLM 运行时已刷新：provider={data.get('provider', '')}"
+                            f"Phase 3.6.1 LLM 运行时已刷新：provider={provider}"
+                        )
+                    else:
+                        _logger.warning(
+                            f"Phase 3.6.1 LLM 运行时刷新未完成：provider={provider}"
                         )
             _event_bus.subscribe(EVENT_LLM_CONFIG_CHANGED, _on_llm_config_changed)
             if _logger:

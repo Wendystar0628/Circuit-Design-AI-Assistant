@@ -43,10 +43,9 @@ from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum, auto
-from typing import Any, Callable, Coroutine, Dict, List, Optional
+from typing import Any, Coroutine, Dict, List, Optional
 
 from PyQt6.QtCore import QObject, pyqtSignal
-from shared.event_types import EVENT_STOP_REQUESTED
 
 
 # ============================================================
@@ -155,10 +154,6 @@ class AsyncTaskRegistry(QObject):
         # 延迟获取的服务
         self._event_bus = None
         self._logger = None
-        self._stop_controller = None
-        
-        # 订阅停止事件
-        self._subscribe_stop_events()
     
     # ============================================================
     # 延迟获取服务
@@ -186,50 +181,6 @@ class AsyncTaskRegistry(QObject):
             except Exception:
                 pass
         return self._logger
-    
-    @property
-    def stop_controller(self):
-        """延迟获取 StopController"""
-        if self._stop_controller is None:
-            try:
-                from shared.service_locator import ServiceLocator
-                from shared.service_names import SVC_STOP_CONTROLLER
-                self._stop_controller = ServiceLocator.get_optional(SVC_STOP_CONTROLLER)
-            except Exception:
-                pass
-        return self._stop_controller
-    
-    def _subscribe_stop_events(self) -> None:
-        """订阅停止事件"""
-        # 延迟订阅，避免初始化顺序问题
-        try:
-            if self.event_bus:
-                self.event_bus.subscribe(EVENT_STOP_REQUESTED, self._on_stop_requested)
-        except Exception:
-            pass
-    
-    def _on_stop_requested(self, event_data: Dict[str, Any]) -> None:
-        """
-        处理停止请求事件
-        
-        取消所有运行中的任务，并通知 StopController 开始清理。
-        
-        Args:
-            event_data: 事件数据，包含 task_id 和 reason
-        """
-        # 取消所有运行中的任务
-        cancelled_count = self.cancel_all()
-        
-        # 通知 StopController 开始清理（仅在有任务被取消时）
-        # mark_stopping() 会检查状态，非 STOP_REQUESTED 状态下会静默返回
-        if self.stop_controller and cancelled_count > 0:
-            self.stop_controller.mark_stopping()
-        
-        if self.logger:
-            self.logger.info(
-                f"Stop requested, cancelled {cancelled_count} tasks, "
-                f"reason={event_data.get('reason', 'unknown')}"
-            )
     
     # ============================================================
     # 任务提交
@@ -468,12 +419,7 @@ class AsyncTaskRegistry(QObject):
                 # 索引任务：保存已索引的进度
                 if self.logger:
                     self.logger.debug(f"Saving partial index progress for task '{task_id}'")
-            
-            # 通知 StopController 清理完成
-            # mark_stopping() 会检查状态，非 STOP_REQUESTED 状态下会静默返回
-            if self.stop_controller:
-                self.stop_controller.mark_stopping()
-            
+
         except Exception as e:
             if self.logger:
                 self.logger.warning(f"Error during task cleanup for '{task_id}': {e}")

@@ -764,6 +764,12 @@ class ModelConfigDialog(QDialog):
         provider_id = self._provider_combo.currentData()
         embedding_provider_id = self._embedding_provider_combo.currentData()
         search_provider_id = self._general_search_provider_combo.currentData()
+        previous_provider_id = self.config_manager.get(CONFIG_LLM_PROVIDER, "")
+        previous_model_name = self.config_manager.get(CONFIG_LLM_MODEL, "")
+        previous_model_id = (
+            f"{previous_provider_id}:{previous_model_name}"
+            if previous_provider_id and previous_model_name else ""
+        )
         
         # 保存厂商选择
         self.config_manager.set(CONFIG_LLM_PROVIDER, provider_id)
@@ -812,8 +818,10 @@ class ModelConfigDialog(QDialog):
         if self.logger:
             self.logger.info(f"Model configuration saved: provider={provider_id}, model={self._model_combo.currentText()}")
         
-        # 重新初始化 LLM 客户端
-        self._reinit_llm_client(provider_id)
+        self._request_llm_runtime_refresh(
+            provider_id=provider_id,
+            old_model_id=previous_model_id,
+        )
         
         return True
 
@@ -863,49 +871,30 @@ class ModelConfigDialog(QDialog):
         
         return True
 
-    def _reinit_llm_client(self, provider_id: str) -> None:
+    def _request_llm_runtime_refresh(
+        self,
+        provider_id: str,
+        old_model_id: str,
+    ) -> None:
         """
         请求刷新 LLM 运行时
         
         在配置保存后调用，发布 EVENT_LLM_CONFIG_CHANGED，由应用层（bootstrap）
-        订阅该事件并负责刷新 LLM 客户端运行时。界面层不直接操作运行时。
+        订阅该事件并负责刷新运行时和统一广播模型变更。界面层不直接操作运行时。
         """
         try:
             model = self._model_combo.currentText()
-            host = ""
 
             if self.event_bus:
-                from shared.event_types import EVENT_LLM_CONFIG_CHANGED, EVENT_MODEL_CHANGED
+                from shared.event_types import EVENT_LLM_CONFIG_CHANGED
                 self.event_bus.publish(
                     EVENT_LLM_CONFIG_CHANGED,
                     data={
                         "provider": provider_id,
                         "model": model,
-                        "host": host,
+                        "old_model_id": old_model_id,
                         "source": "model_config_dialog",
                     }
-                )
-
-                display_name = model
-                try:
-                    from shared.model_registry import ModelRegistry
-                    model_id = f"{provider_id}:{model}"
-                    model_config = ModelRegistry.get_model(model_id)
-                    if model_config:
-                        display_name = model_config.display_name
-                except Exception:
-                    pass
-
-                self.event_bus.publish(
-                    EVENT_MODEL_CHANGED,
-                    data={
-                        "new_model_id": f"{provider_id}:{model}",
-                        "old_model_id": None,
-                        "provider": provider_id,
-                        "model_name": model,
-                        "display_name": display_name,
-                    },
-                    source="model_config_dialog"
                 )
                     
         except Exception as e:

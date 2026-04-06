@@ -140,34 +140,19 @@ EVENT_TASK_CANCELLED = "task_cancelled"
 # 携带数据：
 #   - provider: str - LLM 厂商 ID
 #   - model: str - 模型名称
-#   - host: str - 保留字段，当前云端模型场景下为空字符串
 #   - source: str - 触发来源
 EVENT_LLM_CONFIG_CHANGED = "llm_config_changed"
-
-# LLM 客户端重新初始化（结果通知）
-# 由应用层（bootstrap）在运行时刷新完成后发布。
-# 携带数据：
-#   - provider: str - LLM 厂商 ID
-#   - model: str - 模型名称
-#   - host: str - 保留字段，当前云端模型场景下为空字符串
-#   - source: str - 触发来源
-EVENT_LLM_CLIENT_REINITIALIZED = "llm_client_reinitialized"
 
 # 模型切换
 # 携带数据：
 #   - new_model_id: str - 新模型 ID（格式: "provider:model_name"）
-#   - old_model_id: str - 旧模型 ID（可能为 None）
+#   - old_model_id: str - 旧模型 ID（可能为空字符串）
 #   - provider: str - 厂商 ID
 #   - model_name: str - 模型名称
+#   - display_name: str - 模型显示名称
 #   - supports_thinking: bool - 是否支持深度思考
 #   - supports_vision: bool - 是否支持视觉
 EVENT_MODEL_CHANGED = "model_changed"
-
-# LLM 厂商切换
-# 携带数据：
-#   - old_provider: str - 旧厂商 ID
-#   - new_provider: str - 新厂商 ID
-EVENT_LLM_PROVIDER_CHANGED = "llm_provider_changed"
 
 # ============================================================
 # 嵌入模型事件
@@ -596,33 +581,6 @@ EVENT_ITERATION_USER_STOPPED = "iteration_user_stopped"
 EVENT_ACTIVE_FILE_CHANGED = "active_file_changed"
 
 # ============================================================
-# 停止控制事件
-# ============================================================
-
-# 停止请求
-# 携带数据：
-#   - task_id: str - 被停止的任务 ID
-#   - reason: str - 停止原因（"user_requested", "timeout", "error", "session_switch", "app_shutdown"）
-#   - timestamp: float - 请求时间戳
-EVENT_STOP_REQUESTED = "stop_requested"
-
-# 停止完成
-# 携带数据：
-#   - task_id: str - 被停止的任务 ID
-#   - reason: str - 停止原因
-#   - partial_result: Any - 部分结果（若有）
-#   - is_partial: bool - 是否为部分结果
-#   - cleanup_success: bool - 资源清理是否成功
-EVENT_STOP_COMPLETED = "stop_completed"
-
-# 停止状态变更
-# 携带数据：
-#   - old_state: str - 旧状态（"idle", "running", "stop_requested", "stopping", "stopped"）
-#   - new_state: str - 新状态
-#   - task_id: str - 相关任务 ID（若有）
-EVENT_STOP_STATE_CHANGED = "stop_state_changed"
-
-# ============================================================
 # 设计目标事件
 # ============================================================
 
@@ -795,7 +753,6 @@ EVENT_AGENT_FILE_MODIFIED = "agent.file_modified"
 CRITICAL_EVENTS = [
     EVENT_ITERATION_AWAITING_CONFIRMATION,
     EVENT_ERROR_OCCURRED,
-    EVENT_STOP_REQUESTED,
 ]
 
 
@@ -830,9 +787,7 @@ __all__ = [
     "EVENT_TASK_FAILED",
     "EVENT_TASK_CANCELLED",
     "EVENT_LLM_CONFIG_CHANGED",
-    "EVENT_LLM_CLIENT_REINITIALIZED",
     "EVENT_MODEL_CHANGED",
-    "EVENT_LLM_PROVIDER_CHANGED",
     # 嵌入模型事件
     "EVENT_EMBEDDING_PROVIDER_CHANGED",
     "EVENT_EMBEDDING_MODEL_READY",
@@ -902,10 +857,6 @@ __all__ = [
     "EVENT_ITERATION_USER_CONFIRMED",
     "EVENT_ITERATION_USER_STOPPED",
     "EVENT_ACTIVE_FILE_CHANGED",
-    # 停止控制事件
-    "EVENT_STOP_REQUESTED",
-    "EVENT_STOP_COMPLETED",
-    "EVENT_STOP_STATE_CHANGED",
     # 设计目标事件
     "EVENT_DESIGN_GOALS_UPDATED",
     "EVENT_DESIGN_COMPLETED",

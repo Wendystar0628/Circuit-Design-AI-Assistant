@@ -35,20 +35,17 @@
     
 """
 
-import json
 import logging
 import time
-import uuid
-from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from domain.simulation.executor.executor_registry import ExecutorRegistry, executor_registry
 from domain.simulation.models.simulation_result import (
     SimulationResult,
-    SimulationData,
     create_error_result,
 )
+from domain.simulation.service.simulation_result_repository import SimulationResultRepository, simulation_result_repository
 from domain.simulation.models.simulation_error import (
     SimulationError,
     SimulationErrorType,
@@ -62,7 +59,6 @@ from shared.event_types import (
     EVENT_SIM_PROGRESS,
     EVENT_SIM_ERROR,
 )
-from shared.constants.paths import SIM_RESULTS_DIR
 
 # 全局事件总线实例（延迟获取）
 _event_bus: Optional[EventBus] = None
@@ -113,6 +109,7 @@ class SimulationService:
     def __init__(
         self,
         registry: Optional[ExecutorRegistry] = None,
+        result_repository: Optional[SimulationResultRepository] = None,
     ):
         """
         初始化仿真服务
@@ -122,6 +119,7 @@ class SimulationService:
         """
         self._logger = logging.getLogger(__name__)
         self._registry = registry or executor_registry
+        self._result_repository = result_repository or simulation_result_repository
         
         # 内部状态
         self._is_running = False
@@ -190,7 +188,7 @@ class SimulationService:
                 )
                 saved_result_path = ""
                 if project_root:
-                    saved_result_path = self.save_sim_result(project_root, result)
+                    saved_result_path = self._result_repository.save(project_root, result)
                     self._logger.info(f"仿真结果已保存: {saved_result_path}")
                 self._publish_complete_event(result, saved_result_path)
                 return result
@@ -206,7 +204,7 @@ class SimulationService:
             # 保存结果到文件
             saved_result_path = ""
             if project_root:
-                saved_result_path = self.save_sim_result(project_root, result)
+                saved_result_path = self._result_repository.save(project_root, result)
                 self._logger.info(f"仿真结果已保存: {saved_result_path}")
             
             # 发布完成事件（传递保存的结果路径）
@@ -234,7 +232,7 @@ class SimulationService:
             )
             saved_result_path = ""
             if project_root:
-                saved_result_path = self.save_sim_result(project_root, result)
+                saved_result_path = self._result_repository.save(project_root, result)
                 self._logger.info(f"仿真结果已保存: {saved_result_path}")
             self._publish_complete_event(result, saved_result_path)
             return result
@@ -283,177 +281,6 @@ class SimulationService:
         return self._last_simulation_file
 
     # ============================================================
-    # 结果存储方法
-    # ============================================================
-    
-    def save_sim_result(
-        self,
-        project_root: str,
-        result: SimulationResult,
-    ) -> str:
-        """
-        保存仿真结果到文件
-        
-        Args:
-            project_root: 项目根目录路径
-            result: 仿真结果对象
-            
-        Returns:
-            str: 结果文件相对路径
-        """
-        root = Path(project_root)
-        
-        # 生成结果文件路径
-        result_id = self._generate_result_id()
-        result_rel_path = f"{SIM_RESULTS_DIR}/{result_id}.json"
-        result_path = root / result_rel_path
-        
-        # 确保目录存在
-        result_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        # 序列化并写入
-        result_dict = result.to_dict()
-        result_dict["id"] = result_id
-        
-        content = json.dumps(result_dict, indent=2, ensure_ascii=False)
-        result_path.write_text(content, encoding="utf-8")
-        
-        return result_rel_path
-    
-    def load_sim_result(
-        self,
-        project_root: str,
-        result_path: str,
-    ) -> LoadResult[SimulationResult]:
-        """
-        从文件加载仿真结果
-        
-        Args:
-            project_root: 项目根目录路径
-            result_path: 结果文件相对路径
-            
-        Returns:
-            LoadResult[SimulationResult]: 加载结果对象
-        """
-        # 路径为空检查
-        if not result_path:
-            return LoadResult.path_empty()
-        
-        root = Path(project_root)
-        file_path = root / result_path
-        
-        # 文件存在性检查
-        if not file_path.exists():
-            return LoadResult.file_missing(result_path)
-        
-        # 尝试读取和解析
-        try:
-            content = file_path.read_text(encoding="utf-8")
-            if not content.strip():
-                return LoadResult.parse_error(result_path, "文件内容为空")
-            
-            data = json.loads(content)
-            result = SimulationResult.from_dict(data)
-            return LoadResult.ok(result, result_path)
-            
-        except json.JSONDecodeError as e:
-            return LoadResult.parse_error(result_path, f"JSON 解析失败: {e}")
-        except KeyError as e:
-            return LoadResult.parse_error(result_path, f"缺少必需字段: {e}")
-        except Exception as e:
-            return LoadResult.unknown_error(result_path, str(e))
-    
-    def list_sim_results(
-        self,
-        project_root: str,
-        limit: int = 10,
-    ) -> List[Dict[str, Any]]:
-        """
-        列出最近的仿真结果
-        
-        Args:
-            project_root: 项目根目录路径
-            limit: 返回数量限制
-            
-        Returns:
-            List[Dict]: 仿真结果摘要列表，按时间倒序
-        """
-        root = Path(project_root)
-        results_dir = root / SIM_RESULTS_DIR
-        
-        if not results_dir.exists():
-            return []
-        
-        # 获取所有 JSON 文件
-        json_files = list(results_dir.glob("*.json"))
-        
-        # 按修改时间排序
-        json_files.sort(key=lambda f: f.stat().st_mtime, reverse=True)
-        
-        results = []
-        for file_path in json_files[:limit]:
-            try:
-                content = file_path.read_text(encoding="utf-8")
-                data = json.loads(content)
-                results.append({
-                    "id": data.get("id", file_path.stem),
-                    "file_path": data.get("file_path", ""),
-                    "analysis_type": data.get("analysis_type", ""),
-                    "success": data.get("success", False),
-                    "timestamp": data.get("timestamp", ""),
-                    "path": str(file_path.relative_to(root)),
-                })
-            except Exception:
-                continue
-        
-        return results
-    
-    def get_latest_sim_result(
-        self,
-        project_root: str,
-    ) -> LoadResult[SimulationResult]:
-        """
-        获取最新的仿真结果
-        
-        Args:
-            project_root: 项目根目录路径
-            
-        Returns:
-            LoadResult[SimulationResult]: 加载结果对象
-        """
-        results = self.list_sim_results(project_root, limit=1)
-        if results:
-            return self.load_sim_result(project_root, results[0]["path"])
-        return LoadResult.file_missing("")
-    
-    def delete_sim_result(
-        self,
-        project_root: str,
-        result_path: str,
-    ) -> bool:
-        """
-        删除仿真结果文件
-        
-        Args:
-            project_root: 项目根目录路径
-            result_path: 结果文件相对路径
-            
-        Returns:
-            bool: 是否删除成功
-        """
-        root = Path(project_root)
-        file_path = root / result_path
-        
-        if file_path.exists():
-            try:
-                file_path.unlink()
-                return True
-            except Exception as e:
-                self._logger.error(f"删除仿真结果失败: {e}")
-                return False
-        return False
-
-    # ============================================================
     # 内部辅助方法
     # ============================================================
     
@@ -484,12 +311,6 @@ class SimulationService:
         if analysis_config is None:
             return ""
         return analysis_config.get("analysis_type", "")
-    
-    def _generate_result_id(self) -> str:
-        """生成仿真结果 ID"""
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        short_uuid = uuid.uuid4().hex[:8]
-        return f"sim_{timestamp}_{short_uuid}"
     
     def _publish_started_event(
         self,

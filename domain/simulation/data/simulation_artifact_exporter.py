@@ -2,11 +2,14 @@ import csv
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from domain.simulation.data.simulation_output_reader import simulation_output_reader
 from domain.simulation.data.waveform_data_service import waveform_data_service
 from domain.simulation.models.simulation_result import SimulationResult
+
+
+EXPORT_SCHEMA_VERSION = 1
 
 
 class SimulationArtifactExporter:
@@ -24,47 +27,87 @@ class SimulationArtifactExporter:
     def format_timestamp_folder(self, timestamp: str) -> str:
         return self._format_timestamp_folder(timestamp)
 
-    def export_metrics(self, export_root: Path, metrics: List[Any], overall_score: float) -> List[str]:
+    def build_artifact_payload(
+        self,
+        result: SimulationResult,
+        artifact_type: str,
+        *,
+        summary: Optional[Dict[str, Any]] = None,
+        files: Optional[Dict[str, Any]] = None,
+        data: Optional[Dict[str, Any]] = None,
+        extra_metadata: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        metadata = self.build_result_metadata(result, artifact_type)
+        if extra_metadata:
+            metadata.update(extra_metadata)
+        return {
+            "schema_version": EXPORT_SCHEMA_VERSION,
+            "artifact_type": artifact_type,
+            "metadata": metadata,
+            "summary": summary or {},
+            "files": files or {},
+            "data": data or {},
+        }
+
+    def build_result_metadata(self, result: SimulationResult, artifact_type: str) -> Dict[str, Any]:
+        return {
+            "artifact_type": artifact_type,
+            "file_name": Path(result.file_path).name if result.file_path else "",
+            "file_path": result.file_path,
+            "analysis_type": result.analysis_type,
+            "timestamp": result.timestamp,
+            "success": result.success,
+            "executor": result.executor,
+            "duration_seconds": result.duration_seconds,
+            "analysis_command": result.analysis_command,
+            "x_axis_kind": result.x_axis_kind,
+            "x_axis_label": result.get_x_axis_label(),
+            "x_axis_scale": result.x_axis_scale,
+            "requested_x_range": self._serialize_range(result.requested_x_range),
+            "actual_x_range": self._serialize_range(result.actual_x_range),
+        }
+
+    def export_metrics(self, export_root: Path, result: SimulationResult, metrics: List[Any], overall_score: float) -> List[str]:
         category_dir = self._ensure_category_dir(export_root, "metrics")
         csv_path = category_dir / "metrics.csv"
         json_path = category_dir / "metrics.json"
 
+        columns = [
+            "display_name",
+            "name",
+            "value",
+            "unit",
+            "target",
+            "is_met",
+            "trend",
+            "category",
+            "raw_value",
+            "confidence",
+            "error_message",
+        ]
         rows = [self._metric_to_row(metric) for metric in metrics]
         with csv_path.open("w", newline="", encoding="utf-8") as handle:
             writer = csv.writer(handle)
-            writer.writerow([
-                "display_name",
-                "name",
-                "value",
-                "unit",
-                "target",
-                "is_met",
-                "trend",
-                "category",
-                "raw_value",
-                "confidence",
-                "error_message",
-            ])
+            writer.writerow(columns)
             for row in rows:
-                writer.writerow([
-                    row["display_name"],
-                    row["name"],
-                    row["value"],
-                    row["unit"],
-                    row["target"],
-                    row["is_met"],
-                    row["trend"],
-                    row["category"],
-                    row["raw_value"],
-                    row["confidence"],
-                    row["error_message"],
-                ])
+                writer.writerow([row.get(column, "") for column in columns])
 
-        self._write_json(json_path, {
-            "overall_score": overall_score,
-            "metric_count": len(rows),
-            "metrics": rows,
-        })
+        self._write_json(json_path, self.build_artifact_payload(
+            result=result,
+            artifact_type="metrics",
+            summary={
+                "metric_count": len(rows),
+                "overall_score": overall_score,
+            },
+            files={
+                "csv": csv_path.name,
+            },
+            data={
+                "columns": columns,
+                "rows": rows,
+                "overall_score": overall_score,
+            },
+        ))
         return [str(csv_path), str(json_path)]
 
     def export_analysis_info(self, export_root: Path, result: SimulationResult) -> List[str]:
@@ -73,7 +116,17 @@ class SimulationArtifactExporter:
         text_path = category_dir / "analysis_info.txt"
 
         payload = self._build_analysis_info_payload(result)
-        self._write_json(json_path, payload)
+        self._write_json(json_path, self.build_artifact_payload(
+            result,
+            "analysis_info",
+            summary={
+                "parameter_count": len(payload.get("parameters") or {}),
+            },
+            files={
+                "text": text_path.name,
+            },
+            data=payload,
+        ))
         text_path.write_text(self._build_analysis_info_text(payload), encoding="utf-8")
         return [str(json_path), str(text_path)]
 
@@ -83,44 +136,44 @@ class SimulationArtifactExporter:
         json_path = category_dir / "raw_data.json"
 
         snapshot = waveform_data_service.build_table_snapshot(result)
-        if snapshot is None:
-            self._write_json(json_path, {
-                "analysis_type": result.analysis_type,
-                "x_label": result.get_x_axis_label(),
-                "signal_names": [],
-                "total_rows": 0,
-            })
-            csv_path.write_text("", encoding="utf-8")
-            return [str(csv_path), str(json_path)]
+        x_label = snapshot.x_label if snapshot is not None else result.get_x_axis_label()
+        signal_names = list(snapshot.signal_names) if snapshot is not None else []
+        columns = [x_label, *signal_names]
+        rows = self._build_snapshot_rows(snapshot)
+        series = self._build_snapshot_series(snapshot)
 
         with csv_path.open("w", newline="", encoding="utf-8") as handle:
             writer = csv.writer(handle)
-            writer.writerow([snapshot.x_label, *snapshot.signal_names])
-            for row_index in range(snapshot.total_rows):
-                row = [float(snapshot.x_values[row_index])]
-                for signal_name in snapshot.signal_names:
-                    column = snapshot.signal_columns.get(signal_name)
-                    if column is None or row_index >= len(column):
-                        row.append("")
-                        continue
-                    raw_value = column[row_index]
-                    row.append(float(raw_value) if self._is_finite_number(raw_value) else "")
-                writer.writerow(row)
+            writer.writerow(columns)
+            for row in rows:
+                writer.writerow([row.get(column, "") for column in columns])
 
-        self._write_json(json_path, {
-            "analysis_type": snapshot.analysis_type,
-            "x_label": snapshot.x_label,
-            "signal_names": snapshot.signal_names,
-            "total_rows": snapshot.total_rows,
-            "result_path": snapshot.result_path,
-            "timestamp": snapshot.timestamp,
-        })
+        self._write_json(json_path, self.build_artifact_payload(
+            result,
+            "raw_data",
+            summary={
+                "row_count": len(rows),
+                "signal_count": len(signal_names),
+                "x_axis_label": x_label,
+            },
+            files={
+                "csv": csv_path.name,
+            },
+            data={
+                "columns": columns,
+                "rows": rows,
+                "series": series,
+            },
+            extra_metadata={
+                "result_path": snapshot.result_path if snapshot is not None else result.file_path,
+            },
+        ))
         return [str(csv_path), str(json_path)]
 
     def export_output_log(self, export_root: Path, result: SimulationResult) -> List[str]:
         category_dir = self._ensure_category_dir(export_root, "output_log")
         text_path = category_dir / "output_log.txt"
-        json_path = category_dir / "output_log_summary.json"
+        json_path = category_dir / "output_log.json"
 
         raw_output = getattr(result, "raw_output", None) or ""
         text_path.write_text(raw_output, encoding="utf-8")
@@ -128,12 +181,26 @@ class SimulationArtifactExporter:
         log_lines = simulation_output_reader.get_output_log_from_text(raw_output)
         error_count = sum(1 for line in log_lines if line.is_error())
         warning_count = sum(1 for line in log_lines if line.is_warning())
-        self._write_json(json_path, {
-            "total_lines": len(log_lines),
-            "error_count": error_count,
-            "warning_count": warning_count,
-            "info_count": len(log_lines) - error_count - warning_count,
-        })
+        info_count = len(log_lines) - error_count - warning_count
+        first_error = next((line.content for line in log_lines if line.is_error()), None)
+        self._write_json(json_path, self.build_artifact_payload(
+            result,
+            "output_log",
+            summary={
+                "total_lines": len(log_lines),
+                "error_count": error_count,
+                "warning_count": warning_count,
+                "info_count": info_count,
+                "first_error": first_error,
+            },
+            files={
+                "text": text_path.name,
+            },
+            data={
+                "raw_output": raw_output,
+                "lines": [line.to_dict() for line in log_lines],
+            },
+        ))
         return [str(text_path), str(json_path)]
 
     def _ensure_category_dir(self, export_root: Path, category_name: str) -> Path:
@@ -155,6 +222,43 @@ class SimulationArtifactExporter:
             "confidence": getattr(metric, "confidence", None),
             "error_message": str(getattr(metric, "error_message", "") or ""),
         }
+
+    def _build_snapshot_rows(self, snapshot) -> List[Dict[str, Any]]:
+        if snapshot is None:
+            return []
+
+        rows: List[Dict[str, Any]] = []
+        for row_index in range(snapshot.total_rows):
+            row: Dict[str, Any] = {snapshot.x_label: float(snapshot.x_values[row_index])}
+            for signal_name in snapshot.signal_names:
+                column = snapshot.signal_columns.get(signal_name)
+                if column is None or row_index >= len(column):
+                    row[signal_name] = ""
+                    continue
+                raw_value = column[row_index]
+                row[signal_name] = float(raw_value) if self._is_finite_number(raw_value) else ""
+            rows.append(row)
+        return rows
+
+    def _build_snapshot_series(self, snapshot) -> List[Dict[str, Any]]:
+        if snapshot is None:
+            return []
+
+        x_values = [float(value) for value in snapshot.x_values]
+        series: List[Dict[str, Any]] = []
+        for signal_name in snapshot.signal_names:
+            column = snapshot.signal_columns.get(signal_name)
+            values = []
+            if column is not None:
+                for raw_value in column:
+                    values.append(float(raw_value) if self._is_finite_number(raw_value) else None)
+            series.append({
+                "name": signal_name,
+                "x": x_values,
+                "y": values,
+                "point_count": len(values),
+            })
+        return series
 
     def _build_analysis_info_payload(self, result: SimulationResult) -> Dict[str, Any]:
         info = result.analysis_info if isinstance(result.analysis_info, dict) else {}

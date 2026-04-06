@@ -22,16 +22,19 @@ from presentation.panels.simulation.simulation_view_model import (
 from presentation.panels.simulation.metric_card import MetricCard
 from presentation.panels.simulation.metrics_panel import MetricsPanel
 from presentation.panels.simulation.analysis_chart_viewer import ChartViewer
-from presentation.panels.simulation.waveform_widget import WaveformWidget, WaveformMeasurement
+from presentation.panels.simulation.waveform_widget import WaveformWidget
+from presentation.panels.simulation.waveform_plot_types import WaveformMeasurement
 from presentation.panels.simulation.raw_data_table import RawDataTable, RawDataTableModel
 from presentation.panels.simulation.output_log_viewer import OutputLogViewer, LogHighlighter
 from presentation.panels.simulation.simulation_export_panel import SimulationExportPanel
 from presentation.panels.simulation.tuning_panel import TuningPanel, ParameterSliderWidget
 from presentation.panels.simulation.simulation_tab import (
     SimulationTab,
-    MetricsSummaryPanel,
-    ChartViewerPanel,
-    StatusIndicator,
+)
+from presentation.panels.simulation.simulation_tab_widgets import (
+    SimulationMetricsSummaryPanel,
+    SimulationResultTabView,
+    SimulationStatusBanner,
 )
 
 __all__ = [
@@ -51,7 +54,7 @@ __all__ = [
     "TuningPanel",
     "ParameterSliderWidget",
     "SimulationTab",
-    "MetricsSummaryPanel",
-    "ChartViewerPanel",
-    "StatusIndicator",
+    "SimulationMetricsSummaryPanel",
+    "SimulationResultTabView",
+    "SimulationStatusBanner",
 ]

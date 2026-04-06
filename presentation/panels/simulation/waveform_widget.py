@@ -28,11 +28,7 @@
     measurement = widget.get_measurement()
 """
 
-import csv
-import json
 import logging
-from dataclasses import dataclass
-from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from PyQt6.QtCore import Qt, pyqtSignal
@@ -51,22 +47,29 @@ from PyQt6.QtWidgets import (
     QPushButton,
 )
 
-import pyqtgraph as pg
 import numpy as np
+import pyqtgraph as pg
 
 from domain.simulation.data.waveform_data_service import (
     WaveformDataService,
-    WaveformData,
     waveform_data_service,
 )
 from domain.simulation.models.simulation_result import SimulationResult
+from presentation.panels.simulation.waveform_export_bundle_builder import waveform_export_bundle_builder
+from presentation.panels.simulation.waveform_measurement_support import waveform_measurement_support
+from presentation.panels.simulation.waveform_plot_types import (
+    CURSOR_A_COLOR,
+    CURSOR_B_COLOR,
+    INITIAL_POINTS,
+    VIEWPORT_POINTS,
+    PlotItem,
+    SIGNAL_COLORS,
+    WaveformMeasurement,
+)
+from presentation.panels.simulation.waveform_viewport_manager import WaveformViewportManager
 from presentation.panels.simulation.ltspice_plot_interaction import (
     LTSpiceViewBox,
-    apply_dynamic_tick_spacing,
     clamp_range,
-    finite_range,
-    merge_ranges,
-    normalize_range,
 )
 
 from resources.theme import (
@@ -87,71 +90,10 @@ from resources.theme import (
 # 常量定义
 # ============================================================
 
-# 信号颜色列表（用于多信号显示）
-SIGNAL_COLORS = [
-    "#1f77b4",  # 蓝色
-    "#ff7f0e",  # 橙色
-    "#2ca02c",  # 绿色
-    "#d62728",  # 红色
-    "#9467bd",  # 紫色
-    "#8c564b",  # 棕色
-    "#e377c2",  # 粉色
-    "#7f7f7f",  # 灰色
-    "#bcbd22",  # 黄绿色
-    "#17becf",  # 青色
-]
-
-# 光标颜色
-CURSOR_A_COLOR = "#ff0000"  # 红色
-CURSOR_B_COLOR = "#00ff00"  # 绿色
-
-# 初始加载点数
-INITIAL_POINTS = 500
-
-# 缩放时加载点数
-VIEWPORT_POINTS = 1000
-
 
 # ============================================================
 # 数据类定义
 # ============================================================
-
-@dataclass
-class WaveformMeasurement:
-    """
-    波形测量结果
-    
-    Attributes:
-        cursor_a_x: 光标 A 的 X 位置
-        cursor_a_y: 光标 A 的 Y 值（第一个信号）
-        cursor_b_x: 光标 B 的 X 位置
-        cursor_b_y: 光标 B 的 Y 值（第一个信号）
-        delta_x: X 差值
-        delta_y: Y 差值
-        slope: 斜率
-        frequency: 频率（1/delta_x）
-        signal_values_a: 光标 A 处各信号的 Y 值
-        signal_values_b: 光标 B 处各信号的 Y 值
-    """
-    cursor_a_x: Optional[float] = None
-    cursor_a_y: Optional[float] = None
-    cursor_b_x: Optional[float] = None
-    cursor_b_y: Optional[float] = None
-    delta_x: Optional[float] = None
-    delta_y: Optional[float] = None
-    slope: Optional[float] = None
-    frequency: Optional[float] = None
-    signal_values_a: Optional[Dict[str, float]] = None
-    signal_values_b: Optional[Dict[str, float]] = None
-
-
-@dataclass
-class PlotItem:
-    """绘图项数据"""
-    plot_data_item: pg.PlotDataItem
-    color: str
-    waveform_data: Optional[WaveformData] = None
-    axis: str = "left"  # "left" (电压) 或 "right" (电流)
 
 
 # ============================================================
@@ -186,6 +128,8 @@ class WaveformWidget(QWidget):
         
         # 数据服务
         self._data_service: WaveformDataService = waveform_data_service
+        self._measurement_support = waveform_measurement_support
+        self._viewport_manager = WaveformViewportManager(self._data_service)
         
         # 当前仿真结果
         self._current_result: Optional[SimulationResult] = None
@@ -707,38 +651,13 @@ class WaveformWidget(QWidget):
         Returns:
             WaveformMeasurement: 测量结果
         """
-        measurement = WaveformMeasurement()
-        
-        if self._cursor_a_pos is not None:
-            measurement.cursor_a_x = self._from_view_x_value(self._cursor_a_pos)
-            all_y_a = self._get_all_y_at_x(measurement.cursor_a_x)
-            measurement.signal_values_a = all_y_a
-            if all_y_a:
-                measurement.cursor_a_y = next(iter(all_y_a.values()))
-        
-        if self._cursor_b_pos is not None:
-            measurement.cursor_b_x = self._from_view_x_value(self._cursor_b_pos)
-            all_y_b = self._get_all_y_at_x(measurement.cursor_b_x)
-            measurement.signal_values_b = all_y_b
-            if all_y_b:
-                measurement.cursor_b_y = next(iter(all_y_b.values()))
-        
-        if measurement.cursor_a_x is not None and measurement.cursor_b_x is not None:
-            measurement.delta_x = measurement.cursor_b_x - measurement.cursor_a_x
-            
-            if measurement.cursor_a_y is not None and measurement.cursor_b_y is not None:
-                measurement.delta_y = measurement.cursor_b_y - measurement.cursor_a_y
-                
-                if measurement.delta_x != 0:
-                    measurement.slope = measurement.delta_y / measurement.delta_x
-                    if (
-                        self._current_result is not None
-                        and self._current_result.x_axis_kind == "time"
-                        and not self._current_result.is_x_axis_log()
-                    ):
-                        measurement.frequency = 1.0 / abs(measurement.delta_x)
-        
-        return measurement
+        return self._measurement_support.build_measurement(
+            self._current_result,
+            self._plot_items,
+            self._cursor_a_pos,
+            self._cursor_b_pos,
+            self._from_view_x_value,
+        )
 
     def export_image(self, path: str) -> bool:
         pixmap = self._plot_widget.grab()
@@ -747,89 +666,31 @@ class WaveformWidget(QWidget):
         return pixmap.save(path)
 
     def export_bundle(self, output_dir: str) -> List[str]:
-        target_dir = Path(output_dir)
-        target_dir.mkdir(parents=True, exist_ok=True)
+        if self._current_result is None:
+            return []
 
-        exported_files: List[str] = []
-        image_path = target_dir / "waveform.png"
-        csv_path = target_dir / "waveform.csv"
-        json_path = target_dir / "waveform.json"
-
-        if self.export_image(str(image_path)):
-            exported_files.append(str(image_path))
-
-        rows = self._build_export_rows()
-        with csv_path.open("w", newline="", encoding="utf-8") as handle:
-            writer = csv.writer(handle)
-            headers = [self._get_x_axis_label(), *self.get_displayed_signal_names()]
-            writer.writerow(headers)
-            for row in rows:
-                writer.writerow([row.get(header, "") for header in headers])
-        exported_files.append(str(csv_path))
-
-        payload = {
-            "x_axis_label": self._get_x_axis_label(),
-            "displayed_signals": self.get_displayed_signal_names(),
-            "measurement": self._measurement_to_payload(self.get_measurement()),
-            "signals": self._build_signal_payloads(),
-        }
-        json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-        exported_files.append(str(json_path))
-
-        return exported_files
+        measurement = self.get_measurement()
+        signal_names = self.get_displayed_signal_names()
+        headers = [self._get_x_axis_label(), *signal_names]
+        rows = waveform_export_bundle_builder.build_export_rows(
+            self._plot_items,
+            signal_names,
+            self._get_x_axis_label(),
+        )
+        signal_payloads = waveform_export_bundle_builder.build_signal_payloads(self._plot_items)
+        return waveform_export_bundle_builder.export_bundle(
+            output_dir,
+            self._current_result,
+            signal_names,
+            headers,
+            rows,
+            measurement,
+            signal_payloads,
+            self.export_image,
+        )
 
     def get_displayed_signal_names(self) -> List[str]:
         return list(self._plot_items.keys())
-
-    def _build_export_rows(self) -> List[Dict[str, float]]:
-        signal_names = self.get_displayed_signal_names()
-        if not signal_names:
-            return []
-
-        primary_signal = self._plot_items.get(signal_names[0])
-        if primary_signal is None or primary_signal.waveform_data is None:
-            return []
-
-        primary_x = primary_signal.waveform_data.x_data
-        rows: List[Dict[str, float]] = []
-        x_label = self._get_x_axis_label()
-        for index, x_value in enumerate(primary_x):
-            row: Dict[str, float] = {x_label: float(x_value)}
-            for signal_name in signal_names:
-                plot_item = self._plot_items.get(signal_name)
-                waveform_data = plot_item.waveform_data if plot_item is not None else None
-                if waveform_data is None or index >= len(waveform_data.y_data):
-                    continue
-                row[signal_name] = float(waveform_data.y_data[index])
-            rows.append(row)
-        return rows
-
-    def _build_signal_payloads(self) -> Dict[str, Dict[str, List[float] | str]]:
-        payloads: Dict[str, Dict[str, List[float] | str]] = {}
-        for signal_name, plot_item in self._plot_items.items():
-            waveform_data = plot_item.waveform_data
-            if waveform_data is None:
-                continue
-            payloads[signal_name] = {
-                "axis": plot_item.axis,
-                "x": [float(value) for value in waveform_data.x_data],
-                "y": [float(value) for value in waveform_data.y_data],
-            }
-        return payloads
-
-    def _measurement_to_payload(self, measurement: WaveformMeasurement) -> Dict[str, object]:
-        return {
-            "cursor_a_x": measurement.cursor_a_x,
-            "cursor_a_y": measurement.cursor_a_y,
-            "cursor_b_x": measurement.cursor_b_x,
-            "cursor_b_y": measurement.cursor_b_y,
-            "delta_x": measurement.delta_x,
-            "delta_y": measurement.delta_y,
-            "slope": measurement.slope,
-            "frequency": measurement.frequency,
-            "signal_values_a": measurement.signal_values_a or {},
-            "signal_values_b": measurement.signal_values_b or {},
-        }
 
     def _get_x_axis_label(self) -> str:
         if self._current_result is None:
@@ -840,16 +701,11 @@ class WaveformWidget(QWidget):
         if self._current_result is None or not self._plot_items:
             return
 
-        for signal_name, plot_item in self._plot_items.items():
-            waveform_data = self._data_service.get_initial_data(
-                self._current_result,
-                signal_name,
-                target_points=INITIAL_POINTS,
-            )
-            if waveform_data is None:
-                continue
-            plot_item.waveform_data = waveform_data
-            plot_item.plot_data_item.setData(waveform_data.x_data, waveform_data.y_data)
+        self._viewport_manager.reload_initial_data(
+            self._current_result,
+            self._plot_items,
+            INITIAL_POINTS,
+        )
 
         self._rebuild_domains()
         self._apply_full_viewport()
@@ -936,55 +792,20 @@ class WaveformWidget(QWidget):
             self._legend.addItem(plot_item.plot_data_item, signal_name)
 
     def _rebuild_domains(self):
-        if self._current_result is None or self._current_result.data is None or not self._plot_items:
-            self._x_domain = None
-            self._left_y_domain = None
-            self._right_y_domain = None
-            return
-
-        requested_domain = None
-        if self._current_result.requested_x_range is not None:
-            requested_domain = finite_range(
-                self._to_view_x_data(np.asarray(self._current_result.requested_x_range, dtype=float))
-            )
-
-        actual_x_data = self._current_result.get_x_axis_data()
-        actual_domain = None
-        if actual_x_data is not None:
-            actual_domain = finite_range(self._to_view_x_data(actual_x_data))
-
-        self._x_domain = requested_domain or actual_domain
-
-        left_y_ranges = []
-        right_y_ranges = []
-        for signal_name, plot_item in self._plot_items.items():
-            signal_data = self._current_result.data.get_signal(signal_name)
-            if signal_data is None:
-                continue
-            y_range = finite_range(signal_data)
-            if y_range is None:
-                continue
-            if plot_item.axis == "right":
-                right_y_ranges.append(y_range)
-            else:
-                left_y_ranges.append(y_range)
-
-        self._left_y_domain = merge_ranges(left_y_ranges)
-        self._right_y_domain = merge_ranges(right_y_ranges)
+        self._x_domain, self._left_y_domain, self._right_y_domain = self._viewport_manager.rebuild_domains(
+            self._current_result,
+            self._plot_items,
+            self._to_view_x_data,
+        )
 
     def _apply_domain_limits(self):
-        plot_item = self._plot_widget.getPlotItem()
-        view_box = plot_item.vb
-        if self._x_domain is not None:
-            x_min, x_max = self._x_domain
-            view_box.setLimits(xMin=x_min, xMax=x_max)
-
-        base_y_domain = self._left_y_domain or self._right_y_domain
-        if base_y_domain is not None:
-            view_box.setLimits(yMin=base_y_domain[0], yMax=base_y_domain[1])
-
-        if self._right_vb is not None and self._right_y_domain is not None:
-            self._right_vb.setLimits(yMin=self._right_y_domain[0], yMax=self._right_y_domain[1])
+        self._viewport_manager.apply_domain_limits(
+            self._plot_widget,
+            self._right_vb,
+            self._x_domain,
+            self._left_y_domain,
+            self._right_y_domain,
+        )
 
     def _apply_viewport(
         self,
@@ -992,23 +813,14 @@ class WaveformWidget(QWidget):
         left_y_range: Optional[Tuple[float, float]],
         right_y_range: Optional[Tuple[float, float]],
     ):
-        if x_range is None:
-            return
-
-        base_y_range = left_y_range or right_y_range
-        if base_y_range is None:
-            return
-
-        plot_item = self._plot_widget.getPlotItem()
-        plot_item.setXRange(x_range[0], x_range[1], padding=0.0)
-        plot_item.setYRange(base_y_range[0], base_y_range[1], padding=0.0)
-        if self._right_vb is not None:
-            applied_right_y = right_y_range or base_y_range
-            self._right_vb.setYRange(applied_right_y[0], applied_right_y[1], padding=0.0)
-        apply_dynamic_tick_spacing(plot_item.getAxis('bottom'), x_range, log_enabled=self._is_log_x_enabled())
-        apply_dynamic_tick_spacing(plot_item.getAxis('left'), base_y_range, log_enabled=False)
-        if self._right_vb is not None:
-            apply_dynamic_tick_spacing(plot_item.getAxis('right'), right_y_range or base_y_range, log_enabled=False)
+        self._viewport_manager.apply_viewport(
+            self._plot_widget,
+            self._right_vb,
+            x_range,
+            left_y_range,
+            right_y_range,
+            log_x_enabled=self._is_log_x_enabled(),
+        )
 
     def _apply_full_viewport(self):
         if self._x_domain is None:
@@ -1018,77 +830,9 @@ class WaveformWidget(QWidget):
         self._apply_viewport(self._x_domain, self._left_y_domain, self._right_y_domain)
         self._emit_viewport_changed()
 
-    def _get_current_view_x_range(self) -> Optional[Tuple[float, float]]:
-        try:
-            view_range = self._plot_widget.getPlotItem().viewRange()
-        except Exception:
-            return None
-        if not view_range or not view_range[0]:
-            return None
-        return normalize_range((view_range[0][0], view_range[0][1]))
-
-    def _get_current_left_view_range(self) -> Optional[Tuple[float, float]]:
-        try:
-            view_range = self._plot_widget.getPlotItem().viewRange()
-        except Exception:
-            return None
-        if not view_range or not view_range[1]:
-            return None
-        return normalize_range((view_range[1][0], view_range[1][1]))
-
-    def _get_current_right_view_range(self) -> Optional[Tuple[float, float]]:
-        if self._right_vb is None:
-            return None
-        try:
-            view_range = self._right_vb.viewRange()
-        except Exception:
-            return None
-        if not view_range or not view_range[1]:
-            return None
-        return normalize_range((view_range[1][0], view_range[1][1]))
-
-    def _map_parallel_y_range(
-        self,
-        source_range: Tuple[float, float],
-        target_range: Tuple[float, float],
-        requested_source_range: Tuple[float, float],
-    ) -> Tuple[float, float]:
-        source_span = source_range[1] - source_range[0]
-        target_span = target_range[1] - target_range[0]
-        if source_span <= 0 or target_span <= 0:
-            return target_range
-
-        start_ratio = (requested_source_range[0] - source_range[0]) / source_span
-        end_ratio = (requested_source_range[1] - source_range[0]) / source_span
-        mapped_range = (
-            target_range[0] + start_ratio * target_span,
-            target_range[0] + end_ratio * target_span,
-        )
-        normalized_mapped = normalize_range(mapped_range)
-        return normalized_mapped if normalized_mapped is not None else target_range
-
-    def _reload_viewport_data(self, view_x_range: Tuple[float, float]):
-        if self._current_result is None:
-            return
-
-        actual_x_min = self._from_view_x_value(view_x_range[0])
-        actual_x_max = self._from_view_x_value(view_x_range[1])
-        for signal_name, plot_item in self._plot_items.items():
-            waveform_data = self._data_service.get_viewport_data(
-                self._current_result,
-                signal_name,
-                actual_x_min,
-                actual_x_max,
-                target_points=VIEWPORT_POINTS,
-            )
-            if waveform_data is None:
-                continue
-            plot_item.waveform_data = waveform_data
-            plot_item.plot_data_item.setData(waveform_data.x_data, waveform_data.y_data)
-
     def _emit_viewport_changed(self):
-        current_x = self._get_current_view_x_range()
-        current_left_y = self._get_current_left_view_range()
+        current_x = self._viewport_manager.get_current_view_x_range(self._plot_widget)
+        current_left_y = self._viewport_manager.get_current_left_view_range(self._plot_widget)
         if current_x is None or current_left_y is None:
             return
         self.viewport_changed.emit(
@@ -1119,18 +863,24 @@ class WaveformWidget(QWidget):
         if clamped_left_y_range is None:
             return
 
-        current_left_view = self._get_current_left_view_range() or base_y_domain
-        current_right_view = self._get_current_right_view_range() or self._right_y_domain
+        current_left_view = self._viewport_manager.get_current_left_view_range(self._plot_widget) or base_y_domain
+        current_right_view = self._viewport_manager.get_current_right_view_range(self._right_vb) or self._right_y_domain
         applied_right_y_range = self._right_y_domain
         if current_right_view is not None and self._right_y_domain is not None:
-            mapped_right = self._map_parallel_y_range(
+            mapped_right = self._viewport_manager.map_parallel_y_range(
                 current_left_view,
                 current_right_view,
                 clamped_left_y_range,
             )
             applied_right_y_range = clamp_range(mapped_right, self._right_y_domain)
 
-        self._reload_viewport_data(clamped_x_range)
+        self._viewport_manager.reload_viewport_data(
+            self._current_result,
+            self._plot_items,
+            clamped_x_range,
+            self._from_view_x_value,
+            VIEWPORT_POINTS,
+        )
         self._apply_domain_limits()
         self._apply_viewport(clamped_x_range, clamped_left_y_range, applied_right_y_range)
         self._update_measurement()
@@ -1212,29 +962,6 @@ class WaveformWidget(QWidget):
         self._cursor_b_pos = line.value()
         self._update_measurement()
     
-    def _get_all_y_at_x(self, x: float) -> Dict[str, float]:
-        """
-        获取指定 X 位置处所有显示信号的 Y 值
-        
-        使用线性插值获取精确值。
-        
-        Returns:
-            Dict[str, float]: {signal_name: y_value}
-        """
-        result: Dict[str, float] = {}
-        for name, item in self._plot_items.items():
-            if item.waveform_data is None:
-                continue
-            x_data = item.waveform_data.x_data
-            y_data = item.waveform_data.y_data
-            if len(x_data) == 0:
-                continue
-            try:
-                result[name] = float(np.interp(x, x_data, y_data))
-            except Exception:
-                pass
-        return result
-    
     def _update_measurement(self):
         """更新测量显示（包括所有信号在光标处的 Y 值）"""
         measurement = self.get_measurement()
@@ -1264,17 +991,7 @@ class WaveformWidget(QWidget):
             self._freq_label.setText("f: --")
         
         # 更新第二行：各信号在光标处的 Y 值
-        value_parts = []
-        vals_a = measurement.signal_values_a or {}
-        vals_b = measurement.signal_values_b or {}
-        for name in self._plot_items:
-            color = self._plot_items[name].color
-            a_val = f"{vals_a[name]:.4g}" if name in vals_a else "--"
-            if vals_b:
-                b_val = f"{vals_b[name]:.4g}" if name in vals_b else "--"
-                value_parts.append(f'<span style="color:{color}">{name}: A={a_val}  B={b_val}</span>')
-            else:
-                value_parts.append(f'<span style="color:{color}">{name}: {a_val}</span>')
+        value_parts = self._measurement_support.build_value_parts(measurement, self._plot_items)
         self._signal_values_label.setText("  |  ".join(value_parts))
         
         # 发出信号
@@ -1426,5 +1143,4 @@ class WaveformWidget(QWidget):
 
 __all__ = [
     "WaveformWidget",
-    "WaveformMeasurement",
 ]

@@ -199,33 +199,52 @@ class SimulationExportPanel(QWidget):
 
         export_root = simulation_artifact_exporter.create_export_root(base_directory, result)
         exported_files: List[str] = []
-        errors: List[str] = []
+        category_exports: Dict[str, List[str]] = {}
+        errors: List[Dict[str, str]] = []
 
         for export_type in selected_types:
             try:
+                category_file_paths: List[str] = []
                 if export_type == "metrics":
-                    exported_files.extend(simulation_artifact_exporter.export_metrics(export_root, self._metrics, self._overall_score))
+                    category_file_paths = simulation_artifact_exporter.export_metrics(export_root, result, self._metrics, self._overall_score)
                 elif export_type == "charts":
-                    exported_files.extend(self._chart_viewer.export_bundle(str(export_root / "charts")))
+                    category_file_paths = self._chart_viewer.export_bundle(str(export_root / "charts"))
                 elif export_type == "waveforms":
-                    exported_files.extend(self._waveform_widget.export_bundle(str(export_root / "waveforms")))
+                    category_file_paths = self._waveform_widget.export_bundle(str(export_root / "waveforms"))
                 elif export_type == "analysis_info":
-                    exported_files.extend(simulation_artifact_exporter.export_analysis_info(export_root, result))
+                    category_file_paths = simulation_artifact_exporter.export_analysis_info(export_root, result)
                 elif export_type == "raw_data":
-                    exported_files.extend(simulation_artifact_exporter.export_raw_data(export_root, result))
+                    category_file_paths = simulation_artifact_exporter.export_raw_data(export_root, result)
                 elif export_type == "output_log":
-                    exported_files.extend(simulation_artifact_exporter.export_output_log(export_root, result))
+                    category_file_paths = simulation_artifact_exporter.export_output_log(export_root, result)
+                exported_files.extend(category_file_paths)
+                category_exports[export_type] = self._to_relative_paths(export_root, category_file_paths)
             except Exception as exc:
-                errors.append(f"{export_type}: {exc}")
+                category_exports[export_type] = []
+                errors.append({
+                    "artifact_type": export_type,
+                    "message": str(exc),
+                })
 
         manifest_path = export_root / "export_manifest.json"
-        manifest_payload = {
-            "result_file": result.file_path,
-            "timestamp": result.timestamp,
-            "selected_types": selected_types,
-            "exported_files": exported_files,
-            "errors": errors,
-        }
+        manifest_payload = simulation_artifact_exporter.build_artifact_payload(
+            result,
+            "export_manifest",
+            summary={
+                "selected_type_count": len(selected_types),
+                "exported_file_count": len(exported_files) + 1,
+                "error_count": len(errors),
+            },
+            files={
+                "categories": category_exports,
+                "manifest": manifest_path.name,
+            },
+            data={
+                "selected_types": selected_types,
+                "exported_files": self._to_relative_paths(export_root, [*exported_files, str(manifest_path)]),
+                "errors": errors,
+            },
+        )
         manifest_path.write_text(json.dumps(manifest_payload, ensure_ascii=False, indent=2), encoding="utf-8")
         exported_files.append(str(manifest_path))
 
@@ -248,6 +267,17 @@ class SimulationExportPanel(QWidget):
                 "导出完成。\n根目录：{path}\n文件数量：{count}",
             ).format(path=str(export_root), count=len(exported_files)),
         )
+
+    def _to_relative_paths(self, export_root: Path, file_paths: List[str]) -> List[str]:
+        root = export_root.resolve()
+        relative_paths: List[str] = []
+        for file_path in file_paths:
+            path = Path(file_path)
+            try:
+                relative_paths.append(str(path.resolve().relative_to(root)).replace("\\", "/"))
+            except Exception:
+                relative_paths.append(path.name)
+        return relative_paths
 
     def _refresh_preview(self):
         result = self._result

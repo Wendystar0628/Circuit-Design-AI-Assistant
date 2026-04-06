@@ -27,6 +27,10 @@ from domain.simulation.service.tuning_service import (
     TuningApplyResult,
     tuning_service,
 )
+from domain.simulation.service.simulation_result_repository import (
+    SimulationResultRepository,
+    simulation_result_repository,
+)
 
 __all__ = [
     # 参数提取服务
@@ -39,4 +43,7 @@ __all__ = [
     "TuningService",
     "TuningApplyResult",
     "tuning_service",
+    # 仿真结果仓储
+    "SimulationResultRepository",
+    "simulation_result_repository",
 ]

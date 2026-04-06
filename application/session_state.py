@@ -69,6 +69,9 @@ SESSION_DESIGN_GOALS_PATH = "design_goals_path"
 SESSION_DESIGN_GOALS_SUMMARY = "design_goals_summary"
 SESSION_LAST_METRICS = "last_metrics"
 SESSION_ERROR_CONTEXT = "error_context"
+SESSION_WORKING_CONTEXT_SUMMARY = "working_context_summary"
+SESSION_WORKING_CONTEXT_COMPRESSED_COUNT = "working_context_compressed_count"
+SESSION_WORKING_CONTEXT_KEEP_RECENT = "working_context_keep_recent"
 
 # RAG 状态（由 RAGManager 通过 EventBus 投影更新）
 SESSION_RAG_INDEXING = "rag_indexing"
@@ -130,6 +133,9 @@ class SessionState:
             SESSION_DESIGN_GOALS_SUMMARY: {},
             SESSION_LAST_METRICS: {},
             SESSION_ERROR_CONTEXT: "",
+            SESSION_WORKING_CONTEXT_SUMMARY: "",
+            SESSION_WORKING_CONTEXT_COMPRESSED_COUNT: 0,
+            SESSION_WORKING_CONTEXT_KEEP_RECENT: 0,
             # RAG 状态
             SESSION_RAG_INDEXING: False,
             SESSION_RAG_INDEX_STATUS: {},
@@ -396,6 +402,21 @@ class SessionState:
         return self.get(SESSION_ERROR_CONTEXT, "")
 
     @property
+    def working_context_summary(self) -> str:
+        """工作上下文摘要"""
+        return self.get(SESSION_WORKING_CONTEXT_SUMMARY, "")
+
+    @property
+    def working_context_compressed_count(self) -> int:
+        """工作上下文被摘要覆盖的历史消息数"""
+        return self.get(SESSION_WORKING_CONTEXT_COMPRESSED_COUNT, 0)
+
+    @property
+    def working_context_keep_recent(self) -> int:
+        """工作上下文直接保留的最近消息数"""
+        return self.get(SESSION_WORKING_CONTEXT_KEEP_RECENT, 0)
+
+    @property
     def rag_indexing(self) -> bool:
         """RAG 是否正在索引"""
         return self.get(SESSION_RAG_INDEXING, False)
@@ -442,6 +463,9 @@ __all__ = [
     "SESSION_DESIGN_GOALS_SUMMARY",
     "SESSION_LAST_METRICS",
     "SESSION_ERROR_CONTEXT",
+    "SESSION_WORKING_CONTEXT_SUMMARY",
+    "SESSION_WORKING_CONTEXT_COMPRESSED_COUNT",
+    "SESSION_WORKING_CONTEXT_KEEP_RECENT",
     "SESSION_RAG_INDEXING",
     "SESSION_RAG_INDEX_STATUS",
 ]

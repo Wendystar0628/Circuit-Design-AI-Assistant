@@ -43,6 +43,12 @@ from langchain_core.messages import BaseMessage
 
 from domain.llm.message_store import MessageStore
 from domain.llm.token_monitor import TokenMonitor
+from domain.llm.working_context_builder import (
+    WORKING_CONTEXT_COMPRESSED_COUNT_KEY,
+    WORKING_CONTEXT_KEEP_RECENT_KEY,
+    WORKING_CONTEXT_SUMMARY_KEY,
+    get_working_context_messages,
+)
 from domain.llm.cache_stats_tracker import (
     CacheStatsTracker, 
     SessionCacheStats,
@@ -444,7 +450,12 @@ class ContextManager:
         """
         with self._lock:
             if not hasattr(self, '_internal_state'):
-                self._internal_state = {"messages": []}
+                self._internal_state = {
+                    "messages": [],
+                    WORKING_CONTEXT_SUMMARY_KEY: "",
+                    WORKING_CONTEXT_COMPRESSED_COUNT_KEY: 0,
+                    WORKING_CONTEXT_KEEP_RECENT_KEY: 0,
+                }
             return self._internal_state
     
     def sync_state(self, state: Dict[str, Any]) -> None:
@@ -549,7 +560,7 @@ class ContextManager:
             消息列表，格式为 [{"role": str, "content": str|list}, ...]
         """
         state = self.get_current_state()
-        messages = self.get_messages(state)
+        messages = get_working_context_messages(state)
         
         # 转换为 LLM API 格式
         result = []

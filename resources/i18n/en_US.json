@@ -316,7 +316,7 @@
 
   "dialog.compress.current_status": "Current Status",
   "dialog.compress.title": "Compress Context",
-  "dialog.compress.message_count": "Message count:",
+  "dialog.compress.message_count": "History message count:",
   "dialog.compress.token_usage": "Token usage:",
   "dialog.compress.estimate": "Compression Estimate",
   "dialog.compress.keep_count": "Keep recent messages:",
@@ -331,8 +331,8 @@
   "dialog.compress.approx_tokens": "approx. {tokens} tokens",
   "dialog.compress.approx_usage": "approx. {tokens} tokens ({percent}%)",
   "dialog.compress.categories": "Message Categories Preview",
-  "dialog.compress.must_keep": "Must keep messages (system messages, tool calls):",
-  "dialog.compress.will_compress": "Messages to be compressed:",
+  "dialog.compress.must_keep": "Messages kept directly in working context:",
+  "dialog.compress.will_compress": "History messages covered by summary:",
   "dialog.compress.import_error": "Failed to load Context Compress Dialog module.",
   "dialog.compress.error": "Failed to open context compress dialog: {error}",
 

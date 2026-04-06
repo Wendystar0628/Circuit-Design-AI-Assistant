@@ -167,6 +167,15 @@ class GraphState:
     error_context: str = ""
     """错误上下文（仿真失败时的错误信息）"""
     
+    working_context_summary: str = ""
+    """工作上下文摘要"""
+    
+    working_context_compressed_count: int = 0
+    """工作上下文压缩计数"""
+    
+    working_context_keep_recent: int = 0
+    """工作上下文保留最近"""
+    
     # ============================================================
     # 计数器
     # ============================================================
@@ -240,6 +249,9 @@ class GraphState:
             "design_goals_summary": self.design_goals_summary,
             "last_metrics": self.last_metrics,
             "error_context": self.error_context,
+            "working_context_summary": self.working_context_summary,
+            "working_context_compressed_count": self.working_context_compressed_count,
+            "working_context_keep_recent": self.working_context_keep_recent,
             # 计数器
             "iteration_count": self.iteration_count,
             "checkpoint_count": self.checkpoint_count,
@@ -272,6 +284,9 @@ class GraphState:
             design_goals_summary=data.get("design_goals_summary", {}),
             last_metrics=data.get("last_metrics", {}),
             error_context=data.get("error_context", ""),
+            working_context_summary=data.get("working_context_summary", ""),
+            working_context_compressed_count=data.get("working_context_compressed_count", 0),
+            working_context_keep_recent=data.get("working_context_keep_recent", 0),
             iteration_count=data.get("iteration_count", 0),
             checkpoint_count=data.get("checkpoint_count", 0),
             stagnation_count=data.get("stagnation_count", 0),

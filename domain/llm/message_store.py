@@ -45,6 +45,11 @@ from domain.llm.message_helpers import (
     dict_to_message,
     dicts_to_messages,
 )
+from domain.llm.working_context_builder import (
+    WORKING_CONTEXT_COMPRESSED_COUNT_KEY,
+    WORKING_CONTEXT_KEEP_RECENT_KEY,
+    WORKING_CONTEXT_SUMMARY_KEY,
+)
 
 
 # ============================================================
@@ -471,7 +476,7 @@ class MessageStore:
         Returns:
             摘要文本
         """
-        return state.get("conversation_summary", "")
+        return state.get(WORKING_CONTEXT_SUMMARY_KEY, "")
     
     def has_summary(self, state: Dict[str, Any]) -> bool:
         """
@@ -503,7 +508,7 @@ class MessageStore:
         """
         with self._lock:
             new_state = copy.deepcopy(state)
-            new_state["conversation_summary"] = summary
+            new_state[WORKING_CONTEXT_SUMMARY_KEY] = summary
             return new_state
     
     # ============================================================
@@ -537,8 +542,9 @@ class MessageStore:
                 # 清空所有消息
                 new_state["messages"] = []
             
-            # 清空摘要
-            new_state["conversation_summary"] = ""
+            new_state[WORKING_CONTEXT_SUMMARY_KEY] = ""
+            new_state[WORKING_CONTEXT_COMPRESSED_COUNT_KEY] = 0
+            new_state[WORKING_CONTEXT_KEEP_RECENT_KEY] = 0
             
             if self.logger:
                 self.logger.info("消息列表已重置")

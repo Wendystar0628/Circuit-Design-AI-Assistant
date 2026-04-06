@@ -416,7 +416,6 @@ EVENT_RAG_INDEX_ERROR = "rag.index_error"
 #   - relations_found: int - 匹配关系数
 #   - chunks_found: int - 匹配分块数
 EVENT_RAG_QUERY_COMPLETE = "rag.query_complete"
-
 # ============================================================
 # 上下文压缩事件
 # ============================================================
@@ -429,8 +428,9 @@ EVENT_RAG_QUERY_COMPLETE = "rag.query_complete"
 #   - keep_recent: int - 保留的最近消息数
 #   - before_tokens / after_tokens / saved_tokens: int - 压缩前后 token 信息
 #   - before_ratio / after_ratio: float - 压缩前后占用比例
-#   - before_message_count / after_message_count: int - 压缩前后消息数
-#   - summary_tokens: int - 压缩后摘要 token 数
+#   - before_history_message_count / after_history_message_count: int - 历史消息总数（保持不删）
+#   - before_working_message_count / after_working_message_count: int - 工作上下文消息数
+#   - summary_tokens: int - 工作上下文摘要 token 数
 #   - model / provider / model_id: str - 执行压缩时使用的模型信息
 #   - error: str - 错误信息（仅 failed 或 skipped 时存在）
 EVENT_CONTEXT_COMPRESS_COMPLETE = "context_compress_complete"

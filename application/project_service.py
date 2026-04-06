@@ -314,7 +314,7 @@ class ProjectService:
             # 若不存在 → 创建新的 Checkpointer，使用空白 GraphState
             
             # 7. TODO: 从 GraphState 恢复各组件状态（阶段五实现）
-            # - 对话面板：加载 messages 和 conversation_summary
+            # - 对话面板：加载完整 messages 和 working_context_* 压缩状态
             # - 仿真结果面板：加载 simulation_results
             # - 设计目标：加载 design_goals
             # - 迭代历史：加载 iteration_history

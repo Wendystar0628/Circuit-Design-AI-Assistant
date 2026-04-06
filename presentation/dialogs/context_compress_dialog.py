@@ -320,9 +320,9 @@ class ContextCompressDialog(QDialog):
         content_layout = QVBoxLayout(content)
         content_layout.setSpacing(8)
         
-        # 必保留消息
+        # 工作上下文直接保留消息
         keep_label = QLabel(
-            self._get_text("dialog.compress.must_keep", "必保留消息（系统消息、工具调用）：")
+            self._get_text("dialog.compress.must_keep", "工作上下文直接保留的消息：")
         )
         keep_label.setStyleSheet("font-weight: bold; color: #4caf50;")
         content_layout.addWidget(keep_label)
@@ -332,9 +332,9 @@ class ContextCompressDialog(QDialog):
         )
         content_layout.addWidget(self._keep_messages_label)
         
-        # 将被压缩的消息
+        # 将被摘要覆盖的历史消息
         compress_label = QLabel(
-            self._get_text("dialog.compress.will_compress", "将被压缩的消息：")
+            self._get_text("dialog.compress.will_compress", "将由摘要覆盖的历史消息：")
         )
         compress_label.setStyleSheet("font-weight: bold; color: #ff9800;")
         content_layout.addWidget(compress_label)
@@ -423,7 +423,7 @@ class ContextCompressDialog(QDialog):
             self._preview_summary = preview.get("summary_preview", "")
             
             # 更新当前状态显示
-            message_count = stats.get("message_count", 0)
+            message_count = stats.get("history_message_count", 0)
             used_tokens = stats.get("total_tokens", 0)
             total_tokens = stats.get("input_limit", 0)
             ratio = stats.get("usage_ratio", 0)
@@ -457,8 +457,8 @@ class ContextCompressDialog(QDialog):
             
             self._message_categories = preview.get("classification", {})
             
-            keep_count = estimated.get("keep_count", 0)
-            compress_count = estimated.get("remove_count", 0)
+            keep_count = estimated.get("direct_count", 0)
+            compress_count = estimated.get("summarized_count", 0)
             
             self._keep_messages_label.setText(
                 f"{keep_count} {self._get_text('dialog.compress.messages_unit', 'messages')}"

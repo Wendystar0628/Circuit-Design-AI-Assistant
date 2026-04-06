@@ -19,6 +19,7 @@ Token 监控 - 监控 Token 使用量
 
 依赖：
     - token_counter.py（Token 计数）
+    - working_context_builder.py（工作上下文构建）
 """
 
 import logging
@@ -29,6 +30,13 @@ from domain.llm.token_counter import (
     count_message_tokens,
     get_model_context_limit,
     get_model_output_limit,
+)
+from domain.llm.working_context_builder import (
+    get_direct_working_messages,
+    get_history_message_count,
+    get_working_context_message_count,
+    get_working_context_messages,
+    get_working_context_summary,
 )
 
 
@@ -75,27 +83,37 @@ class TokenMonitor:
         计算当前 Token 占用
         
         Args:
-            state: GraphState 状态，包含 messages 和可选的 conversation_summary
+            state: GraphState 状态，包含完整历史 messages 与工作上下文压缩状态
             model: 模型名称
             
         Returns:
             使用情况字典：
             - total_tokens: 总 token 数
+            - message_tokens: 消息 token 数
+            - summary_tokens: 摘要 token 数
+            - history_message_count: 历史消息数
+            - working_message_count: 工作上下文消息数
             - context_limit: 上下文限制
             - output_reserve: 输出预留
+            - input_limit: 输入限制
             - available: 可用空间
             - usage_ratio: 占用比例
         """
-        messages = state.get("messages", [])
-        
-        # 计算消息 tokens（统一使用 token_counter 的函数）
-        message_tokens = self._count_messages(messages, model)
-        
-        # 添加摘要 tokens（如果有）
-        summary = state.get("conversation_summary", "")
+        direct_messages = get_direct_working_messages(state)
+        working_messages = get_working_context_messages(state)
+        history_message_count = get_history_message_count(state)
+        working_message_count = get_working_context_message_count(state)
+
+        message_tokens = self._count_messages(direct_messages, model)
+
         summary_tokens = 0
+        summary = get_working_context_summary(state)
         if summary:
-            summary_tokens = count_tokens(summary, model)
+            summary_messages = [msg for msg in working_messages if msg not in direct_messages]
+            if summary_messages:
+                summary_tokens = self._count_messages(summary_messages, model)
+            else:
+                summary_tokens = count_tokens(summary, model)
 
         total_tokens = message_tokens + summary_tokens
         
@@ -112,6 +130,8 @@ class TokenMonitor:
             "total_tokens": total_tokens,
             "message_tokens": message_tokens,
             "summary_tokens": summary_tokens,
+            "history_message_count": history_message_count,
+            "working_message_count": working_message_count,
             "context_limit": context_limit,
             "output_reserve": output_reserve,
             "input_limit": input_limit,

@@ -51,30 +51,10 @@ COMPRESS_LAYER_HISTORY_SUMMARY = 10  # 层级3：保留摘要的历史消息数
 COMPRESS_ENABLE_SEMANTIC_RETRIEVAL = True  # 是否启用语义检索历史（未来功能）
 
 # ============================================================
-# 增强清理策略配置（激进压缩）
+# 工作上下文压缩配置
 # ============================================================
 
-# 深度思考内容清理（reasoning_content 占用大量 token，激进清理）
-KEEP_REASONING_RECENT_COUNT = 1      # 仅保留最近 1 条消息的 reasoning_content
-REASONING_TRUNCATE_LENGTH = 0        # 旧消息 reasoning_content 完全清除
-
-# 操作记录清理
-OPERATIONS_MERGE_ENABLED = True      # 启用操作记录合并
-OPERATIONS_MAX_PER_MESSAGE = 3       # 每条消息最多保留 3 个操作（减少）
-OPERATIONS_DEDUP_ENABLED = True      # 启用操作记录去重
-
-# 摘要管理（使用结构化摘要，更紧凑）
-SUMMARY_REPLACE_ON_COMPRESS = True   # 压缩时用新摘要替换旧摘要
 SUMMARY_MAX_LENGTH = 1000            # 摘要最大长度（减少到 1000 字符）
-SUMMARY_USE_STRUCTURED = True        # 使用结构化 JSON 摘要（更紧凑）
-
-# 消息内容截断（更激进）
-OLD_MESSAGE_TRUNCATE_LENGTH = 500    # 旧消息 content 截断到 500 字符
-TRUNCATE_PRESERVE_CODE_BLOCKS = False # 不保留代码块完整性（代码应通过 RAG 检索）
-
-# 代码块处理（参考 Cursor 机制）
-CODE_BLOCK_MAX_LINES = 20            # 代码块最多保留 20 行
-CODE_BLOCK_EXTRACT_TO_RAG = True     # 将代码块提取到 RAG 索引（未来功能）
 
 # ============================================================
 # 自适应压缩策略配置
@@ -82,19 +62,6 @@ CODE_BLOCK_EXTRACT_TO_RAG = True     # 将代码块提取到 RAG 索引（未来
 
 # 自适应压缩：根据压缩后实际占比动态调整策略
 COMPRESS_ADAPTIVE_ENABLED = True     # 是否启用自适应压缩
-
-# 压缩后占比 < 20%：正常，无需额外处理
-# 压缩后占比 > 20%：触发更激进的压缩策略
-
-# 二次压缩阈值和参数（当首次压缩未达标时）
-COMPRESS_SECONDARY_THRESHOLD = 0.25  # 二次压缩触发阈值（首次压缩后 > 25%）
-COMPRESS_SECONDARY_KEEP_RECENT = 2   # 二次压缩时保留的最近消息数（减少到2条）
-COMPRESS_SECONDARY_TRUNCATE_LEN = 200  # 二次压缩时消息截断长度
-
-# 极端压缩阈值和参数（当二次压缩仍未达标时）
-COMPRESS_EXTREME_THRESHOLD = 0.30    # 极端压缩触发阈值（二次压缩后 > 30%）
-COMPRESS_EXTREME_KEEP_RECENT = 1     # 极端压缩时仅保留最近 1 条消息
-COMPRESS_EXTREME_SUMMARY_ONLY = True # 极端压缩时丢弃所有历史，仅保留摘要
 
 # 压缩失败处理
 COMPRESS_MAX_ATTEMPTS = 3            # 最大压缩尝试次数

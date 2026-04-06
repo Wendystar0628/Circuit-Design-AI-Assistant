@@ -1237,26 +1237,18 @@ class ConversationViewModel(QObject):
                 f"Stop completed: task_id={task_id}, reason={reason}, "
                 f"is_partial={is_partial}, content_len={len(partial_content)}"
             )
-
+ 
         self._disconnect_llm_executor_signals()
         
-        # 处理部分响应
+        # 处理部分响应：保留所有已经输出到界面的可见内容
         if is_partial and self._current_stream_content:
-            # 使用已累积的流式内容
             partial_content = self._current_stream_content
-        
-        # 根据内容长度决定是否保存
-        MIN_PARTIAL_LENGTH = 50
+ 
         saved = False
-        if partial_content and len(partial_content) >= MIN_PARTIAL_LENGTH:
-            # 保存部分响应，标记为已中断
+        if partial_content:
             self._save_partial_response(partial_content, reason)
+            self._auto_save_session()
             saved = True
-        else:
-            if self.logger:
-                self.logger.debug(
-                    f"Partial content too short ({len(partial_content)} chars), discarding"
-                )
         
         # 清空流式状态
         self._current_stream_content = ""

@@ -58,6 +58,9 @@ from application.session_state import (
     SESSION_DESIGN_GOALS_SUMMARY,
     SESSION_LAST_METRICS,
     SESSION_ERROR_CONTEXT,
+    SESSION_WORKING_CONTEXT_SUMMARY,
+    SESSION_WORKING_CONTEXT_COMPRESSED_COUNT,
+    SESSION_WORKING_CONTEXT_KEEP_RECENT,
     SESSION_RAG_INDEXING,
     SESSION_RAG_INDEX_STATUS,
 )
@@ -288,6 +291,24 @@ class GraphStateProjector:
         if new_error != old_error:
             updates[SESSION_ERROR_CONTEXT] = new_error
 
+        # working_context_summary
+        new_working_summary = getattr(new_state, 'working_context_summary', '')
+        old_working_summary = getattr(old_state, 'working_context_summary', '') if old_state else ''
+        if new_working_summary != old_working_summary:
+            updates[SESSION_WORKING_CONTEXT_SUMMARY] = new_working_summary
+
+        # working_context_compressed_count
+        new_compressed_count = getattr(new_state, 'working_context_compressed_count', 0)
+        old_compressed_count = getattr(old_state, 'working_context_compressed_count', 0) if old_state else 0
+        if new_compressed_count != old_compressed_count:
+            updates[SESSION_WORKING_CONTEXT_COMPRESSED_COUNT] = new_compressed_count
+
+        # working_context_keep_recent
+        new_keep_recent = getattr(new_state, 'working_context_keep_recent', 0)
+        old_keep_recent = getattr(old_state, 'working_context_keep_recent', 0) if old_state else 0
+        if new_keep_recent != old_keep_recent:
+            updates[SESSION_WORKING_CONTEXT_KEEP_RECENT] = new_keep_recent
+
     # ============================================================
     # 事件发布
     # ============================================================
@@ -391,6 +412,9 @@ class GraphStateProjector:
             SESSION_TERMINATION_REASON: "",
             SESSION_LAST_METRICS: {},
             SESSION_ERROR_CONTEXT: "",
+            SESSION_WORKING_CONTEXT_SUMMARY: "",
+            SESSION_WORKING_CONTEXT_COMPRESSED_COUNT: 0,
+            SESSION_WORKING_CONTEXT_KEEP_RECENT: 0,
             SESSION_RAG_INDEXING: False,
             SESSION_RAG_INDEX_STATUS: {},
         }

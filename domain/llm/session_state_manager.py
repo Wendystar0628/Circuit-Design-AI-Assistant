@@ -52,6 +52,12 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
+from domain.llm.working_context_builder import (
+    WORKING_CONTEXT_COMPRESSED_COUNT_KEY,
+    WORKING_CONTEXT_KEEP_RECENT_KEY,
+    WORKING_CONTEXT_SUMMARY_KEY,
+)
+
 if TYPE_CHECKING:
     from application.graph.state import GraphState
 
@@ -326,6 +332,11 @@ class SessionStateManager:
             messages_to_dicts,
             is_human_message,
         )
+        from domain.llm.working_context_builder import (
+            WORKING_CONTEXT_COMPRESSED_COUNT_KEY,
+            WORKING_CONTEXT_KEEP_RECENT_KEY,
+            WORKING_CONTEXT_SUMMARY_KEY,
+        )
         
         with self._lock:
             if not self._current_session_id:
@@ -368,7 +379,9 @@ class SessionStateManager:
                     "updated_at": datetime.now().isoformat(),
                     "message_count": len(messages),
                     "preview": preview,
-                    "summary": current_state.get("conversation_summary", ""),
+                    WORKING_CONTEXT_SUMMARY_KEY: current_state.get(WORKING_CONTEXT_SUMMARY_KEY, ""),
+                    WORKING_CONTEXT_COMPRESSED_COUNT_KEY: current_state.get(WORKING_CONTEXT_COMPRESSED_COUNT_KEY, 0),
+                    WORKING_CONTEXT_KEEP_RECENT_KEY: current_state.get(WORKING_CONTEXT_KEEP_RECENT_KEY, 0),
                 }
             )
             
@@ -781,6 +794,11 @@ class SessionStateManager:
         from domain.services import context_service
         from domain.llm.message_helpers import dicts_to_messages
         import copy
+        from domain.llm.working_context_builder import (
+            WORKING_CONTEXT_COMPRESSED_COUNT_KEY,
+            WORKING_CONTEXT_KEEP_RECENT_KEY,
+            WORKING_CONTEXT_SUMMARY_KEY,
+        )
 
         messages_data = context_service.load_messages(project_root, session_id)
         messages = dicts_to_messages(messages_data) if messages_data else []
@@ -790,9 +808,13 @@ class SessionStateManager:
 
         metadata = context_service.get_session_metadata(project_root, session_id)
         if metadata:
-            base_state["conversation_summary"] = metadata.get("summary", "")
+            base_state[WORKING_CONTEXT_SUMMARY_KEY] = metadata.get(WORKING_CONTEXT_SUMMARY_KEY, "")
+            base_state[WORKING_CONTEXT_COMPRESSED_COUNT_KEY] = metadata.get(WORKING_CONTEXT_COMPRESSED_COUNT_KEY, 0)
+            base_state[WORKING_CONTEXT_KEEP_RECENT_KEY] = metadata.get(WORKING_CONTEXT_KEEP_RECENT_KEY, 0)
         else:
-            base_state["conversation_summary"] = ""
+            base_state[WORKING_CONTEXT_SUMMARY_KEY] = ""
+            base_state[WORKING_CONTEXT_COMPRESSED_COUNT_KEY] = 0
+            base_state[WORKING_CONTEXT_KEEP_RECENT_KEY] = 0
 
         return base_state
 
@@ -801,10 +823,17 @@ class SessionStateManager:
         state: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         import copy
+        from domain.llm.working_context_builder import (
+            WORKING_CONTEXT_COMPRESSED_COUNT_KEY,
+            WORKING_CONTEXT_KEEP_RECENT_KEY,
+            WORKING_CONTEXT_SUMMARY_KEY,
+        )
 
         base_state = copy.deepcopy(state if state is not None else self._get_current_state())
         base_state["messages"] = []
-        base_state["conversation_summary"] = ""
+        base_state[WORKING_CONTEXT_SUMMARY_KEY] = ""
+        base_state[WORKING_CONTEXT_COMPRESSED_COUNT_KEY] = 0
+        base_state[WORKING_CONTEXT_KEEP_RECENT_KEY] = 0
         return base_state
 
     def _activate_session(

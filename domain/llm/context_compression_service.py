@@ -8,6 +8,12 @@ from typing import Any, Dict, Optional
 
 from domain.llm.context_compressor import ContextCompressor
 from domain.llm.message_helpers import messages_to_dicts
+from domain.llm.working_context_builder import (
+    WORKING_CONTEXT_COMPRESSED_COUNT_KEY,
+    WORKING_CONTEXT_KEEP_RECENT_KEY,
+    WORKING_CONTEXT_SUMMARY_KEY,
+    build_working_context_state,
+)
 from infrastructure.config.settings import (
     COMPRESS_AUTO_THRESHOLD,
     COMPRESS_FALLBACK_NEW_CONVERSATION,
@@ -143,7 +149,9 @@ class ContextCompressionService:
     def _build_state_signature(self, state: Dict[str, Any]) -> str:
         payload = {
             "messages": messages_to_dicts(state.get("messages", [])),
-            "conversation_summary": state.get("conversation_summary", ""),
+            WORKING_CONTEXT_SUMMARY_KEY: state.get(WORKING_CONTEXT_SUMMARY_KEY, ""),
+            WORKING_CONTEXT_COMPRESSED_COUNT_KEY: state.get(WORKING_CONTEXT_COMPRESSED_COUNT_KEY, 0),
+            WORKING_CONTEXT_KEEP_RECENT_KEY: state.get(WORKING_CONTEXT_KEEP_RECENT_KEY, 0),
         }
         raw = json.dumps(payload, ensure_ascii=False, sort_keys=True)
         return hashlib.sha1(raw.encode("utf-8")).hexdigest()
@@ -160,7 +168,8 @@ class ContextCompressionService:
             "provider": provider,
             "model": model,
             "model_id": f"{provider}:{model}",
-            "message_count": len(state.get("messages", [])),
+            "history_message_count": usage.get("history_message_count", len(state.get("messages", []))),
+            "working_message_count": usage.get("working_message_count", 0),
             "total_tokens": usage.get("total_tokens", 0),
             "message_tokens": usage.get("message_tokens", 0),
             "summary_tokens": usage.get("summary_tokens", 0),
@@ -198,20 +207,13 @@ class ContextCompressionService:
             keep_recent=keep_recent,
             model=model_info["model"],
         )
-        summary_tokens = 0
-        if preview.summary_preview:
-            try:
-                from domain.llm.token_counter import count_tokens
-                summary_tokens = count_tokens(preview.summary_preview, model_info["model"])
-            except Exception:
-                summary_tokens = 0
-        current_summary_tokens = budget.get("summary_tokens", 0)
-        estimated_after_tokens = max(
-            0,
-            budget["total_tokens"] - preview.estimated_tokens_saved - current_summary_tokens + summary_tokens,
+        preview_state = build_working_context_state(
+            state,
+            summary=preview.summary_preview,
+            compressed_count=preview.compressed_message_count,
+            keep_recent=keep_recent,
         )
-        input_limit = budget["input_limit"] or 1
-        estimated_after_ratio = min(1.0, estimated_after_tokens / input_limit)
+        after_budget = self._build_budget_snapshot(preview_state, model_info["model"], model_info["provider"])
         categories = self.context_manager.classify_messages(state) if self.context_manager else {}
         return {
             "status": "ready",
@@ -220,12 +222,12 @@ class ContextCompressionService:
             "budget": budget,
             "summary_preview": preview.summary_preview,
             "estimated": {
-                "remove_count": len(preview.messages_to_remove),
-                "keep_count": len(preview.messages_to_keep),
+                "summarized_count": len(preview.messages_to_summarize),
+                "direct_count": len(preview.direct_messages_after_compress),
                 "saved_tokens": preview.estimated_tokens_saved,
-                "summary_tokens": summary_tokens,
-                "after_tokens": estimated_after_tokens,
-                "after_ratio": estimated_after_ratio,
+                "summary_tokens": after_budget.get("summary_tokens", 0),
+                "after_tokens": after_budget.get("total_tokens", 0),
+                "after_ratio": after_budget.get("usage_ratio", 0.0),
             },
             "classification": {
                 "high": len(categories.get("high", [])),
@@ -346,8 +348,10 @@ class ContextCompressionService:
                 "before_ratio": before["usage_ratio"],
                 "after_ratio": after["usage_ratio"],
                 "saved_tokens": max(0, before["total_tokens"] - after["total_tokens"]),
-                "before_message_count": before["message_count"],
-                "after_message_count": after["message_count"],
+                "before_history_message_count": before["history_message_count"],
+                "after_history_message_count": after["history_message_count"],
+                "before_working_message_count": before["working_message_count"],
+                "after_working_message_count": after["working_message_count"],
                 "summary_tokens": after["summary_tokens"],
                 "model": model_info["model"],
                 "provider": model_info["provider"],

@@ -316,7 +316,7 @@
 
   "dialog.compress.current_status": "当前状态",
   "dialog.compress.title": "压缩上下文",
-  "dialog.compress.message_count": "消息数量：",
+  "dialog.compress.message_count": "历史消息数量：",
   "dialog.compress.token_usage": "Token 占用：",
   "dialog.compress.estimate": "压缩预估",
   "dialog.compress.keep_count": "保留最近消息数：",
@@ -331,8 +331,8 @@
   "dialog.compress.approx_tokens": "约 {tokens} tokens",
   "dialog.compress.approx_usage": "约 {tokens} tokens ({percent}%)",
   "dialog.compress.categories": "消息分类预览",
-  "dialog.compress.must_keep": "必保留消息（系统消息、工具调用）：",
-  "dialog.compress.will_compress": "将被压缩的消息：",
+  "dialog.compress.must_keep": "工作上下文直接保留的消息：",
+  "dialog.compress.will_compress": "将由摘要覆盖的历史消息：",
   "dialog.compress.import_error": "无法加载上下文压缩对话框模块。",
   "dialog.compress.error": "打开上下文压缩对话框失败：{error}",
 

@@ -62,7 +62,6 @@ from shared.event_types import (
     EVENT_ITERATION_AWAITING_CONFIRMATION,
     EVENT_ITERATION_USER_CONFIRMED,
     EVENT_SIM_RESULT_FILE_CREATED,
-    EVENT_SESSION_CHANGED,
 )
 
 
@@ -237,7 +236,6 @@ class SimulationTab(QWidget):
             (EVENT_ITERATION_AWAITING_CONFIRMATION, self._on_awaiting_confirmation),
             (EVENT_ITERATION_USER_CONFIRMED, self._on_user_confirmed),
             (EVENT_SIM_RESULT_FILE_CREATED, self._on_sim_result_file_created),
-            (EVENT_SESSION_CHANGED, self._on_session_changed),
         ]
         
         for event_type, handler in subscriptions:
@@ -296,7 +294,7 @@ class SimulationTab(QWidget):
         # 清空当前显示
         self.clear()
 
-        QTimer.singleShot(250, self._restore_last_result_after_project_opened)
+        QTimer.singleShot(250, self._restore_project_result_after_project_opened)
     
     def _on_project_closed(self, event_data: dict):
         """处理项目关闭事件"""
@@ -355,70 +353,7 @@ class SimulationTab(QWidget):
         self._logger.error(f"Simulation error: {error_message}")
         self._status_indicator.hide_status()
         self._set_controls_enabled(True)
-    
-    def _on_session_changed(self, event_data: dict):
-        """
-        处理会话变更事件
-        
-        根据 4.0.7 节设计：
-        - 新会话启动时，显示空状态，不自动加载历史结果
-        - 切换到已有会话时，根据 sim_result_path 加载或显示空状态
-        
-        Args:
-            event_data: 事件数据，包含 session_id, sim_result_path 等
-        """
-        # 事件数据在 "data" 字段中
-        data = event_data.get("data", event_data)
-        action = data.get("action", "")
-        sim_result_path = data.get("sim_result_path", "")
-        session_id = data.get("session_id", "")
-        
-        self._logger.info(
-            f"Session changed: action={action}, session_id={session_id}, "
-            f"sim_result_path={sim_result_path}"
-        )
-        
-        if action == "new":
-            self.clear()
-            self._show_empty_state()
-            return
-        
-        if self._project_root and sim_result_path:
-            self._load_from_path(sim_result_path)
-            return
 
-        if action == "switch":
-            self.clear()
-            self._show_empty_state()
-    
-    def _load_from_path(self, sim_result_path: str):
-        """
-        从路径加载仿真结果
-        
-        Args:
-            sim_result_path: 仿真结果相对路径
-        """
-        if not self._project_root:
-            self._show_empty_state()
-            return
-        
-        try:
-            from shared.file_reference_validator import file_reference_validator
-            
-            # 校验文件是否存在
-            if not file_reference_validator.validate_sim_result_path(
-                self._project_root, sim_result_path
-            ):
-                self._show_file_missing_state()
-                return
-            
-            # 加载结果
-            self._load_simulation_result(sim_result_path)
-            
-        except Exception as e:
-            self._logger.warning(f"Failed to load from path: {e}")
-            self._show_file_missing_state()
-    
     def _on_history_clicked(self):
         """处理历史按钮点击"""
         self.history_requested.emit()
@@ -486,7 +421,6 @@ class SimulationTab(QWidget):
         """
         if result_path:
             self._last_loaded_result_path = self._normalize_result_path(result_path)
-            self._persist_current_session_result_path(result_path)
 
         self._chart_viewer_panel.clear()
         self._view_model.load_result(result)
@@ -515,47 +449,14 @@ class SimulationTab(QWidget):
         if show_op_dialog:
             self._maybe_show_op_result_dialog(result, result_path=result_path)
 
-    def _restore_last_result_after_project_opened(self):
+    def _restore_project_result_after_project_opened(self):
         if not self._project_root:
             return
 
         if self._view_model.current_result is not None or self._last_loaded_result_path:
             return
 
-        try:
-            from shared.service_locator import ServiceLocator
-            from shared.service_names import SVC_SESSION_STATE_MANAGER
-
-            session_state_manager = ServiceLocator.get_optional(SVC_SESSION_STATE_MANAGER)
-            sim_result_path = (
-                session_state_manager.get_current_session_sim_result_path(self._project_root)
-                if session_state_manager else ""
-            )
-
-            if sim_result_path:
-                self._load_from_path(sim_result_path)
-                return
-        except Exception as e:
-            self._logger.debug(f"Failed to restore session-bound simulation result: {e}")
-
         self._load_project_simulation_result()
-
-    def _persist_current_session_result_path(self, result_path: str):
-        if not self._project_root or not result_path:
-            return
-
-        try:
-            from shared.service_locator import ServiceLocator
-            from shared.service_names import SVC_SESSION_STATE_MANAGER
-
-            session_state_manager = ServiceLocator.get_optional(SVC_SESSION_STATE_MANAGER)
-            if session_state_manager:
-                session_state_manager.update_current_session_sim_result_path(
-                    result_path,
-                    project_root=self._project_root,
-                )
-        except Exception as e:
-            self._logger.debug(f"Failed to persist simulation result path for session: {e}")
 
     def _load_waveform_data(self, result):
         """
@@ -701,30 +602,6 @@ class SimulationTab(QWidget):
             "加载历史结果"
         ))
     
-    def _show_file_missing_state(self):
-        """显示文件丢失状态"""
-        self._chart_viewer_panel.hide()
-        self._empty_widget.show()
-        self._metrics_panel_view.clear_result_timestamp()
-        # 隐藏顶部信息栏
-        self._metrics_panel_view.hide_header_bar()
-        
-        # 加载文件丢失图标
-        self._load_file_missing_icon()
-        
-        # 更新为文件丢失提示
-        self._empty_label.setText(self._get_text(
-            "simulation.file_missing",
-            "仿真结果文件已丢失"
-        ))
-        self._empty_hint.setText(self._get_text(
-            "simulation.file_missing_hint",
-            "请重新运行仿真或点击刷新按钮"
-        ))
-        
-        # 隐藏加载历史按钮
-        self._load_history_btn.hide()
-    
     def _hide_empty_state(self):
         """隐藏空状态"""
         self._empty_widget.hide()
@@ -819,24 +696,6 @@ class SimulationTab(QWidget):
         except Exception:
             pass
     
-    def _load_file_missing_icon(self):
-        """加载文件丢失图标"""
-        try:
-            from PyQt6.QtGui import QPixmap
-            from pathlib import Path
-            
-            icon_path = Path(__file__).parent.parent.parent / "resources" / "icons" / "simulation" / "file-missing.svg"
-            if icon_path.exists():
-                pixmap = QPixmap(str(icon_path))
-                if not pixmap.isNull():
-                    self._empty_icon.setPixmap(pixmap.scaled(
-                        48, 48,
-                        Qt.AspectRatioMode.KeepAspectRatio,
-                        Qt.TransformationMode.SmoothTransformation
-                    ))
-        except Exception:
-            pass
-    
     def _on_load_history_clicked(self):
         """处理加载历史结果按钮点击"""
         self._logger.info("Load history button clicked")
@@ -887,9 +746,7 @@ class SimulationTab(QWidget):
     
     def _on_shown(self):
         """显示后的处理"""
-        # 根据 4.0.7 节设计：新会话不自动加载历史结果
-        # 仿真结果的加载由 EVENT_SESSION_CHANGED 事件触发
-        # 或由用户点击刷新按钮手动触发
+        # 仿真结果由项目打开和仿真事件驱动；显示阶段不主动恢复。
         pass
 
 

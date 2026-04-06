@@ -63,7 +63,6 @@ SESSION_TERMINATION_REASON = "termination_reason"
 
 # 当前文件（从 GraphState 投影）
 SESSION_ACTIVE_CIRCUIT_FILE = "active_circuit_file"
-SESSION_SIM_RESULT_PATH = "sim_result_path"
 SESSION_DESIGN_GOALS_PATH = "design_goals_path"
 
 # 轻量摘要（从 GraphState 投影）
@@ -126,7 +125,6 @@ class SessionState:
             SESSION_TERMINATION_REASON: "",
             # 当前文件
             SESSION_ACTIVE_CIRCUIT_FILE: "",
-            SESSION_SIM_RESULT_PATH: "",
             SESSION_DESIGN_GOALS_PATH: ".circuit_ai/design_goals.json",
             # 轻量摘要
             SESSION_DESIGN_GOALS_SUMMARY: {},
@@ -440,7 +438,6 @@ __all__ = [
     "SESSION_IS_COMPLETED",
     "SESSION_TERMINATION_REASON",
     "SESSION_ACTIVE_CIRCUIT_FILE",
-    "SESSION_SIM_RESULT_PATH",
     "SESSION_DESIGN_GOALS_PATH",
     "SESSION_DESIGN_GOALS_SUMMARY",
     "SESSION_LAST_METRICS",

@@ -97,6 +97,10 @@ class ToolRegistry:
         """
         return self._tools.get(name)
 
+    def get_all(self) -> List[BaseTool]:
+        """获取所有已注册的工具实例"""
+        return list(self._tools.values())
+
     def get_names(self) -> List[str]:
         """获取所有已注册工具的名称"""
         return list(self._tools.keys())

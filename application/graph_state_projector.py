@@ -54,7 +54,6 @@ from application.session_state import (
     SESSION_IS_COMPLETED,
     SESSION_TERMINATION_REASON,
     SESSION_ACTIVE_CIRCUIT_FILE,
-    SESSION_SIM_RESULT_PATH,
     SESSION_DESIGN_GOALS_PATH,
     SESSION_DESIGN_GOALS_SUMMARY,
     SESSION_LAST_METRICS,
@@ -258,12 +257,6 @@ class GraphStateProjector:
             updates[SESSION_ACTIVE_CIRCUIT_FILE] = new_circuit
             self._publish_active_file_changed(old_circuit, new_circuit)
 
-        # sim_result_path
-        new_sim = getattr(new_state, 'sim_result_path', '')
-        old_sim = getattr(old_state, 'sim_result_path', '') if old_state else ''
-        if new_sim != old_sim:
-            updates[SESSION_SIM_RESULT_PATH] = new_sim
-
         # design_goals_path
         new_goals_path = getattr(new_state, 'design_goals_path', '.circuit_ai/design_goals.json')
         old_goals_path = getattr(old_state, 'design_goals_path', '.circuit_ai/design_goals.json') if old_state else '.circuit_ai/design_goals.json'
@@ -386,7 +379,6 @@ class GraphStateProjector:
         updates = {
             SESSION_PROJECT_ROOT: None,
             SESSION_ACTIVE_CIRCUIT_FILE: "",
-            SESSION_SIM_RESULT_PATH: "",
             SESSION_DESIGN_GOALS_PATH: ".circuit_ai/design_goals.json",
             SESSION_DESIGN_GOALS_SUMMARY: {},
             SESSION_WORKFLOW_LOCKED: False,

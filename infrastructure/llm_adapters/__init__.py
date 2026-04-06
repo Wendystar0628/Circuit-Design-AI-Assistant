@@ -47,11 +47,15 @@ from infrastructure.llm_adapters.base_client import (
     ContextOverflowError,
     ResponseParseError,
 )
+from infrastructure.llm_adapters.openai_compatible_client import OpenAICompatibleClient
+from infrastructure.llm_adapters.client_factory import LLMClientFactory
 
 # 智谱 GLM 适配器
 from infrastructure.llm_adapters.zhipu import (
     ZhipuClient,
 )
+from infrastructure.llm_adapters.deepseek import DeepSeekClient
+from infrastructure.llm_adapters.qwen import QwenClient
 
 # 模型配置已迁移到 ModelRegistry
 # 参见：shared/model_registry.py 和 infrastructure/llm_adapters/model_configs/
@@ -70,6 +74,10 @@ __all__ = [
     "RateLimitError",
     "ContextOverflowError",
     "ResponseParseError",
+    "OpenAICompatibleClient",
+    "LLMClientFactory",
     # 智谱客户端
     "ZhipuClient",
+    "DeepSeekClient",
+    "QwenClient",
 ]

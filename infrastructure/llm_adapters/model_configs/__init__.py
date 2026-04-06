@@ -17,9 +17,23 @@ from infrastructure.llm_adapters.model_configs.zhipu_models import (
     ZHIPU_PROVIDER,
     ZHIPU_MODELS,
 )
+from infrastructure.llm_adapters.model_configs.deepseek_models import (
+    DEEPSEEK_PROVIDER,
+    DEEPSEEK_MODELS,
+)
+from infrastructure.llm_adapters.model_configs.qwen_models import (
+    QWEN_PROVIDER,
+    QWEN_MODELS,
+)
 
 __all__ = [
     # 智谱
     "ZHIPU_PROVIDER",
     "ZHIPU_MODELS",
+    # DeepSeek
+    "DEEPSEEK_PROVIDER",
+    "DEEPSEEK_MODELS",
+    # Qwen
+    "QWEN_PROVIDER",
+    "QWEN_MODELS",
 ]

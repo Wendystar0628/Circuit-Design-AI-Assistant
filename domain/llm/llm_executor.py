@@ -101,7 +101,6 @@ class LLMExecutor(QObject):
         # 延迟获取的服务
         self._task_registry = None
         self._throttler = None
-        self._external_service = None
         self._logger = None
         self._stop_controller = None
         self._resource_cleanup = None
@@ -142,18 +141,6 @@ class LLMExecutor(QObject):
             except Exception as e:
                 logging.getLogger(__name__).warning(f"Failed to load StreamThrottler: {e}")
         return self._throttler
-    
-    @property
-    def external_service(self):
-        """延迟获取 ExternalServiceManager"""
-        if self._external_service is None:
-            try:
-                from shared.service_locator import ServiceLocator
-                from shared.service_names import SVC_EXTERNAL_SERVICE_MANAGER
-                self._external_service = ServiceLocator.get_optional(SVC_EXTERNAL_SERVICE_MANAGER)
-            except Exception as e:
-                logging.getLogger(__name__).error(f"Failed to load ExternalServiceManager: {e}")
-        return self._external_service
     
     @property
     def logger(self):
@@ -1151,72 +1138,19 @@ class LLMExecutor(QObject):
         Returns:
             BaseLLMClient: LLM 客户端实例，未找到返回 None
         """
-        if not self.external_service:
+        try:
+            from shared.service_locator import ServiceLocator
+            from shared.service_names import SVC_LLM_CLIENT
+
+            current_client = ServiceLocator.get_optional(SVC_LLM_CLIENT)
+            if current_client:
+                return current_client
+        except Exception as e:
             if self.logger:
-                self.logger.error("ExternalServiceManager not available")
-            return None
-        
-        # 根据模型名称确定服务类型
-        service_type = self._get_service_type_by_model(model)
-        if not service_type:
-            if self.logger:
-                self.logger.error(f"Unknown model: {model}")
-            return None
-        
-        # 获取客户端
-        client = self.external_service.get_client(service_type)
-        if not client:
-            if self.logger:
-                self.logger.error(f"LLM client not registered for service: {service_type}")
-            return None
-        
-        return client
-    
-    def _get_service_type_by_model(self, model: str) -> Optional[str]:
-        """
-        根据模型名称确定服务类型
-        
-        Args:
-            model: 模型名称
-            
-        Returns:
-            str: 服务类型常量，未知返回 None
-        """
-        from domain.llm.external_service_manager import (
-            SERVICE_LLM_ZHIPU,
-            SERVICE_LLM_GEMINI,
-            SERVICE_LLM_OPENAI,
-            SERVICE_LLM_CLAUDE,
-            SERVICE_LLM_QWEN,
-            SERVICE_LLM_DEEPSEEK,
-        )
-        
-        model_lower = model.lower()
-        
-        # 智谱 GLM
-        if "glm" in model_lower or "zhipu" in model_lower:
-            return SERVICE_LLM_ZHIPU
-        
-        # Google Gemini
-        if "gemini" in model_lower:
-            return SERVICE_LLM_GEMINI
-        
-        # OpenAI GPT
-        if "gpt" in model_lower or "openai" in model_lower:
-            return SERVICE_LLM_OPENAI
-        
-        # Anthropic Claude
-        if "claude" in model_lower:
-            return SERVICE_LLM_CLAUDE
-        
-        # 阿里通义千问
-        if "qwen" in model_lower or "tongyi" in model_lower:
-            return SERVICE_LLM_QWEN
-        
-        # DeepSeek
-        if "deepseek" in model_lower:
-            return SERVICE_LLM_DEEPSEEK
-        
+                self.logger.debug(f"Failed to get active LLM client from ServiceLocator: {e}")
+
+        if self.logger:
+            self.logger.error(f"No active LLM client is registered for model: {model}")
         return None
     
     def _format_error_message(self, error: Exception) -> str:

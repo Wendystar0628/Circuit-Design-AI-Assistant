@@ -15,7 +15,6 @@
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime
 from typing import Dict, List, Optional
 
 
@@ -125,42 +124,6 @@ class ProviderConfig:
     website: str = ""                 # 官网链接
     docs_url: str = ""                # 文档链接
 
-
-# ============================================================
-# 本地模型信息
-# ============================================================
-
-@dataclass
-class LocalModelInfo:
-    """
-    本地模型信息数据类
-    
-    用于存储从 Ollama 服务获取的本地模型信息。
-    """
-    
-    name: str                         # 模型名称（如 "qwen2.5:7b"）
-    size: int = 0                     # 模型文件大小（字节）
-    parameter_size: str = ""          # 参数量估算（如 "7B"）
-    modified_at: Optional[datetime] = None  # 最后修改时间
-    digest: str = ""                  # 模型摘要/哈希
-    
-    @property
-    def size_gb(self) -> float:
-        """获取模型大小（GB）"""
-        return self.size / (1024 ** 3) if self.size > 0 else 0.0
-    
-    @property
-    def display_size(self) -> str:
-        """获取显示用的大小字符串"""
-        if self.size <= 0:
-            return "Unknown"
-        gb = self.size_gb
-        if gb >= 1:
-            return f"{gb:.1f} GB"
-        mb = self.size / (1024 ** 2)
-        return f"{mb:.0f} MB"
-
-
 # ============================================================
 # 嵌入模型配置
 # ============================================================
@@ -224,7 +187,6 @@ class EmbeddingProviderConfig:
 __all__ = [
     "ModelConfig",
     "ProviderConfig",
-    "LocalModelInfo",
     "EmbeddingModelConfig",
     "EmbeddingProviderConfig",
 ]

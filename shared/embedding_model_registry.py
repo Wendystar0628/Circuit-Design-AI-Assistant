@@ -29,30 +29,6 @@ from shared.model_types import EmbeddingModelConfig, EmbeddingProviderConfig
 # 内置嵌入模型配置
 # ============================================================
 
-# 本地嵌入模型
-LOCAL_EMBEDDING_MODELS = [
-    EmbeddingModelConfig(
-        id="local:gte-modernbert-base",
-        provider="local",
-        name="gte-modernbert-base",
-        display_name="GTE ModernBERT Base",
-        dimensions=768,
-        max_tokens=8192,
-        is_local=True,
-        description="英文嵌入模型，基于 ModernBERT 架构，支持 8192 长上下文",
-    ),
-    EmbeddingModelConfig(
-        id="local:bge-small-en-v1.5",
-        provider="local",
-        name="bge-small-en-v1.5",
-        display_name="BGE Small EN v1.5",
-        dimensions=384,
-        max_tokens=512,
-        is_local=True,
-        description="轻量级英文嵌入模型，适合资源受限环境",
-    ),
-]
-
 # 智谱嵌入模型
 ZHIPU_EMBEDDING_MODELS = [
     EmbeddingModelConfig(
@@ -78,16 +54,6 @@ ZHIPU_EMBEDDING_MODELS = [
 ]
 
 # 厂商配置
-LOCAL_EMBEDDING_PROVIDER = EmbeddingProviderConfig(
-    id="local",
-    display_name="本地模型",
-    base_url="",
-    default_model="gte-modernbert-base",
-    requires_api_key=False,
-    is_local=True,
-    implemented=True,
-)
-
 ZHIPU_EMBEDDING_PROVIDER = EmbeddingProviderConfig(
     id="zhipu",
     display_name="智谱 AI",
@@ -96,16 +62,6 @@ ZHIPU_EMBEDDING_PROVIDER = EmbeddingProviderConfig(
     requires_api_key=True,
     is_local=False,
     implemented=True,
-)
-
-OPENAI_EMBEDDING_PROVIDER = EmbeddingProviderConfig(
-    id="openai",
-    display_name="OpenAI",
-    base_url="https://api.openai.com/v1/embeddings",
-    default_model="text-embedding-3-small",
-    requires_api_key=True,
-    is_local=False,
-    implemented=False,  # 占位，未实现
 )
 
 
@@ -143,13 +99,7 @@ class EmbeddingModelRegistry:
         cls._logger = logging.getLogger(__name__)
         
         # 注册内置厂商
-        cls.register_provider(LOCAL_EMBEDDING_PROVIDER)
         cls.register_provider(ZHIPU_EMBEDDING_PROVIDER)
-        cls.register_provider(OPENAI_EMBEDDING_PROVIDER)
-        
-        # 注册内置模型
-        for model in LOCAL_EMBEDDING_MODELS:
-            cls.register_model(model)
         
         for model in ZHIPU_EMBEDDING_MODELS:
             cls.register_model(model)
@@ -296,7 +246,7 @@ class EmbeddingModelRegistry:
         返回对应的模型配置。
         
         Returns:
-            当前嵌入模型配置，未配置则返回默认本地模型
+            当前嵌入模型配置，未配置则返回默认智谱模型
         """
         try:
             from shared.service_locator import ServiceLocator
@@ -304,10 +254,9 @@ class EmbeddingModelRegistry:
             
             config_manager = ServiceLocator.get_optional(SVC_CONFIG_MANAGER)
             if not config_manager:
-                # ConfigManager 未初始化，返回默认本地模型
-                return cls.get_model("local:gte-modernbert-base")
+                return cls.get_model("zhipu:embedding-3")
             
-            provider_id = config_manager.get("embedding_provider", "local")
+            provider_id = config_manager.get("embedding_provider", "zhipu")
             model_name = config_manager.get("embedding_model", "")
             
             # 如果未指定模型名称，使用厂商默认模型
@@ -321,12 +270,10 @@ class EmbeddingModelRegistry:
                 if model:
                     return model
             
-            # 回退到默认本地模型
-            return cls.get_model("local:gte-modernbert-base")
+            return cls.get_model("zhipu:embedding-3")
             
         except Exception:
-            # 出错时返回默认本地模型
-            return cls.get_model("local:gte-modernbert-base")
+            return cls.get_model("zhipu:embedding-3")
     
     # ============================================================
     # 工具方法
@@ -348,9 +295,6 @@ class EmbeddingModelRegistry:
 
 __all__ = [
     "EmbeddingModelRegistry",
-    "LOCAL_EMBEDDING_MODELS",
     "ZHIPU_EMBEDDING_MODELS",
-    "LOCAL_EMBEDDING_PROVIDER",
     "ZHIPU_EMBEDDING_PROVIDER",
-    "OPENAI_EMBEDDING_PROVIDER",
 ]

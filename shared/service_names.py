@@ -123,9 +123,6 @@ SVC_TOOL_EXECUTOR = "tool_executor"
 # LLM 客户端 - 大模型 API 调用
 SVC_LLM_CLIENT = "llm_client"
 
-# Ollama 服务 - 本地模型管理
-SVC_OLLAMA_SERVICE = "ollama_service"
-
 # ============================================================
 # 基础设施层服务 - 追踪系统（阶段 1.5）
 # ============================================================
@@ -193,7 +190,6 @@ __all__ = [
     "SVC_UNIFIED_SEARCH_SERVICE",
     "SVC_IN_FILE_SEARCH_SERVICE",
     "SVC_LLM_CLIENT",
-    "SVC_OLLAMA_SERVICE",
     "SVC_TRACING_STORE",
     "SVC_TRACING_LOGGER",
     # 应用层 - 三层状态分离架构

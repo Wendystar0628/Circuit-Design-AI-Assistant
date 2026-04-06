@@ -31,9 +31,6 @@ from typing import Any, Callable, Dict, Generator, List, Optional, Union
 
 # LLM 服务
 SERVICE_LLM_ZHIPU = "llm_zhipu"           # 智谱 GLM（当前版本主要支持）
-SERVICE_LLM_GEMINI = "llm_gemini"         # Google Gemini
-SERVICE_LLM_OPENAI = "llm_openai"         # OpenAI GPT
-SERVICE_LLM_CLAUDE = "llm_claude"         # Anthropic Claude
 SERVICE_LLM_QWEN = "llm_qwen"             # 阿里通义千问
 SERVICE_LLM_DEEPSEEK = "llm_deepseek"     # DeepSeek
 
@@ -44,8 +41,7 @@ SERVICE_SEARCH_BING = "search_bing"       # Bing Web Search
 
 # 所有服务类型
 ALL_SERVICE_TYPES = [
-    SERVICE_LLM_ZHIPU, SERVICE_LLM_GEMINI, SERVICE_LLM_OPENAI,
-    SERVICE_LLM_CLAUDE, SERVICE_LLM_QWEN, SERVICE_LLM_DEEPSEEK,
+    SERVICE_LLM_ZHIPU, SERVICE_LLM_QWEN, SERVICE_LLM_DEEPSEEK,
     SERVICE_SEARCH_ZHIPU, SERVICE_SEARCH_GOOGLE, SERVICE_SEARCH_BING,
 ]
 
@@ -925,9 +921,6 @@ __all__ = [
     "ServiceStatus",
     # 服务类型常量
     "SERVICE_LLM_ZHIPU",
-    "SERVICE_LLM_GEMINI",
-    "SERVICE_LLM_OPENAI",
-    "SERVICE_LLM_CLAUDE",
     "SERVICE_LLM_QWEN",
     "SERVICE_LLM_DEEPSEEK",
     "SERVICE_SEARCH_ZHIPU",

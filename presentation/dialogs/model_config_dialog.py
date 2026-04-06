@@ -31,9 +31,12 @@ from infrastructure.config.settings import (
     LLM_PROVIDER_ZHIPU,
     LLM_PROVIDER_DEEPSEEK,
     LLM_PROVIDER_QWEN,
-    LLM_PROVIDER_OPENAI,
-    LLM_PROVIDER_ANTHROPIC,
-    LLM_PROVIDER_LOCAL,
+    EMBEDDING_PROVIDER_DEFAULTS,
+    CONFIG_EMBEDDING_PROVIDER,
+    CONFIG_EMBEDDING_MODEL,
+    CONFIG_EMBEDDING_BASE_URL,
+    CONFIG_EMBEDDING_TIMEOUT,
+    CONFIG_EMBEDDING_BATCH_SIZE,
     WEB_SEARCH_GOOGLE,
     WEB_SEARCH_BING,
     CONFIG_LLM_PROVIDER,
@@ -46,15 +49,12 @@ from infrastructure.config.settings import (
     CONFIG_ENABLE_PROVIDER_WEB_SEARCH,
     CONFIG_ENABLE_GENERAL_WEB_SEARCH,
     CONFIG_GENERAL_WEB_SEARCH_PROVIDER,
-    CONFIG_LOCAL_LLM_HOST,
-    CONFIG_LOCAL_LLM_MODEL,
     DEFAULT_BASE_URL,
     DEFAULT_MODEL,
     DEFAULT_TIMEOUT,
+    DEFAULT_EMBEDDING_TIMEOUT,
+    DEFAULT_EMBEDDING_BATCH_SIZE,
     DEFAULT_THINKING_TIMEOUT,
-    DEFAULT_LOCAL_LLM_HOST,
-    DEFAULT_LOCAL_LLM_MODEL,
-    LOCAL_LLM_REQUEST_TIMEOUT,
 )
 
 
@@ -64,11 +64,8 @@ from infrastructure.config.settings import (
 
 PROVIDER_DISPLAY_NAMES: Dict[str, str] = {
     LLM_PROVIDER_ZHIPU: "智谱 AI (Zhipu)",
-    LLM_PROVIDER_LOCAL: "本地模型 (Ollama)",
     LLM_PROVIDER_DEEPSEEK: "DeepSeek",
     LLM_PROVIDER_QWEN: "通义千问 (Qwen)",
-    LLM_PROVIDER_OPENAI: "OpenAI",
-    LLM_PROVIDER_ANTHROPIC: "Anthropic Claude",
 }
 
 
@@ -104,6 +101,14 @@ class ModelConfigDialog(QDialog):
         self._base_url_edit: Optional[QLineEdit] = None
         self._streaming_check: Optional[QCheckBox] = None
         self._timeout_spin: Optional[QSpinBox] = None
+
+        self._embedding_config_group: Optional[QGroupBox] = None
+        self._embedding_provider_combo: Optional[QComboBox] = None
+        self._embedding_model_combo: Optional[QComboBox] = None
+        self._embedding_api_key_edit: Optional[QLineEdit] = None
+        self._embedding_base_url_edit: Optional[QLineEdit] = None
+        self._embedding_timeout_spin: Optional[QSpinBox] = None
+        self._embedding_batch_size_spin: Optional[QSpinBox] = None
         
         # 厂商专属功能组件
         self._provider_features_group: Optional[QGroupBox] = None
@@ -120,16 +125,6 @@ class ModelConfigDialog(QDialog):
         self._general_search_api_key_edit: Optional[QLineEdit] = None
         self._google_cx_edit: Optional[QLineEdit] = None
         self._google_cx_label: Optional[QLabel] = None
-        
-        # 本地模型配置组件
-        self._local_config_group: Optional[QGroupBox] = None
-        self._local_host_edit: Optional[QLineEdit] = None
-        self._local_status_label: Optional[QLabel] = None
-        self._local_model_combo: Optional[QComboBox] = None
-        self._local_refresh_btn: Optional[QPushButton] = None
-        self._local_streaming_check: Optional[QCheckBox] = None
-        self._local_timeout_spin: Optional[QSpinBox] = None
-        self._local_install_hint: Optional[QLabel] = None
         
         # 按钮和状态
         self._test_btn: Optional[QPushButton] = None
@@ -381,10 +376,10 @@ class ModelConfigDialog(QDialog):
         # 2. API 配置组（云端厂商）
         self._api_config_group = self._create_api_config_group()
         main_layout.addWidget(self._api_config_group)
-        
-        # 3. 本地模型配置组（Ollama）
-        self._local_config_group = self._create_local_config_group()
-        main_layout.addWidget(self._local_config_group)
+
+        # 3. 嵌入模型配置组
+        self._embedding_config_group = self._create_embedding_config_group()
+        main_layout.addWidget(self._embedding_config_group)
         
         # 4. 厂商专属功能组（选择模型后显示）
         self._provider_features_group = self._create_provider_features_group()
@@ -475,78 +470,49 @@ class ModelConfigDialog(QDialog):
         
         return group
 
-    def _create_local_config_group(self) -> QGroupBox:
-        """创建本地模型配置组（Ollama）"""
+    def _create_embedding_config_group(self) -> QGroupBox:
+        """创建嵌入模型配置组"""
         group = QGroupBox()
-        group.setProperty("group_type", "local_config")
-        layout = QVBoxLayout(group)
-        
-        form_layout = QFormLayout()
-        
-        # Ollama 服务地址
-        self._local_host_edit = QLineEdit()
-        self._local_host_edit.setPlaceholderText(DEFAULT_LOCAL_LLM_HOST)
-        self._local_host_edit.setText(DEFAULT_LOCAL_LLM_HOST)
-        
-        host_label = QLabel()
-        host_label.setProperty("label_type", "local_host")
-        form_layout.addRow(host_label, self._local_host_edit)
-        
-        # 服务状态指示器
-        status_layout = QHBoxLayout()
-        self._local_status_label = QLabel()
-        self._local_status_label.setStyleSheet("color: #888;")
-        status_layout.addWidget(self._local_status_label)
-        status_layout.addStretch()
-        
-        # 刷新按钮
-        self._local_refresh_btn = QPushButton()
-        self._local_refresh_btn.setFixedWidth(80)
-        self._local_refresh_btn.clicked.connect(self._on_refresh_local_models)
-        status_layout.addWidget(self._local_refresh_btn)
-        
-        status_label = QLabel()
-        status_label.setProperty("label_type", "local_status")
-        form_layout.addRow(status_label, status_layout)
-        
-        # 模型选择
-        self._local_model_combo = QComboBox()
-        
+        group.setProperty("group_type", "embedding_config")
+        layout = QFormLayout(group)
+
+        self._embedding_provider_combo = QComboBox()
+        self._embedding_provider_combo.currentIndexChanged.connect(self._on_embedding_provider_changed)
+        provider_label = QLabel()
+        provider_label.setProperty("label_type", "embedding_provider")
+        layout.addRow(provider_label, self._embedding_provider_combo)
+
+        self._embedding_model_combo = QComboBox()
         model_label = QLabel()
-        model_label.setProperty("label_type", "local_model")
-        form_layout.addRow(model_label, self._local_model_combo)
-        
-        # 流式输出
-        self._local_streaming_check = QCheckBox()
-        self._local_streaming_check.setChecked(True)
-        
-        streaming_label = QLabel()
-        streaming_label.setProperty("label_type", "local_streaming")
-        form_layout.addRow(streaming_label, self._local_streaming_check)
-        
-        # 超时设置（本地模型推理较慢，默认更长）
-        self._local_timeout_spin = QSpinBox()
-        self._local_timeout_spin.setRange(30, 600)
-        self._local_timeout_spin.setValue(LOCAL_LLM_REQUEST_TIMEOUT)
-        self._local_timeout_spin.setSuffix(" s")
-        
+        model_label.setProperty("label_type", "embedding_model")
+        layout.addRow(model_label, self._embedding_model_combo)
+
+        self._embedding_api_key_edit = QLineEdit()
+        self._embedding_api_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        api_key_label = QLabel()
+        api_key_label.setProperty("label_type", "embedding_api_key")
+        layout.addRow(api_key_label, self._embedding_api_key_edit)
+
+        self._embedding_base_url_edit = QLineEdit()
+        base_url_label = QLabel()
+        base_url_label.setProperty("label_type", "embedding_base_url")
+        layout.addRow(base_url_label, self._embedding_base_url_edit)
+
+        self._embedding_timeout_spin = QSpinBox()
+        self._embedding_timeout_spin.setRange(5, 300)
+        self._embedding_timeout_spin.setValue(DEFAULT_EMBEDDING_TIMEOUT)
+        self._embedding_timeout_spin.setSuffix(" s")
         timeout_label = QLabel()
-        timeout_label.setProperty("label_type", "local_timeout")
-        form_layout.addRow(timeout_label, self._local_timeout_spin)
-        
-        layout.addLayout(form_layout)
-        
-        # 安装指引提示
-        self._local_install_hint = QLabel()
-        self._local_install_hint.setStyleSheet(
-            "color: #666; padding: 8px; background-color: #f5f5f5; "
-            "border-radius: 4px; font-size: 12px;"
-        )
-        self._local_install_hint.setWordWrap(True)
-        self._local_install_hint.setOpenExternalLinks(True)
-        self._local_install_hint.setVisible(False)
-        layout.addWidget(self._local_install_hint)
-        
+        timeout_label.setProperty("label_type", "embedding_timeout")
+        layout.addRow(timeout_label, self._embedding_timeout_spin)
+
+        self._embedding_batch_size_spin = QSpinBox()
+        self._embedding_batch_size_spin.setRange(1, 256)
+        self._embedding_batch_size_spin.setValue(DEFAULT_EMBEDDING_BATCH_SIZE)
+        batch_size_label = QLabel()
+        batch_size_label.setProperty("label_type", "embedding_batch_size")
+        layout.addRow(batch_size_label, self._embedding_batch_size_spin)
+
         return group
 
 
@@ -702,55 +668,30 @@ class ModelConfigDialog(QDialog):
         
         # 触发厂商变更以更新模型列表和配置区显示
         self._on_provider_changed(self._provider_combo.currentIndex())
-        
-        # 检查是否是本地模型
-        defaults = PROVIDER_DEFAULTS.get(provider, {})
-        is_local = defaults.get("is_local", False)
-        
-        if is_local:
-            # 本地模型配置
-            local_host = self.config_manager.get(CONFIG_LOCAL_LLM_HOST, DEFAULT_LOCAL_LLM_HOST)
-            self._local_host_edit.setText(local_host)
-            
-            local_model = self.config_manager.get(CONFIG_LOCAL_LLM_MODEL, DEFAULT_LOCAL_LLM_MODEL)
-            # 模型选择在刷新后设置
-            for i in range(self._local_model_combo.count()):
-                if self._local_model_combo.itemData(i) == local_model:
-                    self._local_model_combo.setCurrentIndex(i)
-                    break
-            
-            # 流式输出
-            streaming = self.config_manager.get(CONFIG_LLM_STREAMING, True)
-            self._local_streaming_check.setChecked(streaming)
-            
-            # 超时
-            timeout = self.config_manager.get(CONFIG_LLM_TIMEOUT, LOCAL_LLM_REQUEST_TIMEOUT)
-            self._local_timeout_spin.setValue(timeout)
-        else:
-            # 云端模型配置
-            # 模型
-            model = self.config_manager.get(CONFIG_LLM_MODEL, DEFAULT_MODEL)
-            index = self._model_combo.findText(model, Qt.MatchFlag.MatchFixedString)
-            if index >= 0:
-                self._model_combo.setCurrentIndex(index)
-            
-            # API Key（从 CredentialManager 获取当前厂商的凭证）
-            api_key = ""
-            if self.credential_manager and provider:
-                api_key = self.credential_manager.get_llm_api_key(provider)
-            self._api_key_edit.setText(api_key)
-            
-            # Base URL
-            base_url = self.config_manager.get(CONFIG_LLM_BASE_URL, "")
-            self._base_url_edit.setText(base_url)
-            
-            # 流式输出
-            streaming = self.config_manager.get(CONFIG_LLM_STREAMING, True)
-            self._streaming_check.setChecked(streaming)
-            
-            # 超时
-            timeout = self.config_manager.get(CONFIG_LLM_TIMEOUT, DEFAULT_TIMEOUT)
-            self._timeout_spin.setValue(timeout)
+
+        # 模型
+        model = self.config_manager.get(CONFIG_LLM_MODEL, DEFAULT_MODEL)
+        index = self._model_combo.findText(model, Qt.MatchFlag.MatchFixedString)
+        if index >= 0:
+            self._model_combo.setCurrentIndex(index)
+
+        # API Key（从 CredentialManager 获取当前厂商的凭证）
+        api_key = ""
+        if self.credential_manager and provider:
+            api_key = self.credential_manager.get_llm_api_key(provider)
+        self._api_key_edit.setText(api_key)
+
+        # Base URL
+        base_url = self.config_manager.get(CONFIG_LLM_BASE_URL, "")
+        self._base_url_edit.setText(base_url)
+
+        # 流式输出
+        streaming = self.config_manager.get(CONFIG_LLM_STREAMING, True)
+        self._streaming_check.setChecked(streaming)
+
+        # 超时
+        timeout = self.config_manager.get(CONFIG_LLM_TIMEOUT, DEFAULT_TIMEOUT)
+        self._timeout_spin.setValue(timeout)
         
         # 深度思考
         deep_think = self.config_manager.get(CONFIG_ENABLE_THINKING, True)
@@ -760,6 +701,35 @@ class ModelConfigDialog(QDialog):
         thinking_timeout = self.config_manager.get(CONFIG_THINKING_TIMEOUT, DEFAULT_THINKING_TIMEOUT)
         self._thinking_timeout_spin.setValue(thinking_timeout)
         self._thinking_timeout_spin.setEnabled(deep_think)
+
+        self._populate_embedding_providers()
+        embedding_provider = self.config_manager.get(CONFIG_EMBEDDING_PROVIDER, "zhipu")
+        embedding_index = self._embedding_provider_combo.findData(embedding_provider)
+        if embedding_index >= 0:
+            self._embedding_provider_combo.setCurrentIndex(embedding_index)
+        elif self._embedding_provider_combo.count() > 0:
+            self._embedding_provider_combo.setCurrentIndex(0)
+        self._on_embedding_provider_changed(self._embedding_provider_combo.currentIndex())
+
+        embedding_model = self.config_manager.get(CONFIG_EMBEDDING_MODEL, "")
+        if embedding_model:
+            model_index = self._embedding_model_combo.findText(embedding_model, Qt.MatchFlag.MatchFixedString)
+            if model_index >= 0:
+                self._embedding_model_combo.setCurrentIndex(model_index)
+
+        if self.credential_manager and embedding_provider:
+            self._embedding_api_key_edit.setText(
+                self.credential_manager.get_embedding_api_key(embedding_provider)
+            )
+
+        embedding_base_url = self.config_manager.get(CONFIG_EMBEDDING_BASE_URL, "")
+        if embedding_base_url:
+            self._embedding_base_url_edit.setText(embedding_base_url)
+
+        embedding_timeout = self.config_manager.get(CONFIG_EMBEDDING_TIMEOUT, DEFAULT_EMBEDDING_TIMEOUT)
+        self._embedding_timeout_spin.setValue(embedding_timeout)
+        embedding_batch_size = self.config_manager.get(CONFIG_EMBEDDING_BATCH_SIZE, DEFAULT_EMBEDDING_BATCH_SIZE)
+        self._embedding_batch_size_spin.setValue(embedding_batch_size)
 
         search_provider = self.config_manager.get(CONFIG_GENERAL_WEB_SEARCH_PROVIDER, WEB_SEARCH_GOOGLE)
         index = self._general_search_provider_combo.findData(search_provider)
@@ -810,36 +780,37 @@ class ModelConfigDialog(QDialog):
         
         # 获取当前选择的厂商
         provider_id = self._provider_combo.currentData()
-        defaults = PROVIDER_DEFAULTS.get(provider_id, {})
-        is_local = defaults.get("is_local", False)
+        embedding_provider_id = self._embedding_provider_combo.currentData()
         search_provider_id = self._general_search_provider_combo.currentData()
         
         # 保存厂商选择
         self.config_manager.set(CONFIG_LLM_PROVIDER, provider_id)
-        
-        if is_local:
-            # 本地模型配置
-            self.config_manager.set(CONFIG_LOCAL_LLM_HOST, self._local_host_edit.text().strip())
-            local_model = self._local_model_combo.currentData() or self._local_model_combo.currentText()
-            self.config_manager.set(CONFIG_LOCAL_LLM_MODEL, local_model)
-            self.config_manager.set(CONFIG_LLM_MODEL, local_model)
-            self.config_manager.set(CONFIG_LLM_STREAMING, self._local_streaming_check.isChecked())
-            self.config_manager.set(CONFIG_LLM_TIMEOUT, self._local_timeout_spin.value())
-            # 本地模型不需要保存 API Key
-        else:
-            # 云端模型配置
-            # 保存 LLM 凭证到 CredentialManager
-            if self.credential_manager:
-                api_key = self._api_key_edit.text().strip()
-                if api_key:
-                    self.credential_manager.set_llm_api_key(provider_id, api_key)
-                else:
-                    self.credential_manager.delete_credential("llm", provider_id)
-            
-            self.config_manager.set(CONFIG_LLM_BASE_URL, self._base_url_edit.text())
-            self.config_manager.set(CONFIG_LLM_MODEL, self._model_combo.currentText())
-            self.config_manager.set(CONFIG_LLM_STREAMING, self._streaming_check.isChecked())
-            self.config_manager.set(CONFIG_LLM_TIMEOUT, self._timeout_spin.value())
+
+        # 云端模型配置
+        # 保存 LLM 凭证到 CredentialManager
+        if self.credential_manager:
+            api_key = self._api_key_edit.text().strip()
+            if api_key:
+                self.credential_manager.set_llm_api_key(provider_id, api_key)
+            else:
+                self.credential_manager.delete_credential("llm", provider_id)
+
+        self.config_manager.set(CONFIG_LLM_BASE_URL, self._base_url_edit.text())
+        self.config_manager.set(CONFIG_LLM_MODEL, self._model_combo.currentText())
+        self.config_manager.set(CONFIG_LLM_STREAMING, self._streaming_check.isChecked())
+        self.config_manager.set(CONFIG_LLM_TIMEOUT, self._timeout_spin.value())
+
+        self.config_manager.set(CONFIG_EMBEDDING_PROVIDER, embedding_provider_id)
+        self.config_manager.set(CONFIG_EMBEDDING_MODEL, self._embedding_model_combo.currentText())
+        self.config_manager.set(CONFIG_EMBEDDING_BASE_URL, self._embedding_base_url_edit.text().strip())
+        self.config_manager.set(CONFIG_EMBEDDING_TIMEOUT, self._embedding_timeout_spin.value())
+        self.config_manager.set(CONFIG_EMBEDDING_BATCH_SIZE, self._embedding_batch_size_spin.value())
+        if self.credential_manager and embedding_provider_id:
+            embedding_api_key = self._embedding_api_key_edit.text().strip()
+            if embedding_api_key:
+                self.credential_manager.set_embedding_api_key(embedding_provider_id, embedding_api_key)
+            else:
+                self.credential_manager.delete_credential("embedding", embedding_provider_id)
         
         # 保存其他配置
         self.config_manager.set(CONFIG_ENABLE_THINKING, self._deep_think_check.isChecked())
@@ -857,10 +828,7 @@ class ModelConfigDialog(QDialog):
                 self.credential_manager.delete_credential("search", search_provider_id)
         
         if self.logger:
-            if is_local:
-                self.logger.info(f"Model configuration saved: provider={provider_id}, model={self._local_model_combo.currentData()}")
-            else:
-                self.logger.info(f"Model configuration saved: provider={provider_id}, model={self._model_combo.currentText()}")
+            self.logger.info(f"Model configuration saved: provider={provider_id}, model={self._model_combo.currentText()}")
         
         # 重新初始化 LLM 客户端
         self._reinit_llm_client(provider_id)
@@ -869,46 +837,32 @@ class ModelConfigDialog(QDialog):
 
     def _validate_config(self) -> bool:
         """校验配置"""
-        provider_id = self._provider_combo.currentData()
-        defaults = PROVIDER_DEFAULTS.get(provider_id, {})
-        is_local = defaults.get("is_local", False)
-        
-        if is_local:
-            # 本地模型校验
-            # 服务地址格式校验
-            host = self._local_host_edit.text().strip()
-            if host and not (host.startswith("http://") or host.startswith("https://")):
-                QMessageBox.warning(
-                    self,
-                    self._get_text("dialog.warning", "Warning"),
-                    self._get_text(
-                        "dialog.model_config.error.invalid_host",
-                        "Service address must start with http:// or https://"
-                    )
-                )
-                self._local_host_edit.setFocus()
-                return False
-            
-            # 超时值必须 > 0
-            if self._local_timeout_spin.value() <= 0:
-                QMessageBox.warning(
-                    self,
-                    self._get_text("dialog.warning", "Warning"),
-                    self._get_text("dialog.model_config.error.invalid_timeout", "Timeout must be greater than 0")
-                )
-                self._local_timeout_spin.setFocus()
-                return False
-        else:
-            # 云端模型校验
-            # 超时值必须 > 0
-            if self._timeout_spin.value() <= 0:
-                QMessageBox.warning(
-                    self,
-                    self._get_text("dialog.warning", "Warning"),
-                    self._get_text("dialog.model_config.error.invalid_timeout", "Timeout must be greater than 0")
-                )
-                self._timeout_spin.setFocus()
-                return False
+        if self._timeout_spin.value() <= 0:
+            QMessageBox.warning(
+                self,
+                self._get_text("dialog.warning", "Warning"),
+                self._get_text("dialog.model_config.error.invalid_timeout", "Timeout must be greater than 0")
+            )
+            self._timeout_spin.setFocus()
+            return False
+
+        if self._embedding_timeout_spin.value() <= 0:
+            QMessageBox.warning(
+                self,
+                self._get_text("dialog.warning", "Warning"),
+                self._get_text("dialog.model_config.error.invalid_timeout", "Timeout must be greater than 0")
+            )
+            self._embedding_timeout_spin.setFocus()
+            return False
+
+        if self._embedding_batch_size_spin.value() <= 0:
+            QMessageBox.warning(
+                self,
+                self._get_text("dialog.warning", "Warning"),
+                self._get_text("dialog.model_config.error.invalid_batch_size", "Batch size must be greater than 0")
+            )
+            self._embedding_batch_size_spin.setFocus()
+            return False
         
         # 联网搜索互斥校验（防御性检查，UI 已确保互斥）
         provider_search = self._provider_web_search_check.isChecked()
@@ -935,13 +889,8 @@ class ModelConfigDialog(QDialog):
         订阅该事件并负责刷新 LLM 客户端运行时。界面层不直接操作运行时。
         """
         try:
-            defaults = PROVIDER_DEFAULTS.get(provider_id, {})
-            is_local = defaults.get("is_local", False)
-            model = (
-                self._local_model_combo.currentData() or self._local_model_combo.currentText()
-                if is_local else self._model_combo.currentText()
-            )
-            host = self._local_host_edit.text().strip() if is_local else ""
+            model = self._model_combo.currentText()
+            host = ""
 
             if self.event_bus:
                 from shared.event_types import EVENT_LLM_CONFIG_CHANGED, EVENT_MODEL_CHANGED
@@ -989,52 +938,39 @@ class ModelConfigDialog(QDialog):
         """厂商选择变更"""
         provider_id = self._provider_combo.currentData()
         defaults = PROVIDER_DEFAULTS.get(provider_id, {})
-        is_local = defaults.get("is_local", False)
-        
-        # 切换云端/本地配置区的显示
-        if self._api_config_group:
-            self._api_config_group.setVisible(not is_local)
-        if self._local_config_group:
-            self._local_config_group.setVisible(is_local)
-        
-        if is_local:
-            # 本地模型：刷新 Ollama 模型列表
-            self._on_refresh_local_models()
+
+        self._model_combo.clear()
+        models = self._get_models_for_provider(provider_id)
+        for model in models:
+            self._model_combo.addItem(model)
+
+        # 设置默认模型
+        default_model = defaults.get("default_model", "")
+        if default_model:
+            idx = self._model_combo.findText(default_model, Qt.MatchFlag.MatchFixedString)
+            if idx >= 0:
+                self._model_combo.setCurrentIndex(idx)
+
+        # 更新 Base URL 占位符
+        base_url = defaults.get("base_url", "")
+        self._base_url_edit.setPlaceholderText(base_url)
+        self._base_url_edit.setText(base_url)
+
+        # 从 CredentialManager 加载该厂商的已保存凭证
+        if self.credential_manager and provider_id:
+            saved_api_key = self.credential_manager.get_llm_api_key(provider_id)
+            self._api_key_edit.setText(saved_api_key)
         else:
-            # 云端模型：更新模型列表（从 ModelRegistry 获取）
-            self._model_combo.clear()
-            models = self._get_models_for_provider(provider_id)
-            for model in models:
-                self._model_combo.addItem(model)
-            
-            # 设置默认模型
-            default_model = defaults.get("default_model", "")
-            if default_model:
-                idx = self._model_combo.findText(default_model, Qt.MatchFlag.MatchFixedString)
-                if idx >= 0:
-                    self._model_combo.setCurrentIndex(idx)
-            
-            # 更新 Base URL 占位符
-            base_url = defaults.get("base_url", "")
-            self._base_url_edit.setPlaceholderText(base_url)
-            if not self._base_url_edit.text():
-                self._base_url_edit.setText(base_url)
-            
-            # 从 CredentialManager 加载该厂商的已保存凭证
-            if self.credential_manager and provider_id:
-                saved_api_key = self.credential_manager.get_llm_api_key(provider_id)
-                self._api_key_edit.setText(saved_api_key)
-            else:
-                self._api_key_edit.setText("")
+            self._api_key_edit.setText("")
         
         # 检查是否已实现和支持的功能（从 ModelRegistry 获取）
         implemented = defaults.get("implemented", False)
-        supports_thinking = self._provider_supports_thinking(provider_id) if not is_local else False
+        supports_thinking = self._provider_supports_thinking(provider_id)
         supports_web_search = defaults.get("supports_web_search", False)
         
-        # 更新厂商专属功能组（本地模型不显示）
+        # 更新厂商专属功能组
         if self._provider_features_group:
-            self._provider_features_group.setVisible(not is_local and implemented)
+            self._provider_features_group.setVisible(implemented)
         self._update_provider_features(implemented, supports_thinking, supports_web_search)
         
         # 重置验证状态
@@ -1057,130 +993,53 @@ class ModelConfigDialog(QDialog):
         except Exception:
             return False
 
-    def _on_refresh_local_models(self):
-        """刷新本地模型列表"""
-        if not self._local_model_combo or not self._local_status_label:
+    def _populate_embedding_providers(self) -> None:
+        if not self._embedding_provider_combo or self._embedding_provider_combo.count() > 0:
             return
-        
-        # 更新状态为检测中
-        self._local_status_label.setText(
-            self._get_text("dialog.model_config.local.checking", "Checking...")
-        )
-        self._local_status_label.setStyleSheet("color: #4a9eff;")
-        self._local_refresh_btn.setEnabled(False)
-        self._local_model_combo.clear()
-        
-        # 使用 QTimer 延迟执行，避免阻塞 UI
-        from PyQt6.QtCore import QTimer
-        QTimer.singleShot(100, self._do_refresh_local_models)
-
-    def _do_refresh_local_models(self):
-        """执行本地模型列表刷新"""
         try:
-            import httpx
-            
-            host = self._local_host_edit.text().strip() or DEFAULT_LOCAL_LLM_HOST
-            url = f"{host}/api/tags"
-            
-            with httpx.Client(timeout=5.0) as client:
-                response = client.get(url)
-                
-                if response.status_code == 200:
-                    data = response.json()
-                    models = data.get("models", [])
-                    
-                    if models:
-                        # 服务运行中，有模型
-                        self._local_status_label.setText(
-                            self._get_text("dialog.model_config.local.running", "Ollama running")
-                        )
-                        self._local_status_label.setStyleSheet("color: #4caf50;")
-                        self._local_install_hint.setVisible(False)
-                        
-                        # 填充模型列表
-                        for model in models:
-                            name = model.get("name", "")
-                            size = model.get("size", 0)
-                            # 格式化大小
-                            size_str = self._format_size(size)
-                            display = f"{name} ({size_str})" if size_str else name
-                            self._local_model_combo.addItem(display, name)
-                        
-                        # 选择默认模型
-                        default_model = DEFAULT_LOCAL_LLM_MODEL
-                        for i in range(self._local_model_combo.count()):
-                            if self._local_model_combo.itemData(i) == default_model:
-                                self._local_model_combo.setCurrentIndex(i)
-                                break
-                    else:
-                        # 服务运行中，但无模型
-                        self._local_status_label.setText(
-                            self._get_text("dialog.model_config.local.no_models", "No models installed")
-                        )
-                        self._local_status_label.setStyleSheet("color: #ff9800;")
-                        self._show_local_install_hint("no_models")
-                else:
-                    # 服务响应异常
-                    self._local_status_label.setText(
-                        self._get_text("dialog.model_config.local.error", "Service error")
-                    )
-                    self._local_status_label.setStyleSheet("color: #f44336;")
-                    self._show_local_install_hint("error")
-                    
-        except httpx.ConnectError:
-            # 服务未启动
-            self._local_status_label.setText(
-                self._get_text("dialog.model_config.local.not_running", "Ollama not running")
-            )
-            self._local_status_label.setStyleSheet("color: #f44336;")
-            self._show_local_install_hint("not_running")
-        except Exception as e:
-            # 其他错误
-            self._local_status_label.setText(
-                self._get_text("dialog.model_config.local.error", "Service error")
-            )
-            self._local_status_label.setStyleSheet("color: #f44336;")
-            self._show_local_install_hint("error")
-            if self.logger:
-                self.logger.error(f"Failed to refresh local models: {e}")
-        finally:
-            self._local_refresh_btn.setEnabled(True)
+            from shared.embedding_model_registry import EmbeddingModelRegistry
+            providers = EmbeddingModelRegistry.list_implemented_providers()
+        except Exception:
+            providers = []
 
-    def _format_size(self, size_bytes: int) -> str:
-        """格式化文件大小"""
-        if size_bytes <= 0:
-            return ""
-        for unit in ["B", "KB", "MB", "GB"]:
-            if size_bytes < 1024:
-                return f"{size_bytes:.1f} {unit}"
-            size_bytes /= 1024
-        return f"{size_bytes:.1f} TB"
+        for provider in providers:
+            self._embedding_provider_combo.addItem(provider.display_name, provider.id)
 
-    def _show_local_install_hint(self, hint_type: str):
-        """显示本地模型安装指引"""
-        if not self._local_install_hint:
+        if not providers:
+            for provider_id, defaults in EMBEDDING_PROVIDER_DEFAULTS.items():
+                if defaults.get("implemented", False):
+                    self._embedding_provider_combo.addItem(defaults.get("display_name", provider_id), provider_id)
+
+    def _on_embedding_provider_changed(self, index: int):
+        provider_id = self._embedding_provider_combo.currentData()
+        if not provider_id:
             return
-        
-        if hint_type == "not_running":
-            hint_text = self._get_text(
-                "dialog.model_config.local.hint_not_running",
-                "Ollama service is not running. Start it with: <code>ollama serve</code><br>"
-                "Or install from: <a href='https://ollama.ai'>https://ollama.ai</a>"
+
+        self._embedding_model_combo.clear()
+        provider = None
+        try:
+            from shared.embedding_model_registry import EmbeddingModelRegistry
+            provider = EmbeddingModelRegistry.get_provider(provider_id)
+            for model_name in EmbeddingModelRegistry.list_model_names(provider_id):
+                self._embedding_model_combo.addItem(model_name)
+        except Exception:
+            provider = None
+
+        defaults = EMBEDDING_PROVIDER_DEFAULTS.get(provider_id, {})
+        default_model = provider.default_model if provider else defaults.get("default_model", "")
+        if default_model:
+            model_index = self._embedding_model_combo.findText(default_model, Qt.MatchFlag.MatchFixedString)
+            if model_index >= 0:
+                self._embedding_model_combo.setCurrentIndex(model_index)
+
+        base_url = provider.base_url if provider else defaults.get("base_url", "")
+        self._embedding_base_url_edit.setPlaceholderText(base_url)
+        self._embedding_base_url_edit.setText(base_url)
+
+        if self.credential_manager:
+            self._embedding_api_key_edit.setText(
+                self.credential_manager.get_embedding_api_key(provider_id)
             )
-        elif hint_type == "no_models":
-            hint_text = self._get_text(
-                "dialog.model_config.local.hint_no_models",
-                "No models installed. Download a model with:<br>"
-                "<code>ollama pull qwen2.5:7b</code>"
-            )
-        else:
-            hint_text = self._get_text(
-                "dialog.model_config.local.hint_error",
-                "Failed to connect to Ollama service. Please check the service address."
-            )
-        
-        self._local_install_hint.setText(hint_text)
-        self._local_install_hint.setVisible(True)
 
     def _update_provider_features(self, implemented: bool, supports_thinking: bool, supports_web_search: bool):
         """更新厂商专属功能组的显示状态"""
@@ -1342,7 +1201,6 @@ class ModelConfigDialog(QDialog):
             )
             return
         
-        # 获取当前配置
         api_key = self._api_key_edit.text().strip()
         if not api_key:
             QMessageBox.warning(
@@ -1366,19 +1224,25 @@ class ModelConfigDialog(QDialog):
     def _do_test_connection(self, provider_id: str, api_key: str):
         """执行实际的连接测试"""
         try:
+            from infrastructure.llm_adapters import LLMClientFactory
+
             base_url = self._base_url_edit.text().strip()
             model = self._model_combo.currentText()
-            
-            # 根据厂商选择测试方法
-            if provider_id == LLM_PROVIDER_ZHIPU:
-                success, message = self._test_zhipu_connection(api_key, base_url, model)
-            else:
-                # 其他厂商暂未实现
-                success = False
-                message = self._get_text(
-                    "dialog.model_config.provider_not_implemented",
-                    "This provider is not yet implemented."
-                )
+            timeout = self._timeout_spin.value()
+            client = LLMClientFactory.create_client(
+                provider_id=provider_id,
+                api_key=api_key,
+                base_url=base_url if base_url else None,
+                model=model if model else None,
+                timeout=timeout,
+            )
+            response = client.chat(
+                messages=[{"role": "user", "content": "Hi"}],
+                streaming=False,
+                thinking=False,
+            )
+            success = bool(response.content or response.tool_calls is not None)
+            message = ""
             
             # 更新状态
             if success:
@@ -1393,84 +1257,6 @@ class ModelConfigDialog(QDialog):
             self._update_validation_status("failed", str(e))
         finally:
             self._test_btn.setEnabled(True)
-
-    def _test_zhipu_connection(
-        self, api_key: str, base_url: str, model: str
-    ) -> tuple:
-        """
-        测试智谱 AI 连接
-        
-        Returns:
-            (success: bool, message: str)
-        """
-        import httpx
-        
-        # 使用默认 base_url 如果未提供
-        from infrastructure.config.settings import DEFAULT_BASE_URL
-        actual_base_url = base_url if base_url else DEFAULT_BASE_URL
-        url = f"{actual_base_url}/chat/completions"
-        
-        # 构建请求
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key}",
-        }
-        
-        request_body = {
-            "model": model,
-            "messages": [{"role": "user", "content": "Hi"}],
-            "stream": False,
-        }
-        
-        if self.logger:
-            self.logger.info(f"Testing connection to: {url}")
-            self.logger.info(f"Model: {model}")
-            self.logger.debug(f"Request body: {request_body}")
-        
-        try:
-            # 直接使用 httpx 发送请求，获取原始响应
-            with httpx.Client(timeout=15.0) as client:
-                response = client.post(url, json=request_body, headers=headers)
-                
-                status_code = response.status_code
-                response_text = response.text
-                
-                if self.logger:
-                    self.logger.info(f"Response status: {status_code}")
-                    self.logger.debug(f"Response body: {response_text[:500]}")
-                
-                # 检查状态码
-                if status_code == 200:
-                    try:
-                        data = response.json()
-                        if "choices" in data and len(data["choices"]) > 0:
-                            return True, ""
-                        else:
-                            return False, f"Unexpected response format: {response_text[:200]}"
-                    except Exception as parse_err:
-                        return False, f"Failed to parse response: {parse_err}"
-                else:
-                    # 返回详细的错误信息
-                    return False, f"HTTP {status_code}: {response_text[:300]}"
-                    
-        except httpx.TimeoutException as e:
-            if self.logger:
-                self.logger.error(f"Timeout: {e}")
-            return False, self._get_text(
-                "dialog.model_config.error.timeout",
-                "Request timed out, server may be slow"
-            )
-        except httpx.ConnectError as e:
-            if self.logger:
-                self.logger.error(f"Connect error: {e}")
-            return False, self._get_text(
-                "dialog.model_config.error.network",
-                f"Connection failed: {e}"
-            )
-        except Exception as e:
-            if self.logger:
-                self.logger.error(f"Unexpected error: {type(e).__name__}: {e}")
-            return False, f"{type(e).__name__}: {e}"
 
     def _save_verification_timestamp(self, provider_id: str):
         """保存验证时间戳"""
@@ -1585,8 +1371,8 @@ class ModelConfigDialog(QDialog):
                 group.setTitle(self._get_text("dialog.model_config.group.provider_model", "Provider & Model"))
             elif group_type == "api_config":
                 group.setTitle(self._get_text("dialog.model_config.group.api_config", "API Configuration"))
-            elif group_type == "local_config":
-                group.setTitle(self._get_text("dialog.model_config.group.local_config", "Local Model (Ollama)"))
+            elif group_type == "embedding_config":
+                group.setTitle(self._get_text("dialog.model_config.group.embedding_config", "Embedding Configuration"))
             elif group_type == "provider_features":
                 group.setTitle(self._get_text("dialog.model_config.group.provider_features", "Provider Features"))
             elif group_type == "general_search":
@@ -1607,16 +1393,18 @@ class ModelConfigDialog(QDialog):
                 label.setText(self._get_text("dialog.model_config.label.streaming", "Streaming Output"))
             elif label_type == "timeout":
                 label.setText(self._get_text("dialog.model_config.label.timeout", "Timeout"))
-            elif label_type == "local_host":
-                label.setText(self._get_text("dialog.model_config.label.local_host", "Service Address"))
-            elif label_type == "local_status":
-                label.setText(self._get_text("dialog.model_config.label.local_status", "Status"))
-            elif label_type == "local_model":
-                label.setText(self._get_text("dialog.model_config.label.model", "Model"))
-            elif label_type == "local_streaming":
-                label.setText(self._get_text("dialog.model_config.label.streaming", "Streaming Output"))
-            elif label_type == "local_timeout":
-                label.setText(self._get_text("dialog.model_config.label.timeout", "Timeout"))
+            elif label_type == "embedding_provider":
+                label.setText(self._get_text("dialog.model_config.label.embedding_provider", "Embedding Provider"))
+            elif label_type == "embedding_model":
+                label.setText(self._get_text("dialog.model_config.label.embedding_model", "Embedding Model"))
+            elif label_type == "embedding_api_key":
+                label.setText(self._get_text("dialog.model_config.label.embedding_api_key", "Embedding API Key"))
+            elif label_type == "embedding_base_url":
+                label.setText(self._get_text("dialog.model_config.label.embedding_base_url", "Embedding Base URL"))
+            elif label_type == "embedding_timeout":
+                label.setText(self._get_text("dialog.model_config.label.embedding_timeout", "Embedding Timeout"))
+            elif label_type == "embedding_batch_size":
+                label.setText(self._get_text("dialog.model_config.label.embedding_batch_size", "Embedding Batch Size"))
             elif label_type == "deep_think":
                 label.setText(self._get_text("dialog.model_config.label.deep_think", "Deep Thinking"))
             elif label_type == "thinking_timeout":
@@ -1638,12 +1426,6 @@ class ModelConfigDialog(QDialog):
         )
         self._save_btn.setText(self._get_text("btn.save", "Save"))
         self._cancel_btn.setText(self._get_text("btn.cancel", "Cancel"))
-        
-        # 本地模型刷新按钮
-        if self._local_refresh_btn:
-            self._local_refresh_btn.setText(
-                self._get_text("dialog.model_config.btn.refresh", "Refresh")
-            )
         
         # 更新未实现提示文本
         if self._not_implemented_label.isVisible():

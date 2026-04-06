@@ -310,9 +310,11 @@ def _init_phase_1() -> bool:
         # 职责：注册所有内置模型配置，作为模型信息的单一信息源
         # --------------------------------------------------------
         from shared.model_registry import ModelRegistry
+        from shared.embedding_model_registry import EmbeddingModelRegistry
         ModelRegistry.initialize()
+        EmbeddingModelRegistry.initialize()
         if _logger:
-            _logger.info("Phase 1.4 ModelRegistry 初始化完成")
+            _logger.info("Phase 1.4 ModelRegistry / EmbeddingModelRegistry 初始化完成")
 
         # --------------------------------------------------------
         # 1.5 TracingStore 初始化
@@ -800,13 +802,11 @@ def refresh_llm_runtime_services() -> bool:
             SVC_EXTERNAL_SERVICE_MANAGER,
             SVC_LLM_EXECUTOR,
         )
-        from infrastructure.config.settings import LLM_PROVIDER_ZHIPU
+        from infrastructure.config.settings import CONFIG_LLM_PROVIDER, CONFIG_LLM_BASE_URL, CONFIG_LLM_MODEL, CONFIG_LLM_TIMEOUT
+        from infrastructure.llm_adapters import LLMClientFactory
         from domain.llm.external_service_manager import (
             ExternalServiceManager,
             SERVICE_LLM_ZHIPU,
-            SERVICE_LLM_GEMINI,
-            SERVICE_LLM_OPENAI,
-            SERVICE_LLM_CLAUDE,
             SERVICE_LLM_QWEN,
             SERVICE_LLM_DEEPSEEK,
         )
@@ -826,9 +826,6 @@ def refresh_llm_runtime_services() -> bool:
 
         for service_type in [
             SERVICE_LLM_ZHIPU,
-            SERVICE_LLM_GEMINI,
-            SERVICE_LLM_OPENAI,
-            SERVICE_LLM_CLAUDE,
             SERVICE_LLM_QWEN,
             SERVICE_LLM_DEEPSEEK,
         ]:
@@ -836,48 +833,53 @@ def refresh_llm_runtime_services() -> bool:
 
         ServiceLocator.unregister(SVC_LLM_CLIENT)
 
-        provider = config_manager.get("llm_provider", "")
+        provider = config_manager.get(CONFIG_LLM_PROVIDER, "")
         if not provider:
             if _logger:
                 _logger.info("Phase 3.6 LLM 客户端初始化跳过：未配置 LLM 厂商")
             return False
 
-        if provider == LLM_PROVIDER_ZHIPU:
-            credential = credential_manager.get_credential("llm", provider)
-            if not credential or not credential.get("api_key"):
-                if _logger:
-                    _logger.info(f"Phase 3.6 LLM 客户端初始化跳过：{provider} 的 API Key 未配置")
-                return False
-
-            from infrastructure.llm_adapters.zhipu import ZhipuClient
-
-            api_key = credential.get("api_key")
-            base_url = config_manager.get("llm_base_url", "")
-            model = config_manager.get("llm_model", "")
-            timeout = config_manager.get("llm_timeout", 60)
-
-            client = ZhipuClient(
-                api_key=api_key,
-                base_url=base_url if base_url else None,
-                model=model if model else None,
-                timeout=timeout,
-            )
-            ServiceLocator.register(SVC_LLM_CLIENT, client)
-            external_service_manager.register_service(SERVICE_LLM_ZHIPU, client)
-
-            llm_executor = ServiceLocator.get_optional(SVC_LLM_EXECUTOR)
-            if llm_executor is None:
-                from domain.llm.llm_executor import LLMExecutor
-                llm_executor = LLMExecutor()
-                ServiceLocator.register(SVC_LLM_EXECUTOR, llm_executor)
-
+        service_type_by_provider = {
+            "zhipu": SERVICE_LLM_ZHIPU,
+            "deepseek": SERVICE_LLM_DEEPSEEK,
+            "qwen": SERVICE_LLM_QWEN,
+        }
+        service_type = service_type_by_provider.get(provider)
+        if not service_type:
             if _logger:
-                _logger.info(f"Phase 3.6 LLM 客户端初始化完成：{provider}, model={model or 'default'}")
-            return True
+                _logger.warning(f"Phase 3.6 LLM 客户端初始化跳过：厂商 {provider} 暂未接入统一运行时")
+            return False
+
+        credential = credential_manager.get_credential("llm", provider)
+        if not credential or not credential.get("api_key"):
+            if _logger:
+                _logger.info(f"Phase 3.6 LLM 客户端初始化跳过：{provider} 的 API Key 未配置")
+            return False
+
+        api_key = credential.get("api_key")
+        base_url = config_manager.get(CONFIG_LLM_BASE_URL, "")
+        model = config_manager.get(CONFIG_LLM_MODEL, "")
+        timeout = config_manager.get(CONFIG_LLM_TIMEOUT, 60)
+
+        client = LLMClientFactory.create_client(
+            provider_id=provider,
+            api_key=api_key,
+            base_url=base_url if base_url else None,
+            model=model if model else None,
+            timeout=timeout,
+        )
+        ServiceLocator.register(SVC_LLM_CLIENT, client)
+        external_service_manager.register_service(service_type, client)
+
+        llm_executor = ServiceLocator.get_optional(SVC_LLM_EXECUTOR)
+        if llm_executor is None:
+            from domain.llm.llm_executor import LLMExecutor
+            llm_executor = LLMExecutor()
+            ServiceLocator.register(SVC_LLM_EXECUTOR, llm_executor)
 
         if _logger:
-            _logger.warning(f"Phase 3.6 LLM 客户端初始化跳过：厂商 {provider} 暂未实现")
-        return False
+            _logger.info(f"Phase 3.6 LLM 客户端初始化完成：{provider}, model={model or 'default'}")
+        return True
 
     except Exception as e:
         if _logger:

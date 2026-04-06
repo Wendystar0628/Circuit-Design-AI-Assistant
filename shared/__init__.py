@@ -180,7 +180,6 @@ from shared.i18n_manager import (
 from shared.model_types import (
     ModelConfig,
     ProviderConfig,
-    LocalModelInfo,
     EmbeddingModelConfig,
     EmbeddingProviderConfig,
 )
@@ -327,7 +326,6 @@ __all__ = [
     # 模型类型
     "ModelConfig",
     "ProviderConfig",
-    "LocalModelInfo",
     "EmbeddingModelConfig",
     "EmbeddingProviderConfig",
     # 模型注册表

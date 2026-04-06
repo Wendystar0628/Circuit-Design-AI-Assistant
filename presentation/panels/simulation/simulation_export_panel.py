@@ -258,7 +258,7 @@ class SimulationExportPanel(QWidget):
         self._export_btn.setEnabled(has_result)
 
     def _apply_style(self):
-        checkmark_icon_path = (Path(__file__).resolve().parents[3] / "resources" / "icons" / "ui" / "checkmark.svg").as_posix()
+        checkmark_icon_path = (Path(__file__).resolve().parents[3] / "resources" / "icons" / "ui" / "checkmark-dark.svg").as_posix()
         self.setStyleSheet(f"""
             SimulationExportPanel {{
                 background-color: {COLOR_BG_PRIMARY};
@@ -284,11 +284,8 @@ class SimulationExportPanel(QWidget):
                 border-radius: 4px;
                 background-color: {COLOR_BG_PRIMARY};
             }}
-            QCheckBox::indicator:hover {{
-                border: 1px solid {COLOR_ACCENT};
-            }}
             QCheckBox::indicator:checked {{
-                border: 1px solid {COLOR_ACCENT};
+                border: 1px solid {COLOR_BORDER};
                 background-color: {COLOR_BG_PRIMARY};
                 image: url("{checkmark_icon_path}");
             }}
@@ -299,6 +296,8 @@ class SimulationExportPanel(QWidget):
                 background-color: {COLOR_BG_SECONDARY};
             }}
             QCheckBox::indicator:checked:disabled {{
+                border: 1px solid {COLOR_BORDER};
+                background-color: {COLOR_BG_SECONDARY};
                 image: url("{checkmark_icon_path}");
             }}
             #exportSecondaryBtn, #exportPrimaryBtn {{

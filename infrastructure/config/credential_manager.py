@@ -33,6 +33,7 @@ from .settings import (
     GLOBAL_CONFIG_DIR,
     CREDENTIALS_FILE,
     CREDENTIAL_TYPE_LLM,
+    CREDENTIAL_TYPE_EMBEDDING,
     CREDENTIAL_TYPE_SEARCH,
 )
 
@@ -77,12 +78,14 @@ class CredentialManager:
                         self._credentials = json.load(f)
                     self._credentials = {
                         CREDENTIAL_TYPE_LLM: dict(self._credentials.get(CREDENTIAL_TYPE_LLM, {})),
+                        CREDENTIAL_TYPE_EMBEDDING: dict(self._credentials.get(CREDENTIAL_TYPE_EMBEDDING, {})),
                         CREDENTIAL_TYPE_SEARCH: dict(self._credentials.get(CREDENTIAL_TYPE_SEARCH, {})),
                     }
                 else:
                     # 凭证文件不存在，初始化空结构
                     self._credentials = {
                         CREDENTIAL_TYPE_LLM: {},
+                        CREDENTIAL_TYPE_EMBEDDING: {},
                         CREDENTIAL_TYPE_SEARCH: {},
                     }
                     self._save_credentials_internal()
@@ -95,6 +98,7 @@ class CredentialManager:
                 self._log_error(f"凭证文件 JSON 解析失败: {e}")
                 self._credentials = {
                     CREDENTIAL_TYPE_LLM: {},
+                    CREDENTIAL_TYPE_EMBEDDING: {},
                     CREDENTIAL_TYPE_SEARCH: {},
                 }
                 self._loaded = True
@@ -104,6 +108,7 @@ class CredentialManager:
                 self._log_error(f"凭证加载失败: {e}")
                 self._credentials = {
                     CREDENTIAL_TYPE_LLM: {},
+                    CREDENTIAL_TYPE_EMBEDDING: {},
                     CREDENTIAL_TYPE_SEARCH: {},
                 }
                 self._loaded = True
@@ -337,6 +342,32 @@ class CredentialManager:
         """
         return self.set_credential(CREDENTIAL_TYPE_LLM, provider_id, {"api_key": api_key})
     
+    def get_embedding_api_key(self, provider_id: str) -> str:
+        """
+        获取嵌入模型厂商的 API Key
+        
+        Args:
+            provider_id: 厂商标识
+            
+        Returns:
+            API Key 明文，不存在则返回空字符串
+        """
+        credential = self.get_credential(CREDENTIAL_TYPE_EMBEDDING, provider_id)
+        return credential.get("api_key", "") if credential else ""
+    
+    def set_embedding_api_key(self, provider_id: str, api_key: str) -> bool:
+        """
+        设置嵌入模型厂商的 API Key
+        
+        Args:
+            provider_id: 厂商标识
+            api_key: API Key 明文
+            
+        Returns:
+            bool: 保存是否成功
+        """
+        return self.set_credential(CREDENTIAL_TYPE_EMBEDDING, provider_id, {"api_key": api_key})
+
     # ============================================================
     # 便捷方法（搜索凭证）
     # ============================================================

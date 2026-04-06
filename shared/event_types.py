@@ -182,23 +182,6 @@ EVENT_MODEL_CHANGED = "model_changed"
 EVENT_LLM_PROVIDER_CHANGED = "llm_provider_changed"
 
 # ============================================================
-# 本地模型事件（Ollama）
-# ============================================================
-
-# Ollama 服务状态变更
-# 携带数据：
-#   - status: str - 服务状态（"running", "not_running", "not_installed", "error"）
-#   - base_url: str - Ollama 服务地址
-#   - error_message: str - 错误信息（若状态为 error）
-EVENT_OLLAMA_STATUS_CHANGED = "ollama_status_changed"
-
-# Ollama 模型列表更新
-# 携带数据：
-#   - models: list - 模型列表，每项包含 name, size, parameter_size, modified_at
-#   - count: int - 模型数量
-EVENT_OLLAMA_MODELS_UPDATED = "ollama_models_updated"
-
-# ============================================================
 # 嵌入模型事件
 # ============================================================
 
@@ -936,9 +919,6 @@ __all__ = [
     "EVENT_LLM_CLIENT_REINITIALIZED",
     "EVENT_MODEL_CHANGED",
     "EVENT_LLM_PROVIDER_CHANGED",
-    # 本地模型事件
-    "EVENT_OLLAMA_STATUS_CHANGED",
-    "EVENT_OLLAMA_MODELS_UPDATED",
     # 嵌入模型事件
     "EVENT_EMBEDDING_PROVIDER_CHANGED",
     "EVENT_EMBEDDING_MODEL_READY",

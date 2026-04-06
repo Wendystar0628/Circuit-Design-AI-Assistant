@@ -46,28 +46,6 @@ class SimulationExportPanel(QWidget):
         layout.setContentsMargins(SPACING_NORMAL, SPACING_NORMAL, SPACING_NORMAL, SPACING_NORMAL)
         layout.setSpacing(SPACING_NORMAL)
 
-        self._summary_card = QFrame()
-        self._summary_card.setObjectName("exportSummaryCard")
-        summary_layout = QVBoxLayout(self._summary_card)
-        summary_layout.setContentsMargins(SPACING_NORMAL, SPACING_NORMAL, SPACING_NORMAL, SPACING_NORMAL)
-        summary_layout.setSpacing(SPACING_SMALL)
-
-        self._title_label = QLabel()
-        self._title_label.setObjectName("exportTitleLabel")
-        summary_layout.addWidget(self._title_label)
-
-        self._hint_label = QLabel()
-        self._hint_label.setObjectName("exportHintLabel")
-        self._hint_label.setWordWrap(True)
-        summary_layout.addWidget(self._hint_label)
-
-        self._target_preview_label = QLabel()
-        self._target_preview_label.setObjectName("exportTargetPreviewLabel")
-        self._target_preview_label.setWordWrap(True)
-        summary_layout.addWidget(self._target_preview_label)
-
-        layout.addWidget(self._summary_card)
-
         self._selection_card = QFrame()
         self._selection_card.setObjectName("exportSelectionCard")
         selection_layout = QVBoxLayout(self._selection_card)
@@ -127,7 +105,6 @@ class SimulationExportPanel(QWidget):
 
     def set_result(self, result: Optional[SimulationResult]):
         self._result = result
-        self._refresh_preview()
         self._update_enabled_state()
 
     def set_metrics(self, metrics: List[Any]):
@@ -140,15 +117,9 @@ class SimulationExportPanel(QWidget):
         self._result = None
         self._metrics = []
         self._overall_score = 0.0
-        self._refresh_preview()
         self._update_enabled_state()
 
     def retranslate_ui(self):
-        self._title_label.setText(self._get_text("simulation.export.title", "统一数据导出"))
-        self._hint_label.setText(self._get_text(
-            "simulation.export.hint",
-            "选择要导出的结果类型。导出时会先选择一个根目录，然后自动生成“电路文件名/仿真时间/信息类别”层级。",
-        ))
         self._selection_title.setText(self._get_text("simulation.export.selection_title", "导出内容"))
         self._checkboxes["metrics"].setText(self._get_text("simulation.export.metrics", "仿真指标"))
         self._checkboxes["charts"].setText(self._get_text("simulation.export.charts", "图表"))
@@ -159,7 +130,6 @@ class SimulationExportPanel(QWidget):
         self._select_all_btn.setText(self._get_text("simulation.export.select_all", "全选"))
         self._clear_selection_btn.setText(self._get_text("simulation.export.clear_selection", "清空选择"))
         self._export_btn.setText(self._get_text("simulation.export.execute", "导出所选内容"))
-        self._refresh_preview()
 
     def _select_all(self):
         for checkbox in self._checkboxes.values():
@@ -279,24 +249,6 @@ class SimulationExportPanel(QWidget):
                 relative_paths.append(path.name)
         return relative_paths
 
-    def _refresh_preview(self):
-        result = self._result
-        if result is None:
-            self._target_preview_label.setText(self._get_text(
-                "simulation.export.preview_empty",
-                "当前暂无结果。导出目录预览：simulation_result/simulation_time_unknown/...",
-            ))
-            return
-
-        circuit_name = Path(result.file_path).name if result.file_path else "simulation_result"
-        timestamp_folder = simulation_artifact_exporter.format_timestamp_folder(result.timestamp)
-        self._target_preview_label.setText(
-            self._get_text(
-                "simulation.export.preview",
-                "导出结构预览：{circuit}/{timestamp}/<所选类别>",
-            ).format(circuit=circuit_name, timestamp=timestamp_folder)
-        )
-
     def _update_enabled_state(self):
         has_result = self._result is not None
         for checkbox in self._checkboxes.values():
@@ -306,25 +258,48 @@ class SimulationExportPanel(QWidget):
         self._export_btn.setEnabled(has_result)
 
     def _apply_style(self):
+        checkmark_icon_path = (Path(__file__).resolve().parents[3] / "resources" / "icons" / "ui" / "checkmark.svg").as_posix()
         self.setStyleSheet(f"""
             SimulationExportPanel {{
                 background-color: {COLOR_BG_PRIMARY};
             }}
-            #exportSummaryCard, #exportSelectionCard {{
+            #exportSelectionCard {{
                 background-color: {COLOR_BG_TERTIARY};
                 border: 1px solid {COLOR_BORDER};
                 border-radius: {BORDER_RADIUS_NORMAL}px;
             }}
-            #exportTitleLabel, #exportSelectionTitle {{
+            #exportSelectionTitle {{
                 color: {COLOR_TEXT_PRIMARY};
                 font-weight: bold;
             }}
-            #exportHintLabel, #exportTargetPreviewLabel {{
-                color: {COLOR_TEXT_SECONDARY};
-                font-size: {FONT_SIZE_SMALL}px;
-            }}
             QCheckBox {{
                 color: {COLOR_TEXT_PRIMARY};
+                spacing: 8px;
+                font-size: {FONT_SIZE_SMALL}px;
+            }}
+            QCheckBox::indicator {{
+                width: 16px;
+                height: 16px;
+                border: 1px solid {COLOR_BORDER};
+                border-radius: 4px;
+                background-color: {COLOR_BG_PRIMARY};
+            }}
+            QCheckBox::indicator:hover {{
+                border: 1px solid {COLOR_ACCENT};
+            }}
+            QCheckBox::indicator:checked {{
+                border: 1px solid {COLOR_ACCENT};
+                background-color: {COLOR_BG_PRIMARY};
+                image: url("{checkmark_icon_path}");
+            }}
+            QCheckBox::indicator:unchecked {{
+                image: none;
+            }}
+            QCheckBox::indicator:disabled {{
+                background-color: {COLOR_BG_SECONDARY};
+            }}
+            QCheckBox::indicator:checked:disabled {{
+                image: url("{checkmark_icon_path}");
             }}
             #exportSecondaryBtn, #exportPrimaryBtn {{
                 border-radius: {BORDER_RADIUS_NORMAL}px;

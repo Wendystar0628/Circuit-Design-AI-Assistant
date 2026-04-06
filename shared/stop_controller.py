@@ -42,6 +42,11 @@ from enum import Enum
 from typing import Any, Callable, Dict, List, Optional
 
 from PyQt6.QtCore import QObject, QMetaObject, Qt, Q_ARG, pyqtSignal
+from shared.event_types import (
+    EVENT_STOP_COMPLETED,
+    EVENT_STOP_REQUESTED,
+    EVENT_STOP_STATE_CHANGED,
+)
 
 
 # ============================================================
@@ -216,7 +221,7 @@ class StopController(QObject):
         # 在锁外发送信号和事件
         self._emit_state_changed(self._state.value)
         self._emit_stop_requested(task_id, reason.value)
-        self._publish_event("EVENT_STOP_REQUESTED", task_id, reason.value)
+        self._publish_event(EVENT_STOP_REQUESTED, task_id, reason.value)
         
         return True
     
@@ -355,7 +360,7 @@ class StopController(QObject):
                 )
         
         self._emit_state_changed(self._state.value)
-        self._publish_event("EVENT_STOP_STATE_CHANGED", self._active_task_id or "unknown", {
+        self._publish_event(EVENT_STOP_STATE_CHANGED, self._active_task_id or "unknown", {
             "old_state": old_state.value,
             "new_state": self._state.value
         })
@@ -418,7 +423,7 @@ class StopController(QObject):
         # 在锁外发送信号和事件
         self._emit_state_changed(self._state.value)
         self._emit_stop_completed(task_id, stop_result)
-        self._publish_event("EVENT_STOP_COMPLETED", task_id, stop_result)
+        self._publish_event(EVENT_STOP_COMPLETED, task_id, stop_result)
         
         return True
     

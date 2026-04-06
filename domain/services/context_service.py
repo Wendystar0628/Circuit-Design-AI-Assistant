@@ -113,7 +113,7 @@ def load_messages(
     
     Args:
         project_root: 项目根目录路径
-        session_id: 会话 ID（也可以是旧格式的 file_name）
+        session_id: 会话 ID
         
     Returns:
         List[Dict]: 消息列表，文件不存在时返回空列表
@@ -204,7 +204,7 @@ def get_message_count(
 
 def list_sessions(
     project_root: str,
-    limit: int = 20
+    limit: Optional[int] = 20
 ) -> List[Dict[str, Any]]:
     """
     列出所有会话
@@ -242,7 +242,7 @@ def list_sessions(
         reverse=True
     )
     
-    return valid_sessions[:limit]
+    return valid_sessions[:limit] if limit is not None else valid_sessions
 
 
 def delete_session(
@@ -305,51 +305,6 @@ def session_exists(
     root = Path(project_root)
     file_path = root / CONVERSATIONS_DIR / f"{session_id}.json"
     return file_path.exists()
-
-
-def rename_session(
-    project_root: str,
-    session_id: str,
-    new_name: str
-) -> bool:
-    """
-    重命名会话
-    
-    仅更新会话索引中的名称，不修改文件名。
-    
-    Args:
-        project_root: 项目根目录路径
-        session_id: 会话 ID
-        new_name: 新名称
-        
-    Returns:
-        bool: 是否重命名成功
-    """
-    if not session_id or not new_name:
-        return False
-    
-    return update_session_index(
-        project_root,
-        session_id,
-        {"name": new_name}
-    )
-
-
-def get_conversation_path(
-    project_root: str,
-    session_id: str
-) -> str:
-    """
-    获取会话文件路径
-    
-    Args:
-        project_root: 项目根目录路径
-        session_id: 会话 ID
-        
-    Returns:
-        str: 会话文件完整路径
-    """
-    return str(Path(project_root) / CONVERSATIONS_DIR / f"{session_id}.json")
 
 
 # ============================================================
@@ -575,12 +530,10 @@ __all__ = [
     "get_recent_messages",
     "get_message_count",
     "clear_messages",
-    "get_conversation_path",
     # 会话管理
     "list_sessions",
     "delete_session",
     "session_exists",
-    "rename_session",
     # 会话索引管理
     "get_current_session_id",
     "set_current_session_id",

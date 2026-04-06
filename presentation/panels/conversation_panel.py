@@ -3,7 +3,7 @@
 对话面板主类（重构版）
 
 职责：
-- 协调各子组件（TitleBar、MessageArea、StatusBar、InputArea、AttachmentManager）
+- 协调各子组件（TitleBar、MessageArea、InputArea、AttachmentManager）
 - 通过 ViewModel 获取数据，保持 UI 与数据层解耦
 - 处理用户交互和事件转发
 - 响应项目切换和语言变更事件
@@ -734,15 +734,8 @@ class ConversationPanel(QWidget):
             success, new_session_name = self.view_model.request_new_session()
             
             if success:
-                # 清空 ViewModel 显示数据
-                self.view_model.clear()
-                
-                # 清空显示
-                self.clear_display()
-                
-                # 更新标题栏显示新会话名称
-                if new_session_name and self._title_bar:
-                    self._title_bar.set_session_name(new_session_name)
+                if self._attachment_manager:
+                    self._attachment_manager.clear_attachments()
                 
                 if self.logger:
                     self.logger.info(f"New conversation started: {new_session_name}")

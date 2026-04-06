@@ -18,10 +18,10 @@
 """
 
 import json
-from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+from domain.llm.session_state_manager import SessionInfo
 from PyQt6.QtWidgets import (
     QDialog,
     QVBoxLayout,
@@ -38,20 +38,6 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 from PyQt6.QtCore import Qt
-
-
-# ============================================================
-# 数据结构
-# ============================================================
-
-@dataclass
-class SessionInfo:
-    """会话信息"""
-    session_id: str           # 会话 ID（thread_id）
-    created_at: datetime      # 创建时间
-    updated_at: datetime      # 最后更新时间
-    message_count: int        # 消息数量
-    preview: str              # 预览文本（首条用户消息摘要）
 
 
 # ============================================================
@@ -75,7 +61,6 @@ class HistoryDialog(QDialog):
         self._i18n_manager = None
         self._event_bus = None
         self._logger = None
-        self._context_manager = None
         
         # 会话数据
         self._sessions: List[SessionInfo] = []
@@ -141,18 +126,6 @@ class HistoryDialog(QDialog):
             except Exception:
                 pass
         return self._logger
-
-    @property
-    def context_manager(self):
-        """延迟获取 ContextManager"""
-        if self._context_manager is None:
-            try:
-                from shared.service_locator import ServiceLocator
-                from shared.service_names import SVC_CONTEXT_MANAGER
-                self._context_manager = ServiceLocator.get_optional(SVC_CONTEXT_MANAGER)
-            except Exception:
-                pass
-        return self._context_manager
 
     @property
     def session_state_manager(self):
@@ -311,7 +284,7 @@ class HistoryDialog(QDialog):
         self._save_current_session_before_load()
         
         # 从 SessionStateManager 获取会话列表
-        sessions = self._get_sessions_from_checkpointer()
+        sessions = self._get_sessions_from_manager()
         
         for session in sessions:
             self._sessions.append(session)
@@ -336,24 +309,10 @@ class HistoryDialog(QDialog):
         确保历史对话框显示的内容与本地文件一致。
         """
         try:
-            project_path = self._get_project_path()
-            if not project_path:
-                return
-            
             if not self.session_state_manager:
                 return
-            
-            # 获取当前状态
-            current_state = {}
-            if self.context_manager:
-                try:
-                    current_state = self.context_manager.get_current_state()
-                except Exception:
-                    pass
-            
-            # 标记为脏并保存
-            self.session_state_manager.mark_dirty()
-            self.session_state_manager.save_current_session(current_state, project_path)
+
+            self.session_state_manager.save_current_session()
             
             if self.logger:
                 self.logger.debug("Current session saved before loading history")
@@ -362,7 +321,7 @@ class HistoryDialog(QDialog):
             if self.logger:
                 self.logger.warning(f"Failed to save current session: {e}")
 
-    def _get_sessions_from_checkpointer(self) -> List[SessionInfo]:
+    def _get_sessions_from_manager(self) -> List[SessionInfo]:
         """从 SessionStateManager 获取会话列表"""
         sessions = []
         
@@ -380,32 +339,7 @@ class HistoryDialog(QDialog):
                     self.logger.warning("SessionStateManager not available")
                 return sessions
             
-            session_list = self.session_state_manager.get_all_sessions(project_path)
-            
-            for session_info in session_list:
-                # 解析时间
-                created_str = session_info.created_at
-                updated_str = session_info.updated_at
-                
-                try:
-                    created_at = datetime.fromisoformat(created_str) if created_str else datetime.now()
-                except ValueError:
-                    created_at = datetime.now()
-                
-                try:
-                    updated_at = datetime.fromisoformat(updated_str) if updated_str else datetime.now()
-                except ValueError:
-                    updated_at = datetime.now()
-                
-                # 创建本地 SessionInfo（与 session_state_manager 的 SessionInfo 不同）
-                local_session_info = SessionInfo(
-                    session_id=session_info.session_id,
-                    created_at=created_at,
-                    updated_at=updated_at,
-                    message_count=session_info.message_count,
-                    preview=session_info.preview,
-                )
-                sessions.append(local_session_info)
+            sessions = self.session_state_manager.get_all_sessions(project_path)
             
             if self.logger:
                 self.logger.info(f"Loaded {len(sessions)} sessions from SessionStateManager")
@@ -431,9 +365,14 @@ class HistoryDialog(QDialog):
 
     def _format_session_item(self, session: SessionInfo) -> str:
         """格式化会话列表项显示文本"""
-        date_str = session.updated_at.strftime("%Y-%m-%d %H:%M")
+        try:
+            updated_at = datetime.fromisoformat(session.updated_at) if session.updated_at else datetime.now()
+        except ValueError:
+            updated_at = datetime.now()
+
+        date_str = updated_at.strftime("%Y-%m-%d %H:%M")
         preview = session.preview[:30] + "..." if len(session.preview) > 30 else session.preview
-        return f"{date_str} | {session.message_count} msgs\n{preview}"
+        return f"{session.name}\n{date_str} | {session.message_count} msgs\n{preview}"
 
     def show_session_detail(self, session_id: str) -> None:
         """显示会话详情"""
@@ -485,8 +424,7 @@ class HistoryDialog(QDialog):
         html_parts = []
         
         for msg in messages:
-            # 兼容两种格式：新格式使用 "type"，旧格式使用 "role"
-            role = msg.get("type") or msg.get("role", "unknown")
+            role = msg.get("type", "unknown")
             content = msg.get("content", "")
             timestamp = msg.get("timestamp", "")
             
@@ -530,15 +468,7 @@ class HistoryDialog(QDialog):
                 if self.logger:
                     self.logger.error("No project path available")
                 return False
-            
-            # 获取当前 GraphState
-            current_state = {}
-            if self.context_manager:
-                try:
-                    current_state = self.context_manager.get_current_state()
-                except Exception:
-                    pass
-            
+
             # 使用 ServiceLocator 获取 SessionStateManager 单例
             if not self.session_state_manager:
                 if self.logger:
@@ -547,7 +477,8 @@ class HistoryDialog(QDialog):
             
             # switch_session 内部会同步状态到 ContextManager
             new_state = self.session_state_manager.switch_session(
-                project_path, session_id, current_state,
+                project_root=project_path,
+                session_id=session_id,
                 sync_to_context_manager=True
             )
             
@@ -627,7 +558,7 @@ class HistoryDialog(QDialog):
         elif format == "txt":
             lines = []
             for msg in messages:
-                role = msg.get("role", "unknown").upper()
+                role = msg.get("type", "unknown").upper()
                 content = msg.get("content", "")
                 timestamp = msg.get("timestamp", "")
                 lines.append(f"[{role}] {timestamp}")
@@ -638,7 +569,7 @@ class HistoryDialog(QDialog):
         elif format == "md":
             lines = ["# Conversation Export", ""]
             for msg in messages:
-                role = msg.get("role", "unknown")
+                role = msg.get("type", "unknown")
                 content = msg.get("content", "")
                 timestamp = msg.get("timestamp", "")
                 
@@ -675,7 +606,7 @@ class HistoryDialog(QDialog):
                     self.logger.error("SessionStateManager not available")
                 return False
             
-            success = self.session_state_manager.delete_session(project_path, session_id)
+            success = self.session_state_manager.delete_session(project_root=project_path, session_id=session_id)
             
             if success:
                 if self.logger:
@@ -830,5 +761,4 @@ class HistoryDialog(QDialog):
 
 __all__ = [
     "HistoryDialog",
-    "SessionInfo",
 ]

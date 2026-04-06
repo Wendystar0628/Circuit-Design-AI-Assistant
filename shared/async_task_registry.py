@@ -31,7 +31,7 @@
         return result
     
     # 提交任务
-    await registry.submit(TASK_LLM, "task_1", my_task())
+    await registry.submit(TASK_RAG_INDEX, "task_1", my_task())
     
     # 取消任务
     registry.cancel("task_1")
@@ -46,13 +46,13 @@ from enum import Enum, auto
 from typing import Any, Callable, Coroutine, Dict, List, Optional
 
 from PyQt6.QtCore import QObject, pyqtSignal
+from shared.event_types import EVENT_STOP_REQUESTED
 
 
 # ============================================================
 # 任务类型常量
 # ============================================================
 
-TASK_LLM = "llm"                    # LLM 生成任务
 TASK_RAG_INDEX = "rag_index"        # RAG 索引任务（Embedding + ChromaDB）
 TASK_RAG_QUERY = "rag_query"        # RAG 检索任务（向量相似度搜索）
 TASK_FILE_WATCH = "file_watch"      # 文件监听任务
@@ -204,7 +204,7 @@ class AsyncTaskRegistry(QObject):
         # 延迟订阅，避免初始化顺序问题
         try:
             if self.event_bus:
-                self.event_bus.subscribe("EVENT_STOP_REQUESTED", self._on_stop_requested)
+                self.event_bus.subscribe(EVENT_STOP_REQUESTED, self._on_stop_requested)
         except Exception:
             pass
     
@@ -246,7 +246,7 @@ class AsyncTaskRegistry(QObject):
         提交异步任务
         
         Args:
-            task_type: 任务类型（如 TASK_LLM）
+            task_type: 任务类型（如 TASK_RAG_INDEX）
             task_id: 任务唯一标识
             coro: 协程对象
             priority: 任务优先级
@@ -464,20 +464,7 @@ class AsyncTaskRegistry(QObject):
         
         try:
             # 针对不同任务类型执行特定清理
-            if task_type == TASK_LLM:
-                # LLM 任务：刷新流式输出缓冲区
-                from shared.service_locator import ServiceLocator
-                from shared.service_names import SVC_STREAM_THROTTLER
-                
-                throttler = ServiceLocator.get_optional(SVC_STREAM_THROTTLER)
-                if throttler:
-                    # 立即刷新缓冲区，保存已接收的内容
-                    await throttler.flush_all(task_id)
-                    
-                    if self.logger:
-                        self.logger.debug(f"Flushed stream buffer for task '{task_id}'")
-            
-            elif task_type == TASK_RAG_INDEX:
+            if task_type == TASK_RAG_INDEX:
                 # 索引任务：保存已索引的进度
                 if self.logger:
                     self.logger.debug(f"Saving partial index progress for task '{task_id}'")
@@ -738,7 +725,6 @@ __all__ = [
     "TaskInfo",
     "PendingTask",
     # 任务类型常量
-    "TASK_LLM",
     "TASK_RAG_INDEX",
     "TASK_RAG_QUERY",
     "TASK_FILE_WATCH",

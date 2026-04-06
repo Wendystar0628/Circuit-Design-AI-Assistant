@@ -532,8 +532,12 @@ class MainWindow(QMainWindow):
         self._update_recent_menu()
         
         # 恢复对话会话（项目打开后立即恢复）
-        # 延迟 100ms 确保 SessionState.project_root 已更新
-        QTimer.singleShot(100, self._restore_conversation_session)
+        # 统一走 SessionStateManager 的权威恢复路径
+        if self._session_manager:
+            QTimer.singleShot(
+                0,
+                lambda: self._restore_conversation_session(project_path)
+            )
         
         if self.logger:
             self.logger.info(f"Project opened event received: {project_path}")
@@ -569,6 +573,58 @@ class MainWindow(QMainWindow):
                 self._action_handlers._open_project
             )
 
+    def _restore_conversation_session(self, project_root: str) -> None:
+        try:
+            from shared.service_locator import ServiceLocator
+            from shared.service_names import (
+                SVC_CONTEXT_MANAGER,
+                SVC_SESSION_STATE_MANAGER,
+            )
+
+            session_state_manager = ServiceLocator.get_optional(SVC_SESSION_STATE_MANAGER)
+            if not session_state_manager:
+                if self.logger:
+                    self.logger.error("SessionStateManager not available")
+                return
+
+            initial_state = {}
+            context_manager = ServiceLocator.get_optional(SVC_CONTEXT_MANAGER)
+            if context_manager:
+                try:
+                    initial_state = context_manager.get_current_state() or {}
+                except Exception as e:
+                    if self.logger:
+                        self.logger.warning(f"Failed to get initial state from ContextManager: {e}")
+
+            session_state_manager.on_app_startup(project_root, initial_state)
+
+            if self.logger:
+                session_id = session_state_manager.get_current_session_id()
+                self.logger.info(
+                    f"Conversation session restored: {session_id}, project_root={project_root}"
+                )
+        except Exception as e:
+            if self.logger:
+                self.logger.error(f"Error restoring conversation session: {e}")
+
+    def _save_current_conversation(self) -> None:
+        try:
+            from shared.service_locator import ServiceLocator
+            from shared.service_names import SVC_SESSION_STATE_MANAGER
+
+            session_state_manager = ServiceLocator.get_optional(SVC_SESSION_STATE_MANAGER)
+            if not session_state_manager:
+                if self.logger:
+                    self.logger.error("SessionStateManager not available")
+                return
+
+            saved = session_state_manager.save_current_session()
+            if self.logger and saved:
+                self.logger.info("Conversation saved")
+        except Exception as e:
+            if self.logger:
+                self.logger.error(f"Error saving conversation: {e}")
+
     # ============================================================
     # 窗口状态管理
     # ============================================================
@@ -588,10 +644,10 @@ class MainWindow(QMainWindow):
         # 保存会话状态（编辑器会话）
         if self._session_manager:
             self._session_manager.save_session_state()
-            # 保存对话会话
-            self._session_manager.save_current_conversation()
             # 释放资源
             self._session_manager.dispose()
+
+        self._save_current_conversation()
         
         super().closeEvent(event)
 
@@ -736,19 +792,24 @@ class MainWindow(QMainWindow):
         if self.logger:
             self.logger.info(f"Session name changed to: {name}")
 
-        if not self._session_manager or not self._session_manager.session_state_manager:
-            return
+        try:
+            from shared.service_locator import ServiceLocator
+            from shared.service_names import SVC_SESSION_STATE_MANAGER
 
-        session_manager = self._session_manager.session_state_manager
-        session_id = session_manager.get_current_session_id()
-        project_root = self._session_manager.session_state.project_root if self._session_manager.session_state else None
+            session_state_manager = ServiceLocator.get_optional(SVC_SESSION_STATE_MANAGER)
+            if not session_state_manager:
+                return
 
-        if not session_id or not project_root:
-            return
+            session_id = session_state_manager.get_current_session_id()
+            if not session_id:
+                return
 
-        success = self._session_manager.rename_session(session_id, name)
-        if not success[0] and self.logger:
-            self.logger.warning(f"Failed to rename session: {success[1]}")
+            success = session_state_manager.rename_session(session_id, name)
+            if not success and self.logger:
+                self.logger.warning(f"Failed to rename session: {session_id}")
+        except Exception as e:
+            if self.logger:
+                self.logger.error(f"Failed to rename session: {e}")
 
 
     def _on_compress_requested(self):

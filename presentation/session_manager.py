@@ -1,21 +1,19 @@
 # Session Manager - 会话管理器
 """
-会话管理器 - 负责项目路径、打开文件和对话会话的保存与恢复
+会话管理器 - 负责项目路径和打开文件的保存与恢复
 
 职责：
 - 保存上次打开的项目路径
 - 保存编辑器中打开的文件列表
-- 保存和恢复对话会话状态
 - 恢复会话状态
 
 设计原则：
 - 单一职责：仅负责会话状态的持久化
 - 延迟获取 ServiceLocator 中的服务
-- 编辑器会话在阶段一实现，对话会话在阶段三扩展
 """
 
 import os
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any
 
 from PyQt6.QtWidgets import QMainWindow
 from PyQt6.QtCore import QTimer
@@ -25,7 +23,7 @@ class SessionManager:
     """
     会话管理器
     
-    负责会话状态（项目路径、打开的文件、对话会话）的保存与恢复
+    负责会话状态（项目路径、打开的文件）的保存与恢复
     """
 
     def __init__(self, main_window: QMainWindow, panels: Dict[str, Any]):
@@ -40,11 +38,7 @@ class SessionManager:
         self._panels = panels
         self._config_manager = None
         self._session_state = None
-        self._project_service = None
-        self._context_manager = None
-        self._event_bus = None
         self._logger = None
-        self._session_state_manager = None
         
         # 初始化仿真结果监控器
         self._initialize_simulation_result_watcher()
@@ -75,18 +69,6 @@ class SessionManager:
         return self._session_state
 
     @property
-    def project_service(self):
-        """延迟获取 ProjectService"""
-        if self._project_service is None:
-            try:
-                from shared.service_locator import ServiceLocator
-                from shared.service_names import SVC_PROJECT_SERVICE
-                self._project_service = ServiceLocator.get_optional(SVC_PROJECT_SERVICE)
-            except Exception:
-                pass
-        return self._project_service
-
-    @property
     def logger(self):
         """延迟获取 Logger"""
         if self._logger is None:
@@ -97,44 +79,8 @@ class SessionManager:
                 pass
         return self._logger
 
-    @property
-    def context_manager(self):
-        """延迟获取 ContextManager"""
-        if self._context_manager is None:
-            try:
-                from shared.service_locator import ServiceLocator
-                from shared.service_names import SVC_CONTEXT_MANAGER
-                self._context_manager = ServiceLocator.get_optional(SVC_CONTEXT_MANAGER)
-            except Exception:
-                pass
-        return self._context_manager
-
-    @property
-    def event_bus(self):
-        """延迟获取 EventBus"""
-        if self._event_bus is None:
-            try:
-                from shared.service_locator import ServiceLocator
-                from shared.service_names import SVC_EVENT_BUS
-                self._event_bus = ServiceLocator.get_optional(SVC_EVENT_BUS)
-            except Exception:
-                pass
-        return self._event_bus
-
-    @property
-    def session_state_manager(self):
-        """延迟获取 SessionStateManager"""
-        if self._session_state_manager is None:
-            try:
-                from shared.service_locator import ServiceLocator
-                from shared.service_names import SVC_SESSION_STATE_MANAGER
-                self._session_state_manager = ServiceLocator.get_optional(SVC_SESSION_STATE_MANAGER)
-            except Exception:
-                pass
-        return self._session_state_manager
-
     def save_session_state(self):
-        """保存会话状态（项目路径、打开的文件、对话会话）"""
+        """保存会话状态（项目路径、打开的文件）"""
         if not self.config_manager:
             return
         
@@ -207,148 +153,6 @@ class SessionManager:
         """重置所有打开文件的修改状态"""
         if hasattr(editor_panel, 'reset_all_modification_states'):
             editor_panel.reset_all_modification_states()
-
-    # ============================================================
-    # 完整会话恢复流程
-    # ============================================================
-
-    def restore_full_session(self):
-        """
-        完整的会话恢复流程（委托给 SessionStateManager）
-        
-        在 EVENT_STATE_PROJECT_OPENED 后调用，SessionStateManager 执行以下步骤：
-        1. 读取 sessions.json 获取 current_session_id
-        2. 若存在当前会话，加载会话消息并同步到 ContextManager
-        3. 若不存在当前会话，创建新会话
-        4. 发布 EVENT_SESSION_CHANGED 事件
-        
-        注意：SessionStateManager.switch_session() 和 create_session() 已内置状态同步，
-        无需在此处手动同步。
-        """
-        if not self.session_state_manager:
-            if self.logger:
-                self.logger.error("SessionStateManager not available")
-            return
-        
-        try:
-            # 获取项目路径
-            project_root = None
-            if self.session_state:
-                project_root = self.session_state.project_root
-            
-            if not project_root:
-                if self.logger:
-                    self.logger.warning("No project root available for session restore")
-                return
-            
-            # 调用 on_app_startup 恢复会话
-            # SessionStateManager 内部会同步状态到 ContextManager
-            initial_state = {}
-            self.session_state_manager.on_app_startup(project_root, initial_state)
-            
-            session_id = self.session_state_manager.get_current_session_id()
-            if session_id:
-                if self.logger:
-                    self.logger.info(f"Session restored: {session_id}")
-            else:
-                if self.logger:
-                    self.logger.warning("Session restore completed but no session ID")
-                    
-        except Exception as e:
-            if self.logger:
-                self.logger.error(f"Error restoring session: {e}")
-
-    # ============================================================
-    # 软件关闭时保存会话
-    # ============================================================
-
-    def save_current_conversation(self):
-        """
-        保存当前对话会话（委托给 SessionStateManager）
-        
-        在软件关闭时调用
-        """
-        if not self.session_state_manager:
-            if self.logger:
-                self.logger.error("SessionStateManager not available")
-            return
-        
-        try:
-            # 获取项目路径
-            project_root = None
-            if self.session_state:
-                project_root = self.session_state.project_root
-            
-            if not project_root:
-                if self.logger:
-                    self.logger.warning("No project root available for saving conversation")
-                return
-            
-            # 从 ContextManager 获取当前状态
-            current_state = {}
-            if self.context_manager:
-                try:
-                    current_state = self.context_manager.get_current_state()
-                except Exception as e:
-                    if self.logger:
-                        self.logger.warning(f"Failed to get state from ContextManager: {e}")
-            
-            # 强制标记为脏，确保保存
-            self.session_state_manager.mark_dirty()
-            
-            # 调用 on_app_shutdown 保存会话
-            self.session_state_manager.on_app_shutdown(current_state, project_root)
-            
-            if self.logger:
-                self.logger.info("Conversation saved")
-                    
-        except Exception as e:
-            if self.logger:
-                self.logger.error(f"Error saving conversation: {e}")
-
-    # ============================================================
-    # 会话重命名
-    # ============================================================
-
-    def rename_session(self, old_name: str, new_name: str) -> Tuple[bool, str]:
-        """
-        重命名会话（委托给 SessionStateManager）
-        
-        Args:
-            old_name: 旧会话名称（实际上是 session_id）
-            new_name: 新会话名称
-            
-        Returns:
-            (是否成功, 消息)
-        """
-        if self.session_state_manager:
-            try:
-                # 获取项目路径
-                project_root = None
-                if self.session_state:
-                    project_root = self.session_state.project_root
-                
-                if not project_root:
-                    return False, "No project root available"
-                
-                # old_name 实际上是 session_id
-                success = self.session_state_manager.rename_session(
-                    project_root, old_name, new_name
-                )
-                
-                if success:
-                    if self.logger:
-                        self.logger.info(f"Session renamed via SessionStateManager: {old_name} -> {new_name}")
-                    return True, "Session renamed successfully"
-                else:
-                    return False, "Failed to rename session"
-                
-            except Exception as e:
-                if self.logger:
-                    self.logger.error(f"Error renaming session: {e}")
-                return False, str(e)
-        
-        return False, "SessionStateManager not available"
 
     # ============================================================
     # 仿真结果监控器生命周期管理

@@ -135,12 +135,6 @@ EVENT_TASK_CANCELLED = "task_cancelled"
 # LLM 事件
 # ============================================================
 
-# LLM 流式输出块
-EVENT_LLM_CHUNK = "llm_chunk"
-
-# LLM 完成
-EVENT_LLM_COMPLETE = "llm_complete"
-
 # LLM 错误
 EVENT_LLM_ERROR = "llm_error"
 
@@ -911,8 +905,6 @@ __all__ = [
     "EVENT_TASK_FAILED",
     "EVENT_TASK_CANCELLED",
     # LLM 事件
-    "EVENT_LLM_CHUNK",
-    "EVENT_LLM_COMPLETE",
     "EVENT_LLM_ERROR",
     "EVENT_LLM_TOOL_CALL",
     "EVENT_LLM_CONFIG_CHANGED",

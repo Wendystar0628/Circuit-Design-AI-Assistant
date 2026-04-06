@@ -33,7 +33,7 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import Any, Callable, Coroutine, Dict, List, Optional, Union
 
-from infrastructure.llm_adapters.base_client import BaseLLMClient, StreamChunk
+from infrastructure.llm_adapters.base_client import BaseLLMClient
 from domain.llm.agent.types import (
     BaseTool,
     ToolCallInfo,
@@ -109,6 +109,7 @@ class AgentLoop:
         context: ToolContext,
         model: str,
         thinking: bool = False,
+        stop_requested: Optional[Callable[[], bool]] = None,
         max_turns: int = MAX_TURNS,
     ):
         """
@@ -120,6 +121,7 @@ class AgentLoop:
             context: 工具执行上下文
             model: 模型名称
             thinking: 是否启用深度思考
+            stop_requested: 停止检查函数
             max_turns: 最大循环轮次
         """
         self._client = client
@@ -127,6 +129,7 @@ class AgentLoop:
         self._context = context
         self._model = model
         self._thinking = thinking
+        self._stop_requested = stop_requested
         self._max_turns = max_turns
         self._logger = logging.getLogger(__name__)
 
@@ -152,12 +155,15 @@ class AgentLoop:
 
         try:
             for turn in range(self._max_turns):
+                self._raise_if_stop_requested()
                 result.total_turns = turn + 1
 
                 # ---- 1. 流式调用 LLM ----
                 turn_result = await self._stream_llm_response(
                     messages, schemas, on_event
                 )
+
+                self._raise_if_stop_requested()
 
                 # ---- 2. 构建 assistant 消息并追加到历史 ----
                 assistant_msg = self._build_assistant_message(turn_result)
@@ -176,6 +182,7 @@ class AgentLoop:
                     break
 
                 # ---- 4. 执行工具调用 ----
+                self._raise_if_stop_requested()
                 tool_results = await self._execute_tool_calls(
                     turn_result.tool_calls, on_event
                 )
@@ -246,6 +253,8 @@ class AgentLoop:
         """
         turn = TurnResult()
 
+        self._raise_if_stop_requested()
+
         stream_gen = self._client.chat_stream(
             messages=messages,
             model=self._model,
@@ -255,6 +264,7 @@ class AgentLoop:
 
         try:
             async for chunk in stream_gen:
+                self._raise_if_stop_requested()
                 # 处理思考内容
                 if chunk.reasoning_content:
                     turn.reasoning_content += chunk.reasoning_content
@@ -318,6 +328,7 @@ class AgentLoop:
         results = []
 
         for tc_raw in tool_calls:
+            self._raise_if_stop_requested()
             # 解析工具调用信息
             try:
                 tc_info = ToolCallInfo.from_api_format(tc_raw)
@@ -348,6 +359,11 @@ class AgentLoop:
             results.append(result)
 
         return results
+
+    def _raise_if_stop_requested(self) -> None:
+        """在活跃停止请求下中断 Agent 循环。"""
+        if self._stop_requested and self._stop_requested():
+            raise asyncio.CancelledError()
 
     async def _execute_single_tool(self, tc_info: ToolCallInfo) -> ToolResult:
         """

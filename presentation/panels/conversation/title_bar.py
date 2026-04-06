@@ -232,12 +232,6 @@ class TitleBar(QWidget):
         if self._session_name_label:
             self._session_name_label.setText(display_name)
     
-    def get_session_name(self) -> str:
-        """获取当前会话名称"""
-        if self._session_name_label:
-            return self._session_name_label.text()
-        return ""
-    
     def enter_edit_mode(self) -> None:
         """进入名称编辑模式"""
         if self._session_name_label and self._session_name_edit:

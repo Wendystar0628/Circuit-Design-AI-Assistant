@@ -7,10 +7,8 @@
 - MessageBubble - 消息气泡组件
 - SuggestionMessage - 建议选项消息组件
 - InputArea - 输入区域组件
-- StreamDisplayHandler - 流式显示处理器
 - TitleBar - 标题栏组件
 - MessageArea - 消息显示区域
-- StatusBar - 状态栏组件
 - AttachmentManager - 附件管理器
 """
 

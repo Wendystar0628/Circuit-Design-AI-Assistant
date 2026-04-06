@@ -751,6 +751,19 @@ class ConversationViewModel(QObject):
         text = chunk_data.get("text", "")
         if text:
             self.append_stream_chunk(text, chunk_type)
+
+    def _disconnect_llm_executor_signals(self) -> None:
+        try:
+            from shared.service_locator import ServiceLocator
+            from shared.service_names import SVC_LLM_EXECUTOR
+
+            llm_executor = ServiceLocator.get_optional(SVC_LLM_EXECUTOR)
+            if llm_executor:
+                llm_executor.stream_chunk.disconnect(self._on_llm_stream_chunk)
+                llm_executor.generation_complete.disconnect(self._on_llm_generation_complete)
+                llm_executor.generation_error.disconnect(self._on_llm_generation_error)
+        except Exception:
+            pass
     
     def _on_llm_generation_complete(
         self,
@@ -768,17 +781,7 @@ class ConversationViewModel(QObject):
             return
 
         # 断开信号连接（避免重复处理）
-        try:
-            from shared.service_locator import ServiceLocator
-            from shared.service_names import SVC_LLM_EXECUTOR
-            
-            llm_executor = ServiceLocator.get_optional(SVC_LLM_EXECUTOR)
-            if llm_executor:
-                llm_executor.stream_chunk.disconnect(self._on_llm_stream_chunk)
-                llm_executor.generation_complete.disconnect(self._on_llm_generation_complete)
-                llm_executor.generation_error.disconnect(self._on_llm_generation_error)
-        except Exception:
-            pass
+        self._disconnect_llm_executor_signals()
         
         # 提取结果
         content = result.get("content", "")
@@ -836,17 +839,7 @@ class ConversationViewModel(QObject):
             return
 
         # 断开信号连接
-        try:
-            from shared.service_locator import ServiceLocator
-            from shared.service_names import SVC_LLM_EXECUTOR
-            
-            llm_executor = ServiceLocator.get_optional(SVC_LLM_EXECUTOR)
-            if llm_executor:
-                llm_executor.stream_chunk.disconnect(self._on_llm_stream_chunk)
-                llm_executor.generation_complete.disconnect(self._on_llm_generation_complete)
-                llm_executor.generation_error.disconnect(self._on_llm_generation_error)
-        except Exception:
-            pass
+        self._disconnect_llm_executor_signals()
         
         self._handle_llm_error(error_msg)
     
@@ -1035,18 +1028,9 @@ class ConversationViewModel(QObject):
         """
         if self.session_state_manager:
             try:
-                # 获取项目路径
-                from shared.service_locator import ServiceLocator
-                from shared.service_names import SVC_SESSION_STATE
-                
-                session_state = ServiceLocator.get_optional(SVC_SESSION_STATE)
-                if session_state and session_state.project_root:
-                    session_id = self.session_state_manager.create_session(
-                        session_state.project_root
-                    )
-                    session_name = self.session_state_manager.get_current_session_name()
-                    return True, session_name
-                return False, "No project path available"
+                self.session_state_manager.create_session()
+                session_name = self.session_state_manager.get_current_session_name()
+                return True, session_name
             except Exception as e:
                 return False, str(e)
         return False, "SessionStateManager not available"
@@ -1135,24 +1119,14 @@ class ConversationViewModel(QObject):
         """
         if self.session_state_manager and self.context_manager:
             try:
-                # 获取项目路径
-                from shared.service_locator import ServiceLocator
-                from shared.service_names import SVC_SESSION_STATE
-                
-                session_state = ServiceLocator.get_optional(SVC_SESSION_STATE)
-                if session_state and session_state.project_root:
-                    # 获取当前 GraphState
-                    state = self.context_manager.get_current_state()
-                    success = self.session_state_manager.save_current_session(
-                        state, session_state.project_root
-                    )
-                    if success:
-                        if self.logger:
-                            session_name = self.session_state_manager.get_current_session_name()
-                            self.logger.debug(f"Auto-saved session: {session_name}")
-                    else:
-                        if self.logger:
-                            self.logger.warning("Auto-save failed")
+                success = self.session_state_manager.save_current_session()
+                if success:
+                    if self.logger:
+                        session_name = self.session_state_manager.get_current_session_name()
+                        self.logger.debug(f"Auto-saved session: {session_name}")
+                else:
+                    if self.logger:
+                        self.logger.warning("Auto-save failed")
             except Exception as e:
                 if self.logger:
                     self.logger.warning(f"Auto-save error: {e}")
@@ -1282,6 +1256,8 @@ class ConversationViewModel(QObject):
                 f"Stop completed: task_id={task_id}, reason={reason}, "
                 f"is_partial={is_partial}, content_len={len(partial_content)}"
             )
+
+        self._disconnect_llm_executor_signals()
         
         # 处理部分响应
         if is_partial and self._current_stream_content:

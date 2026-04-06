@@ -16,7 +16,6 @@
 - model_registry: LLM 模型注册表
 - embedding_model_registry: 嵌入模型注册表
 - async_runtime: qasync 异步运行时（Qt + asyncio 融合事件循环）
-- stream_throttler: 流式数据节流聚合器（LLM 流式输出优化）
 
 三层状态分离架构（新）：
 - UIState (presentation/ui_state.py): 纯 UI 状态
@@ -39,7 +38,6 @@
 - model_registry.py: 依赖 model_types.py
 - embedding_model_registry.py: 依赖 model_types.py
 - async_runtime.py: 依赖 qasync、PyQt6，不依赖其他 shared 模块
-- stream_throttler.py: 依赖 asyncio、PyQt6，不依赖其他 shared 模块
 - 其他模块可依赖以上所有，但不能被以上模块反向依赖
 """
 
@@ -95,8 +93,6 @@ from shared.event_types import (
     EVENT_TASK_FAILED,
     EVENT_TASK_CANCELLED,
     # LLM 事件
-    EVENT_LLM_CHUNK,
-    EVENT_LLM_COMPLETE,
     EVENT_LLM_TOOL_CALL,
     # 仿真事件
     EVENT_SIM_STARTED,
@@ -199,19 +195,12 @@ from shared.async_runtime import (
     run_coroutine_threadsafe,
 )
 
-# 流式数据节流聚合器
-from shared.stream_throttler import (
-    StreamThrottler,
-    StreamState,
-)
-
 # 异步任务注册表
 from shared.async_task_registry import (
     AsyncTaskRegistry,
     TaskState,
     TaskPriority as AsyncTaskPriority,
     TaskInfo,
-    TASK_LLM,
     TASK_RAG_INDEX,
     TASK_RAG_QUERY,
     TASK_FILE_WATCH,
@@ -269,8 +258,6 @@ __all__ = [
     "EVENT_TASK_COMPLETED",
     "EVENT_TASK_FAILED",
     "EVENT_TASK_CANCELLED",
-    "EVENT_LLM_CHUNK",
-    "EVENT_LLM_COMPLETE",
     "EVENT_LLM_TOOL_CALL",
     "EVENT_SIM_STARTED",
     "EVENT_SIM_COMPLETE",
@@ -338,15 +325,11 @@ __all__ = [
     "is_async_runtime_initialized",
     "shutdown_async_runtime",
     "run_coroutine_threadsafe",
-    # 流式数据节流聚合器
-    "StreamThrottler",
-    "StreamState",
     # 异步任务注册表
     "AsyncTaskRegistry",
     "TaskState",
     "AsyncTaskPriority",
     "TaskInfo",
-    "TASK_LLM",
     "TASK_RAG_INDEX",
     "TASK_RAG_QUERY",
     "TASK_FILE_WATCH",

@@ -50,6 +50,7 @@ STATUS_COLORS = {
     "processed": "#4CAF50",   # 绿
     "processing": "#2196F3",  # 蓝
     "failed": "#F44336",      # 红
+    "excluded": "#FB8C00",    # 橙
     "pending": "#9E9E9E",     # 灰
 }
 
@@ -57,6 +58,7 @@ STATUS_LABELS = {
     "processed": "已索引",
     "processing": "索引中",
     "failed": "失败",
+    "excluded": "排除索引",
     "pending": "待索引",
 }
 
@@ -132,7 +134,7 @@ class RAGPanel(QWidget):
         layout.addLayout(self._create_top_bar())
 
         # ---- 2. 统计概览 ----
-        self._stats_label = QLabel("文档: 0  |  分块: 0  |  实体: 0  |  关系: 0")
+        self._stats_label = QLabel("文档: 0  |  分块: 0  |  排除: 0  |  实体: 0  |  关系: 0")
         self._stats_label.setStyleSheet("color: #666; font-size: 12px; padding: 4px 0;")
         layout.addWidget(self._stats_label)
 
@@ -162,7 +164,7 @@ class RAGPanel(QWidget):
         """创建顶栏：标题 + 状态标签"""
         bar = QHBoxLayout()
 
-        title = QLabel("知识库")
+        title = QLabel("索引库")
         title.setStyleSheet("font-size: 15px; font-weight: bold;")
         bar.addWidget(title)
 
@@ -186,7 +188,7 @@ class RAGPanel(QWidget):
         self._btn_index.setStyleSheet(self._action_btn_style())
         actions.addWidget(self._btn_index)
 
-        self._btn_clear = QPushButton("清空知识库")
+        self._btn_clear = QPushButton("清空索引库")
         self._btn_clear.setEnabled(False)
         self._btn_clear.setStyleSheet(self._action_btn_style("#e53935", "#c62828"))
         actions.addWidget(self._btn_clear)
@@ -411,7 +413,7 @@ class RAGPanel(QWidget):
         self._info_label.setText("")
         self._info_label.setStyleSheet("color: #999; font-size: 11px;")
         self._file_tree.clear()
-        self._stats_label.setText("文档: 0  |  分块: 0  |  实体: 0  |  关系: 0")
+        self._stats_label.setText("文档: 0  |  分块: 0  |  排除: 0  |  实体: 0  |  关系: 0")
         self._status_label.setText("初始化中...")
         self._status_label.setStyleSheet(
             "color: #1565c0; font-size: 12px; padding: 2px 8px; "
@@ -423,7 +425,7 @@ class RAGPanel(QWidget):
         """项目关闭 → 重置面板状态"""
         self._is_indexing = False
         self._file_tree.clear()
-        self._stats_label.setText("文档: 0  |  分块: 0  |  实体: 0  |  关系: 0")
+        self._stats_label.setText("文档: 0  |  分块: 0  |  排除: 0  |  实体: 0  |  关系: 0")
         self._info_label.setText("")
         self._progress_bar.setVisible(False)
         self._update_status_label()
@@ -444,8 +446,8 @@ class RAGPanel(QWidget):
         """清空知识库"""
         from PyQt6.QtWidgets import QMessageBox
         reply = QMessageBox.question(
-            self, "清空知识库",
-            "确定要清空当前项目的知识库吗？\n已索引的内容将被全部删除。",
+            self, "清空索引库",
+            "确定要清空当前项目的索引库吗？\n已索引的内容将被全部删除。",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -470,8 +472,8 @@ class RAGPanel(QWidget):
         try:
             await manager.clear_index_async()
             self._file_tree.clear()
-            self._stats_label.setText("文档: 0  |  分块: 0  |  实体: 0  |  关系: 0")
-            self._info_label.setText("知识库已清空")
+            self._stats_label.setText("文档: 0  |  分块: 0  |  排除: 0  |  实体: 0  |  关系: 0")
+            self._info_label.setText("索引库已清空")
         except Exception as e:
             self._info_label.setText(f"清空失败: {e}")
             logger.error(f"Failed to clear RAG index: {e}")
@@ -618,10 +620,18 @@ class RAGPanel(QWidget):
                 st = f.status if hasattr(f, "status") else "pending"
                 chunks = str(f.chunks_count if hasattr(f, "chunks_count") else 0)
                 indexed_at = f.indexed_at if hasattr(f, "indexed_at") else ""
+                exclude_reason = f.exclude_reason if hasattr(f, "exclude_reason") else None
+                error_text = f.error if hasattr(f, "error") else None
 
                 item = QTreeWidgetItem([path, STATUS_LABELS.get(st, st), chunks, indexed_at])
                 color = STATUS_COLORS.get(st, "#999")
                 item.setForeground(1, __import__("PyQt6.QtGui", fromlist=["QColor"]).QColor(color))
+                if exclude_reason:
+                    item.setToolTip(1, exclude_reason)
+                    item.setToolTip(0, exclude_reason)
+                elif error_text:
+                    item.setToolTip(1, error_text)
+                    item.setToolTip(0, error_text)
                 self._file_tree.addTopLevelItem(item)
 
         except Exception as e:
@@ -638,7 +648,7 @@ class RAGPanel(QWidget):
             stats = status.stats if hasattr(status, "stats") else None
             if stats:
                 self._stats_label.setText(
-                    f"文档: {stats.total_files}  |  分块: {stats.total_chunks}  |  "
+                    f"文档: {stats.total_files}  |  分块: {stats.total_chunks}  |  排除: {stats.excluded}  |  "
                     f"实体: {stats.total_entities}  |  关系: {stats.total_relations}"
                 )
         except Exception as e:

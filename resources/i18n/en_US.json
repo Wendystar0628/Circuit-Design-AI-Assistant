@@ -34,7 +34,7 @@
   "menu.simulation.run": "Run Simulation",
   "menu.simulation.stop": "Stop Simulation",
 
-  "menu.knowledge": "Knowledge Base",
+  "menu.knowledge": "Index Library",
   "menu.knowledge.import": "Import Documents",
   "menu.knowledge.rebuild": "Rebuild Index",
 
@@ -95,6 +95,7 @@
   "panel.file_browser": "File Browser",
   "panel.code_editor": "Code Editor",
   "panel.chat": "Chat",
+  "panel.rag": "Index Library",
   "panel.simulation": "Simulation Results",
   "panel.iteration_history": "Iteration History",
   "panel.devtools": "DevTools",

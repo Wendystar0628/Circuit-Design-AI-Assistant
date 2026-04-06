@@ -290,7 +290,7 @@ class MainWindow(QMainWindow):
         self._tab_controller.register_tab(
             TAB_RAG,
             rag_panel,
-            self._get_text("panel.rag", "知识库"),
+            self._get_text("panel.rag", "索引库"),
             "resources/icons/panel/knowledge.svg"
         )
         self._panels["rag"] = rag_panel
@@ -451,7 +451,7 @@ class MainWindow(QMainWindow):
         if "rag" in self._panels:
             self._tab_controller.update_tab_title(
                 TAB_RAG,
-                self._get_text("panel.rag", "知识库")
+                self._get_text("panel.rag", "索引库")
             )
         
         # 更新调试标签页标题（如果存在）
@@ -501,11 +501,6 @@ class MainWindow(QMainWindow):
         # 必须在 Phase 3 完成后执行，因为 ProjectService 在 Phase 3.3 初始化
         # 注意：对话会话恢复在 _on_project_opened 中触发，确保项目已打开
         self._restore_session()
-
-    def _restore_conversation_session(self):
-        """恢复对话会话"""
-        if self._session_manager:
-            self._session_manager.restore_full_session()
 
     def _on_language_changed(self, event_data: Dict[str, Any]):
         """语言变更事件处理"""
@@ -740,9 +735,20 @@ class MainWindow(QMainWindow):
         """处理会话名称变更"""
         if self.logger:
             self.logger.info(f"Session name changed to: {name}")
-        
-        if self._session_manager:
-            self._session_manager.set_current_session_name(name)
+
+        if not self._session_manager or not self._session_manager.session_state_manager:
+            return
+
+        session_manager = self._session_manager.session_state_manager
+        session_id = session_manager.get_current_session_id()
+        project_root = self._session_manager.session_state.project_root if self._session_manager.session_state else None
+
+        if not session_id or not project_root:
+            return
+
+        success = self._session_manager.rename_session(session_id, name)
+        if not success[0] and self.logger:
+            self.logger.warning(f"Failed to rename session: {success[1]}")
 
 
     def _on_compress_requested(self):

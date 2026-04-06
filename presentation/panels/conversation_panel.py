@@ -21,9 +21,9 @@
 """
 
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QDragEnterEvent, QDropEvent
 from PyQt6.QtWidgets import (
     QWidget,
@@ -40,9 +40,6 @@ from presentation.panels.conversation import (
     InputArea,
     AttachmentManager,
     ButtonMode,
-    SUGGESTION_STATE_ACTIVE,
-    SUGGESTION_STATE_SELECTED,
-    SUGGESTION_STATE_EXPIRED,
     ALLOWED_IMAGE_EXTENSIONS,
 )
 
@@ -52,12 +49,6 @@ from presentation.panels.conversation import (
 # ============================================================
 
 PANEL_BACKGROUND = "#ffffff"
-PRIMARY_COLOR = "#4a9eff"
-USER_MESSAGE_BG = "#e3f2fd"
-ASSISTANT_MESSAGE_BG = "#f8f9fa"
-SYSTEM_MESSAGE_COLOR = "#6c757d"
-WARNING_COLOR = "#ff9800"
-CRITICAL_COLOR = "#f44336"
 
 
 # ============================================================
@@ -72,9 +63,6 @@ class ConversationPanel(QWidget):
     """
     
     # 信号定义
-    message_sent = pyqtSignal(str, list)           # 用户发送消息 (text, attachments)
-    suggestion_selected = pyqtSignal(str)          # 用户点击建议按钮 (suggestion_id)
-    file_selected = pyqtSignal(list)               # 用户选择阅读文件 (paths)
     compress_requested = pyqtSignal()              # 用户请求压缩上下文
     new_conversation_requested = pyqtSignal()      # 用户请求新开对话
     history_requested = pyqtSignal()               # 用户请求查看历史对话
@@ -90,7 +78,6 @@ class ConversationPanel(QWidget):
         self._event_bus = None
         self._i18n = None
         self._logger = None
-        self._session_state = None
         
         # 子组件引用
         self._title_bar: Optional[TitleBar] = None
@@ -156,18 +143,6 @@ class ConversationPanel(QWidget):
                 if self.logger:
                     self.logger.error(f"创建 ViewModel 失败: {e}")
         return self._view_model
-    
-    @property
-    def session_state(self):
-        """延迟获取会话状态（只读）"""
-        if self._session_state is None:
-            try:
-                from shared.service_locator import ServiceLocator
-                from shared.service_names import SVC_SESSION_STATE
-                self._session_state = ServiceLocator.get_optional(SVC_SESSION_STATE)
-            except Exception:
-                pass
-        return self._session_state
     
     def _get_text(self, key: str, default: str = "") -> str:
         """获取国际化文本"""
@@ -601,8 +576,6 @@ class ConversationPanel(QWidget):
     def _on_session_name_changed(self, name: str) -> None:
         """处理会话名称变更"""
         self.session_name_changed.emit(name)
-        if self.view_model and hasattr(self.view_model, 'set_session_name'):
-            self.view_model.set_session_name(name)
     
     def _on_compress_clicked(self) -> None:
         """处理压缩按钮点击"""
@@ -653,10 +626,7 @@ class ConversationPanel(QWidget):
         if self._input_area:
             for path in paths:
                 self._input_area.add_attachment(path, "file")
-        
-        if paths:
-            self.file_selected.emit(paths)
-    
+
     def _on_model_card_clicked(self) -> None:
         """处理模型卡片点击，打开模型设置对话框"""
         try:
@@ -740,7 +710,6 @@ class ConversationPanel(QWidget):
             if success:
                 # 切换按钮为停止模式
                 self._input_area.set_button_mode(ButtonMode.STOP)
-                self.message_sent.emit(text, attachments)
     
     def clear_display(self) -> None:
         """清空显示区（不清空 ViewModel 数据）"""
@@ -783,195 +752,6 @@ class ConversationPanel(QWidget):
         
         # 发出信号
         self.new_conversation_requested.emit()
-    
-    def _save_current_conversation(self, session_name: str) -> None:
-        """
-        保存当前对话
-        
-        Args:
-            session_name: 会话名称
-        """
-        if not session_name:
-            return
-        
-        # 获取项目路径
-        project_path = None
-        if self.session_state:
-            project_path = self.session_state.project_root
-        
-        if not project_path:
-            if self.logger:
-                self.logger.debug("No project path, skip save")
-            return
-        
-        # 通过 SessionStateManager 保存
-        try:
-            from shared.service_locator import ServiceLocator
-            from shared.service_names import SVC_SESSION_STATE_MANAGER, SVC_CONTEXT_MANAGER
-            
-            session_manager = ServiceLocator.get_optional(SVC_SESSION_STATE_MANAGER)
-            context_manager = ServiceLocator.get_optional(SVC_CONTEXT_MANAGER)
-            
-            if session_manager and context_manager:
-                state = context_manager.get_current_state()
-                success = session_manager.save_current_session(state, project_path)
-                if success:
-                    if self.logger:
-                        self.logger.info(f"Conversation saved: {session_name}")
-                else:
-                    if self.logger:
-                        self.logger.warning("保存失败")
-        except Exception as e:
-            if self.logger:
-                self.logger.error(f"保存对话时出错: {e}")
-    
-    def _create_new_session_file(self, session_name: str) -> None:
-        """
-        创建新会话文件
-        
-        Args:
-            session_name: 新会话名称
-        """
-        if not session_name:
-            return
-        
-        # 获取项目路径
-        project_path = None
-        if self.session_state:
-            project_path = self.session_state.project_root
-        
-        if not project_path:
-            return
-        
-        # 通过 SessionStateManager 创建新会话
-        try:
-            from shared.service_locator import ServiceLocator
-            from shared.service_names import SVC_SESSION_STATE_MANAGER
-            
-            session_manager = ServiceLocator.get_optional(SVC_SESSION_STATE_MANAGER)
-            if session_manager:
-                session_manager.create_session(project_path)
-        except Exception as e:
-            if self.logger:
-                self.logger.warning(f"创建新会话文件失败: {e}")
-    
-    def handle_stream_chunk(self, chunk_type: str, text: str) -> None:
-        """
-        处理流式输出块（由 MainWindow 调用）
-        
-        Args:
-            chunk_type: 内容类型 ("reasoning" | "content")
-            text: 文本内容
-        """
-        if self._message_area:
-            self._message_area.append_stream_chunk(chunk_type, text)
-    
-    def handle_phase_change(self, phase: str) -> None:
-        """
-        处理阶段切换（由 MainWindow 调用）
-        
-        Args:
-            phase: 新阶段 ("searching" | "reasoning" | "content")
-        """
-        if not self._message_area:
-            return
-        
-        if phase == "searching":
-            # 开始搜索阶段
-            self._message_area.start_searching()
-        elif phase == "content":
-            # 从思考阶段切换到内容阶段，更新思考状态显示
-            self._message_area.finish_thinking()
-    
-    def handle_search_complete(self, results: List[Dict[str, Any]]) -> None:
-        """
-        处理联网搜索完成（由 MainWindow 调用）
-        
-        Args:
-            results: 搜索结果列表
-        """
-        if self._message_area:
-            self._message_area.finish_searching(len(results))
-            self._message_area.update_search_results(results)
-    
-    def finish_stream(self, result: Dict[str, Any]) -> None:
-        """
-        完成流式输出（由 MainWindow 调用）
-        
-        Args:
-            result: LLM 完整响应结果
-        
-        注意：助手消息已在 MainWindow._on_llm_result() 中通过 ContextManager 添加，
-        这里只需要结束流式输出并刷新显示，不需要重复添加消息。
-        """
-        # 结束流式输出气泡
-        if self._message_area:
-            self._message_area.finish_streaming()
-        
-        # 更新 ViewModel 状态（不添加消息，消息已由 ContextManager 添加）
-        if self.view_model:
-            self.view_model._is_loading = False
-            self.view_model._current_stream_content = ""
-            self.view_model._current_reasoning_content = ""
-            self.view_model.can_send_changed.emit(True)
-        
-        # 刷新显示（从 ContextManager 获取最新消息）
-        self.refresh_display()
-    
-    def handle_error(self, error_msg: str) -> None:
-        """
-        处理错误（由 MainWindow 调用）
-        
-        Args:
-            error_msg: 错误消息
-        """
-        if self._message_area and self._message_area.is_streaming():
-            self._message_area.finish_streaming()
-        
-        if self.logger:
-            self.logger.error(f"LLM error in conversation panel: {error_msg}")
-    
-    def get_user_input(self) -> str:
-        """获取用户输入"""
-        if self._input_area:
-            return self._input_area.get_text()
-        return ""
-    
-    def get_attachments(self) -> List[Dict[str, Any]]:
-        """获取附件列表"""
-        if self._attachment_manager:
-            return self._attachment_manager.get_attachments()
-        return []
-    
-    def set_session_name(self, name: str) -> None:
-        """设置会话名称显示"""
-        if self._title_bar:
-            self._title_bar.set_session_name(name)
-    
-    def get_session_name(self) -> str:
-        """获取当前会话名称"""
-        if self._title_bar:
-            return self._title_bar.get_session_name()
-        return ""
-    
-    def append_suggestion_message(
-        self,
-        suggestions: List[Dict[str, Any]],
-        status_summary: str = ""
-    ) -> None:
-        """追加建议选项消息"""
-        if self.view_model:
-            self.view_model.append_suggestion_message(suggestions, status_summary)
-    
-    def mark_suggestion_selected(self, suggestion_id: str) -> None:
-        """标记建议选项已选择"""
-        if self.view_model:
-            self.view_model.mark_suggestion_selected(suggestion_id)
-    
-    def mark_suggestion_expired(self) -> None:
-        """标记建议选项已过期"""
-        if self.view_model:
-            self.view_model.mark_suggestion_expired()
 
     # ============================================================
     # 国际化
@@ -996,10 +776,4 @@ __all__ = [
     "ConversationPanel",
     # 常量
     "PANEL_BACKGROUND",
-    "PRIMARY_COLOR",
-    "USER_MESSAGE_BG",
-    "ASSISTANT_MESSAGE_BG",
-    "SYSTEM_MESSAGE_COLOR",
-    "WARNING_COLOR",
-    "CRITICAL_COLOR",
 ]

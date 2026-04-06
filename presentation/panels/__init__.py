@@ -37,9 +37,6 @@ from presentation.panels.code_editor_panel import (
 from presentation.panels.conversation_panel import (
     ConversationPanel,
     PANEL_BACKGROUND,
-    USER_MESSAGE_BG,
-    ASSISTANT_MESSAGE_BG,
-    PRIMARY_COLOR,
 )
 
 # 从对话面板子模块导入
@@ -76,9 +73,6 @@ __all__ = [
     # Conversation Panel
     "ConversationPanel",
     "PANEL_BACKGROUND",
-    "USER_MESSAGE_BG",
-    "ASSISTANT_MESSAGE_BG",
-    "PRIMARY_COLOR",
     # Conversation ViewModel
     "ConversationViewModel",
     "DisplayMessage",

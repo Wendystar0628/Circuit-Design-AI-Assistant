@@ -21,10 +21,19 @@
 
 import logging
 import os
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Dict, Optional, Set
+from typing import Callable, Dict, Optional
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class FileIndexRule:
+    extension: str
+    should_index: bool
+    max_size: int
+    exclude_reason: str = ""
 
 # ============================================================
 # 文件大小上限（按类型）
@@ -71,7 +80,6 @@ INDEXABLE_EXTENSIONS: Dict[str, int] = {
     ".md":    _MAX_SIZE_TEXT,
     ".txt":   _MAX_SIZE_TEXT,
     ".rst":   _MAX_SIZE_TEXT,
-    ".csv":   _MAX_SIZE_TEXT,
     # 配置 / 数据
     ".yaml":  _MAX_SIZE_TEXT,
     ".yml":   _MAX_SIZE_TEXT,
@@ -87,8 +95,14 @@ INDEXABLE_EXTENSIONS: Dict[str, int] = {
     ".docx":  _MAX_SIZE_DOCX,
 }
 
-# 快速查询集合（供 _is_indexable 等使用）
-INDEXABLE_EXTENSIONS_SET: Set[str] = set(INDEXABLE_EXTENSIONS.keys())
+EXCLUDED_INDEX_RULES: Dict[str, FileIndexRule] = {
+    ".csv": FileIndexRule(
+        extension=".csv",
+        should_index=False,
+        max_size=_MAX_SIZE_TEXT,
+        exclude_reason="CSV 表格/数值数据文件已排除索引",
+    ),
+}
 
 
 # ============================================================
@@ -183,13 +197,26 @@ def extract_content(abs_path: str) -> str:
     Returns:
         提取到的纯文本内容；提取失败时返回空字符串
     """
-    ext = Path(abs_path).suffix.lower()
-    max_size = INDEXABLE_EXTENSIONS.get(ext, _MAX_SIZE_TEXT)
+    rule = get_file_index_rule(abs_path)
+    if rule is None or not rule.should_index:
+        return ""
+
+    ext = rule.extension
+    max_size = rule.max_size
     extractor = _EXTRACTOR_MAP.get(ext, _extract_text)
     return extractor(abs_path, max_size)
 
 
-def is_indexable(abs_path: str) -> bool:
-    """判断文件扩展名是否在支持范围内"""
+def get_file_index_rule(abs_path: str) -> Optional[FileIndexRule]:
     ext = Path(abs_path).suffix.lower()
-    return ext in INDEXABLE_EXTENSIONS_SET
+    if ext in INDEXABLE_EXTENSIONS:
+        return FileIndexRule(
+            extension=ext,
+            should_index=True,
+            max_size=INDEXABLE_EXTENSIONS[ext],
+        )
+
+    return EXCLUDED_INDEX_RULES.get(ext)
+
+
+__all__ = ["FileIndexRule", "get_file_index_rule", "extract_content"]

@@ -50,7 +50,7 @@ CIRCUIT_EXTENSIONS = {
 }
 
 DOC_EXTENSIONS = {
-    ".md", ".txt", ".rst", ".csv", ".docx",
+    ".md", ".txt", ".rst", ".docx",
 }
 
 # PDF 和其他富文档/配置文件走固定窗口或段落（在 chunk_file 末尾 else 分支）

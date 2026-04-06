@@ -36,7 +36,7 @@ from typing import Any, Dict, List, Optional, Set
 
 from domain.rag.chunker import chunk_file
 from domain.rag.embedder import Embedder
-from domain.rag.file_extractor import extract_content, is_indexable, INDEXABLE_EXTENSIONS_SET
+from domain.rag.file_extractor import FileIndexRule, extract_content, get_file_index_rule
 from domain.rag.rag_worker import RAGWorkerThread
 from domain.rag.vector_store import RAGQueryResult, VectorStore
 from infrastructure.config.settings import (
@@ -83,10 +83,11 @@ class FileIndexInfo:
     doc_id: str = ""
     mtime: float = 0.0
     size: int = 0
-    status: str = "pending"  # pending / processing / processed / failed
+    status: str = "pending"  # pending / processing / processed / failed / excluded
     chunks_count: int = 0
     indexed_at: str = ""
     error: Optional[str] = None
+    exclude_reason: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         d = {
@@ -99,6 +100,8 @@ class FileIndexInfo:
         }
         if self.error:
             d["error"] = self.error
+        if self.exclude_reason:
+            d["exclude_reason"] = self.exclude_reason
         return d
 
     @classmethod
@@ -112,6 +115,7 @@ class FileIndexInfo:
             chunks_count=data.get("chunks_count", 0),
             indexed_at=data.get("indexed_at", ""),
             error=data.get("error"),
+            exclude_reason=data.get("exclude_reason"),
         )
 
 
@@ -121,6 +125,7 @@ class IndexStats:
     total_files: int = 0
     processed: int = 0
     failed: int = 0
+    excluded: int = 0
     total_chunks: int = 0
     total_entities: int = 0
     total_relations: int = 0
@@ -342,6 +347,7 @@ class RAGManager:
             files_to_index = self._scan_project_files()
             if not files_to_index:
                 logger.info("No files to index (all up to date)")
+                self._save_index_meta()
                 self._indexing = False
                 self._publish_event(EVENT_RAG_INDEX_COMPLETE, {
                     "total_indexed": 0,
@@ -420,7 +426,21 @@ class RAGManager:
             return
 
         abs_path, rel_path = self._resolve_path(file_path)
-        if not abs_path or not self._is_indexable(abs_path):
+        if not abs_path:
+            return
+
+        rule = self._get_file_index_rule(abs_path)
+        if rule is None:
+            return
+
+        if not rule.should_index:
+            try:
+                stat = os.stat(abs_path)
+                old_meta = self._index_meta.get("files", {}).get(rel_path, {})
+                self._mark_file_excluded(rel_path, stat, old_meta, rule)
+                self._save_index_meta()
+            except OSError:
+                pass
             return
 
         try:
@@ -573,6 +593,7 @@ class RAGManager:
             total_files=len(files_meta),
             processed=sum(1 for f in files_meta.values() if f.get("status") == "processed"),
             failed=sum(1 for f in files_meta.values() if f.get("status") == "failed"),
+            excluded=sum(1 for f in files_meta.values() if f.get("status") == "excluded"),
             total_chunks=total_chunks,
         )
 
@@ -655,9 +676,8 @@ class RAGManager:
 
             for filename in filenames:
                 abs_path = os.path.join(dirpath, filename)
-                ext = os.path.splitext(filename)[1].lower()
-
-                if ext not in INDEXABLE_EXTENSIONS_SET:
+                rule = self._get_file_index_rule(abs_path)
+                if rule is None:
                     continue
 
                 rel_path = os.path.relpath(abs_path, root).replace("\\", "/")
@@ -668,6 +688,10 @@ class RAGManager:
                     stat = os.stat(abs_path)
                     old_meta = files_meta.get(rel_path, {})
                     old_mtime = old_meta.get("mtime", 0.0)
+
+                    if not rule.should_index:
+                        self._mark_file_excluded(rel_path, stat, old_meta, rule)
+                        continue
 
                     if (old_meta.get("status") == "processed"
                             and abs(stat.st_mtime - old_mtime) < 0.01):
@@ -722,9 +746,39 @@ class RAGManager:
             self._save_index_meta()
             logger.info(f"Cleaned {cleaned} deleted files from index")
 
-    def _is_indexable(self, abs_path: str) -> bool:
-        """检查文件是否可索引"""
-        return is_indexable(abs_path)
+    def _get_file_index_rule(self, abs_path: str) -> Optional[FileIndexRule]:
+        return get_file_index_rule(abs_path)
+
+    def _mark_file_excluded(
+        self,
+        rel_path: str,
+        stat: os.stat_result,
+        old_meta: Dict[str, Any],
+        rule: FileIndexRule,
+    ) -> None:
+        if (
+            old_meta.get("status") == "excluded"
+            and abs(stat.st_mtime - old_meta.get("mtime", 0.0)) < 0.01
+            and old_meta.get("exclude_reason") == rule.exclude_reason
+        ):
+            return
+
+        if self._vector_store and old_meta.get("status") == "processed":
+            try:
+                self._vector_store.delete_file(rel_path)
+            except Exception as e:
+                logger.warning(f"Failed to delete excluded file vectors for {rel_path}: {e}")
+
+        self._update_file_meta(rel_path, {
+            "doc_id": "",
+            "mtime": stat.st_mtime,
+            "size": stat.st_size,
+            "status": "excluded",
+            "chunks_count": 0,
+            "indexed_at": datetime.now(timezone.utc).isoformat(),
+            "error": None,
+            "exclude_reason": rule.exclude_reason,
+        })
 
     def _resolve_path(self, file_path: str) -> tuple:
         """解析路径为 (abs_path, rel_path)"""
@@ -792,6 +846,7 @@ class RAGManager:
                 "total_files": len(files_meta),
                 "processed": sum(1 for f in files_meta.values() if f.get("status") == "processed"),
                 "failed": sum(1 for f in files_meta.values() if f.get("status") == "failed"),
+                "excluded": sum(1 for f in files_meta.values() if f.get("status") == "excluded"),
                 "total_chunks": sum(f.get("chunks_count", 0) for f in files_meta.values()),
             }
             snapshot = dict(self._index_meta)

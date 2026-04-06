@@ -20,18 +20,11 @@ from typing import Optional, Dict, Any, List
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
     QLabel, QLineEdit, QComboBox, QCheckBox, QSpinBox,
-    QPushButton, QGroupBox, QMessageBox, QWidget, QFrame
+    QPushButton, QGroupBox, QMessageBox, QWidget, QTabWidget
 )
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QPixmap, QPainter, QColor
 
 from infrastructure.config.settings import (
-    PROVIDER_DEFAULTS,
-    SUPPORTED_LLM_PROVIDERS,
-    LLM_PROVIDER_ZHIPU,
-    LLM_PROVIDER_DEEPSEEK,
-    LLM_PROVIDER_QWEN,
-    EMBEDDING_PROVIDER_DEFAULTS,
     CONFIG_EMBEDDING_PROVIDER,
     CONFIG_EMBEDDING_MODEL,
     CONFIG_EMBEDDING_BASE_URL,
@@ -49,24 +42,11 @@ from infrastructure.config.settings import (
     CONFIG_ENABLE_PROVIDER_WEB_SEARCH,
     CONFIG_ENABLE_GENERAL_WEB_SEARCH,
     CONFIG_GENERAL_WEB_SEARCH_PROVIDER,
-    DEFAULT_BASE_URL,
-    DEFAULT_MODEL,
     DEFAULT_TIMEOUT,
     DEFAULT_EMBEDDING_TIMEOUT,
     DEFAULT_EMBEDDING_BATCH_SIZE,
     DEFAULT_THINKING_TIMEOUT,
 )
-
-
-# ============================================================
-# 厂商显示名称映射
-# ============================================================
-
-PROVIDER_DISPLAY_NAMES: Dict[str, str] = {
-    LLM_PROVIDER_ZHIPU: "智谱 AI (Zhipu)",
-    LLM_PROVIDER_DEEPSEEK: "DeepSeek",
-    LLM_PROVIDER_QWEN: "通义千问 (Qwen)",
-}
 
 
 # ============================================================
@@ -109,6 +89,9 @@ class ModelConfigDialog(QDialog):
         self._embedding_base_url_edit: Optional[QLineEdit] = None
         self._embedding_timeout_spin: Optional[QSpinBox] = None
         self._embedding_batch_size_spin: Optional[QSpinBox] = None
+        self._tab_widget: Optional[QTabWidget] = None
+        self._chat_tab: Optional[QWidget] = None
+        self._embedding_tab: Optional[QWidget] = None
         
         # 厂商专属功能组件
         self._provider_features_group: Optional[QGroupBox] = None
@@ -116,7 +99,6 @@ class ModelConfigDialog(QDialog):
         self._deep_think_check: Optional[QCheckBox] = None
         self._thinking_timeout_spin: Optional[QSpinBox] = None
         self._provider_web_search_check: Optional[QCheckBox] = None
-        self._not_implemented_label: Optional[QLabel] = None
         
         # 通用联网搜索组件
         self._general_search_group: Optional[QGroupBox] = None
@@ -369,25 +351,38 @@ class ModelConfigDialog(QDialog):
         """设置 UI 布局"""
         main_layout = QVBoxLayout(self)
         main_layout.setSpacing(15)
-        
-        # 1. 厂商和模型选择组
-        main_layout.addWidget(self._create_provider_model_group())
-        
-        # 2. API 配置组（云端厂商）
-        self._api_config_group = self._create_api_config_group()
-        main_layout.addWidget(self._api_config_group)
 
-        # 3. 嵌入模型配置组
-        self._embedding_config_group = self._create_embedding_config_group()
-        main_layout.addWidget(self._embedding_config_group)
-        
-        # 4. 厂商专属功能组（选择模型后显示）
+        self._tab_widget = QTabWidget()
+        main_layout.addWidget(self._tab_widget)
+
+        self._chat_tab = QWidget()
+        chat_layout = QVBoxLayout(self._chat_tab)
+        chat_layout.setContentsMargins(0, 8, 0, 0)
+        chat_layout.setSpacing(15)
+
+        chat_layout.addWidget(self._create_provider_model_group())
+
+        self._api_config_group = self._create_api_config_group()
+        chat_layout.addWidget(self._api_config_group)
+
         self._provider_features_group = self._create_provider_features_group()
-        main_layout.addWidget(self._provider_features_group)
-        
-        # 5. 通用联网搜索组
+        chat_layout.addWidget(self._provider_features_group)
+
         self._general_search_group = self._create_general_search_group()
-        main_layout.addWidget(self._general_search_group)
+        chat_layout.addWidget(self._general_search_group)
+        chat_layout.addStretch()
+
+        self._embedding_tab = QWidget()
+        embedding_layout = QVBoxLayout(self._embedding_tab)
+        embedding_layout.setContentsMargins(0, 8, 0, 0)
+        embedding_layout.setSpacing(15)
+
+        self._embedding_config_group = self._create_embedding_config_group()
+        embedding_layout.addWidget(self._embedding_config_group)
+        embedding_layout.addStretch()
+
+        self._tab_widget.addTab(self._chat_tab, "")
+        self._tab_widget.addTab(self._embedding_tab, "")
         
         # 验证状态
         self._status_label = QLabel()
@@ -405,13 +400,7 @@ class ModelConfigDialog(QDialog):
         
         # 厂商选择
         self._provider_combo = QComboBox()
-        for provider_id in SUPPORTED_LLM_PROVIDERS:
-            display_name = PROVIDER_DISPLAY_NAMES.get(provider_id, provider_id)
-            defaults = PROVIDER_DEFAULTS.get(provider_id, {})
-            # 未实现的厂商添加标记
-            if not defaults.get("implemented", False):
-                display_name += " (Coming Soon)"
-            self._provider_combo.addItem(display_name, provider_id)
+        self._populate_chat_providers()
         self._provider_combo.currentIndexChanged.connect(self._on_provider_changed)
         
         provider_label = QLabel()
@@ -444,7 +433,6 @@ class ModelConfigDialog(QDialog):
         
         # Base URL
         self._base_url_edit = QLineEdit()
-        self._base_url_edit.setPlaceholderText(DEFAULT_BASE_URL)
         
         base_url_label = QLabel()
         base_url_label.setProperty("label_type", "base_url")
@@ -513,6 +501,8 @@ class ModelConfigDialog(QDialog):
         batch_size_label.setProperty("label_type", "embedding_batch_size")
         layout.addRow(batch_size_label, self._embedding_batch_size_spin)
 
+        self._populate_embedding_providers(force_refresh=True)
+
         return group
 
 
@@ -521,16 +511,6 @@ class ModelConfigDialog(QDialog):
         group = QGroupBox()
         group.setProperty("group_type", "provider_features")
         layout = QVBoxLayout(group)
-        
-        # 未实现提示标签
-        self._not_implemented_label = QLabel()
-        self._not_implemented_label.setStyleSheet(
-            "color: #ff9800; padding: 10px; background-color: #fff3e0; "
-            "border-radius: 4px;"
-        )
-        self._not_implemented_label.setWordWrap(True)
-        self._not_implemented_label.setVisible(False)
-        layout.addWidget(self._not_implemented_label)
         
         # 功能表单
         form_layout = QFormLayout()
@@ -654,23 +634,25 @@ class ModelConfigDialog(QDialog):
         if not self.config_manager:
             # 无配置管理器时使用默认值
             self._on_provider_changed(0)
+            self._populate_embedding_providers(force_refresh=True)
+            if self._embedding_provider_combo.count() > 0:
+                self._embedding_provider_combo.setCurrentIndex(0)
+                self._on_embedding_provider_changed(self._embedding_provider_combo.currentIndex())
             return
         
         # 厂商
-        provider = self.config_manager.get(CONFIG_LLM_PROVIDER, LLM_PROVIDER_ZHIPU)
-        if not provider:
-            provider = LLM_PROVIDER_ZHIPU
+        provider = self.config_manager.get(CONFIG_LLM_PROVIDER, "")
         index = self._provider_combo.findData(provider)
         if index >= 0:
             self._provider_combo.setCurrentIndex(index)
-        else:
+        elif self._provider_combo.count() > 0:
             self._provider_combo.setCurrentIndex(0)
         
         # 触发厂商变更以更新模型列表和配置区显示
         self._on_provider_changed(self._provider_combo.currentIndex())
 
         # 模型
-        model = self.config_manager.get(CONFIG_LLM_MODEL, DEFAULT_MODEL)
+        model = self.config_manager.get(CONFIG_LLM_MODEL, "")
         index = self._model_combo.findText(model, Qt.MatchFlag.MatchFixedString)
         if index >= 0:
             self._model_combo.setCurrentIndex(index)
@@ -702,8 +684,8 @@ class ModelConfigDialog(QDialog):
         self._thinking_timeout_spin.setValue(thinking_timeout)
         self._thinking_timeout_spin.setEnabled(deep_think)
 
-        self._populate_embedding_providers()
-        embedding_provider = self.config_manager.get(CONFIG_EMBEDDING_PROVIDER, "zhipu")
+        self._populate_embedding_providers(force_refresh=True)
+        embedding_provider = self.config_manager.get(CONFIG_EMBEDDING_PROVIDER, "")
         embedding_index = self._embedding_provider_combo.findData(embedding_provider)
         if embedding_index >= 0:
             self._embedding_provider_combo.setCurrentIndex(embedding_index)
@@ -934,10 +916,43 @@ class ModelConfigDialog(QDialog):
     # 事件处理
     # ============================================================
 
+    def _populate_chat_providers(self) -> None:
+        if self._provider_combo is None:
+            return
+
+        self._provider_combo.blockSignals(True)
+        self._provider_combo.clear()
+        for provider in self._list_chat_providers():
+            self._provider_combo.addItem(provider.display_name, provider.id)
+        self._provider_combo.blockSignals(False)
+
+    def _list_chat_providers(self):
+        try:
+            from shared.model_registry import ModelRegistry
+            ModelRegistry.initialize()
+            return ModelRegistry.list_implemented_providers()
+        except Exception as e:
+            if self.logger:
+                self.logger.error(f"加载对话模型厂商失败: {e}")
+            return []
+
+    def _get_chat_provider(self, provider_id: str):
+        if not provider_id:
+            return None
+
+        try:
+            from shared.model_registry import ModelRegistry
+            ModelRegistry.initialize()
+            return ModelRegistry.get_provider(provider_id)
+        except Exception as e:
+            if self.logger:
+                self.logger.error(f"读取对话模型厂商配置失败: {e}")
+            return None
+
     def _on_provider_changed(self, index: int):
         """厂商选择变更"""
         provider_id = self._provider_combo.currentData()
-        defaults = PROVIDER_DEFAULTS.get(provider_id, {})
+        provider = self._get_chat_provider(provider_id)
 
         self._model_combo.clear()
         models = self._get_models_for_provider(provider_id)
@@ -945,14 +960,14 @@ class ModelConfigDialog(QDialog):
             self._model_combo.addItem(model)
 
         # 设置默认模型
-        default_model = defaults.get("default_model", "")
+        default_model = provider.default_model if provider else ""
         if default_model:
             idx = self._model_combo.findText(default_model, Qt.MatchFlag.MatchFixedString)
             if idx >= 0:
                 self._model_combo.setCurrentIndex(idx)
 
         # 更新 Base URL 占位符
-        base_url = defaults.get("base_url", "")
+        base_url = provider.base_url if provider else ""
         self._base_url_edit.setPlaceholderText(base_url)
         self._base_url_edit.setText(base_url)
 
@@ -963,15 +978,10 @@ class ModelConfigDialog(QDialog):
         else:
             self._api_key_edit.setText("")
         
-        # 检查是否已实现和支持的功能（从 ModelRegistry 获取）
-        implemented = defaults.get("implemented", False)
         supports_thinking = self._provider_supports_thinking(provider_id)
-        supports_web_search = defaults.get("supports_web_search", False)
+        supports_web_search = provider.supports_web_search if provider else False
         
-        # 更新厂商专属功能组
-        if self._provider_features_group:
-            self._provider_features_group.setVisible(implemented)
-        self._update_provider_features(implemented, supports_thinking, supports_web_search)
+        self._update_provider_features(supports_thinking, supports_web_search)
         
         # 重置验证状态
         self._reset_validation_status()
@@ -993,22 +1003,41 @@ class ModelConfigDialog(QDialog):
         except Exception:
             return False
 
-    def _populate_embedding_providers(self) -> None:
-        if not self._embedding_provider_combo or self._embedding_provider_combo.count() > 0:
+    def _populate_embedding_providers(self, force_refresh: bool = False) -> None:
+        if self._embedding_provider_combo is None:
             return
+
+        if force_refresh:
+            self._embedding_provider_combo.blockSignals(True)
+            self._embedding_provider_combo.clear()
+            self._embedding_provider_combo.blockSignals(False)
+        elif self._embedding_provider_combo.count() > 0:
+            return
+
         try:
             from shared.embedding_model_registry import EmbeddingModelRegistry
+            EmbeddingModelRegistry.initialize()
             providers = EmbeddingModelRegistry.list_implemented_providers()
-        except Exception:
-            providers = []
+        except Exception as e:
+            if self.logger:
+                self.logger.error(f"加载嵌入模型厂商失败: {e}")
+            return
 
         for provider in providers:
             self._embedding_provider_combo.addItem(provider.display_name, provider.id)
 
-        if not providers:
-            for provider_id, defaults in EMBEDDING_PROVIDER_DEFAULTS.items():
-                if defaults.get("implemented", False):
-                    self._embedding_provider_combo.addItem(defaults.get("display_name", provider_id), provider_id)
+    def _get_embedding_provider(self, provider_id: str):
+        if not provider_id:
+            return None
+
+        try:
+            from shared.embedding_model_registry import EmbeddingModelRegistry
+            EmbeddingModelRegistry.initialize()
+            return EmbeddingModelRegistry.get_provider(provider_id)
+        except Exception as e:
+            if self.logger:
+                self.logger.error(f"读取嵌入模型厂商配置失败: {e}")
+            return None
 
     def _on_embedding_provider_changed(self, index: int):
         provider_id = self._embedding_provider_combo.currentData()
@@ -1016,23 +1045,29 @@ class ModelConfigDialog(QDialog):
             return
 
         self._embedding_model_combo.clear()
-        provider = None
+        provider = self._get_embedding_provider(provider_id)
+        if provider is None:
+            self._embedding_base_url_edit.clear()
+            return
+
         try:
             from shared.embedding_model_registry import EmbeddingModelRegistry
-            provider = EmbeddingModelRegistry.get_provider(provider_id)
-            for model_name in EmbeddingModelRegistry.list_model_names(provider_id):
+            EmbeddingModelRegistry.initialize()
+            model_names = EmbeddingModelRegistry.list_model_names(provider_id)
+            for model_name in model_names:
                 self._embedding_model_combo.addItem(model_name)
-        except Exception:
-            provider = None
+        except Exception as e:
+            if self.logger:
+                self.logger.error(f"加载嵌入模型列表失败: {e}")
+            model_names = []
 
-        defaults = EMBEDDING_PROVIDER_DEFAULTS.get(provider_id, {})
-        default_model = provider.default_model if provider else defaults.get("default_model", "")
+        default_model = provider.default_model
         if default_model:
             model_index = self._embedding_model_combo.findText(default_model, Qt.MatchFlag.MatchFixedString)
             if model_index >= 0:
                 self._embedding_model_combo.setCurrentIndex(model_index)
 
-        base_url = provider.base_url if provider else defaults.get("base_url", "")
+        base_url = provider.base_url
         self._embedding_base_url_edit.setPlaceholderText(base_url)
         self._embedding_base_url_edit.setText(base_url)
 
@@ -1041,41 +1076,21 @@ class ModelConfigDialog(QDialog):
                 self.credential_manager.get_embedding_api_key(provider_id)
             )
 
-    def _update_provider_features(self, implemented: bool, supports_thinking: bool, supports_web_search: bool):
+    def _update_provider_features(self, supports_thinking: bool, supports_web_search: bool):
         """更新厂商专属功能组的显示状态"""
-        if not implemented:
-            # 未实现：显示提示，禁用功能
-            self._not_implemented_label.setVisible(True)
-            self._not_implemented_label.setText(
-                self._get_text(
-                    "dialog.model_config.not_implemented",
-                    "This provider is not yet implemented. Configuration will be saved but the provider cannot be used until implemented."
-                )
-            )
-            self._deep_think_check.setEnabled(False)
-            self._thinking_timeout_spin.setEnabled(False)
-            self._provider_web_search_check.setEnabled(False)
+        self._deep_think_check.setEnabled(supports_thinking)
+        self._thinking_timeout_spin.setEnabled(
+            supports_thinking and self._deep_think_check.isChecked()
+        )
+        self._api_key_edit.setEnabled(True)
+
+        if not supports_thinking:
+            self._deep_think_check.setChecked(False)
+
+        if not supports_web_search:
             self._provider_web_search_check.setChecked(False)
-            self._api_key_edit.setEnabled(True)  # 仍允许输入 API Key
-        else:
-            # 已实现：隐藏提示，根据支持情况启用功能
-            self._not_implemented_label.setVisible(False)
-            self._deep_think_check.setEnabled(supports_thinking)
-            self._thinking_timeout_spin.setEnabled(
-                supports_thinking and self._deep_think_check.isChecked()
-            )
-            self._api_key_edit.setEnabled(True)
-            
-            # 如果不支持深度思考，取消勾选
-            if not supports_thinking:
-                self._deep_think_check.setChecked(False)
-            
-            # 更新厂商专属搜索可用状态（考虑互斥逻辑）
-            self._update_provider_search_availability()
-            
-            # 如果不支持厂商联网搜索，取消勾选
-            if not supports_web_search:
-                self._provider_web_search_check.setChecked(False)
+
+        self._update_provider_search_availability()
 
     def _on_deep_think_changed(self, state: int):
         """深度思考开关变化"""
@@ -1111,13 +1126,11 @@ class ModelConfigDialog(QDialog):
     def _update_provider_search_availability(self):
         """更新厂商专属搜索的可用状态"""
         provider_id = self._provider_combo.currentData()
-        defaults = PROVIDER_DEFAULTS.get(provider_id, {})
-        implemented = defaults.get("implemented", False)
-        supports_web_search = defaults.get("supports_web_search", False)
+        provider = self._get_chat_provider(provider_id)
+        supports_web_search = provider.supports_web_search if provider else False
         
-        # 只有厂商已实现且支持联网搜索，且通用搜索未启用时才可用
         general_search_enabled = self._general_search_check.isChecked()
-        can_enable = implemented and supports_web_search and not general_search_enabled
+        can_enable = supports_web_search and not general_search_enabled
         
         self._provider_web_search_check.setEnabled(can_enable)
         
@@ -1188,18 +1201,6 @@ class ModelConfigDialog(QDialog):
     def _on_test_connection(self):
         """测试连接"""
         provider_id = self._provider_combo.currentData()
-        defaults = PROVIDER_DEFAULTS.get(provider_id, {})
-        
-        if not defaults.get("implemented", False):
-            QMessageBox.information(
-                self,
-                self._get_text("dialog.model_config.test_connection", "Test Connection"),
-                self._get_text(
-                    "dialog.model_config.provider_not_implemented",
-                    "This provider is not yet implemented. Cannot test connection."
-                )
-            )
-            return
         
         api_key = self._api_key_edit.text().strip()
         if not api_key:
@@ -1363,6 +1364,16 @@ class ModelConfigDialog(QDialog):
         self.setWindowTitle(
             self._get_text("dialog.model_config.title", "Model Configuration")
         )
+
+        if self._tab_widget:
+            self._tab_widget.setTabText(
+                0,
+                self._get_text("dialog.model_config.tab.chat", "对话模型配置")
+            )
+            self._tab_widget.setTabText(
+                1,
+                self._get_text("dialog.model_config.tab.embedding", "嵌入模型配置")
+            )
         
         # 组标题
         for group in self.findChildren(QGroupBox):
@@ -1427,15 +1438,6 @@ class ModelConfigDialog(QDialog):
         self._save_btn.setText(self._get_text("btn.save", "Save"))
         self._cancel_btn.setText(self._get_text("btn.cancel", "Cancel"))
         
-        # 更新未实现提示文本
-        if self._not_implemented_label.isVisible():
-            self._not_implemented_label.setText(
-                self._get_text(
-                    "dialog.model_config.not_implemented",
-                    "This provider is not yet implemented. Configuration will be saved but the provider cannot be used until implemented."
-                )
-            )
-        
         # 更新验证状态文本
         status = self._status_label.property("validation_status")
         if status:
@@ -1474,5 +1476,4 @@ class ModelConfigDialog(QDialog):
 
 __all__ = [
     "ModelConfigDialog",
-    "PROVIDER_DISPLAY_NAMES",
 ]

@@ -153,9 +153,6 @@ class SessionManager:
             if hasattr(editor_panel, 'get_current_file'):
                 current_file = editor_panel.get_current_file()
                 self.config_manager.set("active_file", current_file)
-        
-        # 保存对话会话信息
-        self._save_conversation_session()
 
     def restore_session_state(self, open_project_callback):
         """
@@ -212,106 +209,6 @@ class SessionManager:
             editor_panel.reset_all_modification_states()
 
     # ============================================================
-    # 对话会话管理（阶段三扩展）
-    # ============================================================
-
-    def _save_conversation_session(self):
-        """保存对话会话信息到配置"""
-        if not self.config_manager:
-            return
-        
-        # 获取当前会话名称
-        chat_panel = self._panels.get("chat")
-        if chat_panel and hasattr(chat_panel, 'view_model'):
-            view_model = chat_panel.view_model
-            if view_model:
-                session_name = getattr(view_model, 'current_session_name', None)
-                if session_name:
-                    self.config_manager.set("current_conversation_name", session_name)
-
-    def restore_conversation_session(self):
-        """
-        恢复对话会话状态（兼容方法，调用 restore_full_session）
-        
-        在 EVENT_INIT_COMPLETE 后调用，此时 ContextManager 已可用
-        """
-        self.restore_full_session()
-
-    def _refresh_chat_panel(self):
-        """刷新对话面板显示"""
-        chat_panel = self._panels.get("chat")
-        if chat_panel:
-            # 先让 ViewModel 重新加载消息
-            if hasattr(chat_panel, 'view_model') and chat_panel.view_model:
-                if hasattr(chat_panel.view_model, 'load_messages'):
-                    chat_panel.view_model.load_messages()
-            # 然后刷新显示
-            if hasattr(chat_panel, 'refresh_display'):
-                chat_panel.refresh_display()
-
-    def get_current_session_name(self) -> Optional[str]:
-        """获取当前会话名称"""
-        chat_panel = self._panels.get("chat")
-        if chat_panel and hasattr(chat_panel, 'view_model'):
-            view_model = chat_panel.view_model
-            if view_model:
-                return getattr(view_model, 'current_session_name', None)
-        return None
-
-    def set_current_session_name(self, name: str):
-        """设置当前会话名称"""
-        chat_panel = self._panels.get("chat")
-        if chat_panel and hasattr(chat_panel, 'view_model'):
-            view_model = chat_panel.view_model
-            if view_model and hasattr(view_model, 'set_session_name'):
-                view_model.set_session_name(name)
-
-    # ============================================================
-    # 会话名称生成
-    # ============================================================
-
-    def generate_session_name(self) -> str:
-        """
-        生成会话名称
-        
-        格式：Chat YYYY-MM-DD HH:mm（精确到分钟）
-        精确到分钟可避免同一天内多次新建对话时名称冲突
-        
-        Returns:
-            str: 会话名称
-        """
-        from datetime import datetime
-        now = datetime.now().strftime("%Y-%m-%d %H:%M")
-        return f"Chat {now}"
-
-    def _safe_filename(self, name: str) -> str:
-        """
-        将会话名称转换为安全的文件名
-        
-        处理规则：
-        - 替换特殊字符 /\\:*?"<>| 为下划线
-        - 限制长度不超过 100 字符
-        
-        Args:
-            name: 会话名称
-            
-        Returns:
-            str: 安全的文件名
-        """
-        import hashlib
-        
-        unsafe_chars = '/\\:*?"<>|'
-        safe_name = name
-        for char in unsafe_chars:
-            safe_name = safe_name.replace(char, '_')
-        
-        if len(safe_name) > 100:
-            hash_suffix = hashlib.md5(name.encode()).hexdigest()[:8]
-            safe_name = safe_name[:91] + '_' + hash_suffix
-        
-        return safe_name
-
-    # ============================================================
     # 完整会话恢复流程
     # ============================================================
 
@@ -347,10 +244,7 @@ class SessionManager:
             # 调用 on_app_startup 恢复会话
             # SessionStateManager 内部会同步状态到 ContextManager
             initial_state = {}
-            new_state = self.session_state_manager.on_app_startup(project_root, initial_state)
-            
-            # 手动刷新对话面板（确保 UI 显示最新消息）
-            self._refresh_chat_panel()
+            self.session_state_manager.on_app_startup(project_root, initial_state)
             
             session_id = self.session_state_manager.get_current_session_id()
             if session_id:

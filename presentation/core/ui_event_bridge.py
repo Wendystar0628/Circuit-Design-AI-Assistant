@@ -436,35 +436,6 @@ class CommonEventBridges:
             bridge.bridge_event(EVENT_SIM_ERROR, on_sim_error)
     
     @staticmethod
-    def bridge_llm_events(
-        bridge: UIEventBridge,
-        on_llm_chunk: Optional[Callable] = None,
-        on_llm_complete: Optional[Callable] = None,
-        on_model_changed: Optional[Callable] = None,
-    ):
-        """
-        桥接 LLM 相关事件
-        
-        Args:
-            bridge: UIEventBridge 实例
-            on_llm_chunk: LLM 流式输出处理器
-            on_llm_complete: LLM 完成处理器
-            on_model_changed: 模型切换处理器
-        """
-        from shared.event_types import (
-            EVENT_LLM_CHUNK,
-            EVENT_LLM_COMPLETE,
-            EVENT_MODEL_CHANGED,
-        )
-        
-        if on_llm_chunk:
-            bridge.bridge_event(EVENT_LLM_CHUNK, on_llm_chunk)
-        if on_llm_complete:
-            bridge.bridge_event(EVENT_LLM_COMPLETE, on_llm_complete)
-        if on_model_changed:
-            bridge.bridge_event(EVENT_MODEL_CHANGED, on_model_changed)
-    
-    @staticmethod
     def bridge_workflow_events(
         bridge: UIEventBridge,
         on_iteration_awaiting: Optional[Callable] = None,

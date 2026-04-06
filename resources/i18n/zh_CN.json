@@ -34,7 +34,7 @@
   "menu.simulation.run": "运行仿真",
   "menu.simulation.stop": "停止仿真",
 
-  "menu.knowledge": "知识库",
+  "menu.knowledge": "索引库",
   "menu.knowledge.import": "导入文档",
   "menu.knowledge.rebuild": "重建索引",
 
@@ -95,6 +95,7 @@
   "panel.file_browser": "文件浏览器",
   "panel.code_editor": "代码编辑器",
   "panel.chat": "对话",
+  "panel.rag": "索引库",
   "panel.simulation": "仿真结果",
   "panel.iteration_history": "迭代历史",
   "panel.devtools": "调试",

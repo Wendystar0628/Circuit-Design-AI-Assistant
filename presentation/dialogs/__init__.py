@@ -12,7 +12,7 @@
 - select_simulation_file_dialog.py: 选择仿真文件对话框
 """
 
-from .model_config_dialog import ModelConfigDialog, PROVIDER_DISPLAY_NAMES
+from .model_config_dialog import ModelConfigDialog
 from .about_dialog import AboutDialog, APP_VERSION
 from .context_compress_dialog import ContextCompressDialog
 from .history_dialog import HistoryDialog, SessionInfo
@@ -22,7 +22,6 @@ from .select_simulation_file_dialog import SelectSimulationFileDialog
 __all__ = [
     # 新版模型配置对话框
     "ModelConfigDialog",
-    "PROVIDER_DISPLAY_NAMES",
     # 关于对话框
     "AboutDialog",
     "APP_VERSION",

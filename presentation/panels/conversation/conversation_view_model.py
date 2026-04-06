@@ -117,7 +117,6 @@ class ConversationViewModel(QObject):
     suggestion_added = pyqtSignal(str)           # 建议选项消息添加 (message_id)
     compress_suggested = pyqtSignal()            # 建议压缩上下文
     new_conversation_suggested = pyqtSignal()    # 建议开启新对话
-    session_name_updated = pyqtSignal(str)       # 会话名称更新 (name)
     stop_requested = pyqtSignal()                # 停止请求已发出
     stop_completed = pyqtSignal(dict)            # 停止完成 (result)
     tool_call_started = pyqtSignal(str, str, dict)   # 工具调用开始 (tool_call_id, tool_name, arguments)
@@ -136,10 +135,6 @@ class ConversationViewModel(QObject):
         self._current_reasoning_content: str = ""
         self._active_suggestion_message_id: Optional[str] = None
         
-        # 会话名称相关
-        self._current_session_id: Optional[str] = None
-        self._current_session_name: str = ""
-        
         # 停止控制相关
         self._stop_controller = None
         self._current_task_id: Optional[str] = None  # 当前 LLM 任务 ID
@@ -152,7 +147,6 @@ class ConversationViewModel(QObject):
         self._event_bus = None
         self._logger = None
         self._markdown_converter = None
-        self._config_manager = None
         self._session_state_manager = None
         
         # 事件订阅句柄
@@ -215,18 +209,6 @@ class ConversationViewModel(QObject):
         """是否可以发送消息"""
         return self._can_send and not self._is_loading
     
-    @property
-    def current_session_id(self) -> Optional[str]:
-        """当前会话 ID"""
-        return self._current_session_id
-    
-    @property
-    def current_session_name(self) -> str:
-        """当前会话名称（从 SessionStateManager 获取）"""
-        if self.session_state_manager:
-            return self.session_state_manager.get_current_session_name()
-        return self._current_session_name
-    
     # ============================================================
     # 延迟获取服务
     # ============================================================
@@ -265,18 +247,6 @@ class ConversationViewModel(QObject):
             except Exception:
                 pass
         return self._context_manager
-    
-    @property
-    def config_manager(self):
-        """延迟获取配置管理器"""
-        if self._config_manager is None:
-            try:
-                from shared.service_locator import ServiceLocator
-                from shared.service_names import SVC_CONFIG_MANAGER
-                self._config_manager = ServiceLocator.get_optional(SVC_CONFIG_MANAGER)
-            except Exception:
-                pass
-        return self._config_manager
     
     @property
     def session_state_manager(self):
@@ -334,8 +304,6 @@ class ConversationViewModel(QObject):
         
         try:
             from shared.event_types import (
-                EVENT_LLM_CHUNK,
-                EVENT_LLM_COMPLETE,
                 EVENT_ITERATION_AWAITING_CONFIRMATION,
                 EVENT_CONTEXT_COMPRESS_COMPLETE,
                 EVENT_SESSION_CHANGED,
@@ -345,8 +313,6 @@ class ConversationViewModel(QObject):
                 EVENT_AGENT_TOOL_END,
             )
             
-            self.event_bus.subscribe(EVENT_LLM_CHUNK, self._on_llm_chunk)
-            self.event_bus.subscribe(EVENT_LLM_COMPLETE, self._on_llm_complete)
             self.event_bus.subscribe(
                 EVENT_ITERATION_AWAITING_CONFIRMATION,
                 self._on_iteration_awaiting
@@ -372,8 +338,6 @@ class ConversationViewModel(QObject):
         
         try:
             from shared.event_types import (
-                EVENT_LLM_CHUNK,
-                EVENT_LLM_COMPLETE,
                 EVENT_ITERATION_AWAITING_CONFIRMATION,
                 EVENT_CONTEXT_COMPRESS_COMPLETE,
                 EVENT_SESSION_CHANGED,
@@ -383,8 +347,6 @@ class ConversationViewModel(QObject):
                 EVENT_AGENT_TOOL_END,
             )
             
-            self.event_bus.unsubscribe(EVENT_LLM_CHUNK, self._on_llm_chunk)
-            self.event_bus.unsubscribe(EVENT_LLM_COMPLETE, self._on_llm_complete)
             self.event_bus.unsubscribe(
                 EVENT_ITERATION_AWAITING_CONFIRMATION,
                 self._on_iteration_awaiting
@@ -533,43 +495,6 @@ class ConversationViewModel(QObject):
             self._current_stream_content,
             self._current_reasoning_content
         )
-    
-    def finalize_stream(self) -> DisplayMessage:
-        """
-        完成流式输出，生成完整消息
-        
-        Returns:
-            DisplayMessage: 完成的消息
-        """
-        # 转换为 HTML
-        content_html = self._markdown_to_html(self._current_stream_content)
-        reasoning_html = ""
-        if self._current_reasoning_content:
-            reasoning_html = self._markdown_to_html(self._current_reasoning_content)
-        
-        # 创建消息
-        msg = DisplayMessage(
-            id=str(uuid.uuid4()),
-            role=ROLE_ASSISTANT,
-            content_html=content_html,
-            reasoning_html=reasoning_html,
-            timestamp_display=self._format_timestamp(datetime.now().isoformat()),
-            is_streaming=False,
-        )
-        
-        # 添加到消息列表
-        self._messages.append(msg)
-        
-        # 清空流式状态
-        self._current_stream_content = ""
-        self._current_reasoning_content = ""
-        self._is_loading = False
-        
-        # 发出信号
-        self.stream_finished.emit()
-        self.messages_changed.emit()
-        
-        return msg
     
     def start_streaming(self) -> None:
         """
@@ -781,6 +706,7 @@ class ConversationViewModel(QObject):
             
             # 使用 start_streaming() 中生成的任务 ID
             task_id = self._current_task_id or f"llm_{uuid.uuid4().hex[:8]}"
+            self._current_task_id = task_id
             
             # 连接 LLMExecutor 信号
             llm_executor.stream_chunk.connect(self._on_llm_stream_chunk)
@@ -798,8 +724,7 @@ class ConversationViewModel(QObject):
             
             if self.logger:
                 self.logger.info(
-                    f"Agent call triggered: task_id={task_id}, model={model}"
-                )
+                    f"Agent call triggered: task_id={task_id}, model={model}")
                 
         except Exception as e:
             if self.logger:
@@ -820,6 +745,9 @@ class ConversationViewModel(QObject):
             chunk_type: 块类型 ("reasoning" | "content")
             chunk_data: 块数据
         """
+        if task_id != self._current_task_id:
+            return
+
         text = chunk_data.get("text", "")
         if text:
             self.append_stream_chunk(text, chunk_type)
@@ -836,6 +764,9 @@ class ConversationViewModel(QObject):
             task_id: 任务 ID
             result: 生成结果
         """
+        if task_id != self._current_task_id:
+            return
+
         # 断开信号连接（避免重复处理）
         try:
             from shared.service_locator import ServiceLocator
@@ -861,7 +792,7 @@ class ConversationViewModel(QObject):
         # 添加助手消息到 ContextManager
         if self.context_manager and content:
             self.context_manager.add_assistant_message(
-                content=content,
+                content,
                 reasoning_content=reasoning_content,
                 usage=usage,
                 operations=tool_operations if tool_operations else None,
@@ -891,8 +822,7 @@ class ConversationViewModel(QObject):
         if self.logger:
             self.logger.info(
                 f"LLM generation complete: task_id={task_id}, "
-                f"content_len={len(content)}, is_partial={is_partial}"
-            )
+                f"content_len={len(content)}, is_partial={is_partial}")
     
     def _on_llm_generation_error(self, task_id: str, error_msg: str) -> None:
         """
@@ -902,6 +832,9 @@ class ConversationViewModel(QObject):
             task_id: 任务 ID
             error_msg: 错误消息
         """
+        if task_id != self._current_task_id:
+            return
+
         # 断开信号连接
         try:
             from shared.service_locator import ServiceLocator
@@ -965,6 +898,9 @@ class ConversationViewModel(QObject):
         payload: {"task_id", "tool_call_id", "tool_name", "arguments"}
         """
         data = event_data.get("data", {}) or {}
+        if data.get("task_id") != self._current_task_id:
+            return
+
         tool_call_id = data.get("tool_call_id", "")
         tool_name = data.get("tool_name", "")
         arguments = data.get("arguments", {})
@@ -987,6 +923,9 @@ class ConversationViewModel(QObject):
         payload: {"task_id", "tool_call_id", "tool_name", "result_content", "is_error"}
         """
         data = event_data.get("data", {}) or {}
+        if data.get("task_id") != self._current_task_id:
+            return
+
         tool_call_id = data.get("tool_call_id", "")
         result_content = data.get("result_content", "")
         is_error = data.get("is_error", False)
@@ -1031,45 +970,6 @@ class ConversationViewModel(QObject):
                 operations.append(f"{name}{arg_summary}")
         return operations
 
-    def add_assistant_message(
-        self,
-        content: str,
-        reasoning_content: str = "",
-    ) -> None:
-        """
-        添加助手消息到消息列表
-        
-        Args:
-            content: 消息内容
-            reasoning_content: 思考过程内容
-        """
-        # 转换为 HTML
-        content_html = self._markdown_to_html(content)
-        reasoning_html = ""
-        if reasoning_content:
-            reasoning_html = self._markdown_to_html(reasoning_content)
-        
-        # 创建消息
-        msg = DisplayMessage(
-            id=str(uuid.uuid4()),
-            role=ROLE_ASSISTANT,
-            content_html=content_html,
-            reasoning_html=reasoning_html,
-            timestamp_display=self._format_timestamp(datetime.now().isoformat()),
-            is_streaming=False,
-        )
-        
-        # 添加到消息列表
-        self._messages.append(msg)
-        
-        # 更新状态
-        self._is_loading = False
-        self._current_stream_content = ""
-        self._current_reasoning_content = ""
-        
-        # 发出信号
-        self.can_send_changed.emit(True)
-    
     def request_compress(self) -> None:
         """请求压缩上下文"""
         if self.context_manager:
@@ -1126,143 +1026,6 @@ class ConversationViewModel(QObject):
     # 会话名称管理
     # ============================================================
     
-    def generate_unique_session_name(self) -> str:
-        """
-        生成唯一的会话名称
-        
-        命名规则：
-        - 基础格式："Chat YYYY-MM-DD HH:mm"（精确到分钟）
-        - 若已有同名会话，追加序号："Chat YYYY-MM-DD HH:mm (2)"
-        - 序号从 2 开始递增，直到找到唯一名称
-        - 精确到分钟可避免同一天内多次新建对话时名称冲突
-        
-        Returns:
-            str: 唯一的会话名称
-        """
-        now = datetime.now().strftime("%Y-%m-%d %H:%M")
-        base_name = f"Chat {now}"
-        
-        # 获取已存在的会话名称列表
-        existing_names = self._get_existing_session_names()
-        
-        # 检查基础名称是否可用
-        if base_name not in existing_names:
-            return base_name
-        
-        # 追加序号直到找到唯一名称
-        counter = 2
-        while True:
-            candidate_name = f"{base_name} ({counter})"
-            if candidate_name not in existing_names:
-                return candidate_name
-            counter += 1
-            # 安全限制，防止无限循环
-            if counter > 1000:
-                # 使用时间戳作为后备方案
-                timestamp = datetime.now().strftime("%H%M%S")
-                return f"{base_name} ({timestamp})"
-    
-    def _get_existing_session_names(self) -> set:
-        """
-        获取已存在的会话名称集合
-        
-        从 SessionStateManager 收集所有已使用的会话名称。
-        
-        Returns:
-            set: 已存在的会话名称集合
-        """
-        existing_names = set()
-        
-        # 从配置中获取当前会话名称
-        if self.config_manager:
-            current_name = self.config_manager.get("current_conversation_name")
-            if current_name:
-                existing_names.add(current_name)
-        
-        # 从 SessionStateManager 获取所有会话名称
-        if self.session_state_manager:
-            try:
-                # 获取项目路径
-                from shared.service_locator import ServiceLocator
-                from shared.service_names import SVC_SESSION_STATE
-                
-                session_state = ServiceLocator.get_optional(SVC_SESSION_STATE)
-                if session_state:
-                    project_path = session_state.project_root
-                    if project_path:
-                        sessions = self.session_state_manager.get_all_sessions(project_path)
-                        for session in sessions:
-                            if session.name:
-                                existing_names.add(session.name)
-            except Exception as e:
-                if self.logger:
-                    self.logger.debug(f"获取会话名称失败: {e}")
-        
-        return existing_names
-    
-    def set_session_name(self, name: str) -> None:
-        """
-        设置当前会话名称（内部使用，用于同步状态）
-        
-        Args:
-            name: 会话名称
-        """
-        self._current_session_name = name
-        self.session_name_updated.emit(name)
-    
-    def get_session_name(self) -> str:
-        """
-        获取当前会话名称（从 SessionStateManager 获取）
-        
-        Returns:
-            str: 会话名称
-        """
-        if self.session_state_manager:
-            return self.session_state_manager.get_current_session_name()
-        return self._current_session_name
-    
-    def set_session_id(self, session_id: str) -> None:
-        """
-        设置当前会话 ID（保留用于兼容）
-        
-        Args:
-            session_id: 会话 ID
-        """
-        self._current_session_id = session_id
-    
-    def reset_session(self) -> str:
-        """
-        重置会话（新开对话时调用）
-        
-        委托给 SessionStateManager.create_session()
-        
-        Returns:
-            str: 新的会话 ID
-        """
-        if self.session_state_manager:
-            try:
-                # 获取项目路径
-                from shared.service_locator import ServiceLocator
-                from shared.service_names import SVC_SESSION_STATE
-                
-                session_state = ServiceLocator.get_optional(SVC_SESSION_STATE)
-                if session_state and session_state.project_root:
-                    session_id = self.session_state_manager.create_session(
-                        session_state.project_root
-                    )
-                    self._current_session_id = session_id
-                    self._current_session_name = self.session_state_manager.get_current_session_name()
-                    self.session_name_updated.emit(self._current_session_name)
-                    return self._current_session_name
-            except Exception as e:
-                if self.logger:
-                    self.logger.error(f"Failed to create new session: {e}")
-        
-        # 回退：生成唯一的会话名称
-        self._current_session_name = self.generate_unique_session_name()
-        self.session_name_updated.emit(self._current_session_name)
-        return self._current_session_name
-    
     def request_new_session(self) -> Tuple[bool, str]:
         """
         请求新开对话（委托给 SessionStateManager）
@@ -1283,36 +1046,6 @@ class ConversationViewModel(QObject):
                     )
                     session_name = self.session_state_manager.get_current_session_name()
                     return True, session_name
-                return False, "No project path available"
-            except Exception as e:
-                return False, str(e)
-        return False, "SessionStateManager not available"
-    
-    def request_save_session(self) -> Tuple[bool, str]:
-        """
-        请求保存当前会话（委托给 SessionStateManager）
-        
-        Returns:
-            (是否成功, 消息)
-        """
-        if self.session_state_manager:
-            try:
-                # 获取项目路径和当前状态
-                from shared.service_locator import ServiceLocator
-                from shared.service_names import SVC_SESSION_STATE
-                
-                session_state = ServiceLocator.get_optional(SVC_SESSION_STATE)
-                if session_state and session_state.project_root:
-                    # 获取当前 GraphState
-                    if self.context_manager:
-                        state = self.context_manager.get_current_state()
-                        success = self.session_state_manager.save_current_session(
-                            state, session_state.project_root
-                        )
-                        if success:
-                            return True, "Session saved successfully"
-                        return False, "Failed to save session"
-                    return False, "ContextManager not available"
                 return False, "No project path available"
             except Exception as e:
                 return False, str(e)
@@ -1394,37 +1127,6 @@ class ConversationViewModel(QObject):
     # 事件处理
     # ============================================================
     
-    def _on_llm_chunk(self, event_data: Dict[str, Any]) -> None:
-        """处理 LLM 流式输出块事件"""
-        data = event_data.get("data", {})
-        chunk = data.get("chunk", "")
-        chunk_type = data.get("type", "content")
-        
-        if chunk:
-            self.append_stream_chunk(chunk, chunk_type)
-    
-    def _on_llm_complete(self, event_data: Dict[str, Any]) -> None:
-        """处理 LLM 输出完成事件"""
-        # 更新状态
-        self._is_loading = False
-        self._current_stream_content = ""
-        self._current_reasoning_content = ""
-        
-        # 重置 StopController 状态为 IDLE，允许新任务注册
-        if self.stop_controller:
-            self.stop_controller.reset()
-        
-        # 从 ContextManager 重新加载消息以保持同步
-        # 注意：不直接操作 _messages 列表，避免消息重复
-        self.load_messages()
-        
-        # 每轮对话完成后自动保存会话
-        self._auto_save_session()
-        
-        # 发出信号
-        self.stream_finished.emit()
-        self.can_send_changed.emit(True)
-    
     def _auto_save_session(self) -> None:
         """
         自动保存当前会话
@@ -1446,7 +1148,8 @@ class ConversationViewModel(QObject):
                     )
                     if success:
                         if self.logger:
-                            self.logger.debug(f"Auto-saved session: {self.current_session_name}")
+                            session_name = self.session_state_manager.get_current_session_name()
+                            self.logger.debug(f"Auto-saved session: {session_name}")
                     else:
                         if self.logger:
                             self.logger.warning("Auto-save failed")
@@ -1491,13 +1194,6 @@ class ConversationViewModel(QObject):
         
         if self.logger:
             self.logger.debug(f"Session changed: action={action}, id={session_id}, name={session_name}")
-        
-        # 更新内部状态
-        self._current_session_id = session_id
-        self._current_session_name = session_name
-        
-        # 发出会话名称更新信号
-        self.session_name_updated.emit(session_name)
         
         # 重新加载消息（ContextManager 状态已由 SessionStateManager 同步）
         self.load_messages()
@@ -1550,6 +1246,9 @@ class ConversationViewModel(QObject):
         data = event_data.get("data", event_data)
         task_id = data.get("task_id", "")
         reason = data.get("reason", "")
+
+        if task_id and task_id != self._current_task_id:
+            return
         
         if self.logger:
             self.logger.debug(f"Stop requested event: task_id={task_id}, reason={reason}")
@@ -1574,6 +1273,9 @@ class ConversationViewModel(QObject):
         reason = data.get("reason", "")
         is_partial = data.get("is_partial", True)
         partial_content = data.get("partial_content", "")
+
+        if task_id and task_id != self._current_task_id:
+            return
         
         if self.logger:
             self.logger.info(

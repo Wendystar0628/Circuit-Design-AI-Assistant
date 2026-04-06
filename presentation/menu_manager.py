@@ -405,7 +405,7 @@ class MenuManager:
         self._menus["view"].setTitle(self._get_text("menu.view", "View"))
         self._menus["design"].setTitle(self._get_text("menu.design", "Design"))
         self._menus["simulation"].setTitle(self._get_text("menu.simulation", "Simulation"))
-        self._menus["knowledge"].setTitle(self._get_text("menu.knowledge", "Knowledge Base"))
+        self._menus["knowledge"].setTitle(self._get_text("menu.knowledge", "Index Library"))
         self._menus["model"].setTitle(self._get_text("menu.model", "Model"))
         self._menus["settings"].setTitle(self._get_text("menu.settings", "Settings"))
         self._menus["tools"].setTitle(self._get_text("menu.tools", "Tools"))

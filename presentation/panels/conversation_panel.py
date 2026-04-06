@@ -579,8 +579,6 @@ class ConversationPanel(QWidget):
     def _on_compress_clicked(self) -> None:
         """处理压缩按钮点击"""
         self.compress_requested.emit()
-        if self.view_model:
-            self.view_model.request_compress()
     
     def _on_send_clicked(self) -> None:
         """处理发送按钮点击"""

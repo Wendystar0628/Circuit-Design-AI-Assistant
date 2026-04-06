@@ -893,8 +893,8 @@ class ModelConfigDialog(QDialog):
                         "provider": provider_id,
                         "model": model,
                         "old_model_id": old_model_id,
-                        "source": "model_config_dialog",
-                    }
+                    },
+                    source="model_config_dialog",
                 )
                     
         except Exception as e:

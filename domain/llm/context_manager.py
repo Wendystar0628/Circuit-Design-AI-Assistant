@@ -5,7 +5,7 @@
 职责：
 - 作为门面类协调各子模块
 - 提供统一的对外接口
-- 管理消息、Token、压缩、缓存统计
+- 管理消息、Token、缓存统计
 
 设计原则：
 - 延迟获取原则：不在 __init__ 中调用 ServiceLocator.get()
@@ -15,7 +15,6 @@
 职责边界：
 - 消息管理：委托给 MessageStore
 - Token 监控：委托给 TokenMonitor
-- 上下文压缩：委托给 ContextCompressor
 - 缓存统计：委托给 CacheStatsTracker
 - 会话文件生命周期（创建/切换/持久化）：由 SessionStateManager 负责
 - 运行时内部状态（_internal_state）：由本类维护，提供无状态和有状态两种调用模式
@@ -33,10 +32,6 @@
     # 添加消息
     new_state = manager.add_message(state, "user", "Hello")
     
-    # 检查是否需要压缩
-    if manager.should_compress(state, model):
-        new_state = await manager.compress(state, llm_worker)
-    
     # 记录缓存统计
     manager.record_cache_stats(usage_info)
 """
@@ -48,7 +43,6 @@ from langchain_core.messages import BaseMessage
 
 from domain.llm.message_store import MessageStore
 from domain.llm.token_monitor import TokenMonitor
-from domain.llm.context_compressor import ContextCompressor, CompressPreview
 from domain.llm.cache_stats_tracker import (
     CacheStatsTracker, 
     SessionCacheStats,
@@ -64,7 +58,7 @@ class ContextManager:
     """
     上下文管理器 - 门面类
 
-    协调 MessageStore、TokenMonitor、ContextCompressor、CacheStatsTracker，
+    协调 MessageStore、TokenMonitor、CacheStatsTracker，
     提供统一的对外接口。
 
     提供两种调用模式（均可用，各自适合不同场景）：
@@ -88,12 +82,10 @@ class ContextManager:
         # 初始化子模块
         self._message_store = MessageStore()
         self._token_monitor = TokenMonitor(compress_threshold)
-        self._context_compressor = ContextCompressor()
         self._cache_stats_tracker = CacheStatsTracker()
         
         # 延迟获取的服务
         self._logger = None
-        self._event_bus = None
     
     @property
     def logger(self):
@@ -107,19 +99,6 @@ class ContextManager:
                 logging.getLogger(__name__).warning(f"Failed to load custom logger, using stdlib: {e}")
                 self._logger = logging.getLogger(__name__)
         return self._logger
-    
-    @property
-    def event_bus(self):
-        """延迟获取事件总线"""
-        if self._event_bus is None:
-            try:
-                from shared.service_locator import ServiceLocator
-                from shared.service_names import SVC_EVENT_BUS
-                self._event_bus = ServiceLocator.get_optional(SVC_EVENT_BUS)
-            except Exception as e:
-                import logging
-                logging.getLogger(__name__).warning(f"Failed to load EventBus: {e}")
-        return self._event_bus
     
     # ============================================================
     # 消息管理（委托给 MessageStore）
@@ -345,52 +324,6 @@ class ContextManager:
             上下文限制（tokens）
         """
         return self._token_monitor.get_model_limit(model)
-    
-    # ============================================================
-    # 上下文压缩（委托给 ContextCompressor）
-    # ============================================================
-    
-    def generate_compress_preview(
-        self,
-        state: Dict[str, Any],
-        keep_recent: int = 5,
-        model: str = "default"
-    ) -> CompressPreview:
-        """
-        生成压缩预览
-        
-        Args:
-            state: 当前状态
-            keep_recent: 保留的最近消息数
-            model: 模型名称
-            
-        Returns:
-            CompressPreview: 压缩预览信息
-        """
-        return self._context_compressor.generate_compress_preview(
-            state, keep_recent, model
-        )
-    
-    async def compress(
-        self,
-        state: Dict[str, Any],
-        llm_worker: Any,
-        keep_recent: int = 5
-    ) -> Dict[str, Any]:
-        """
-        执行压缩操作
-        
-        Args:
-            state: 当前状态
-            llm_worker: LLM Worker 实例
-            keep_recent: 保留的最近消息数
-            
-        Returns:
-            更新后的状态副本
-        """
-        return await self._context_compressor.compress(
-            state, llm_worker, keep_recent
-        )
     
     # ============================================================
     # 缓存统计（委托给 CacheStatsTracker）
@@ -809,23 +742,6 @@ class ContextManager:
         """
         state = self.get_current_state()
         return self.get_usage_ratio(state, model)
-    
-    def request_compress(self) -> None:
-        """
-        请求压缩上下文（发布事件，由 UI 层处理）
-        """
-        if self.event_bus:
-            try:
-                from shared.event_types import EVENT_CONTEXT_COMPRESS_REQUESTED
-                self.event_bus.publish(EVENT_CONTEXT_COMPRESS_REQUESTED, {
-                    "source": "context_manager",
-                })
-            except ImportError:
-                if self.logger:
-                    self.logger.warning("EVENT_CONTEXT_COMPRESS_REQUESTED not defined")
-        
-        if self.logger:
-            self.logger.info("Context compress requested")
     
 # ============================================================
 # 模块导出

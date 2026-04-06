@@ -436,8 +436,6 @@ class CommonEventBridges:
     @staticmethod
     def bridge_context_events(
         bridge: UIEventBridge,
-        on_compress_requested: Optional[Callable] = None,
-        on_compress_preview: Optional[Callable] = None,
         on_compress_complete: Optional[Callable] = None,
     ):
         """
@@ -445,20 +443,10 @@ class CommonEventBridges:
         
         Args:
             bridge: UIEventBridge 实例
-            on_compress_requested: 压缩请求处理器
-            on_compress_preview: 压缩预览处理器
             on_compress_complete: 压缩完成处理器
         """
-        from shared.event_types import (
-            EVENT_CONTEXT_COMPRESS_REQUESTED,
-            EVENT_CONTEXT_COMPRESS_PREVIEW_READY,
-            EVENT_CONTEXT_COMPRESS_COMPLETE,
-        )
-        
-        if on_compress_requested:
-            bridge.bridge_event(EVENT_CONTEXT_COMPRESS_REQUESTED, on_compress_requested)
-        if on_compress_preview:
-            bridge.bridge_event(EVENT_CONTEXT_COMPRESS_PREVIEW_READY, on_compress_preview)
+        from shared.event_types import EVENT_CONTEXT_COMPRESS_COMPLETE
+
         if on_compress_complete:
             bridge.bridge_event(EVENT_CONTEXT_COMPRESS_COMPLETE, on_compress_complete)
 

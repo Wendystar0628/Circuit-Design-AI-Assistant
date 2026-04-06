@@ -22,11 +22,6 @@ from presentation.core.tab_controller import (
     TAB_COMPONENT,
     TAB_RAG,
 )
-from presentation.core.ui_event_bridge import (
-    UIEventBridge,
-    ensure_main_thread,
-    CommonEventBridges,
-)
 
 __all__ = [
     # ViewModel
@@ -44,8 +39,4 @@ __all__ = [
     "TAB_CONVERSATION",
     "TAB_INFO",
     "TAB_COMPONENT",
-    # UI Event Bridge
-    "UIEventBridge",
-    "ensure_main_thread",
-    "CommonEventBridges",
 ]

@@ -89,12 +89,15 @@ class TokenMonitor:
         messages = state.get("messages", [])
         
         # 计算消息 tokens（统一使用 token_counter 的函数）
-        total_tokens = self._count_messages(messages, model)
+        message_tokens = self._count_messages(messages, model)
         
         # 添加摘要 tokens（如果有）
         summary = state.get("conversation_summary", "")
+        summary_tokens = 0
         if summary:
-            total_tokens += count_tokens(summary, model)
+            summary_tokens = count_tokens(summary, model)
+
+        total_tokens = message_tokens + summary_tokens
         
         # 获取限制
         context_limit = get_model_context_limit(model)
@@ -107,8 +110,11 @@ class TokenMonitor:
         
         return {
             "total_tokens": total_tokens,
+            "message_tokens": message_tokens,
+            "summary_tokens": summary_tokens,
             "context_limit": context_limit,
             "output_reserve": output_reserve,
+            "input_limit": input_limit,
             "available": max(0, available),
             "usage_ratio": min(1.0, usage_ratio),
         }

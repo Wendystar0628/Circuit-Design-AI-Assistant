@@ -21,10 +21,9 @@
 
 使用示例：
     from domain.llm.context_compressor import ContextCompressor
-    
     compressor = ContextCompressor()
     preview = compressor.generate_compress_preview(state, keep_recent=5)
-    new_state = await compressor.compress(state, llm_worker, keep_recent=5)
+    result = await compressor.compress(state, llm_worker, keep_recent=5)
 """
 
 import copy
@@ -199,7 +198,6 @@ class ContextCompressor:
     def __init__(self):
         """初始化压缩器"""
         self._logger = None
-        self._event_bus = None
     
     @property
     def logger(self):
@@ -211,18 +209,6 @@ class ContextCompressor:
             except Exception:
                 pass
         return self._logger
-    
-    @property
-    def event_bus(self):
-        """延迟获取事件总线"""
-        if self._event_bus is None:
-            try:
-                from shared.service_locator import ServiceLocator
-                from shared.service_names import SVC_EVENT_BUS
-                self._event_bus = ServiceLocator.get_optional(SVC_EVENT_BUS)
-            except Exception:
-                pass
-        return self._event_bus
     
     def generate_compress_preview(
         self,
@@ -250,7 +236,8 @@ class ContextCompressor:
         
         # 估算节省的 tokens
         tokens_saved = sum(
-            count_tokens(msg.content if isinstance(msg.content, str) else "", model) 
+            count_tokens(msg.content if isinstance(msg.content, str) else "", model)
+            + count_tokens(get_reasoning_content(msg) or "", model)
             for msg in to_remove
         )
         
@@ -283,7 +270,7 @@ class ContextCompressor:
             model: 模型名称（用于 token 计算）
             
         Returns:
-            更新后的状态副本
+            压缩结果
         """
         try:
             from infrastructure.config.settings import (
@@ -301,19 +288,20 @@ class ContextCompressor:
         if len(messages) <= keep_recent + 1:  # +1 for system message
             if self.logger:
                 self.logger.info("消息数量不足，无需压缩")
-            return state
-        
-        # 发布压缩开始事件
-        self._publish_compress_event("started", {
-            "message_count": len(messages),
-            "keep_recent": keep_recent,
-        })
+            return {
+                "status": "skipped",
+                "state": state,
+                "error": "No compressible history",
+            }
         
         try:
+            safe_context_limit = max(1, context_limit)
+
             # 首次压缩
             new_state = await self._do_compress(
                 state, llm_worker, keep_recent, model
             )
+            final_ratio = 0.0
             
             # 自适应压缩：检查压缩后占比
             if COMPRESS_ADAPTIVE_ENABLED:
@@ -322,7 +310,7 @@ class ContextCompressor:
                 
                 while attempt < COMPRESS_MAX_ATTEMPTS:
                     current_tokens = self._calculate_state_tokens(new_state, model)
-                    current_ratio = current_tokens / context_limit
+                    current_ratio = current_tokens / safe_context_limit
                     
                     if self.logger:
                         self.logger.info(
@@ -342,32 +330,34 @@ class ContextCompressor:
                 
                 # 最终检查
                 final_tokens = self._calculate_state_tokens(new_state, model)
-                final_ratio = final_tokens / context_limit
+                final_ratio = final_tokens / safe_context_limit
                 
                 if final_ratio > COMPRESS_TARGET_RATIO:
                     if self.logger:
                         self.logger.warning(
                             f"压缩后仍超过目标: {final_ratio:.1%} > {COMPRESS_TARGET_RATIO:.0%}"
                         )
-                    # 发布建议开启新对话的事件
-                    self._publish_compress_event("suggest_new_conversation", {
-                        "current_ratio": final_ratio,
-                        "target_ratio": COMPRESS_TARGET_RATIO,
-                    })
+            else:
+                final_tokens = self._calculate_state_tokens(new_state, model)
+                final_ratio = final_tokens / safe_context_limit
             
-            # 发布压缩完成事件
-            self._publish_compress_event("completed", {
-                "final_ratio": final_ratio if COMPRESS_ADAPTIVE_ENABLED else None,
-            })
-            
-            return new_state
+            return {
+                "status": "completed",
+                "state": new_state,
+                "final_ratio": final_ratio,
+                "target_ratio": COMPRESS_TARGET_RATIO,
+                "missed_target": final_ratio > COMPRESS_TARGET_RATIO,
+            }
             
         except Exception as e:
             if self.logger:
                 self.logger.error(f"压缩失败: {e}")
-            
-            self._publish_compress_event("failed", {"error": str(e)})
-            return state
+
+            return {
+                "status": "failed",
+                "state": state,
+                "error": str(e),
+            }
     
     async def _do_compress(
         self,
@@ -1085,36 +1075,6 @@ class ContextCompressor:
             result = result[:SUMMARY_MAX_LENGTH] + "\n[...摘要已截断...]"
         
         return result
-    
-    def _publish_compress_event(
-        self,
-        status: str,
-        data: Dict[str, Any]
-    ) -> None:
-        """发布压缩事件"""
-        if self.event_bus is None:
-            return
-        
-        try:
-            from shared.event_types import (
-                EVENT_CONTEXT_COMPRESS_REQUESTED,
-                EVENT_CONTEXT_COMPRESS_PREVIEW_READY,
-                EVENT_CONTEXT_COMPRESS_COMPLETE,
-            )
-            
-            event_map = {
-                "started": EVENT_CONTEXT_COMPRESS_REQUESTED,
-                "preview": EVENT_CONTEXT_COMPRESS_PREVIEW_READY,
-                "completed": EVENT_CONTEXT_COMPRESS_COMPLETE,
-                "failed": EVENT_CONTEXT_COMPRESS_COMPLETE,
-            }
-            
-            event_type = event_map.get(status)
-            if event_type:
-                self.event_bus.publish(event_type, {"status": status, **data})
-                
-        except Exception:
-            pass
 
 
 # ============================================================

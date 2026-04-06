@@ -140,7 +140,7 @@ EVENT_TASK_CANCELLED = "task_cancelled"
 # 携带数据：
 #   - provider: str - LLM 厂商 ID
 #   - model: str - 模型名称
-#   - source: str - 触发来源
+#   - old_model_id: str - 变更前模型 ID（可能为空字符串）
 EVENT_LLM_CONFIG_CHANGED = "llm_config_changed"
 
 # 模型切换
@@ -421,13 +421,18 @@ EVENT_RAG_QUERY_COMPLETE = "rag.query_complete"
 # 上下文压缩事件
 # ============================================================
 
-# 请求压缩上下文
-EVENT_CONTEXT_COMPRESS_REQUESTED = "context_compress_requested"
-
-# 压缩预览就绪
-EVENT_CONTEXT_COMPRESS_PREVIEW_READY = "context_compress_preview_ready"
-
-# 压缩完成
+# 压缩结果
+# 携带数据：
+#   - status: str - 压缩状态（"completed" | "failed" | "skipped" | "suggest_new_conversation"）
+#   - mode: str - 触发模式（"manual" | "auto"）
+#   - trigger_reason: str - 触发原因
+#   - keep_recent: int - 保留的最近消息数
+#   - before_tokens / after_tokens / saved_tokens: int - 压缩前后 token 信息
+#   - before_ratio / after_ratio: float - 压缩前后占用比例
+#   - before_message_count / after_message_count: int - 压缩前后消息数
+#   - summary_tokens: int - 压缩后摘要 token 数
+#   - model / provider / model_id: str - 执行压缩时使用的模型信息
+#   - error: str - 错误信息（仅 failed 或 skipped 时存在）
 EVENT_CONTEXT_COMPRESS_COMPLETE = "context_compress_complete"
 
 # ============================================================
@@ -436,12 +441,11 @@ EVENT_CONTEXT_COMPRESS_COMPLETE = "context_compress_complete"
 
 # 会话状态变更（由 SessionStateManager 发布）
 # 携带数据：
+#   - session_id: str - 当前会话 ID
 #   - session_name: str - 当前会话名称
-#   - message_count: int - 消息数量
 #   - action: str - 触发动作（"new", "switch", "delete", "rename"）
-#   - previous_session_name: str - 之前的会话名称（可选）
+#   - previous_session_id: str - 之前的会话 ID（可选）
 EVENT_SESSION_CHANGED = "session_changed"
-
 
 # ============================================================
 # 错误处理事件
@@ -825,8 +829,6 @@ __all__ = [
     "EVENT_RAG_INDEX_PROGRESS",
     "EVENT_RAG_INDEX_COMPLETE",
     # 上下文压缩事件
-    "EVENT_CONTEXT_COMPRESS_REQUESTED",
-    "EVENT_CONTEXT_COMPRESS_PREVIEW_READY",
     "EVENT_CONTEXT_COMPRESS_COMPLETE",
     # 错误处理事件
     "EVENT_ERROR_OCCURRED",

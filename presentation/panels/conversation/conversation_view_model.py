@@ -148,6 +148,7 @@ class ConversationViewModel(QObject):
         self._logger = None
         self._markdown_converter = None
         self._session_state_manager = None
+        self._context_compression_service = None
         
         # 事件订阅句柄
         self._subscriptions: List[Callable] = []
@@ -259,6 +260,19 @@ class ConversationViewModel(QObject):
             except Exception:
                 pass
         return self._session_state_manager
+
+    @property
+    def context_compression_service(self):
+        if self._context_compression_service is None:
+            try:
+                from shared.service_locator import ServiceLocator
+                from shared.service_names import SVC_CONTEXT_COMPRESSION_SERVICE
+                self._context_compression_service = ServiceLocator.get_optional(
+                    SVC_CONTEXT_COMPRESSION_SERVICE
+                )
+            except Exception:
+                pass
+        return self._context_compression_service
     
     @property
     def stop_controller(self):
@@ -815,6 +829,11 @@ class ConversationViewModel(QObject):
         
         # 自动保存会话
         self._auto_save_session()
+
+        if self.context_compression_service:
+            self.context_compression_service.schedule_auto_compress(
+                source="llm_generation_complete"
+            )
         
         # 发出信号
         self.stream_finished.emit()
@@ -944,15 +963,6 @@ class ConversationViewModel(QObject):
             else:
                 operations.append(f"{name}{arg_summary}")
         return operations
-
-    def request_compress(self) -> None:
-        """请求压缩上下文"""
-        if self.context_manager:
-            try:
-                self.context_manager.request_compress()
-            except Exception as e:
-                if self.logger:
-                    self.logger.error(f"请求压缩失败: {e}")
     
     # ============================================================
     # 辅助方法
@@ -1127,10 +1137,10 @@ class ConversationViewModel(QObject):
         data = event_data.get("data", {})
         status = data.get("status", "")
         
-        if status == "completed":
+        if status in {"completed", "suggest_new_conversation"}:
             # 重新加载消息
             self.load_messages()
-        elif status == "suggest_new_conversation":
+        if status == "suggest_new_conversation":
             # 建议开启新对话
             self.new_conversation_suggested.emit()
     

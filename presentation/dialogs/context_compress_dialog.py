@@ -18,7 +18,8 @@
 
 from typing import Any, Dict, List, Optional
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from infrastructure.config.settings import DEFAULT_KEEP_RECENT_MESSAGES
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QDialog,
     QVBoxLayout,
@@ -34,7 +35,9 @@ from PyQt6.QtWidgets import (
     QScrollArea,
     QWidget,
     QSizePolicy,
+    QMessageBox,
 )
+from qasync import asyncSlot
 
 # ============================================================
 # 样式常量
@@ -58,10 +61,6 @@ class ContextCompressDialog(QDialog):
     显示压缩预览信息，让用户确认或调整压缩参数。
     """
     
-    # 信号定义
-    preview_requested = pyqtSignal()           # 请求生成摘要预览
-    compress_confirmed = pyqtSignal(dict)      # 确认压缩 (options)
-    
     def __init__(self, parent: Optional[QWidget] = None):
         """初始化对话框"""
         super().__init__(parent)
@@ -84,7 +83,7 @@ class ContextCompressDialog(QDialog):
         
         # 延迟获取的服务
         self._i18n = None
-        self._context_manager = None
+        self._context_compression_service = None
         
         # 初始化 UI
         self._setup_ui()
@@ -102,16 +101,18 @@ class ContextCompressDialog(QDialog):
         return self._i18n
     
     @property
-    def context_manager(self):
-        """延迟获取上下文管理器"""
-        if self._context_manager is None:
+    def compression_service(self):
+        """延迟获取上下文压缩服务"""
+        if self._context_compression_service is None:
             try:
                 from shared.service_locator import ServiceLocator
-                from shared.service_names import SVC_CONTEXT_MANAGER
-                self._context_manager = ServiceLocator.get_optional(SVC_CONTEXT_MANAGER)
+                from shared.service_names import SVC_CONTEXT_COMPRESSION_SERVICE
+                self._context_compression_service = ServiceLocator.get_optional(
+                    SVC_CONTEXT_COMPRESSION_SERVICE
+                )
             except Exception:
                 pass
-        return self._context_manager
+        return self._context_compression_service
     
     def _get_text(self, key: str, default: str = "") -> str:
         """获取国际化文本"""
@@ -215,7 +216,7 @@ class ContextCompressDialog(QDialog):
         ))
         self._keep_count_spin = QSpinBox()
         self._keep_count_spin.setRange(2, 20)
-        self._keep_count_spin.setValue(5)
+        self._keep_count_spin.setValue(DEFAULT_KEEP_RECENT_MESSAGES)
         self._keep_count_spin.valueChanged.connect(self._on_keep_count_changed)
         keep_row.addWidget(self._keep_count_spin)
         keep_row.addStretch()
@@ -403,18 +404,28 @@ class ContextCompressDialog(QDialog):
         Args:
             state: 可选的状态字典，若不提供则从 ContextManager 获取
         """
-        if self.context_manager is None:
+        if self.compression_service is None:
             return
         
         try:
-            # 获取当前统计信息
-            stats = self.context_manager.get_stats()
+            keep_recent = (
+                self._keep_count_spin.value()
+                if self._keep_count_spin
+                else DEFAULT_KEEP_RECENT_MESSAGES
+            )
+            preview = self.compression_service.create_preview(
+                keep_recent=keep_recent,
+                reason="manual",
+            )
+            stats = preview.get("budget", {})
+            estimated = preview.get("estimated", {})
             self._current_stats = stats
+            self._preview_summary = preview.get("summary_preview", "")
             
             # 更新当前状态显示
             message_count = stats.get("message_count", 0)
-            used_tokens = stats.get("used_tokens", 0)
-            total_tokens = stats.get("total_tokens", 100000)
+            used_tokens = stats.get("total_tokens", 0)
+            total_tokens = stats.get("input_limit", 0)
             ratio = stats.get("usage_ratio", 0)
             
             self._message_count_label.setText(
@@ -444,12 +455,10 @@ class ContextCompressDialog(QDialog):
                 }}
             """)
             
-            # 获取消息分类
-            categories = self.context_manager.classify_messages()
-            self._message_categories = categories
+            self._message_categories = preview.get("classification", {})
             
-            keep_count = len(categories.get("must_keep", []))
-            compress_count = len(categories.get("can_compress", []))
+            keep_count = estimated.get("keep_count", 0)
+            compress_count = estimated.get("remove_count", 0)
             
             self._keep_messages_label.setText(
                 f"{keep_count} {self._get_text('dialog.compress.messages_unit', 'messages')}"
@@ -457,37 +466,33 @@ class ContextCompressDialog(QDialog):
             self._compress_messages_label.setText(
                 f"{compress_count} {self._get_text('dialog.compress.messages_unit', 'messages')}"
             )
-            
-            # 更新预估
-            self._update_estimate()
+
+            self._estimated_summary_label.setText(
+                self._get_text("dialog.compress.approx_tokens", "approx. {tokens} tokens").replace(
+                    "{tokens}", f"{estimated.get('summary_tokens', 0):,}"
+                )
+            )
+            self._estimated_usage_label.setText(
+                self._get_text("dialog.compress.approx_usage", "approx. {tokens} tokens ({percent}%)")
+                .replace("{tokens}", f"{estimated.get('after_tokens', 0):,}")
+                .replace("{percent}", str(int(estimated.get('after_ratio', 0) * 100)))
+            )
+
+            if self._summary_preview:
+                self._summary_preview.setPlainText(self._preview_summary)
             
         except Exception as e:
-            if hasattr(self, '_logger') and self._logger:
-                self._logger.error(f"加载压缩预览失败: {e}")
+            if self._summary_preview:
+                self._summary_preview.setPlainText(f"加载压缩预览失败: {e}")
     
     def _update_estimate(self) -> None:
         """更新压缩预估"""
-        keep_recent = self._keep_count_spin.value() if self._keep_count_spin else 5
-        
-        # 简单估算
-        estimated_summary_tokens = 2000
-        keep_messages_tokens = keep_recent * 500  # 假设每条消息平均 500 tokens
-        
-        total_tokens = self._current_stats.get("total_tokens", 100000)
-        estimated_after = estimated_summary_tokens + keep_messages_tokens
-        estimated_ratio = estimated_after / total_tokens if total_tokens > 0 else 0
-        
-        self._estimated_summary_label.setText(
-            self._get_text("dialog.compress.approx_tokens", "approx. {tokens} tokens").replace("{tokens}", f"{estimated_summary_tokens:,}")
-        )
-        self._estimated_usage_label.setText(
-            self._get_text("dialog.compress.approx_usage", "approx. {tokens} tokens ({percent}%)").replace("{tokens}", f"{estimated_after:,}").replace("{percent}", str(int(estimated_ratio * 100)))
-        )
+        self.load_preview()
 
 
     def generate_summary_preview(self) -> None:
         """调用 LLM 生成摘要预览"""
-        if self.context_manager is None:
+        if self.compression_service is None:
             return
         
         try:
@@ -495,20 +500,8 @@ class ContextCompressDialog(QDialog):
             self._preview_button.setText(
                 self._get_text("dialog.compress.generating", "生成中...")
             )
-            
-            # 调用 ContextManager 生成预览
-            preview = self.context_manager.generate_compress_preview(
-                keep_recent=self._keep_count_spin.value()
-            )
-            
-            self._preview_summary = preview.get("summary", "")
-            self._summary_preview.setPlainText(self._preview_summary)
-            
-            # 更新预估
-            if "estimated_tokens" in preview:
-                self._estimated_summary_label.setText(
-                    f"约 {preview['estimated_tokens']:,} tokens"
-                )
+
+            self.load_preview()
             
         except Exception as e:
             self._summary_preview.setPlainText(f"生成预览失败: {e}")
@@ -518,29 +511,30 @@ class ContextCompressDialog(QDialog):
                 self._get_text("dialog.compress.btn_preview", "预览摘要")
             )
     
-    def execute_compress(self) -> bool:
+    async def execute_compress(self) -> Dict[str, Any]:
         """
         执行压缩操作
         
         Returns:
             bool: 是否成功
         """
-        if self.context_manager is None:
-            return False
+        if self.compression_service is None:
+            return {
+                "status": "failed",
+                "error": "ContextCompressionService unavailable",
+            }
         
         try:
-            options = {
-                "keep_recent": self._keep_count_spin.value(),
-                "summary": self._preview_summary,
-            }
-            
-            result = self.context_manager.compress(options)
-            return result.get("success", False)
+            return await self.compression_service.apply_manual_compression(
+                keep_recent=self._keep_count_spin.value(),
+                source="context_compress_dialog",
+            )
             
         except Exception as e:
-            if hasattr(self, '_logger') and self._logger:
-                self._logger.error(f"执行压缩失败: {e}")
-            return False
+            return {
+                "status": "failed",
+                "error": str(e),
+            }
     
     # ============================================================
     # 事件处理
@@ -552,21 +546,29 @@ class ContextCompressDialog(QDialog):
     
     def _on_preview_clicked(self) -> None:
         """预览按钮点击"""
-        self.preview_requested.emit()
         self.generate_summary_preview()
-    
-    def _on_confirm_clicked(self) -> None:
+
+    @asyncSlot()
+    async def _on_confirm_clicked(self) -> None:
         """确认压缩按钮点击"""
-        options = {
-            "keep_recent": self._keep_count_spin.value(),
-            "summary": self._preview_summary,
-        }
-        
-        self.compress_confirmed.emit(options)
-        
-        # 执行压缩
-        if self.execute_compress():
+        if self._confirm_button:
+            self._confirm_button.setEnabled(False)
+
+        result = await self.execute_compress()
+        status = result.get("status", "failed")
+
+        if self._confirm_button:
+            self._confirm_button.setEnabled(True)
+
+        if status in {"completed", "suggest_new_conversation"}:
             self.accept()
+            return
+
+        QMessageBox.warning(
+            self,
+            self._get_text("dialog.warning.title", "Warning"),
+            result.get("error", self._get_text("dialog.compress.error", "执行压缩失败")),
+        )
     
     # ============================================================
     # 国际化

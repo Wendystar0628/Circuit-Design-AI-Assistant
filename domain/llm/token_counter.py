@@ -36,6 +36,40 @@ DEFAULT_OUTPUT_LIMIT = 32_768  # 现代大模型普遍支持 32K+ 输出
 _tokenizer_cache: Dict[str, Any] = {}
 
 
+def _resolve_active_model_and_provider(
+    model: str = "default",
+    provider: Optional[str] = None,
+) -> tuple[str, str]:
+    resolved_model = model or "default"
+    resolved_provider = provider or ""
+
+    try:
+        from infrastructure.config.settings import (
+            CONFIG_LLM_MODEL,
+            CONFIG_LLM_PROVIDER,
+            DEFAULT_MODEL,
+            LLM_PROVIDER_ZHIPU,
+        )
+        from shared.service_locator import ServiceLocator
+        from shared.service_names import SVC_CONFIG_MANAGER
+
+        config_manager = ServiceLocator.get_optional(SVC_CONFIG_MANAGER)
+        if config_manager:
+            if resolved_model in {"", "default"}:
+                resolved_model = config_manager.get(CONFIG_LLM_MODEL, DEFAULT_MODEL) or DEFAULT_MODEL
+            if not resolved_provider:
+                resolved_provider = config_manager.get(CONFIG_LLM_PROVIDER, LLM_PROVIDER_ZHIPU) or LLM_PROVIDER_ZHIPU
+    except Exception:
+        pass
+
+    if resolved_model in {"", "default"}:
+        resolved_model = "glm-5"
+    if not resolved_provider:
+        resolved_provider = "zhipu"
+
+    return resolved_model, resolved_provider
+
+
 def _get_tokenizer(model: str = "default") -> Any:
     """
     获取 tokenizer（带缓存）
@@ -52,14 +86,16 @@ def _get_tokenizer(model: str = "default") -> Any:
     Returns:
         tokenizer 实例，加载失败返回 None
     """
-    if model in _tokenizer_cache:
-        return _tokenizer_cache[model]
+    resolved_model, _ = _resolve_active_model_and_provider(model)
+
+    if resolved_model in _tokenizer_cache:
+        return _tokenizer_cache[resolved_model]
     
     try:
         import tiktoken
         # 智谱 GLM / OpenAI GPT-4 / Claude 均使用 cl100k_base 编码
         tokenizer = tiktoken.get_encoding("cl100k_base")
-        _tokenizer_cache[model] = tokenizer
+        _tokenizer_cache[resolved_model] = tokenizer
         return tokenizer
     except ImportError:
         # tiktoken 未安装，使用简单估算
@@ -67,11 +103,11 @@ def _get_tokenizer(model: str = "default") -> Any:
             "tiktoken not installed, falling back to approximate token counting. "
             "Install tiktoken for accurate counting: pip install tiktoken"
         )
-        _tokenizer_cache[model] = None
+        _tokenizer_cache[resolved_model] = None
         return None
     except Exception as e:
-        _logger.warning(f"Failed to load tokenizer for model '{model}': {e}")
-        _tokenizer_cache[model] = None
+        _logger.warning(f"Failed to load tokenizer for model '{resolved_model}': {e}")
+        _tokenizer_cache[resolved_model] = None
         return None
 
 
@@ -95,7 +131,8 @@ def count_tokens(
     if not text:
         return 0
     
-    tokenizer = _get_tokenizer(model)
+    resolved_model, _ = _resolve_active_model_and_provider(model)
+    tokenizer = _get_tokenizer(resolved_model)
     
     if tokenizer is not None:
         try:
@@ -270,7 +307,7 @@ def count_image_tokens(
 # 模型限制查询
 # ============================================================
 
-def get_model_context_limit(model: str = "default", provider: str = "zhipu") -> int:
+def get_model_context_limit(model: str = "default", provider: Optional[str] = None) -> int:
     """
     获取模型的上下文限制（从 ModelRegistry 获取）
     
@@ -283,7 +320,8 @@ def get_model_context_limit(model: str = "default", provider: str = "zhipu") -> 
     """
     try:
         from shared.model_registry import ModelRegistry
-        model_id = f"{provider}:{model}"
+        resolved_model, resolved_provider = _resolve_active_model_and_provider(model, provider)
+        model_id = f"{resolved_provider}:{resolved_model}"
         model_config = ModelRegistry.get_model(model_id)
         if model_config:
             return model_config.context_limit
@@ -293,7 +331,7 @@ def get_model_context_limit(model: str = "default", provider: str = "zhipu") -> 
     return DEFAULT_CONTEXT_LIMIT
 
 
-def get_model_output_limit(model: str = "default", provider: str = "zhipu") -> int:
+def get_model_output_limit(model: str = "default", provider: Optional[str] = None) -> int:
     """
     获取模型的输出限制（从 ModelRegistry 获取）
     
@@ -306,7 +344,8 @@ def get_model_output_limit(model: str = "default", provider: str = "zhipu") -> i
     """
     try:
         from shared.model_registry import ModelRegistry
-        model_id = f"{provider}:{model}"
+        resolved_model, resolved_provider = _resolve_active_model_and_provider(model, provider)
+        model_id = f"{resolved_provider}:{resolved_model}"
         model_config = ModelRegistry.get_model(model_id)
         if model_config:
             return model_config.max_tokens_default

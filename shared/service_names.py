@@ -134,6 +134,9 @@ SVC_TRACING_LOGGER = "tracing_logger"
 # 上下文管理器 - 对话消息和 Token 管理
 SVC_CONTEXT_MANAGER = "context_manager"
 
+# 上下文压缩服务 - 压缩预算、预览、执行协调
+SVC_CONTEXT_COMPRESSION_SERVICE = "context_compression_service"
+
 # 会话状态管理器 - 会话状态的唯一数据源
 SVC_SESSION_STATE_MANAGER = "session_state_manager"
 
@@ -196,6 +199,7 @@ __all__ = [
     "SVC_TOOL_EXECUTOR",
     # 领域层
     "SVC_CONTEXT_MANAGER",
+    "SVC_CONTEXT_COMPRESSION_SERVICE",
     "SVC_SESSION_STATE_MANAGER",
     "SVC_EXTERNAL_SERVICE_MANAGER",
     "SVC_ITERATION_HISTORY_SERVICE",

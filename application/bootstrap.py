@@ -589,6 +589,13 @@ def _delayed_init():
         if _logger:
             _logger.info("Phase 3.5 SessionStateManager 初始化完成")
 
+        from domain.llm.context_compression_service import ContextCompressionService
+        from shared.service_names import SVC_CONTEXT_COMPRESSION_SERVICE
+        context_compression_service = ContextCompressionService()
+        ServiceLocator.register(SVC_CONTEXT_COMPRESSION_SERVICE, context_compression_service)
+        if _logger:
+            _logger.info("Phase 3.5.1 ContextCompressionService 初始化完成")
+
         # --------------------------------------------------------
         # 3.5.3 StopController 初始化
         # 依赖：Logger、EventBus
@@ -633,7 +640,9 @@ def _delayed_init():
         _event_bus = ServiceLocator.get_optional(SVC_EVENT_BUS)
         if _event_bus:
             def _on_llm_config_changed(data):
-                payload = data if isinstance(data, dict) else {}
+                payload = data.get("data", {}) if isinstance(data, dict) else {}
+                if not isinstance(payload, dict):
+                    payload = {}
                 success = refresh_llm_runtime_services()
 
                 provider = payload.get("provider", "")

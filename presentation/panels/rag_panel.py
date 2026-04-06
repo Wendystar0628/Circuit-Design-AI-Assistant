@@ -25,7 +25,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QProgressBar,
     QTreeWidget, QTreeWidgetItem, QHeaderView,
-    QTextEdit, QComboBox, QGroupBox,
+    QTextEdit, QGroupBox,
     QAbstractItemView, QSizePolicy,
 )
 from PyQt6.QtCore import Qt, pyqtSlot, QTimer
@@ -75,12 +75,11 @@ class RAGPanel(QWidget):
     本面板显示自动状态、索引进度、文档列表，并提供手动重索引。
     """
 
-    def __init__(self, parent: Optional[QWidget] = None):
+    def __init__(self, event_bus=None, rag_manager=None, parent: Optional[QWidget] = None):
         super().__init__(parent)
 
-        # 服务引用（延迟获取）
-        self._event_bus = None
-        self._rag_manager = None
+        self._event_bus = event_bus
+        self._rag_manager = rag_manager
         self._subscriptions: List[tuple] = []
 
         # 状态
@@ -100,25 +99,22 @@ class RAGPanel(QWidget):
 
     @property
     def event_bus(self):
-        if self._event_bus is None:
-            try:
-                from shared.service_locator import ServiceLocator
-                from shared.service_names import SVC_EVENT_BUS
-                self._event_bus = ServiceLocator.get_optional(SVC_EVENT_BUS)
-            except Exception:
-                pass
         return self._event_bus
 
     @property
     def rag_manager(self):
-        if self._rag_manager is None:
-            try:
-                from shared.service_locator import ServiceLocator
-                from shared.service_names import SVC_RAG_MANAGER
-                self._rag_manager = ServiceLocator.get_optional(SVC_RAG_MANAGER)
-            except Exception:
-                pass
         return self._rag_manager
+
+    def bind_services(self, event_bus=None, rag_manager=None) -> None:
+        """在延迟初始化完成后补绑定服务依赖。"""
+        if event_bus is not None and event_bus is not self._event_bus:
+            self._event_bus = event_bus
+            self._subscribe_events()
+
+        if rag_manager is not None:
+            self._rag_manager = rag_manager
+
+        self._refresh_state()
 
     # ============================================================
     # UI 初始化
@@ -252,11 +248,6 @@ class RAGPanel(QWidget):
         self._search_input.setMaximumHeight(50)
         row.addWidget(self._search_input, 1)
 
-        self._search_mode = QComboBox()
-        self._search_mode.addItems(["mix", "local", "global", "naive"])
-        self._search_mode.setFixedWidth(70)
-        row.addWidget(self._search_mode)
-
         self._btn_search = QPushButton("检索")
         self._btn_search.setFixedWidth(50)
         self._btn_search.setStyleSheet(self._action_btn_style())
@@ -273,7 +264,7 @@ class RAGPanel(QWidget):
         inner.addWidget(self._search_result)
 
         # 折叠内容可见性联动
-        self._search_test_content = [self._search_input, self._search_mode, self._btn_search, self._search_result]
+        self._search_test_content = [self._search_input, self._btn_search, self._search_result]
         group.toggled.connect(self._on_search_group_toggled)
         # 初始折叠隐藏内容
         for w in self._search_test_content:
@@ -486,34 +477,29 @@ class RAGPanel(QWidget):
 
         manager = self.rag_manager
         if not manager or not manager.is_available:
-            self._search_result.setPlainText("RAG 未就绪（请等待初始化完成）")
+            self._search_result.setPlainText("索引库未就绪（请等待初始化完成）")
             return
 
-        mode = self._search_mode.currentText()
         self._search_result.setPlainText("检索中...")
         self._btn_search.setEnabled(False)
 
         try:
             loop = asyncio.get_running_loop()
-            loop.create_task(self._async_search(query, mode))
+            loop.create_task(self._async_search(query))
         except RuntimeError:
             self._search_result.setPlainText("无可用事件循环")
             self._btn_search.setEnabled(True)
 
-    async def _async_search(self, query: str, mode: str):
+    async def _async_search(self, query: str):
         """异步执行检索（查询在工作线程执行，主线程通过 wrap_future await）"""
         manager = self.rag_manager
         try:
-            result = await manager.query_async(query, mode=mode)
+            result = await manager.query_async(query)
             if result.is_empty:
                 text = f"未找到与 \"{query}\" 相关的内容"
             else:
                 text = result.format_as_context(max_tokens=3000)
-                summary = (
-                    f"实体: {result.entities_count}  "
-                    f"关系: {result.relations_count}  "
-                    f"片段: {result.chunks_count}\n\n"
-                )
+                summary = f"片段: {result.chunks_count}\n\n"
                 text = summary + text
             self._search_result.setPlainText(text)
         except Exception as e:

@@ -34,8 +34,9 @@ class DocumentWatcher:
     监听文件变更事件，防抖后触发 RAGManager 单文件增量索引。
     """
 
-    def __init__(self):
-        self._rag_manager = None  # 延迟获取
+    def __init__(self, event_bus=None, rag_manager=None):
+        self._event_bus = event_bus
+        self._rag_manager = rag_manager
         self._pending_files: Set[str] = set()
         self._debounce_task: Optional[asyncio.Task] = None
         self._subscribed = False
@@ -45,18 +46,16 @@ class DocumentWatcher:
         if self._subscribed:
             return
 
-        try:
-            from shared.service_locator import ServiceLocator
-            from shared.service_names import SVC_EVENT_BUS
+        if self._event_bus is None:
+            return
 
-            event_bus = ServiceLocator.get_optional(SVC_EVENT_BUS)
-            if event_bus:
-                event_bus.subscribe(
-                    EVENT_FILE_EXTERNALLY_MODIFIED,
-                    self._on_file_modified,
-                )
-                self._subscribed = True
-                logger.info("DocumentWatcher started")
+        try:
+            self._event_bus.subscribe(
+                EVENT_FILE_EXTERNALLY_MODIFIED,
+                self._on_file_modified,
+            )
+            self._subscribed = True
+            logger.info("DocumentWatcher started")
         except Exception as e:
             logger.warning(f"Failed to start DocumentWatcher: {e}")
 
@@ -66,20 +65,19 @@ class DocumentWatcher:
             self._debounce_task.cancel()
 
         self._pending_files.clear()
+        if self._subscribed and self._event_bus is not None:
+            try:
+                self._event_bus.unsubscribe(
+                    EVENT_FILE_EXTERNALLY_MODIFIED,
+                    self._on_file_modified,
+                )
+            except Exception:
+                pass
         self._subscribed = False
         logger.info("DocumentWatcher stopped")
 
     @property
     def rag_manager(self):
-        """延迟获取 RAGManager"""
-        if self._rag_manager is None:
-            try:
-                from shared.service_locator import ServiceLocator
-                from shared.service_names import SVC_RAG_MANAGER
-
-                self._rag_manager = ServiceLocator.get_optional(SVC_RAG_MANAGER)
-            except Exception:
-                pass
         return self._rag_manager
 
     # ============================================================

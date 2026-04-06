@@ -161,7 +161,8 @@ class RAGManager:
     → 每个项目有独立的存储，项目隔离
     """
 
-    def __init__(self):
+    def __init__(self, event_bus=None):
+        self._event_bus = event_bus
         self._embedder: Optional[Embedder] = None
         self._vector_store: Optional[VectorStore] = None
         self._indexing = False
@@ -214,22 +215,20 @@ class RAGManager:
         # 启动后台工作线程
         self._worker.start_and_wait()
 
-        try:
-            from shared.service_locator import ServiceLocator
-            from shared.service_names import SVC_EVENT_BUS
+        if self._event_bus is None:
+            return
 
-            event_bus = ServiceLocator.get_optional(SVC_EVENT_BUS)
-            if event_bus:
-                event_bus.subscribe(
-                    EVENT_STATE_PROJECT_OPENED,
-                    self._on_project_opened,
-                )
-                event_bus.subscribe(
-                    EVENT_STATE_PROJECT_CLOSED,
-                    self._on_project_closed,
-                )
-                self._subscribed = True
-                logger.info("RAGManager subscribed to project lifecycle events")
+        try:
+            self._event_bus.subscribe(
+                EVENT_STATE_PROJECT_OPENED,
+                self._on_project_opened,
+            )
+            self._event_bus.subscribe(
+                EVENT_STATE_PROJECT_CLOSED,
+                self._on_project_closed,
+            )
+            self._subscribed = True
+            logger.info("RAGManager subscribed to project lifecycle events")
         except Exception as e:
             logger.warning(f"Failed to subscribe lifecycle events: {e}")
 
@@ -325,7 +324,7 @@ class RAGManager:
         仅索引新增或变更的文件。
         """
         if not self._project_root or not self.is_available:
-            logger.debug("RAG not available, skipping index")
+            logger.debug("Index library is unavailable, skipping index")
             return
 
         if self._indexing:
@@ -486,7 +485,6 @@ class RAGManager:
         self,
         query_text: str,
         top_k: int = DEFAULT_RAG_TOP_K,
-        **_kwargs,
     ) -> RAGQueryResult:
         """
         查询知识库（向量相似度检索）
@@ -499,7 +497,7 @@ class RAGManager:
             RAGQueryResult
         """
         if not self.is_available:
-            return RAGQueryResult(error="RAG not available")
+            return RAGQueryResult(error="Index library is unavailable")
 
         vector = self._embedder.embed_single(query_text)
         hits = self._vector_store.query(vector, top_k=top_k)
@@ -524,7 +522,7 @@ class RAGManager:
         索引在 RAGWorkerThread 中异步执行。
         """
         if not self.is_available:
-            logger.debug("RAG not available, cannot trigger index")
+            logger.debug("Index library is unavailable, cannot trigger index")
             return
         self._worker.submit(self.index_project_files)
 
@@ -543,7 +541,6 @@ class RAGManager:
         self,
         query_text: str,
         top_k: int = DEFAULT_RAG_TOP_K,
-        **_kwargs,
     ) -> "RAGQueryResult":
         """
         从 Qt 主线程异步查询知识库
@@ -559,13 +556,13 @@ class RAGManager:
             RAGQueryResult
         """
         if not self.is_available:
-            return RAGQueryResult(error="RAG not available")
+            return RAGQueryResult(error="Index library is unavailable")
 
         future = self._worker.submit(
             self.query, query_text, top_k
         )
         if future is None:
-            return RAGQueryResult(error="RAG worker not running")
+            return RAGQueryResult(error="Index library worker is not running")
 
         return await asyncio.wrap_future(future)
 
@@ -886,16 +883,13 @@ class RAGManager:
             pass
         return round(total / (1024 * 1024), 2)
 
-    @staticmethod
-    def _publish_event(event_type: str, data: Dict[str, Any]) -> None:
+    def _publish_event(self, event_type: str, data: Dict[str, Any]) -> None:
         """通过 EventBus 发布事件"""
-        try:
-            from shared.service_locator import ServiceLocator
-            from shared.service_names import SVC_EVENT_BUS
+        if self._event_bus is None:
+            return
 
-            event_bus = ServiceLocator.get_optional(SVC_EVENT_BUS)
-            if event_bus:
-                event_bus.publish(event_type, data)
+        try:
+            self._event_bus.publish(event_type, data)
         except Exception as e:
             logger.warning(f"Failed to publish event '{event_type}': {e}")
 

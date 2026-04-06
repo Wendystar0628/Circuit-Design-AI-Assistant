@@ -909,17 +909,19 @@ def _init_rag_services():
         from domain.rag.rag_manager import RAGManager
         from domain.rag.document_watcher import DocumentWatcher
         from shared.service_locator import ServiceLocator
-        from shared.service_names import SVC_RAG_MANAGER
+        from shared.service_names import SVC_EVENT_BUS, SVC_RAG_MANAGER
+
+        event_bus = ServiceLocator.get_optional(SVC_EVENT_BUS)
 
         # 3.8.1 RAGManager + 订阅生命周期事件
-        rag_manager = RAGManager()
+        rag_manager = RAGManager(event_bus=event_bus)
         rag_manager.subscribe_lifecycle_events()
         ServiceLocator.register(SVC_RAG_MANAGER, rag_manager)
         if _logger:
             _logger.info("Phase 3.8.1 RAGManager 创建完成，已订阅项目生命周期事件")
 
         # 3.8.2 DocumentWatcher
-        doc_watcher = DocumentWatcher()
+        doc_watcher = DocumentWatcher(event_bus=event_bus, rag_manager=rag_manager)
         doc_watcher.start()
         if _logger:
             _logger.info("Phase 3.8.2 DocumentWatcher 启动完成")

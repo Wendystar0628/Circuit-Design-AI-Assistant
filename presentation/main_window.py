@@ -286,7 +286,13 @@ class MainWindow(QMainWindow):
         
         # 注册知识库面板（RAG Tab）
         from presentation.panels.rag_panel import RAGPanel
-        rag_panel = RAGPanel()
+        from shared.service_locator import ServiceLocator
+        from shared.service_names import SVC_EVENT_BUS, SVC_RAG_MANAGER
+
+        rag_panel = RAGPanel(
+            event_bus=ServiceLocator.get_optional(SVC_EVENT_BUS),
+            rag_manager=ServiceLocator.get_optional(SVC_RAG_MANAGER),
+        )
         self._tab_controller.register_tab(
             TAB_RAG,
             rag_panel,
@@ -487,6 +493,15 @@ class MainWindow(QMainWindow):
         在 Phase 3 延迟初始化完成后调用，此时所有服务已注册。
         用于初始化需要依赖 Phase 3 服务的组件。
         """
+        if "rag" in self._panels:
+            from shared.service_locator import ServiceLocator
+            from shared.service_names import SVC_EVENT_BUS, SVC_RAG_MANAGER
+
+            self._panels["rag"].bind_services(
+                event_bus=ServiceLocator.get_optional(SVC_EVENT_BUS),
+                rag_manager=ServiceLocator.get_optional(SVC_RAG_MANAGER),
+            )
+
         # 初始化对话面板（此时 ContextManager 已可用）
         if "chat" in self._panels:
             self._panels["chat"].initialize()

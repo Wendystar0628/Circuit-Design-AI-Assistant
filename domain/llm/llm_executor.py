@@ -178,7 +178,10 @@ class LLMExecutor(QObject):
                 build_agent_system_prompt,
             )
 
-            context = ToolContext(project_root=project_root)
+            context = ToolContext(
+                project_root=project_root,
+                rag_query_service=self._get_rag_query_service(),
+            )
             registry = create_default_tools(context)
 
             if self.logger:
@@ -348,6 +351,17 @@ class LLMExecutor(QObject):
 
         import os
         return os.getcwd()
+
+    def _get_rag_query_service(self):
+        try:
+            from shared.service_locator import ServiceLocator
+            from shared.service_names import SVC_RAG_MANAGER
+
+            return ServiceLocator.get_optional(SVC_RAG_MANAGER)
+        except Exception as e:
+            if self.logger:
+                self.logger.debug(f"Failed to get RAG query service: {e}")
+            return None
 
     def _publish_event(self, event_name: str, data: Dict[str, Any]) -> None:
         """

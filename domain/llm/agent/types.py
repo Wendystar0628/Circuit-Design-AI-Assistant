@@ -159,6 +159,7 @@ class ToolContext:
     allowed_extensions: Optional[List[str]] = None
     max_file_size_bytes: int = 200 * 1024  # 200KB
     max_read_lines: int = 2000
+    rag_query_service: Optional[Any] = None
 
 
 # ============================================================

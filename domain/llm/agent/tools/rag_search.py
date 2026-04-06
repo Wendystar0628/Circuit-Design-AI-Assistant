@@ -12,7 +12,6 @@ Agent RAG 检索工具
 - 通过 ServiceLocator 延迟获取 RAGManager
 """
 
-import asyncio
 from typing import Any, Dict, List, Optional
 
 from domain.llm.agent.types import BaseTool, ToolContext, ToolResult
@@ -31,12 +30,12 @@ class RAGSearchTool(BaseTool):
 
     @property
     def label(self) -> str:
-        return "RAG Search"
+        return "Index Library Search"
 
     @property
     def description(self) -> str:
         return (
-            "Search the project knowledge base for document chunks related to a query. "
+            "Search the project index library for document chunks related to a query. "
             "Uses local embedding-based vector retrieval (ChromaDB + sentence-transformers). "
             "Returns relevant text from indexed project files including circuit files, "
             "code, documentation, and PDFs."
@@ -60,7 +59,7 @@ class RAGSearchTool(BaseTool):
 
     @property
     def prompt_snippet(self) -> Optional[str]:
-        return "Search the project knowledge base for document chunks using vector similarity"
+        return "Search the project index library for document chunks using vector similarity"
 
     @property
     def prompt_guidelines(self) -> Optional[List[str]]:
@@ -68,7 +67,7 @@ class RAGSearchTool(BaseTool):
             "Use rag_search to find information about circuit components, "
             "parameters, standards, or design patterns in the project.",
             "rag_search is most effective for domain-specific queries about "
-            "the project's circuit designs and documentation.",
+            "the project's indexed circuit designs and documentation.",
         ]
 
     async def execute(
@@ -96,16 +95,22 @@ class RAGSearchTool(BaseTool):
                 is_error=True,
             )
 
-        # 获取 RAGManager
-        rag_manager = self._get_rag_manager()
-        if not rag_manager or not rag_manager.is_available:
+        rag_query_service = context.rag_query_service
+        if not rag_query_service or not rag_query_service.is_available:
+            init_error = getattr(rag_query_service, "init_error", None) if rag_query_service else None
+            if init_error:
+                error_content = f"Index library is unavailable: {init_error}"
+            else:
+                error_content = (
+                    "Index library is unavailable. Open a project and wait for index initialization to complete."
+                )
             return ToolResult(
-                content="RAG service is not available. Please open a project first.",
+                content=error_content,
                 is_error=True,
             )
 
         try:
-            result = await rag_manager.query_async(query)
+            result = await rag_query_service.query_async(query)
 
             if result.is_empty:
                 return ToolResult(
@@ -126,20 +131,9 @@ class RAGSearchTool(BaseTool):
 
         except Exception as e:
             return ToolResult(
-                content=f"RAG search failed: {e}",
+                content=f"Index library search failed: {e}",
                 is_error=True,
             )
-
-    @staticmethod
-    def _get_rag_manager():
-        """延迟获取 RAGManager"""
-        try:
-            from shared.service_locator import ServiceLocator
-            from shared.service_names import SVC_RAG_MANAGER
-
-            return ServiceLocator.get_optional(SVC_RAG_MANAGER)
-        except Exception:
-            return None
 
 
 # ============================================================

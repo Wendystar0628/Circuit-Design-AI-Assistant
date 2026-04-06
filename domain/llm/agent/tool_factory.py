@@ -80,35 +80,10 @@ def create_default_tools(context: ToolContext) -> ToolRegistry:
     registry.register(FindFilesTool(), [GROUP_SEARCH])
     registry.register(ListDirectoryTool(), [GROUP_SEARCH])
 
-    # ---- RAG 知识检索（条件性注册：仅当服务可用时）----
-    if _is_rag_available():
-        registry.register(RAGSearchTool(), [GROUP_SEARCH])
-        logger.debug("RAGSearchTool registered (RAG service is available)")
-    else:
-        logger.debug("RAGSearchTool skipped (RAG service not available)")
+    registry.register(RAGSearchTool(), [GROUP_SEARCH])
 
     logger.debug(f"Tool factory created registry: {registry!r}")
     return registry
-
-
-# ============================================================
-# 内部服务可用性检查
-# ============================================================
-
-def _is_rag_available() -> bool:
-    """
-    检查 RAG 服务是否已初始化且可用
-
-    通过 ServiceLocator 延迟获取 RAGManager，
-    避免在工厂函数中引入强依赖。
-    """
-    try:
-        from shared.service_locator import ServiceLocator
-        from shared.service_names import SVC_RAG_MANAGER
-        manager = ServiceLocator.get_optional(SVC_RAG_MANAGER)
-        return manager is not None and getattr(manager, "is_available", False)
-    except Exception:
-        return False
 
 
 # ============================================================

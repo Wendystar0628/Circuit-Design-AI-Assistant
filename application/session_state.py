@@ -39,10 +39,6 @@
 import threading
 from typing import Any, Callable, Dict, List, Optional
 
-from shared.event_types import (
-    EVENT_SESSION_CHANGED,
-)
-
 
 # ============================================================
 # 状态字段常量
@@ -109,9 +105,6 @@ class SessionState:
         # 事件级联防护
         self._is_dispatching = False
         self._pending_changes: List[tuple] = []
-        
-        # 延迟获取的服务
-        self._event_bus = None
         self._logger = None
 
     def _get_default_state(self) -> Dict[str, Any]:
@@ -147,18 +140,6 @@ class SessionState:
     # ============================================================
     # 延迟获取服务
     # ============================================================
-
-    @property
-    def event_bus(self):
-        """延迟获取 EventBus"""
-        if self._event_bus is None:
-            try:
-                from shared.service_locator import ServiceLocator
-                from shared.service_names import SVC_EVENT_BUS
-                self._event_bus = ServiceLocator.get_optional(SVC_EVENT_BUS)
-            except Exception:
-                pass
-        return self._event_bus
 
     @property
     def logger(self):
@@ -322,10 +303,7 @@ class SessionState:
         try:
             # 通知订阅者
             self._dispatch_to_subscribers(key, old_value, new_value)
-            
-            # 发布 EventBus 事件
-            self._publish_state_event(key, old_value, new_value)
-            
+
             # 处理待处理的变更
             while self._pending_changes:
                 pending = self._pending_changes.copy()
@@ -333,7 +311,6 @@ class SessionState:
                 
                 for p_key, p_old, p_new in pending:
                     self._dispatch_to_subscribers(p_key, p_old, p_new)
-                    self._publish_state_event(p_key, p_old, p_new)
         finally:
             self._is_dispatching = False
 
@@ -351,33 +328,6 @@ class SessionState:
                     self.logger.error(
                         f"SessionState change handler '{handler_name}' failed for '{key}': {e}"
                     )
-
-    def _publish_state_event(self, key: str, old_value: Any, new_value: Any) -> None:
-        """发布状态变更事件到 EventBus"""
-        if self.event_bus is None:
-            return
-        
-        # 会话相关字段变更发布 EVENT_SESSION_CHANGED
-        session_fields = [
-            SESSION_ID, SESSION_CURRENT_NODE,
-            SESSION_ITERATION_COUNT, SESSION_CHECKPOINT_COUNT
-        ]
-        if key in session_fields:
-            try:
-                self.event_bus.publish(
-                    EVENT_SESSION_CHANGED,
-                    {
-                        "key": key,
-                        "old_value": old_value,
-                        "new_value": new_value,
-                        "session_id": self.session_id,
-                        "action": "state_update",
-                    },
-                    source="session_state"
-                )
-            except Exception as e:
-                if self.logger:
-                    self.logger.warning(f"Failed to publish session state event: {e}")
 
     # ============================================================
     # 便捷属性（只读）

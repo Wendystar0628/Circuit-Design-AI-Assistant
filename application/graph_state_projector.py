@@ -34,7 +34,6 @@ GraphState 投影器 - 自动将 GraphState 变更投影到 SessionState
 from typing import Any, Dict, Optional
 
 from shared.event_types import (
-    EVENT_SESSION_CHANGED,
     EVENT_FILE_CHANGED,
     EVENT_RAG_INDEX_STARTED,
     EVENT_RAG_INDEX_PROGRESS,

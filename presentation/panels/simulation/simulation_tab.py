@@ -523,11 +523,14 @@ class SimulationTab(QWidget):
             return
 
         try:
-            from domain.services import context_service
+            from shared.service_locator import ServiceLocator
+            from shared.service_names import SVC_SESSION_STATE_MANAGER
 
-            session_id = context_service.get_current_session_id(self._project_root)
-            metadata = context_service.get_session_metadata(self._project_root, session_id) if session_id else None
-            sim_result_path = metadata.get("sim_result_path", "") if metadata else ""
+            session_state_manager = ServiceLocator.get_optional(SVC_SESSION_STATE_MANAGER)
+            sim_result_path = (
+                session_state_manager.get_current_session_sim_result_path(self._project_root)
+                if session_state_manager else ""
+            )
 
             if sim_result_path:
                 self._load_from_path(sim_result_path)
@@ -541,36 +544,18 @@ class SimulationTab(QWidget):
         if not self._project_root or not result_path:
             return
 
-        persisted_path = result_path.replace('\\', '/')
-
-        try:
-            from domain.services import context_service
-
-            session_id = context_service.get_current_session_id(self._project_root)
-            if session_id:
-                metadata = context_service.get_session_metadata(self._project_root, session_id) or {}
-                if metadata.get("sim_result_path") != persisted_path:
-                    context_service.update_session_index(
-                        self._project_root,
-                        session_id,
-                        {"sim_result_path": persisted_path},
-                    )
-        except Exception as e:
-            self._logger.debug(f"Failed to persist simulation result path for session: {e}")
-
         try:
             from shared.service_locator import ServiceLocator
-            from shared.service_names import SVC_CONTEXT_MANAGER
+            from shared.service_names import SVC_SESSION_STATE_MANAGER
 
-            context_manager = ServiceLocator.get_optional(SVC_CONTEXT_MANAGER)
-            if context_manager:
-                current_state = context_manager.get_current_state() or {}
-                if current_state.get("sim_result_path") != persisted_path:
-                    new_state = dict(current_state)
-                    new_state["sim_result_path"] = persisted_path
-                    context_manager.sync_state(new_state)
+            session_state_manager = ServiceLocator.get_optional(SVC_SESSION_STATE_MANAGER)
+            if session_state_manager:
+                session_state_manager.update_current_session_sim_result_path(
+                    result_path,
+                    project_root=self._project_root,
+                )
         except Exception as e:
-            self._logger.debug(f"Failed to sync simulation result path into context state: {e}")
+            self._logger.debug(f"Failed to persist simulation result path for session: {e}")
 
     def _load_waveform_data(self, result):
         """

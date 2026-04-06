@@ -386,27 +386,6 @@ class CommonEventBridges:
     """
     
     @staticmethod
-    def bridge_session_events(
-        bridge: UIEventBridge,
-        on_session_changed: Optional[Callable] = None,
-        on_session_loaded: Optional[Callable] = None,
-    ):
-        """
-        桥接会话相关事件
-        
-        Args:
-            bridge: UIEventBridge 实例
-            on_session_changed: 会话变更处理器
-            on_session_loaded: 会话加载处理器
-        """
-        from shared.event_types import EVENT_SESSION_CHANGED, EVENT_SESSION_LOADED
-        
-        if on_session_changed:
-            bridge.bridge_event(EVENT_SESSION_CHANGED, on_session_changed)
-        if on_session_loaded:
-            bridge.bridge_event(EVENT_SESSION_LOADED, on_session_loaded)
-    
-    @staticmethod
     def bridge_simulation_events(
         bridge: UIEventBridge,
         on_sim_started: Optional[Callable] = None,

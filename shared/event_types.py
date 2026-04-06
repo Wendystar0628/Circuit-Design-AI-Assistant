@@ -132,6 +132,60 @@ EVENT_TASK_FAILED = "task_failed"
 EVENT_TASK_CANCELLED = "task_cancelled"
 
 # ============================================================
+# LLM 事件
+# ============================================================
+
+# LLM 配置变更请求
+# 由界面层在保存配置后发布，由应用层（bootstrap）订阅并刷新 LLM 运行时。
+# 携带数据：
+#   - provider: str - LLM 厂商 ID
+#   - model: str - 模型名称
+#   - host: str - 保留字段，当前云端模型场景下为空字符串
+#   - source: str - 触发来源
+EVENT_LLM_CONFIG_CHANGED = "llm_config_changed"
+
+# LLM 客户端重新初始化（结果通知）
+# 由应用层（bootstrap）在运行时刷新完成后发布。
+# 携带数据：
+#   - provider: str - LLM 厂商 ID
+#   - model: str - 模型名称
+#   - host: str - 保留字段，当前云端模型场景下为空字符串
+#   - source: str - 触发来源
+EVENT_LLM_CLIENT_REINITIALIZED = "llm_client_reinitialized"
+
+# 模型切换
+# 携带数据：
+#   - new_model_id: str - 新模型 ID（格式: "provider:model_name"）
+#   - old_model_id: str - 旧模型 ID（可能为 None）
+#   - provider: str - 厂商 ID
+#   - model_name: str - 模型名称
+#   - supports_thinking: bool - 是否支持深度思考
+#   - supports_vision: bool - 是否支持视觉
+EVENT_MODEL_CHANGED = "model_changed"
+
+# LLM 厂商切换
+# 携带数据：
+#   - old_provider: str - 旧厂商 ID
+#   - new_provider: str - 新厂商 ID
+EVENT_LLM_PROVIDER_CHANGED = "llm_provider_changed"
+
+# ============================================================
+# 嵌入模型事件
+# ============================================================
+
+# 嵌入模型厂商切换
+# 携带数据：
+#   - old_provider: str - 旧厂商 ID
+#   - new_provider: str - 新厂商 ID
+EVENT_EMBEDDING_PROVIDER_CHANGED = "embedding_provider_changed"
+
+# 嵌入模型就绪
+# 携带数据：
+#   - provider: str - 嵌入模型厂商 ID
+#   - model: str - 嵌入模型名称
+EVENT_EMBEDDING_MODEL_READY = "embedding_model_ready"
+
+# ============================================================
 # 联网搜索事件
 # ============================================================
 
@@ -395,35 +449,11 @@ EVENT_CONTEXT_COMPRESS_COMPLETE = "context_compress_complete"
 # 对话管理事件
 # ============================================================
 
-# 对话重置（新开对话）
-# 携带数据：
-#   - previous_session_id: str - 之前的会话 ID（若有）
-#   - new_session_id: str - 新会话 ID
-EVENT_CONVERSATION_RESET = "conversation_reset"
-
-# 对话更新（消息列表变化）
-EVENT_CONVERSATION_UPDATED = "conversation_updated"
-
-# 会话加载完成
-# 携带数据：
-#   - session_id: str - 会话 ID
-#   - session_name: str - 会话名称
-#   - message_count: int - 消息数量
-#   - is_new: bool - 是否为新建会话
-EVENT_SESSION_LOADED = "session_loaded"
-
-# 会话名称变更
-# 携带数据：
-#   - session_id: str - 会话 ID
-#   - old_name: str - 旧名称
-#   - new_name: str - 新名称
-EVENT_SESSION_NAME_CHANGED = "session_name_changed"
-
 # 会话状态变更（由 SessionStateManager 发布）
 # 携带数据：
 #   - session_name: str - 当前会话名称
 #   - message_count: int - 消息数量
-#   - action: str - 触发动作（"new", "switch", "save", "delete", "rename", "restore"）
+#   - action: str - 触发动作（"new", "switch", "delete", "rename"）
 #   - previous_session_name: str - 之前的会话名称（可选）
 EVENT_SESSION_CHANGED = "session_changed"
 
@@ -839,18 +869,10 @@ __all__ = [
     "EVENT_RAG_INDEX_STARTED",
     "EVENT_RAG_INDEX_PROGRESS",
     "EVENT_RAG_INDEX_COMPLETE",
-    "EVENT_RAG_INDEX_ERROR",
-    "EVENT_RAG_QUERY_COMPLETE",
     # 上下文压缩事件
     "EVENT_CONTEXT_COMPRESS_REQUESTED",
     "EVENT_CONTEXT_COMPRESS_PREVIEW_READY",
     "EVENT_CONTEXT_COMPRESS_COMPLETE",
-    # 对话管理事件
-    "EVENT_CONVERSATION_RESET",
-    "EVENT_CONVERSATION_UPDATED",
-    "EVENT_SESSION_LOADED",
-    "EVENT_SESSION_NAME_CHANGED",
-    "EVENT_SESSION_CHANGED",
     # 错误处理事件
     "EVENT_ERROR_OCCURRED",
     "EVENT_ERROR_RECOVERED",

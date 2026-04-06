@@ -827,20 +827,6 @@ class ContextManager:
         if self.logger:
             self.logger.info("Context compress requested")
     
-    def refresh_display(self) -> None:
-        """
-        刷新显示（发布事件通知 UI 更新）
-        """
-        if self.event_bus:
-            try:
-                from shared.event_types import EVENT_CONVERSATION_UPDATED
-                self.event_bus.publish(EVENT_CONVERSATION_UPDATED, {
-                    "source": "context_manager",
-                })
-            except ImportError:
-                pass
-
-
 # ============================================================
 # 模块导出
 # ============================================================

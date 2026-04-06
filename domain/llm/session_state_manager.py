@@ -176,7 +176,6 @@ class SessionStateManager:
                 active_project_root = self._project_root or resolved_project_root
                 self.save_current_session(
                     project_root=active_project_root,
-                    publish_event=False,
                 )
 
             previous_session_id = self._current_session_id
@@ -245,7 +244,6 @@ class SessionStateManager:
                     self.save_current_session(
                         state=current_state,
                         project_root=resolved_project_root,
-                        publish_event=False,
                     )
                 if sync_to_context_manager:
                     self._sync_state_to_context_manager(current_state)
@@ -257,7 +255,6 @@ class SessionStateManager:
                 self.save_current_session(
                     state=state,
                     project_root=active_project_root,
-                    publish_event=False,
                 )
             
             previous_session_id = self._current_session_id
@@ -312,7 +309,6 @@ class SessionStateManager:
         self,
         state: Optional[Dict[str, Any]] = None,
         project_root: Optional[str] = None,
-        publish_event: bool = False,
     ) -> bool:
         """
         保存当前会话
@@ -322,7 +318,6 @@ class SessionStateManager:
         2. 通过 context_service 保存到文件
         3. 更新会话索引
         4. 重置 _is_dirty 标志
-        5. 发布 EVENT_SESSION_CHANGED 事件
         
         Args:
             state: 当前 GraphState（字典形式）
@@ -390,10 +385,6 @@ class SessionStateManager:
             
             if self.logger:
                 self.logger.debug(f"会话已保存: {self._current_session_id}")
-            
-            # 发布事件
-            if publish_event:
-                self._publish_session_changed_event(action="save")
             
             return True
 
@@ -569,6 +560,19 @@ class SessionStateManager:
             return []
         
         sessions_data = context_service.list_sessions(resolved_project_root, limit=None)
+        live_snapshot = self._build_runtime_session_snapshot(resolved_project_root)
+        if live_snapshot:
+            snapshot_session_id = live_snapshot.get("session_id", "")
+            replaced = False
+            for idx, data in enumerate(sessions_data):
+                if data.get("session_id", "") == snapshot_session_id:
+                    merged = dict(data)
+                    merged.update(live_snapshot)
+                    sessions_data[idx] = merged
+                    replaced = True
+                    break
+            if not replaced:
+                sessions_data.insert(0, live_snapshot)
         
         result = []
         for data in sessions_data:
@@ -583,6 +587,83 @@ class SessionStateManager:
             ))
         
         return result
+
+    def get_session_messages(
+        self,
+        session_id: str,
+        project_root: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """获取指定会话的消息列表，由 SessionStateManager 统一协调。"""
+        from domain.services import context_service
+        from domain.llm.message_helpers import messages_to_dicts
+
+        resolved_project_root = self._resolve_project_root(project_root)
+        if not resolved_project_root or not session_id:
+            return []
+
+        if (
+            session_id == self._current_session_id
+            and resolved_project_root == self._project_root
+        ):
+            current_state = self._get_current_state()
+            messages = self.message_store.get_messages(current_state)
+            return messages_to_dicts(messages)
+
+        return context_service.load_messages(resolved_project_root, session_id)
+
+    def get_current_session_sim_result_path(
+        self,
+        project_root: Optional[str] = None,
+    ) -> str:
+        """获取当前会话绑定的仿真结果路径。"""
+        resolved_project_root = self._resolve_project_root(project_root)
+        if not resolved_project_root:
+            return ""
+
+        return self._get_current_sim_result_path(project_root=resolved_project_root)
+
+    def update_current_session_sim_result_path(
+        self,
+        sim_result_path: str,
+        project_root: Optional[str] = None,
+    ) -> bool:
+        """更新当前会话绑定的仿真结果路径，并同步运行时内存态。"""
+        from domain.services import context_service
+
+        with self._lock:
+            if not self._current_session_id:
+                return False
+
+            resolved_project_root = self._resolve_project_root(project_root)
+            if not resolved_project_root:
+                return False
+
+            persisted_path = sim_result_path.replace("\\", "/") if sim_result_path else ""
+            metadata = context_service.get_session_metadata(
+                resolved_project_root,
+                self._current_session_id,
+            ) or {}
+            current_path = metadata.get("sim_result_path", "")
+
+            if current_path != persisted_path:
+                success = context_service.update_session_index(
+                    resolved_project_root,
+                    self._current_session_id,
+                    {
+                        "sim_result_path": persisted_path,
+                        "updated_at": datetime.now().isoformat(),
+                    },
+                )
+                if not success:
+                    return False
+
+            self._project_root = resolved_project_root
+            current_state = dict(self._get_current_state())
+            if current_state.get("sim_result_path") != persisted_path:
+                current_state["sim_result_path"] = persisted_path
+                self._sync_state_to_context_manager(current_state)
+
+            return True
     
     # ============================================================
     # 应用生命周期集成
@@ -621,7 +702,6 @@ class SessionStateManager:
             ):
                 self.save_current_session(
                     project_root=previous_project_root,
-                    publish_event=False,
                 )
 
             resolved_project_root = self._resolve_project_root(project_root)
@@ -725,6 +805,41 @@ class SessionStateManager:
                     self.logger.warning(f"获取当前状态失败: {e}")
         return {}
 
+    def _build_runtime_session_snapshot(self, project_root: str) -> Optional[Dict[str, Any]]:
+        if project_root != self._project_root or not self._current_session_id:
+            return None
+
+        from domain.services import context_service
+        from domain.llm.message_helpers import is_human_message
+
+        current_state = self._get_current_state()
+        messages = self.message_store.get_messages(current_state)
+        metadata = context_service.get_session_metadata(
+            project_root,
+            self._current_session_id,
+        ) or {}
+
+        preview = ""
+        for msg in messages:
+            if is_human_message(msg):
+                content = msg.content if isinstance(msg.content, str) else ""
+                preview = content[:50]
+                break
+
+        updated_at = metadata.get("updated_at", "")
+        if self._is_dirty:
+            updated_at = datetime.now().isoformat()
+
+        return {
+            "session_id": self._current_session_id,
+            "name": metadata.get("name", self._current_session_id),
+            "created_at": metadata.get("created_at", ""),
+            "updated_at": updated_at,
+            "message_count": len(messages),
+            "preview": preview,
+            "has_partial_response": metadata.get("has_partial_response", False),
+        }
+
     def _build_session_state(
         self,
         project_root: str,
@@ -804,7 +919,7 @@ class SessionStateManager:
         发布会话变更事件
         
         Args:
-            action: 触发动作（"new", "switch", "save", "delete", "rename", "restore"）
+            action: 触发动作（"new", "switch", "delete", "rename"）
             previous_session_id: 之前的会话 ID
         """
         if self.event_bus:
@@ -822,14 +937,15 @@ class SessionStateManager:
                 if self.logger:
                     self.logger.warning("EVENT_SESSION_CHANGED not defined")
 
-    def _get_current_sim_result_path(self) -> str:
-        if not self._current_session_id or not self._project_root:
+    def _get_current_sim_result_path(self, project_root: Optional[str] = None) -> str:
+        resolved_project_root = project_root or self._project_root
+        if not self._current_session_id or not resolved_project_root:
             return ""
 
         from domain.services import context_service
 
         metadata = context_service.get_session_metadata(
-            self._project_root, self._current_session_id
+            resolved_project_root, self._current_session_id
         )
 
         return metadata.get("sim_result_path", "") if metadata else ""

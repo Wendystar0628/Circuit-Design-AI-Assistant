@@ -279,10 +279,7 @@ class HistoryDialog(QDialog):
         """加载所有会话列表"""
         self._sessions.clear()
         self._session_list.clear()
-        
-        # 先保存当前会话，确保历史列表显示最新内容
-        self._save_current_session_before_load()
-        
+
         # 从 SessionStateManager 获取会话列表
         sessions = self._get_sessions_from_manager()
         
@@ -301,25 +298,6 @@ class HistoryDialog(QDialog):
         
         if self.logger:
             self.logger.info(f"Loaded {len(self._sessions)} sessions")
-    
-    def _save_current_session_before_load(self) -> None:
-        """
-        加载会话列表前保存当前会话
-        
-        确保历史对话框显示的内容与本地文件一致。
-        """
-        try:
-            if not self.session_state_manager:
-                return
-
-            self.session_state_manager.save_current_session()
-            
-            if self.logger:
-                self.logger.debug("Current session saved before loading history")
-                
-        except Exception as e:
-            if self.logger:
-                self.logger.warning(f"Failed to save current session: {e}")
 
     def _get_sessions_from_manager(self) -> List[SessionInfo]:
         """从 SessionStateManager 获取会话列表"""
@@ -401,11 +379,16 @@ class HistoryDialog(QDialog):
             project_path = self._get_project_path()
             if not project_path:
                 return messages
-            
-            # 从 context_service 加载会话消息
-            from domain.services import context_service
-            
-            messages = context_service.load_messages(project_path, session_id)
+
+            if not self.session_state_manager:
+                if self.logger:
+                    self.logger.warning("SessionStateManager not available")
+                return messages
+
+            messages = self.session_state_manager.get_session_messages(
+                session_id=session_id,
+                project_root=project_path,
+            )
             
             if self.logger:
                 self.logger.debug(f"Loaded {len(messages)} messages for session: {session_id}")

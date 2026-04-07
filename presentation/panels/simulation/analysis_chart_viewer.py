@@ -1,4 +1,3 @@
-import csv
 import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -27,14 +26,12 @@ from resources.theme import (
     BORDER_RADIUS_NORMAL,
     COLOR_ACCENT,
     COLOR_ACCENT_LIGHT,
-    COLOR_BG_PRIMARY,
     COLOR_BG_SECONDARY,
     COLOR_BG_TERTIARY,
     COLOR_BORDER,
     COLOR_TEXT_PRIMARY,
     COLOR_TEXT_SECONDARY,
     FONT_SIZE_SMALL,
-    SPACING_NORMAL,
     SPACING_SMALL,
 )
 
@@ -49,7 +46,6 @@ SERIES_COLORS = [
     "#e67e22",
     "#e84393",
 ]
-DERIVED_SIGNAL_SUFFIXES = ("_mag", "_phase", "_real", "_imag")
 SUPPORTED_CHART_TYPES = (
     ChartType.WAVEFORM_TIME,
     ChartType.BODE_OVERLAY,
@@ -121,43 +117,6 @@ class ChartViewer(QWidget):
             ChartViewer {{
                 background-color: {COLOR_BG_SECONDARY};
             }}
-            #signalPanel {{
-                background-color: {COLOR_BG_SECONDARY};
-                border-right: 1px solid {COLOR_BORDER};
-            }}
-            #signalHeader {{
-                background-color: {COLOR_BG_TERTIARY};
-                border-bottom: 1px solid {COLOR_BORDER};
-            }}
-            #signalTitle {{
-                color: {COLOR_TEXT_PRIMARY};
-                font-size: {FONT_SIZE_SMALL}px;
-                font-weight: bold;
-            }}
-            #clearAllBtn {{
-                background-color: transparent;
-                color: {COLOR_TEXT_SECONDARY};
-                border: 1px solid {COLOR_BORDER};
-                border-radius: 3px;
-                padding: 1px 6px;
-                font-size: {FONT_SIZE_SMALL}px;
-            }}
-            #clearAllBtn:hover {{
-                background-color: {COLOR_BG_PRIMARY};
-                color: {COLOR_TEXT_PRIMARY};
-            }}
-            #signalTree {{
-                background-color: {COLOR_BG_SECONDARY};
-                color: {COLOR_TEXT_PRIMARY};
-                border: none;
-                font-size: {FONT_SIZE_SMALL}px;
-            }}
-            #signalTree::item {{
-                padding: 2px 0px;
-            }}
-            #signalTree::item:hover {{
-                background-color: {COLOR_BG_TERTIARY};
-            }}
             #chartTabBar {{
                 background-color: {COLOR_BG_TERTIARY};
                 border-bottom: 1px solid {COLOR_BORDER};
@@ -201,20 +160,6 @@ class ChartViewer(QWidget):
             #emptyLabel {{
                 color: {COLOR_TEXT_SECONDARY};
                 font-size: {FONT_SIZE_SMALL}px;
-            }}
-            #measurementBar {{
-                background-color: {COLOR_BG_TERTIARY};
-                border-top: 1px solid {COLOR_BORDER};
-            }}
-            #measurementBar QLabel {{
-                color: {COLOR_TEXT_PRIMARY};
-                font-size: {FONT_SIZE_SMALL}px;
-                font-family: Consolas, monospace;
-            }}
-            #signalValuesLabel {{
-                color: {COLOR_TEXT_SECONDARY};
-                font-size: {FONT_SIZE_SMALL}px;
-                font-family: Consolas, monospace;
             }}
         """)
 
@@ -428,7 +373,7 @@ class ChartViewer(QWidget):
             x_data = resolved_x_data
             if x_data is None:
                 return None
-            series = self._build_real_signal_series(result, x_data, include_derived=False)
+            series = self._build_real_signal_series(result, x_data)
             return ChartSpec(chart_type, "Transient Waveforms", resolved_x_label, "Value", series, log_x=resolved_log_x, x_domain=resolved_x_domain)
 
         if chart_type == ChartType.BODE_OVERLAY and analysis == "ac":
@@ -442,7 +387,7 @@ class ChartViewer(QWidget):
             x_data = resolved_x_data
             if x_data is None:
                 return None
-            series = self._build_real_signal_series(result, x_data, include_derived=False)
+            series = self._build_real_signal_series(result, x_data)
             return ChartSpec(chart_type, "DC Sweep", resolved_x_label, "Value", series, log_x=resolved_log_x, x_domain=resolved_x_domain)
 
         if chart_type == ChartType.NOISE_SPECTRUM and analysis == "noise":
@@ -488,14 +433,12 @@ class ChartViewer(QWidget):
         self,
         result: SimulationResult,
         x_data: np.ndarray,
-        *,
-        include_derived: bool,
     ) -> List[ChartSeries]:
         data = result.data
         if data is None:
             return []
         series: List[ChartSeries] = []
-        for index, signal_name in enumerate(self._get_base_signal_names(result, include_derived=include_derived)):
+        for index, signal_name in enumerate(self._get_base_signal_names(result)):
             y_data = data.get_signal(signal_name)
             if y_data is None or np.iscomplexobj(y_data) or len(y_data) != len(x_data):
                 continue
@@ -519,21 +462,13 @@ class ChartViewer(QWidget):
             return []
         series: List[ChartSeries] = []
         color_index = 0
-        for signal_name in self._get_base_signal_names(result, include_derived=False):
+        for signal_name in self._get_base_signal_names(result):
             raw_signal = data.get_signal(signal_name)
-            derived_mag = data.get_signal(f"{signal_name}_mag")
-            derived_phase = data.get_signal(f"{signal_name}_phase")
-            if raw_signal is None and derived_mag is None and derived_phase is None:
+            if raw_signal is None or not np.iscomplexobj(raw_signal):
                 continue
 
-            if raw_signal is not None and np.iscomplexobj(raw_signal):
-                magnitude_data = 20 * np.log10(np.maximum(np.abs(raw_signal), 1e-30))
-                phase_data = np.degrees(np.angle(raw_signal))
-            else:
-                if derived_mag is None or derived_phase is None:
-                    continue
-                magnitude_data = 20 * np.log10(np.maximum(np.asarray(derived_mag, dtype=float), 1e-30))
-                phase_data = np.asarray(derived_phase, dtype=float)
+            magnitude_data = 20 * np.log10(np.maximum(np.abs(raw_signal), 1e-30))
+            phase_data = np.degrees(np.angle(raw_signal))
 
             if len(magnitude_data) != len(x_data) or len(phase_data) != len(x_data):
                 continue
@@ -571,7 +506,7 @@ class ChartViewer(QWidget):
             return []
         series: List[ChartSeries] = []
         color_index = 0
-        for signal_name in self._get_base_signal_names(result, include_derived=False):
+        for signal_name in self._get_base_signal_names(result):
             signal = data.get_signal(signal_name)
             if signal is None:
                 continue
@@ -590,19 +525,13 @@ class ChartViewer(QWidget):
             color_index += 1
         return series
 
-    def _get_base_signal_names(self, result: SimulationResult, *, include_derived: bool) -> List[str]:
+    def _get_base_signal_names(self, result: SimulationResult) -> List[str]:
         data = result.data
         if data is None:
             return []
         signal_types = getattr(data, "signal_types", {})
         signal_names = data.get_signal_names()
-        filtered: List[str] = []
-        for name in signal_names:
-            if not include_derived and name.endswith(DERIVED_SIGNAL_SUFFIXES):
-                continue
-            filtered.append(name)
-        filtered.sort(key=lambda name: self._signal_sort_key(name, signal_types))
-        return filtered
+        return sorted(signal_names, key=lambda name: self._signal_sort_key(name, signal_types))
 
     def _signal_sort_key(self, name: str, signal_types: Dict[str, str]):
         name_lower = name.lower()

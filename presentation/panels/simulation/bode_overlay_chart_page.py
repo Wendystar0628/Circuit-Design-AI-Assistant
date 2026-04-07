@@ -495,23 +495,16 @@ class BodeOverlayChartPage(QWidget):
         normalized = (phase_value - phase_min) / phase_span
         return mag_min + normalized * mag_span
 
-    def _display_to_phase_value(self, display_value: float) -> float:
-        if self._mag_view_range is None or self._phase_view_range is None:
-            return float(display_value)
-        mag_min, mag_max = self._mag_view_range
-        phase_min, phase_max = self._phase_view_range
-        mag_span = mag_max - mag_min
-        phase_span = phase_max - phase_min
-        if abs(mag_span) <= 1e-30 or abs(phase_span) <= 1e-30:
-            return phase_min
-        normalized = (display_value - mag_min) / mag_span
-        return phase_min + normalized * phase_span
-
     def _map_phase_array_to_display(self, phase_values: np.ndarray) -> np.ndarray:
         phase_array = np.asarray(phase_values, dtype=float)
         if phase_array.size == 0:
             return phase_array
         return np.asarray([self._phase_to_display_value(value) for value in phase_array], dtype=float)
+
+    def _pen_style_for_series(self, series: ChartSeries) -> Qt.PenStyle:
+        if series.line_style == "dash":
+            return Qt.PenStyle.DashLine
+        return Qt.PenStyle.SolidLine
 
     def _rebuild_plot(self):
         for item in list(self._plot_items.values()):
@@ -541,13 +534,13 @@ class BodeOverlayChartPage(QWidget):
             mag_series = pair.get("magnitude")
             phase_series = pair.get("phase")
             if mag_series is not None:
-                mag_pen = pg.mkPen(mag_series.color, width=1.6, style=Qt.PenStyle.SolidLine)
+                mag_pen = pg.mkPen(mag_series.color, width=1.6, style=self._pen_style_for_series(mag_series))
                 mag_item = pg.PlotDataItem(np.asarray(mag_series.x_data, dtype=float), np.asarray(mag_series.y_data, dtype=float), pen=mag_pen)
                 self._plot_item.addItem(mag_item)
                 self._plot_items[mag_series.name] = mag_item
                 self._legend.addItem(mag_item, group_key)
             if phase_series is not None:
-                phase_pen = pg.mkPen(phase_series.color, width=1.4, style=Qt.PenStyle.DashLine)
+                phase_pen = pg.mkPen(phase_series.color, width=1.4, style=self._pen_style_for_series(phase_series))
                 phase_item = pg.PlotDataItem(np.asarray(phase_series.x_data, dtype=float), self._map_phase_array_to_display(np.asarray(phase_series.y_data, dtype=float)), pen=phase_pen)
                 self._plot_item.addItem(phase_item)
                 self._plot_items[phase_series.name] = phase_item

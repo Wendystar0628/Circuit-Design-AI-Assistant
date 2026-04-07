@@ -89,6 +89,39 @@ def sample_ac_result() -> SimulationResult:
 
 
 @pytest.fixture
+def sample_legacy_ac_result() -> SimulationResult:
+    frequency = np.array([1e3, 1e4, 1e5, 1e6], dtype=float)
+    data = SimulationData(
+        frequency=frequency,
+        signals={
+            "V(out)_mag": np.array([0.70710678, 0.09950372, 0.0099995, 0.001], dtype=float),
+            "V(out)_phase": np.array([-45.0, -84.2894, -89.4271, -89.9427], dtype=float),
+        },
+    )
+    return SimulationResult(
+        executor="spice",
+        file_path="results/export_consistency_legacy_ac.cir",
+        analysis_type="ac",
+        success=True,
+        data=data,
+        raw_output="AC simulation finished",
+        timestamp="2026-04-06T00:20:00",
+        x_axis_kind="frequency",
+        x_axis_label="Frequency (Hz)",
+        x_axis_scale="log",
+        analysis_command=".ac dec 20 1k 1Meg",
+        analysis_info={
+            "parameters": {
+                "sweep_type": "dec",
+                "points_per_decade": "20",
+                "start_frequency": "1k",
+                "stop_frequency": "1Meg",
+            }
+        },
+    )
+
+
+@pytest.fixture
 def sample_metrics():
     return [
         SimpleNamespace(
@@ -164,8 +197,8 @@ def test_chart_and_waveform_exports_follow_common_payload_schema(qapp, sample_re
     chart_payload = __import__("json").loads((charts_dir / "01_waveform_time.json").read_text(encoding="utf-8"))
     waveform_payload = __import__("json").loads((waveforms_dir / "waveform.json").read_text(encoding="utf-8"))
 
-    _assert_common_artifact_payload(charts_manifest, "charts", expected_file_name="export_consistency_ac.cir", expected_x_axis_label="Frequency (Hz)")
-    _assert_common_artifact_payload(chart_payload, "chart", expected_file_name="export_consistency_ac.cir", expected_x_axis_label="Frequency (Hz)")
+    _assert_common_artifact_payload(charts_manifest, "charts", expected_file_name="export_consistency.cir", expected_x_axis_label="Time (s)")
+    _assert_common_artifact_payload(chart_payload, "chart", expected_file_name="export_consistency.cir", expected_x_axis_label="Time (s)")
     _assert_common_artifact_payload(waveform_payload, "waveforms", expected_file_name="export_consistency.cir", expected_x_axis_label="Time (s)")
 
     assert charts_manifest["summary"]["chart_count"] == 1
@@ -205,3 +238,11 @@ def test_ac_chart_exports_single_bode_overlay_with_dual_axis_metadata(qapp, samp
     assert series_by_name["V(out) | Phase"]["axis_key"] == "right"
     assert series_by_name["V(out) | Phase"]["line_style"] == "dash"
     assert chart_payload["summary"]["series_count"] == 2
+
+
+def test_ac_chart_rejects_legacy_derived_only_bode_signals(qapp, sample_legacy_ac_result: SimulationResult):
+    chart_viewer = ChartViewer()
+    chart_viewer.load_result(sample_legacy_ac_result)
+
+    assert chart_viewer._chart_specs == []
+    assert chart_viewer._pages == []

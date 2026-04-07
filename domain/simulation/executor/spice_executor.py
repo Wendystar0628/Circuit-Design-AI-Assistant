@@ -1059,15 +1059,6 @@ class SpiceExecutor(SimulationExecutor):
                     # 保存原始复数数据，供指标提取器使用
                     signals[normalized_name] = vec_info.cdata
                     signal_types[normalized_name] = type_label
-                    # 同时保存分解后的数据，供 UI 显示使用，继承父信号类型
-                    signals[f"{normalized_name}_mag"] = np.abs(vec_info.cdata)
-                    signal_types[f"{normalized_name}_mag"] = type_label
-                    signals[f"{normalized_name}_phase"] = np.angle(vec_info.cdata, deg=True)
-                    signal_types[f"{normalized_name}_phase"] = type_label
-                    signals[f"{normalized_name}_real"] = np.real(vec_info.cdata)
-                    signal_types[f"{normalized_name}_real"] = type_label
-                    signals[f"{normalized_name}_imag"] = np.imag(vec_info.cdata)
-                    signal_types[f"{normalized_name}_imag"] = type_label
                 elif vec_info.data is not None and len(vec_info.data) > 0:
                     # 实数数据
                     signals[normalized_name] = vec_info.data

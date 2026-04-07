@@ -205,7 +205,7 @@ class WaveformDataService:
             return None
         
         x_data = result.get_x_axis_data()
-        y_data = result.data.get_signal(resolved_signal_name)
+        y_data = self._get_signal_data(result.data, resolved_signal_name)
         
         if x_data is None or y_data is None:
             return None
@@ -253,7 +253,7 @@ class WaveformDataService:
             return None
         
         x_data = result.get_x_axis_data()
-        y_data = result.data.get_signal(resolved_signal_name)
+        y_data = self._get_signal_data(result.data, resolved_signal_name)
         
         if x_data is None or y_data is None:
             return None
@@ -452,7 +452,7 @@ class WaveformDataService:
         total_rows = len(x_values)
 
         for signal_name in resolved_signal_names:
-            signal_data = result.data.get_signal(signal_name)
+            signal_data = self._get_signal_data(result.data, signal_name)
             column = np.full(total_rows, np.nan, dtype=float)
             if signal_data is not None:
                 limit = min(len(signal_data), total_rows)
@@ -484,25 +484,22 @@ class WaveformDataService:
         signal_name: str,
     ) -> List[str]:
         available_signals = set(data.get_signal_names())
+        base_name, component_suffix = self._split_component_suffix(signal_name)
+        if component_suffix:
+            signal_data = self._get_signal_data(data, signal_name)
+            if signal_data is None:
+                return []
+            return [signal_name]
+
         if signal_name not in available_signals:
-            expanded_names = [
-                f"{signal_name}{suffix}"
-                for suffix in TABLE_COMPLEX_SUFFIXES
-                if f"{signal_name}{suffix}" in available_signals
-            ]
-            return expanded_names
+            return []
 
         signal_data = data.get_signal(signal_name)
         if signal_data is None:
             return []
 
         if np.iscomplexobj(signal_data):
-            expanded_names = [
-                f"{signal_name}{suffix}"
-                for suffix in TABLE_COMPLEX_SUFFIXES
-                if f"{signal_name}{suffix}" in available_signals
-            ]
-            return expanded_names
+            return [f"{signal_name}{suffix}" for suffix in TABLE_COMPLEX_SUFFIXES]
 
         return [signal_name]
 
@@ -534,10 +531,48 @@ class WaveformDataService:
         return (role_rank, type_rank, base_name.lower(), component_rank, signal_name.lower())
 
     def _get_signal_base_name(self, signal_name: str) -> str:
+        base_name, _ = self._split_component_suffix(signal_name)
+        return base_name
+
+    def _split_component_suffix(self, signal_name: str) -> Tuple[str, str]:
         for suffix in TABLE_COMPLEX_SUFFIXES:
             if signal_name.endswith(suffix):
-                return signal_name[:-len(suffix)]
-        return signal_name
+                return signal_name[:-len(suffix)], suffix
+        return signal_name, ""
+
+    def _get_signal_data(
+        self,
+        data: SimulationData,
+        signal_name: str,
+    ) -> Optional[np.ndarray]:
+        signal_data = data.get_signal(signal_name)
+        if signal_data is not None:
+            return np.asarray(signal_data)
+
+        base_name, component_suffix = self._split_component_suffix(signal_name)
+        if not component_suffix:
+            return None
+
+        base_signal = data.get_signal(base_name)
+        if base_signal is None or not np.iscomplexobj(base_signal):
+            return None
+
+        return self._derive_complex_component(np.asarray(base_signal), component_suffix)
+
+    def _derive_complex_component(
+        self,
+        complex_signal: np.ndarray,
+        component_suffix: str,
+    ) -> Optional[np.ndarray]:
+        if component_suffix == "_mag":
+            return np.abs(complex_signal)
+        if component_suffix == "_phase":
+            return np.angle(complex_signal, deg=True)
+        if component_suffix == "_real":
+            return np.real(complex_signal)
+        if component_suffix == "_imag":
+            return np.imag(complex_signal)
+        return None
 
     def _to_table_scalar_value(self, value: object) -> Optional[float]:
         if value is None:

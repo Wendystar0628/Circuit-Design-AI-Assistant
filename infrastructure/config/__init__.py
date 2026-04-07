@@ -54,10 +54,13 @@ from .settings import (
 
 from .credential_manager import CredentialManager
 from .config_manager import ConfigManager
+from .llm_runtime_config_manager import LLMRuntimeConfigManager, ActiveLLMConfig
 
 __all__ = [
     "CredentialManager",
     "ConfigManager",
+    "LLMRuntimeConfigManager",
+    "ActiveLLMConfig",
     "DEFAULT_MAX_CHECKPOINTS",
     "DEFAULT_STAGNATION_THRESHOLD",
     "DEFAULT_CONTEXT_LIMIT_RATIO",

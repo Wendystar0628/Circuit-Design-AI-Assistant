@@ -71,6 +71,7 @@ class ModelConfigDialog(QDialog):
         self._i18n_manager = None
         self._config_manager = None
         self._credential_manager = None
+        self._llm_runtime_config_manager = None
         self._event_bus = None
         self._logger = None
         
@@ -167,6 +168,18 @@ class ModelConfigDialog(QDialog):
             except Exception:
                 pass
         return self._credential_manager
+
+    @property
+    def llm_runtime_config_manager(self):
+        """延迟获取 LLMRuntimeConfigManager"""
+        if self._llm_runtime_config_manager is None:
+            try:
+                from shared.service_locator import ServiceLocator
+                from shared.service_names import SVC_LLM_RUNTIME_CONFIG_MANAGER
+                self._llm_runtime_config_manager = ServiceLocator.get_optional(SVC_LLM_RUNTIME_CONFIG_MANAGER)
+            except Exception:
+                pass
+        return self._llm_runtime_config_manager
 
     @property
     def event_bus(self):
@@ -639,9 +652,16 @@ class ModelConfigDialog(QDialog):
                 self._embedding_provider_combo.setCurrentIndex(0)
                 self._on_embedding_provider_changed(self._embedding_provider_combo.currentIndex())
             return
+
+        active_config = None
+        if self.llm_runtime_config_manager:
+            try:
+                active_config = self.llm_runtime_config_manager.resolve_active_config()
+            except Exception:
+                active_config = None
         
         # 厂商
-        provider = self.config_manager.get(CONFIG_LLM_PROVIDER, "")
+        provider = active_config.provider if active_config else self.config_manager.get(CONFIG_LLM_PROVIDER, "")
         index = self._provider_combo.findData(provider)
         if index >= 0:
             self._provider_combo.setCurrentIndex(index)
@@ -652,35 +672,35 @@ class ModelConfigDialog(QDialog):
         self._on_provider_changed(self._provider_combo.currentIndex())
 
         # 模型
-        model = self.config_manager.get(CONFIG_LLM_MODEL, "")
+        model = active_config.model if active_config else self.config_manager.get(CONFIG_LLM_MODEL, "")
         index = self._model_combo.findText(model, Qt.MatchFlag.MatchFixedString)
         if index >= 0:
             self._model_combo.setCurrentIndex(index)
 
         # API Key（从 CredentialManager 获取当前厂商的凭证）
-        api_key = ""
-        if self.credential_manager and provider:
+        api_key = active_config.api_key if active_config else ""
+        if not api_key and self.credential_manager and provider:
             api_key = self.credential_manager.get_llm_api_key(provider)
         self._api_key_edit.setText(api_key)
 
         # Base URL
-        base_url = self.config_manager.get(CONFIG_LLM_BASE_URL, "")
+        base_url = active_config.base_url if active_config else self.config_manager.get(CONFIG_LLM_BASE_URL, "")
         self._base_url_edit.setText(base_url)
 
         # 流式输出
-        streaming = self.config_manager.get(CONFIG_LLM_STREAMING, True)
+        streaming = active_config.streaming if active_config else self.config_manager.get(CONFIG_LLM_STREAMING, True)
         self._streaming_check.setChecked(streaming)
 
         # 超时
-        timeout = self.config_manager.get(CONFIG_LLM_TIMEOUT, DEFAULT_TIMEOUT)
+        timeout = active_config.timeout if active_config else self.config_manager.get(CONFIG_LLM_TIMEOUT, DEFAULT_TIMEOUT)
         self._timeout_spin.setValue(timeout)
         
         # 深度思考
-        deep_think = self.config_manager.get(CONFIG_ENABLE_THINKING, True)
+        deep_think = active_config.enable_thinking if active_config else self.config_manager.get(CONFIG_ENABLE_THINKING, True)
         self._deep_think_check.setChecked(deep_think)
         
         # 深度思考超时
-        thinking_timeout = self.config_manager.get(CONFIG_THINKING_TIMEOUT, DEFAULT_THINKING_TIMEOUT)
+        thinking_timeout = active_config.thinking_timeout if active_config else self.config_manager.get(CONFIG_THINKING_TIMEOUT, DEFAULT_THINKING_TIMEOUT)
         self._thinking_timeout_spin.setValue(thinking_timeout)
         self._thinking_timeout_spin.setEnabled(deep_think)
 
@@ -753,7 +773,7 @@ class ModelConfigDialog(QDialog):
 
     def save_config(self) -> bool:
         """保存配置到文件"""
-        if not self.config_manager:
+        if not self.config_manager or not self.llm_runtime_config_manager:
             return False
         
         # 校验
@@ -764,29 +784,24 @@ class ModelConfigDialog(QDialog):
         provider_id = self._provider_combo.currentData()
         embedding_provider_id = self._embedding_provider_combo.currentData()
         search_provider_id = self._general_search_provider_combo.currentData()
-        previous_provider_id = self.config_manager.get(CONFIG_LLM_PROVIDER, "")
-        previous_model_name = self.config_manager.get(CONFIG_LLM_MODEL, "")
-        previous_model_id = (
-            f"{previous_provider_id}:{previous_model_name}"
-            if previous_provider_id and previous_model_name else ""
-        )
-        
-        # 保存厂商选择
-        self.config_manager.set(CONFIG_LLM_PROVIDER, provider_id)
+        previous_active_config = self.llm_runtime_config_manager.resolve_active_config()
+        previous_model_id = previous_active_config.model_id
 
-        # 云端模型配置
-        # 保存 LLM 凭证到 CredentialManager
-        if self.credential_manager:
-            api_key = self._api_key_edit.text().strip()
-            if api_key:
-                self.credential_manager.set_llm_api_key(provider_id, api_key)
-            else:
-                self.credential_manager.delete_credential("llm", provider_id)
-
-        self.config_manager.set(CONFIG_LLM_BASE_URL, self._base_url_edit.text())
-        self.config_manager.set(CONFIG_LLM_MODEL, self._model_combo.currentText())
-        self.config_manager.set(CONFIG_LLM_STREAMING, self._streaming_check.isChecked())
-        self.config_manager.set(CONFIG_LLM_TIMEOUT, self._timeout_spin.value())
+        try:
+            self.llm_runtime_config_manager.save_active_chat_config(
+                provider_id=provider_id,
+                model_name=self._model_combo.currentText(),
+                base_url=self._base_url_edit.text(),
+                timeout=self._timeout_spin.value(),
+                streaming=self._streaming_check.isChecked(),
+                enable_thinking=self._deep_think_check.isChecked(),
+                thinking_timeout=self._thinking_timeout_spin.value(),
+                api_key=self._api_key_edit.text().strip(),
+            )
+        except Exception as e:
+            if self.logger:
+                self.logger.error(f"保存当前 LLM 运行时配置失败: {e}")
+            return False
 
         self.config_manager.set(CONFIG_EMBEDDING_PROVIDER, embedding_provider_id)
         self.config_manager.set(CONFIG_EMBEDDING_MODEL, self._embedding_model_combo.currentText())
@@ -801,8 +816,6 @@ class ModelConfigDialog(QDialog):
                 self.credential_manager.delete_credential("embedding", embedding_provider_id)
         
         # 保存其他配置
-        self.config_manager.set(CONFIG_ENABLE_THINKING, self._deep_think_check.isChecked())
-        self.config_manager.set(CONFIG_THINKING_TIMEOUT, self._thinking_timeout_spin.value())
         self.config_manager.set(CONFIG_ENABLE_PROVIDER_WEB_SEARCH, self._provider_web_search_check.isChecked())
         self.config_manager.set(CONFIG_ENABLE_GENERAL_WEB_SEARCH, self._general_search_check.isChecked())
         self.config_manager.set(CONFIG_GENERAL_WEB_SEARCH_PROVIDER, search_provider_id)

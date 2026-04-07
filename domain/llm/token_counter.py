@@ -44,21 +44,30 @@ def _resolve_active_model_and_provider(
     resolved_provider = provider or ""
 
     try:
-        from infrastructure.config.settings import (
-            CONFIG_LLM_MODEL,
-            CONFIG_LLM_PROVIDER,
-            DEFAULT_MODEL,
-            LLM_PROVIDER_ZHIPU,
-        )
-        from shared.service_locator import ServiceLocator
-        from shared.service_names import SVC_CONFIG_MANAGER
+        from infrastructure.config.llm_runtime_config_manager import LLMRuntimeConfigManager
 
-        config_manager = ServiceLocator.get_optional(SVC_CONFIG_MANAGER)
-        if config_manager:
-            if resolved_model in {"", "default"}:
-                resolved_model = config_manager.get(CONFIG_LLM_MODEL, DEFAULT_MODEL) or DEFAULT_MODEL
-            if not resolved_provider:
-                resolved_provider = config_manager.get(CONFIG_LLM_PROVIDER, LLM_PROVIDER_ZHIPU) or LLM_PROVIDER_ZHIPU
+        active_config = LLMRuntimeConfigManager().resolve_active_config()
+        if resolved_model in {"", "default"} and active_config.model:
+            resolved_model = active_config.model
+        if not resolved_provider and active_config.provider:
+            resolved_provider = active_config.provider
+    except Exception:
+        pass
+
+    try:
+        from shared.model_registry import ModelRegistry
+
+        ModelRegistry.initialize()
+
+        if not resolved_provider:
+            providers = ModelRegistry.list_implemented_providers()
+            if providers:
+                resolved_provider = providers[0].id
+
+        if resolved_model in {"", "default"} and resolved_provider:
+            provider_config = ModelRegistry.get_provider(resolved_provider)
+            if provider_config and provider_config.default_model:
+                resolved_model = provider_config.default_model
     except Exception:
         pass
 
@@ -348,6 +357,17 @@ def get_model_output_limit(model: str = "default", provider: Optional[str] = Non
         model_id = f"{resolved_provider}:{resolved_model}"
         model_config = ModelRegistry.get_model(model_id)
         if model_config:
+            try:
+                from infrastructure.config.llm_runtime_config_manager import LLMRuntimeConfigManager
+
+                active_config = LLMRuntimeConfigManager().resolve_active_config(
+                    provider_id=resolved_provider,
+                    model_name=resolved_model,
+                )
+                if active_config.enable_thinking and model_config.supports_thinking:
+                    return model_config.max_tokens_thinking
+            except Exception:
+                pass
             return model_config.max_tokens_default
     except Exception as e:
         _logger.debug(f"ModelRegistry not available: {e}")

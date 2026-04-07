@@ -225,10 +225,15 @@ class WebSearchTool:
             搜索结果列表
         """
         if not llm_provider:
-            # 从配置获取当前 LLM 厂商
-            if self.config_manager:
-                from infrastructure.config.settings import CONFIG_LLM_PROVIDER
-                llm_provider = self.config_manager.get(CONFIG_LLM_PROVIDER, "")
+            try:
+                from shared.service_locator import ServiceLocator
+                from shared.service_names import SVC_LLM_RUNTIME_CONFIG_MANAGER
+
+                llm_runtime_config_manager = ServiceLocator.get_optional(SVC_LLM_RUNTIME_CONFIG_MANAGER)
+                if llm_runtime_config_manager:
+                    llm_provider = llm_runtime_config_manager.resolve_active_config().provider
+            except Exception:
+                llm_provider = ""
         
         if not llm_provider:
             self._log_warning("未配置 LLM 厂商，无法执行厂商专属搜索")
@@ -509,7 +514,6 @@ class WebSearchTool:
             from infrastructure.config.settings import (
                 CONFIG_ENABLE_PROVIDER_WEB_SEARCH,
                 CONFIG_ENABLE_GENERAL_WEB_SEARCH,
-                CONFIG_LLM_PROVIDER,
                 CONFIG_GENERAL_WEB_SEARCH_PROVIDER,
             )
             config["provider_search_enabled"] = self.config_manager.get(
@@ -518,10 +522,19 @@ class WebSearchTool:
             config["general_search_enabled"] = self.config_manager.get(
                 CONFIG_ENABLE_GENERAL_WEB_SEARCH, False
             )
-            config["llm_provider"] = self.config_manager.get(CONFIG_LLM_PROVIDER, "")
             config["search_provider"] = self.config_manager.get(
                 CONFIG_GENERAL_WEB_SEARCH_PROVIDER, WEB_SEARCH_GOOGLE
             )
+
+        try:
+            from shared.service_locator import ServiceLocator
+            from shared.service_names import SVC_LLM_RUNTIME_CONFIG_MANAGER
+
+            llm_runtime_config_manager = ServiceLocator.get_optional(SVC_LLM_RUNTIME_CONFIG_MANAGER)
+            if llm_runtime_config_manager:
+                config["llm_provider"] = llm_runtime_config_manager.resolve_active_config().provider
+        except Exception:
+            pass
         
         return config
     

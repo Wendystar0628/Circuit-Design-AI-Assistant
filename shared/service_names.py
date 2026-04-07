@@ -60,6 +60,9 @@ SVC_CREDENTIAL_MANAGER = "credential_manager"
 # 配置管理器 - 统一配置访问
 SVC_CONFIG_MANAGER = "config_manager"
 
+# LLM 运行时配置管理器 - 当前模型与 API Key 的统一解析与保存入口
+SVC_LLM_RUNTIME_CONFIG_MANAGER = "llm_runtime_config_manager"
+
 # 文件管理器 - 统一文件操作（同步底层接口）
 SVC_FILE_MANAGER = "file_manager"
 
@@ -179,6 +182,7 @@ __all__ = [
     # 基础设施层
     "SVC_CREDENTIAL_MANAGER",
     "SVC_CONFIG_MANAGER",
+    "SVC_LLM_RUNTIME_CONFIG_MANAGER",
     "SVC_FILE_MANAGER",
     "SVC_ASYNC_FILE_OPS",
     "SVC_FILE_SEARCH_SERVICE",

@@ -688,10 +688,10 @@ class ConversationViewModel(QObject):
         """
         try:
             from shared.service_locator import ServiceLocator
-            from shared.service_names import SVC_LLM_EXECUTOR, SVC_CONFIG_MANAGER
+            from shared.service_names import SVC_LLM_EXECUTOR, SVC_LLM_RUNTIME_CONFIG_MANAGER
             
             llm_executor = ServiceLocator.get_optional(SVC_LLM_EXECUTOR)
-            config_manager = ServiceLocator.get_optional(SVC_CONFIG_MANAGER)
+            llm_runtime_config_manager = ServiceLocator.get_optional(SVC_LLM_RUNTIME_CONFIG_MANAGER)
             
             if not llm_executor:
                 if self.logger:
@@ -699,15 +699,19 @@ class ConversationViewModel(QObject):
                 self._handle_llm_error("LLM 服务未初始化，请先配置 API Key")
                 return
             
-            if not config_manager:
+            if not llm_runtime_config_manager:
                 if self.logger:
-                    self.logger.error("ConfigManager not available")
-                self._handle_llm_error("配置服务不可用")
+                    self.logger.error("LLMRuntimeConfigManager not available")
+                self._handle_llm_error("模型配置服务不可用")
                 return
             
             # 获取模型配置
-            model = config_manager.get("llm_model", "glm-5")
-            enable_thinking = config_manager.get("enable_thinking", True)
+            active_config = llm_runtime_config_manager.resolve_active_config()
+            model = active_config.model
+            enable_thinking = active_config.enable_thinking
+            if not model:
+                self._handle_llm_error("当前未配置对话模型")
+                return
             
             # 获取消息历史（用于 LLM 调用）
             messages = self.context_manager.get_messages_for_llm()

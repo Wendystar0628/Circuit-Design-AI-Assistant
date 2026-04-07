@@ -311,10 +311,13 @@ def _init_phase_1() -> bool:
         # --------------------------------------------------------
         from shared.model_registry import ModelRegistry
         from shared.embedding_model_registry import EmbeddingModelRegistry
+        from infrastructure.config.llm_runtime_config_manager import LLMRuntimeConfigManager
+        from shared.service_names import SVC_LLM_RUNTIME_CONFIG_MANAGER
         ModelRegistry.initialize()
         EmbeddingModelRegistry.initialize()
+        ServiceLocator.register(SVC_LLM_RUNTIME_CONFIG_MANAGER, LLMRuntimeConfigManager())
         if _logger:
-            _logger.info("Phase 1.4 ModelRegistry / EmbeddingModelRegistry 初始化完成")
+            _logger.info("Phase 1.4 ModelRegistry / EmbeddingModelRegistry / LLMRuntimeConfigManager 初始化完成")
 
         # --------------------------------------------------------
         # 1.5 TracingStore 初始化
@@ -844,10 +847,10 @@ def refresh_llm_runtime_services() -> bool:
             SVC_CREDENTIAL_MANAGER,
             SVC_EVENT_BUS,
             SVC_LLM_CLIENT,
+            SVC_LLM_RUNTIME_CONFIG_MANAGER,
             SVC_EXTERNAL_SERVICE_MANAGER,
             SVC_LLM_EXECUTOR,
         )
-        from infrastructure.config.settings import CONFIG_LLM_PROVIDER, CONFIG_LLM_BASE_URL, CONFIG_LLM_MODEL, CONFIG_LLM_TIMEOUT
         from infrastructure.llm_adapters import LLMClientFactory
         from domain.llm.external_service_manager import (
             ExternalServiceManager,
@@ -858,10 +861,11 @@ def refresh_llm_runtime_services() -> bool:
 
         config_manager = ServiceLocator.get_optional(SVC_CONFIG_MANAGER)
         credential_manager = ServiceLocator.get_optional(SVC_CREDENTIAL_MANAGER)
+        llm_runtime_config_manager = ServiceLocator.get_optional(SVC_LLM_RUNTIME_CONFIG_MANAGER)
 
-        if not config_manager or not credential_manager:
+        if not config_manager or not credential_manager or not llm_runtime_config_manager:
             if _logger:
-                _logger.warning("Phase 3.6 LLM 客户端初始化跳过：ConfigManager 或 CredentialManager 不可用")
+                _logger.warning("Phase 3.6 LLM 客户端初始化跳过：LLM 运行时配置依赖不可用")
             return False
 
         external_service_manager = ServiceLocator.get_optional(SVC_EXTERNAL_SERVICE_MANAGER)
@@ -878,7 +882,8 @@ def refresh_llm_runtime_services() -> bool:
 
         ServiceLocator.unregister(SVC_LLM_CLIENT)
 
-        provider = config_manager.get(CONFIG_LLM_PROVIDER, "")
+        active_config = llm_runtime_config_manager.resolve_active_config()
+        provider = active_config.provider
         if not provider:
             if _logger:
                 _logger.info("Phase 3.6 LLM 客户端初始化跳过：未配置 LLM 厂商")
@@ -895,23 +900,17 @@ def refresh_llm_runtime_services() -> bool:
                 _logger.warning(f"Phase 3.6 LLM 客户端初始化跳过：厂商 {provider} 暂未接入统一运行时")
             return False
 
-        credential = credential_manager.get_credential("llm", provider)
-        if not credential or not credential.get("api_key"):
+        if not active_config.api_key:
             if _logger:
                 _logger.info(f"Phase 3.6 LLM 客户端初始化跳过：{provider} 的 API Key 未配置")
             return False
 
-        api_key = credential.get("api_key")
-        base_url = config_manager.get(CONFIG_LLM_BASE_URL, "")
-        model = config_manager.get(CONFIG_LLM_MODEL, "")
-        timeout = config_manager.get(CONFIG_LLM_TIMEOUT, 60)
-
         client = LLMClientFactory.create_client(
             provider_id=provider,
-            api_key=api_key,
-            base_url=base_url if base_url else None,
-            model=model if model else None,
-            timeout=timeout,
+            api_key=active_config.api_key,
+            base_url=active_config.base_url if active_config.base_url else None,
+            model=active_config.model if active_config.model else None,
+            timeout=active_config.timeout,
         )
         ServiceLocator.register(SVC_LLM_CLIENT, client)
         external_service_manager.register_service(service_type, client)
@@ -929,7 +928,7 @@ def refresh_llm_runtime_services() -> bool:
             ServiceLocator.register(SVC_LLM_EXECUTOR, llm_executor)
 
         if _logger:
-            _logger.info(f"Phase 3.6 LLM 客户端初始化完成：{provider}, model={model or 'default'}")
+            _logger.info(f"Phase 3.6 LLM 客户端初始化完成：{provider}, model={active_config.model or 'default'}")
         return True
 
     except Exception as e:

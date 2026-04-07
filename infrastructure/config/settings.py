@@ -97,7 +97,7 @@ PROVIDER_DEFAULTS = {
         "implemented": True,
     },
     LLM_PROVIDER_DEEPSEEK: {
-        "base_url": "https://api.deepseek.com/v1",
+        "base_url": "https://api.deepseek.com",
         "default_model": "deepseek-chat",
         "supports_web_search": False,
         "requires_api_key": True,
@@ -105,7 +105,7 @@ PROVIDER_DEFAULTS = {
     },
     LLM_PROVIDER_QWEN: {
         "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-        "default_model": "qwen-max",
+        "default_model": "qwen3-max",
         "supports_web_search": False,
         "requires_api_key": True,
         "implemented": True,
@@ -253,7 +253,7 @@ DEFAULT_CONFIG = {
     
     # LLM 厂商配置
     CONFIG_LLM_PROVIDER: DEFAULT_LLM_PROVIDER,
-    CONFIG_LLM_MODEL: DEFAULT_MODEL,
+    CONFIG_LLM_MODEL: "",
     CONFIG_LLM_BASE_URL: "",  # 空则使用厂商默认
     CONFIG_LLM_TIMEOUT: DEFAULT_TIMEOUT,
     CONFIG_LLM_STREAMING: DEFAULT_STREAMING,

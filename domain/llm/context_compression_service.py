@@ -18,8 +18,6 @@ from infrastructure.config.settings import (
     COMPRESS_AUTO_THRESHOLD,
     COMPRESS_FALLBACK_NEW_CONVERSATION,
     DEFAULT_KEEP_RECENT_MESSAGES,
-    CONFIG_LLM_MODEL,
-    CONFIG_LLM_PROVIDER,
 )
 
 
@@ -123,13 +121,23 @@ class ContextCompressionService:
         except Exception:
             return None
 
+    @property
+    def llm_runtime_config_manager(self):
+        try:
+            from shared.service_locator import ServiceLocator
+            from shared.service_names import SVC_LLM_RUNTIME_CONFIG_MANAGER
+            return ServiceLocator.get_optional(SVC_LLM_RUNTIME_CONFIG_MANAGER)
+        except Exception:
+            return None
+
     def _resolve_model(self) -> Dict[str, str]:
         provider = "zhipu"
         model = "glm-5"
-        if self.config_manager:
+        if self.llm_runtime_config_manager:
             try:
-                provider = self.config_manager.get(CONFIG_LLM_PROVIDER, provider) or provider
-                model = self.config_manager.get(CONFIG_LLM_MODEL, model) or model
+                active_config = self.llm_runtime_config_manager.resolve_active_config()
+                provider = active_config.provider or provider
+                model = active_config.model or model
             except Exception:
                 pass
         return {

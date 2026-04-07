@@ -111,6 +111,14 @@ class OpenAICompatibleClient(BaseLLMClient):
         if thinking and self.supports_thinking(use_model):
             request_body.setdefault("temperature", 0.6)
 
+        if self.supports_thinking(use_model):
+            if self.provider_id == "qwen":
+                request_body["enable_thinking"] = bool(thinking)
+            elif self.provider_id == "deepseek":
+                request_body["thinking"] = {
+                    "type": "enabled" if thinking else "disabled"
+                }
+
         return request_body
 
     def _extract_text(self, value: Any) -> Optional[str]:

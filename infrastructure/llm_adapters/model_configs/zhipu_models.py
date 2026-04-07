@@ -53,10 +53,10 @@ GLM_5 = ModelConfig(
     supports_web_search=True,
     supports_streaming=True,
     
-    # Token 限制（参考智谱官方文档：200K 上下文，64K 最大输出）
+    # Token 限制（参考智谱官方文档：200K 上下文，128K 最大输出）
     context_limit=200000,
-    max_tokens_default=65536,     # 普通模式 64K 输出
-    max_tokens_thinking=65536,    # 深度思考模式 64K 输出
+    max_tokens_default=128000,
+    max_tokens_thinking=128000,
     
     # 深度思考配置
     thinking_temperature=1.0,

@@ -740,30 +740,33 @@ class InputArea(QWidget):
         if self._model_card_btn is None:
             return
         
-        display_name = "GLM-5"  # 最终回退默认值
+        display_name = "Model"
         
         try:
             # 1. 从 ConfigManager 获取当前配置的模型和厂商
             from shared.service_locator import ServiceLocator
-            from shared.service_names import SVC_CONFIG_MANAGER
-            from infrastructure.config.settings import CONFIG_LLM_MODEL, CONFIG_LLM_PROVIDER
+            from shared.service_names import SVC_LLM_RUNTIME_CONFIG_MANAGER
             
-            config_manager = ServiceLocator.get_optional(SVC_CONFIG_MANAGER)
-            if config_manager:
-                model_name = config_manager.get(CONFIG_LLM_MODEL, "glm-5")
-                provider = config_manager.get(CONFIG_LLM_PROVIDER, "zhipu")
+            llm_runtime_config_manager = ServiceLocator.get_optional(SVC_LLM_RUNTIME_CONFIG_MANAGER)
+            if llm_runtime_config_manager:
+                active_config = llm_runtime_config_manager.resolve_active_config()
+                model_name = active_config.model
+                provider = active_config.provider
+                if active_config.display_name:
+                    display_name = active_config.display_name
                 
                 # 2. 通过 ModelRegistry 获取 display_name
                 from shared.model_registry import ModelRegistry
-                model_id = f"{provider}:{model_name}"
-                model_config = ModelRegistry.get_model(model_id)
-                
-                if model_config:
-                    display_name = model_config.display_name
-                else:
-                    # 3. ModelRegistry 中不存在，格式化显示
-                    # 将 "glm-4.7" 转换为 "GLM-4.7"
-                    display_name = model_name.upper().replace("GLM-", "GLM-")
+                if provider and model_name:
+                    model_id = f"{provider}:{model_name}"
+                    model_config = ModelRegistry.get_model(model_id)
+                    
+                    if model_config:
+                        display_name = model_config.display_name
+                    else:
+                        # 3. ModelRegistry 中不存在，格式化显示
+                        # 将 "glm-4.7" 转换为 "GLM-4.7"
+                        display_name = model_name.upper().replace("GLM-", "GLM-")
         except Exception:
             pass
         

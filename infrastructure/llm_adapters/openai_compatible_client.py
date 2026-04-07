@@ -1,6 +1,6 @@
 import json
 import logging
-from typing import Any, AsyncIterator, Dict, List, Optional
+from typing import Any, AsyncIterator, Callable, Dict, List, Optional
 
 import httpx
 
@@ -301,6 +301,7 @@ class OpenAICompatibleClient(BaseLLMClient):
         thinking: bool = False,
         **kwargs,
     ) -> AsyncIterator[StreamChunk]:
+        stop_requested = kwargs.pop("stop_requested", None)
         request_body = self._build_request_body(messages, model, True, tools, thinking, **kwargs)
         accumulated_tool_calls: Dict[int, Dict[str, Any]] = {}
         try:
@@ -316,7 +317,12 @@ class OpenAICompatibleClient(BaseLLMClient):
                         )
                         self._handle_http_error(error_response)
 
+                    if self._is_stop_requested(stop_requested):
+                        return
+
                     async for line in response.aiter_lines():
+                        if self._is_stop_requested(stop_requested):
+                            return
                         if not line:
                             continue
                         if not line.startswith("data:"):
@@ -362,6 +368,14 @@ class OpenAICompatibleClient(BaseLLMClient):
             raise APIError(f"Stream timeout: {exc}") from exc
         except httpx.RequestError as exc:
             raise APIError(f"Stream error: {exc}") from exc
+
+    def _is_stop_requested(self, callback: Any) -> bool:
+        if not callable(callback):
+            return False
+        try:
+            return bool(callback())
+        except Exception:
+            return False
 
     def get_model_info(self, model: Optional[str] = None) -> ModelInfo:
         use_model = model or self.model

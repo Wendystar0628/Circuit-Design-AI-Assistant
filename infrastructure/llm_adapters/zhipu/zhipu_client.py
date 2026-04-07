@@ -326,6 +326,7 @@ class ZhipuClient(BaseLLMClient):
         Yields:
             StreamChunk: 流式响应块
         """
+        stop_requested = kwargs.pop("stop_requested", None)
         use_model = model or self.model
         
         # 构建请求体
@@ -372,7 +373,10 @@ class ZhipuClient(BaseLLMClient):
                         )
                     
                     # 使用流式处理器处理响应
-                    stream_iterator = self._stream_handler.create_stream_iterator(response)
+                    stream_iterator = self._stream_handler.create_stream_iterator(
+                        response,
+                        stop_requested=stop_requested,
+                    )
                     async for chunk in stream_iterator:
                         yield chunk
                     

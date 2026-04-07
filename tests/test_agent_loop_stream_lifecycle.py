@@ -34,6 +34,20 @@ class _FakeClient:
             yield chunk
 
 
+class _StopAwareClient:
+    def __init__(self):
+        self.aclose_called = False
+        self.stop_callback_seen = False
+
+    async def chat_stream(self, **kwargs):
+        stop_requested = kwargs.get("stop_requested")
+        self.stop_callback_seen = callable(stop_requested)
+        yield StreamChunk(content="partial")
+        if callable(stop_requested) and stop_requested():
+            return
+        yield StreamChunk(is_finished=True, finish_reason="stop")
+
+
 class _FakeRegistry:
     def get_all_openai_schemas(self):
         return []
@@ -65,3 +79,37 @@ def test_agent_loop_allows_stream_generator_to_finish_naturally():
     assert result.finish_reason == "stop"
     assert stream.drained is True
     assert stream.aclose_called is False
+
+
+def test_agent_loop_stop_request_allows_provider_stream_to_exit_gracefully():
+    import asyncio
+
+    stop_state = {"requested": False}
+
+    def _stop_requested():
+        return stop_state["requested"]
+
+    client = _StopAwareClient()
+    loop = AgentLoop(
+        client=client,
+        registry=_FakeRegistry(),
+        context=None,
+        model="test-model",
+        stop_requested=_stop_requested,
+    )
+
+    async def _on_event(event_type, data):
+        if event_type == "stream_chunk" and data.get("chunk_type") == "content":
+            stop_state["requested"] = True
+
+    async def _run():
+        await loop._stream_llm_response([], [], _on_event)
+
+    try:
+        asyncio.run(_run())
+        raised = False
+    except asyncio.CancelledError:
+        raised = True
+
+    assert raised is True
+    assert client.stop_callback_seen is True

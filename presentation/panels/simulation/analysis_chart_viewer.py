@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (
 from domain.simulation.data.simulation_artifact_exporter import simulation_artifact_exporter
 from domain.simulation.models.chart_type import ChartType
 from domain.simulation.models.simulation_result import SimulationResult
+from presentation.panels.simulation.bode_overlay_chart_page import BodeOverlayChartPage
 from presentation.panels.simulation.chart_page_widget import ChartPage
 from presentation.panels.simulation.chart_view_types import ChartSeries, ChartSpec
 from presentation.panels.simulation.ltspice_plot_interaction import finite_range
@@ -51,8 +52,7 @@ SERIES_COLORS = [
 DERIVED_SIGNAL_SUFFIXES = ("_mag", "_phase", "_real", "_imag")
 SUPPORTED_CHART_TYPES = (
     ChartType.WAVEFORM_TIME,
-    ChartType.BODE_MAGNITUDE,
-    ChartType.BODE_PHASE,
+    ChartType.BODE_OVERLAY,
     ChartType.DC_SWEEP,
     ChartType.NOISE_SPECTRUM,
 )
@@ -65,7 +65,7 @@ class ChartViewer(QWidget):
         super().__init__(parent)
         self._result: Optional[SimulationResult] = None
         self._chart_specs: List[ChartSpec] = []
-        self._pages: List[ChartPage] = []
+        self._pages: List[QWidget] = []
 
         self._setup_ui()
         self._apply_style()
@@ -109,6 +109,12 @@ class ChartViewer(QWidget):
         self._action_measure.setCheckable(True)
         self._action_measure.triggered.connect(self._on_toggle_measurement)
         self._toolbar.addAction(self._action_measure)
+
+        self._action_cursor = QAction("Cursor", self)
+        self._action_cursor.setCheckable(True)
+        self._action_cursor.setEnabled(False)
+        self._action_cursor.triggered.connect(self._on_toggle_cursor)
+        self._toolbar.addAction(self._action_cursor)
 
     def _apply_style(self):
         self.setStyleSheet(f"""
@@ -215,6 +221,8 @@ class ChartViewer(QWidget):
     def load_result(self, result: SimulationResult):
         self._result = result
         self._action_measure.setChecked(False)
+        self._action_cursor.setChecked(False)
+        self._action_cursor.setEnabled(False)
         self._chart_specs = self._build_chart_specs(result)
         self._rebuild_pages()
 
@@ -222,6 +230,8 @@ class ChartViewer(QWidget):
         self._result = None
         self._chart_specs = []
         self._action_measure.setChecked(False)
+        self._action_cursor.setChecked(False)
+        self._action_cursor.setEnabled(False)
         while self._tab_bar.count() > 0:
             self._tab_bar.removeTab(0)
         while self._stack.count() > 0:
@@ -234,6 +244,7 @@ class ChartViewer(QWidget):
     def retranslate_ui(self):
         self._action_fit.setText(self._tr("Fit"))
         self._action_measure.setText(self._tr("Measure"))
+        self._action_cursor.setText(self._tr("Cursor"))
         self._empty_label.setText(self._tr("No interactive chart available for the current result."))
         for page in self._pages:
             page.retranslate_ui()
@@ -327,7 +338,7 @@ class ChartViewer(QWidget):
         self._pages = []
 
         for spec in self._chart_specs:
-            page = ChartPage()
+            page = self._create_page(spec)
             page.set_chart(spec)
             page.retranslate_ui()
             self._pages.append(page)
@@ -337,11 +348,19 @@ class ChartViewer(QWidget):
         if self._pages:
             self._tab_bar.setCurrentIndex(0)
             self._stack.setCurrentIndex(0)
+            self._update_toolbar_state()
             self._hide_empty_state()
         else:
+            self._action_cursor.setChecked(False)
+            self._action_cursor.setEnabled(False)
             self._show_empty_state()
 
-    def _current_page(self) -> Optional[ChartPage]:
+    def _create_page(self, spec: ChartSpec) -> QWidget:
+        if spec.chart_type == ChartType.BODE_OVERLAY:
+            return BodeOverlayChartPage()
+        return ChartPage()
+
+    def _current_page(self) -> Optional[QWidget]:
         index = self._tab_bar.currentIndex()
         if index < 0 or index >= len(self._pages):
             return None
@@ -373,7 +392,7 @@ class ChartViewer(QWidget):
         if analysis == "tran":
             return [ChartType.WAVEFORM_TIME]
         if analysis == "ac":
-            return [ChartType.BODE_MAGNITUDE, ChartType.BODE_PHASE]
+            return [ChartType.BODE_OVERLAY]
         if analysis == "dc":
             return [ChartType.DC_SWEEP]
         if analysis == "noise":
@@ -412,19 +431,12 @@ class ChartViewer(QWidget):
             series = self._build_real_signal_series(result, x_data, include_derived=False)
             return ChartSpec(chart_type, "Transient Waveforms", resolved_x_label, "Value", series, log_x=resolved_log_x, x_domain=resolved_x_domain)
 
-        if chart_type == ChartType.BODE_MAGNITUDE and analysis == "ac":
+        if chart_type == ChartType.BODE_OVERLAY and analysis == "ac":
             x_data = resolved_x_data
             if x_data is None:
                 return None
-            series = self._build_bode_series(result, x_data, component="magnitude")
-            return ChartSpec(chart_type, "Bode Magnitude", resolved_x_label, "Magnitude (dB)", series, log_x=resolved_log_x, x_domain=resolved_x_domain)
-
-        if chart_type == ChartType.BODE_PHASE and analysis == "ac":
-            x_data = resolved_x_data
-            if x_data is None:
-                return None
-            series = self._build_bode_series(result, x_data, component="phase")
-            return ChartSpec(chart_type, "Bode Phase", resolved_x_label, "Phase (°)", series, log_x=resolved_log_x, x_domain=resolved_x_domain)
+            series = self._build_bode_overlay_series(result, x_data)
+            return ChartSpec(chart_type, "Bode Overlay", resolved_x_label, "Magnitude (dB)", series, log_x=resolved_log_x, x_domain=resolved_x_domain, secondary_y_label="Phase (°)")
 
         if chart_type == ChartType.DC_SWEEP and analysis == "dc":
             x_data = resolved_x_data
@@ -497,12 +509,10 @@ class ChartViewer(QWidget):
             )
         return series
 
-    def _build_bode_series(
+    def _build_bode_overlay_series(
         self,
         result: SimulationResult,
         x_data: np.ndarray,
-        *,
-        component: str,
     ) -> List[ChartSeries]:
         data = result.data
         if data is None:
@@ -511,34 +521,45 @@ class ChartViewer(QWidget):
         color_index = 0
         for signal_name in self._get_base_signal_names(result, include_derived=False):
             raw_signal = data.get_signal(signal_name)
-            derived_name = f"{signal_name}_{'mag' if component == 'magnitude' else 'phase'}"
-            derived_signal = data.get_signal(derived_name)
-            if raw_signal is None and derived_signal is None:
+            derived_mag = data.get_signal(f"{signal_name}_mag")
+            derived_phase = data.get_signal(f"{signal_name}_phase")
+            if raw_signal is None and derived_mag is None and derived_phase is None:
                 continue
 
-            if component == "magnitude":
-                if raw_signal is not None and np.iscomplexobj(raw_signal):
-                    y_data = 20 * np.log10(np.maximum(np.abs(raw_signal), 1e-30))
-                elif derived_signal is not None:
-                    y_data = 20 * np.log10(np.maximum(np.asarray(derived_signal, dtype=float), 1e-30))
-                else:
-                    continue
+            if raw_signal is not None and np.iscomplexobj(raw_signal):
+                magnitude_data = 20 * np.log10(np.maximum(np.abs(raw_signal), 1e-30))
+                phase_data = np.degrees(np.angle(raw_signal))
             else:
-                if raw_signal is not None and np.iscomplexobj(raw_signal):
-                    y_data = np.degrees(np.angle(raw_signal))
-                elif derived_signal is not None:
-                    y_data = np.asarray(derived_signal, dtype=float)
-                else:
+                if derived_mag is None or derived_phase is None:
                     continue
+                magnitude_data = 20 * np.log10(np.maximum(np.asarray(derived_mag, dtype=float), 1e-30))
+                phase_data = np.asarray(derived_phase, dtype=float)
 
-            if len(y_data) != len(x_data):
+            if len(magnitude_data) != len(x_data) or len(phase_data) != len(x_data):
                 continue
+            color = SERIES_COLORS[color_index % len(SERIES_COLORS)]
             series.append(
                 ChartSeries(
-                    name=signal_name,
+                    name=f"{signal_name} | Mag",
                     x_data=np.asarray(x_data, dtype=float),
-                    y_data=np.asarray(y_data, dtype=float),
-                    color=SERIES_COLORS[color_index % len(SERIES_COLORS)],
+                    y_data=np.asarray(magnitude_data, dtype=float),
+                    color=color,
+                    axis_key="left",
+                    line_style="solid",
+                    group_key=signal_name,
+                    component="magnitude",
+                )
+            )
+            series.append(
+                ChartSeries(
+                    name=f"{signal_name} | Phase",
+                    x_data=np.asarray(x_data, dtype=float),
+                    y_data=np.asarray(phase_data, dtype=float),
+                    color=color,
+                    axis_key="right",
+                    line_style="dash",
+                    group_key=signal_name,
+                    component="phase",
                 )
             )
             color_index += 1
@@ -600,8 +621,11 @@ class ChartViewer(QWidget):
             return
         self._stack.setCurrentIndex(index)
         self._action_measure.setChecked(False)
+        self._action_cursor.setChecked(False)
         for page in self._pages:
             page.set_measurement_enabled(False)
+            page.set_data_cursor_enabled(False)
+        self._update_toolbar_state()
         self.tab_changed.emit(self._chart_specs[index].chart_type.value)
 
     def _on_fit_to_view(self):
@@ -613,6 +637,18 @@ class ChartViewer(QWidget):
         page = self._current_page()
         if page is not None:
             page.set_measurement_enabled(checked)
+
+    def _on_toggle_cursor(self, checked: bool):
+        page = self._current_page()
+        if page is not None:
+            page.set_data_cursor_enabled(checked)
+
+    def _update_toolbar_state(self):
+        page = self._current_page()
+        supports_cursor = bool(page is not None and page.supports_data_cursor())
+        self._action_cursor.setEnabled(supports_cursor)
+        if not supports_cursor:
+            self._action_cursor.setChecked(False)
 
     def _show_empty_state(self):
         self._stack.hide()

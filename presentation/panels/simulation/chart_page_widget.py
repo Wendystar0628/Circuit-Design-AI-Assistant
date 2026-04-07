@@ -291,6 +291,12 @@ class ChartPage(QWidget):
     def fit_to_view(self):
         self._rebuild_plot()
 
+    def supports_data_cursor(self) -> bool:
+        return False
+
+    def set_data_cursor_enabled(self, enabled: bool):
+        return
+
     def set_measurement_enabled(self, enabled: bool):
         if enabled:
             self._ensure_cursors()

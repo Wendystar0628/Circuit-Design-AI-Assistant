@@ -238,7 +238,8 @@ class ZhipuStreamHandler:
     
     def create_stream_iterator(
         self,
-        response
+        response,
+        stop_requested=None,
     ) -> AsyncIterator[StreamChunk]:
         """
         从 httpx 响应创建流式迭代器
@@ -249,9 +250,9 @@ class ZhipuStreamHandler:
         Returns:
             异步 StreamChunk 迭代器
         """
-        return self._iterate_response(response)
+        return self._iterate_response(response, stop_requested=stop_requested)
     
-    async def _iterate_response(self, response) -> AsyncIterator[StreamChunk]:
+    async def _iterate_response(self, response, stop_requested=None) -> AsyncIterator[StreamChunk]:
         """
         迭代 httpx 流式响应
         
@@ -266,11 +267,15 @@ class ZhipuStreamHandler:
         
         try:
             async for chunk in response.aiter_text():
+                if callable(stop_requested) and stop_requested():
+                    return
                 # 将数据添加到缓冲区
                 buffer += chunk
                 
                 # 按行处理
                 while "\n" in buffer:
+                    if callable(stop_requested) and stop_requested():
+                        return
                     line, buffer = buffer.split("\n", 1)
                     
                     stream_chunk = self._process_line(line, state)

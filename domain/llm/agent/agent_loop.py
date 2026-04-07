@@ -252,12 +252,12 @@ class AgentLoop:
             model=self._model,
             tools=schemas if schemas else None,
             thinking=self._thinking,
+            stop_requested=self._stop_requested,
         )
         stream_completed = False
 
         try:
             async for chunk in stream_gen:
-                self._raise_if_stop_requested()
                 # 处理思考内容
                 if chunk.reasoning_content:
                     turn.reasoning_content += chunk.reasoning_content
@@ -284,8 +284,8 @@ class AgentLoop:
                 if chunk.finish_reason:
                     turn.finish_reason = chunk.finish_reason
             stream_completed = True
+            self._raise_if_stop_requested()
         finally:
-            # 正常完成时让 provider 侧自然收尾；仅在异常/取消提前退出时主动关闭
             if not stream_completed and hasattr(stream_gen, 'aclose'):
                 try:
                     await stream_gen.aclose()

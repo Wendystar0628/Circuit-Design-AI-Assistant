@@ -846,6 +846,8 @@ def refresh_llm_runtime_services() -> bool:
     global _logger
 
     try:
+        import asyncio
+
         from shared.service_locator import ServiceLocator
         from shared.service_names import (
             SVC_CONFIG_MANAGER,
@@ -877,6 +879,23 @@ def refresh_llm_runtime_services() -> bool:
         if external_service_manager is None:
             external_service_manager = ExternalServiceManager()
             ServiceLocator.register(SVC_EXTERNAL_SERVICE_MANAGER, external_service_manager)
+
+        old_client = ServiceLocator.get_optional(SVC_LLM_CLIENT)
+        if old_client is not None and hasattr(old_client, "close"):
+            try:
+                from shared.async_runtime import get_event_loop, is_initialized as is_async_runtime_initialized
+
+                if is_async_runtime_initialized():
+                    loop = get_event_loop()
+                    if loop.is_running():
+                        loop.create_task(old_client.close())
+                    elif not loop.is_closed():
+                        loop.run_until_complete(old_client.close())
+                else:
+                    asyncio.run(old_client.close())
+            except Exception as close_exc:
+                if _logger:
+                    _logger.debug(f"Failed to close previous LLM client cleanly: {close_exc}")
 
         for service_type in [
             SERVICE_LLM_ZHIPU,

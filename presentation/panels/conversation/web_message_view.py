@@ -19,6 +19,8 @@ import os
 from typing import Any, Dict, List, Optional
 from PyQt6.QtCore import Qt, pyqtSignal, pyqtSlot, QTimer, QUrl
 
+from domain.llm.message_types import Attachment
+
 try:
     from PyQt6.QtWebEngineWidgets import QWebEngineView
     from PyQt6.QtWebEngineCore import QWebEngineSettings
@@ -513,15 +515,15 @@ function updateToolCard(id, resultHtml, isError) {
 {more}
 </div>'''
     
-    def _render_attachments_html(self, attachments: List[Dict[str, Any]]) -> str:
+    def _render_attachments_html(self, attachments: List[Attachment]) -> str:
         if not attachments:
             return ""
         
         items = []
         for att in attachments[:3]:
-            att_type = att.get("type", "file")
-            name = att.get("name", "未知文件")
-            path = att.get("path", "")
+            att_type = att.type
+            name = att.name or "未知文件"
+            path = att.path
             
             icon = SVG_IMAGE if att_type == "image" else SVG_FILE
             display_name = name[:12] + "..." if len(name) > 15 else name

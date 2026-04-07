@@ -9,7 +9,6 @@
 - InputArea - 输入区域组件
 - TitleBar - 标题栏组件
 - MessageArea - 消息显示区域
-- AttachmentManager - 附件管理器
 """
 
 from presentation.panels.conversation.conversation_view_model import (

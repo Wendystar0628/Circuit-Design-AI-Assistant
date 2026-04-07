@@ -9,6 +9,7 @@ Token 监控。
 
 from typing import Any, Dict
 
+from domain.llm.llm_message_builder import LLMMessageBuilder
 from domain.llm.token_counter import (
     count_tokens,
     count_message_tokens,
@@ -35,6 +36,9 @@ class TokenMonitor:
     
     专注于工作上下文 Token 使用量的计算和监控，不涉及压缩决策。
     """
+
+    def __init__(self):
+        self._message_builder = LLMMessageBuilder()
     
     def calculate_usage(
         self,
@@ -141,31 +145,8 @@ class TokenMonitor:
         Returns:
             Token 数量
         """
-        total = 0
-        
-        for msg in messages:
-            # 角色开销（约 4 tokens）
-            total += 4
-            
-            # 内容
-            content = getattr(msg, "content", "")
-            if isinstance(content, str):
-                total += count_tokens(content, model)
-            elif isinstance(content, list):
-                # 多模态内容
-                for item in content:
-                    if isinstance(item, dict) and "text" in item:
-                        total += count_tokens(item["text"], model)
-            
-            # 扩展字段中的 reasoning_content
-            kwargs = getattr(msg, "additional_kwargs", {}) or {}
-            reasoning = kwargs.get("reasoning_content", "")
-            if reasoning:
-                total += count_tokens(reasoning, model)
-        
-        # 消息格式开销（约 3 tokens）
-        total += 3
-        return total
+        payload_messages = self._message_builder.build_messages(messages)
+        return count_message_tokens(payload_messages, model)
     
     def get_usage_ratio(
         self,

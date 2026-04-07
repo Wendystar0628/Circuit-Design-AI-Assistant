@@ -42,6 +42,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from langchain_core.messages import BaseMessage
 
 from domain.llm.message_store import MessageStore
+from domain.llm.message_types import Attachment
 from domain.llm.token_monitor import TokenMonitor
 from domain.llm.working_context_builder import (
     WORKING_CONTEXT_COMPRESSED_COUNT_KEY,
@@ -112,7 +113,7 @@ class ContextManager:
         state: Dict[str, Any],
         role: str,
         content: str,
-        attachments: Optional[List[Any]] = None,
+        attachments: Optional[List[Attachment]] = None,
         operations: Optional[List[str]] = None,
         reasoning_content: str = "",
         usage: Optional[Dict[str, int]] = None,
@@ -352,7 +353,7 @@ class ContextManager:
     def add_user_message(
         self,
         content: str,
-        attachments: Optional[List[Any]] = None
+        attachments: Optional[List[Attachment]] = None
     ) -> None:
         """
         添加用户消息（有状态版本）
@@ -425,190 +426,11 @@ class ContextManager:
         
         if self.logger:
             self.logger.debug(f"Added assistant message: {content[:50]}...")
-    
-    def get_messages_for_llm(self) -> List[Dict[str, Any]]:
-        """
-        获取用于 LLM 调用的消息列表（有状态版本）
-        
-        处理附件：
-        - 图片：转换为 base64 编码的多模态内容
-        - 文件：读取文件内容并添加到消息文本中
-        
-        Returns:
-            消息列表，格式为 [{"role": str, "content": str|list}, ...]
-        """
+
+    def get_working_messages(self) -> List[BaseMessage]:
         state = self.get_current_state()
-        messages = get_working_context_messages(state)
-        
-        # 转换为 LLM API 格式
-        result = []
-        for msg in messages:
-            llm_msg = self._convert_message_for_llm(msg)
-            result.append(llm_msg)
-        
-        return result
-    
-    def _convert_message_for_llm(self, msg: BaseMessage) -> Dict[str, Any]:
-        """
-        将 LangChain 消息转换为 LLM API 格式
-        
-        Args:
-            msg: LangChain BaseMessage 对象
-            
-        Returns:
-            LLM API 格式的消息字典
-        """
-        from domain.llm.message_helpers import get_role, get_attachments
-        
-        role = get_role(msg)
-        content = msg.content if isinstance(msg.content, str) else ""
-        attachments = get_attachments(msg)
-        
-        # 如果没有附件，直接返回简单格式
-        if not attachments:
-            return {
-                "role": role,
-                "content": content,
-            }
-        
-        # 有附件时，构建多模态内容
-        content_parts = []
-        file_contents = []
-        
-        for att in attachments:
-            att_type = att.get("type", "")
-            att_path = att.get("path", "")
-            att_name = att.get("name", "")
-            
-            if att_type == "image":
-                # 图片转换为 base64
-                image_content = self._convert_image_to_base64(att_path)
-                if image_content:
-                    content_parts.append(image_content)
-            elif att_type == "file":
-                # 文件读取内容
-                file_text = self._read_file_content(att_path, att_name)
-                if file_text:
-                    file_contents.append(file_text)
-        
-        # 构建最终内容
-        if content_parts:
-            # 有图片，使用多模态格式
-            text_content = content
-            if file_contents:
-                text_content += "\n\n" + "\n\n".join(file_contents)
-            
-            # 图片在前，文本在后
-            if text_content.strip():
-                content_parts.append({"type": "text", "text": text_content})
-            else:
-                content_parts.append({"type": "text", "text": "请描述这张图片"})
-            
-            return {
-                "role": role,
-                "content": content_parts,
-            }
-        else:
-            # 只有文件，添加到文本内容
-            text_content = content
-            if file_contents:
-                text_content += "\n\n" + "\n\n".join(file_contents)
-            
-            return {
-                "role": role,
-                "content": text_content,
-            }
-    
-    def _convert_image_to_base64(self, image_path: str) -> Optional[Dict[str, Any]]:
-        """
-        将图片转换为 base64 编码的多模态内容
-        
-        Args:
-            image_path: 图片文件路径
-            
-        Returns:
-            多模态内容字典，失败返回 None
-        """
-        import base64
-        import os
-        
-        if not os.path.isfile(image_path):
-            if self.logger:
-                self.logger.warning(f"Image file not found: {image_path}")
-            return None
-        
-        try:
-            # 获取 MIME 类型
-            ext = os.path.splitext(image_path)[1].lower()
-            mime_types = {
-                ".png": "image/png",
-                ".jpg": "image/jpeg",
-                ".jpeg": "image/jpeg",
-                ".webp": "image/webp",
-                ".gif": "image/gif",
-            }
-            mime_type = mime_types.get(ext, "image/png")
-            
-            # 检查文件大小（限制单张图片最大 10MB）
-            file_size = os.path.getsize(image_path)
-            if file_size > 10 * 1024 * 1024:
-                if self.logger:
-                    self.logger.warning(f"Image file too large: {file_size} bytes (max 10MB)")
-                return None
-            
-            # 读取并编码
-            with open(image_path, "rb") as f:
-                image_bytes = f.read()
-            
-            image_data = base64.b64encode(image_bytes).decode("ascii")
-            data_url = f"data:{mime_type};base64,{image_data}"
-            
-            return {
-                "type": "image_url",
-                "image_url": {
-                    "url": data_url
-                }
-            }
-        except Exception as e:
-            if self.logger:
-                self.logger.error(f"Failed to convert image to base64: {e}")
-            return None
-    
-    def _read_file_content(self, file_path: str, file_name: str) -> Optional[str]:
-        """
-        读取文件内容
-        
-        Args:
-            file_path: 文件路径
-            file_name: 文件名（用于显示）
-            
-        Returns:
-            格式化的文件内容字符串，失败返回 None
-        """
-        import os
-        
-        if not os.path.isfile(file_path):
-            if self.logger:
-                self.logger.warning(f"File not found: {file_path}")
-            return None
-        
-        try:
-            with open(file_path, "r", encoding="utf-8") as f:
-                content = f.read()
-            
-            # 限制文件大小
-            max_chars = 50000
-            if len(content) > max_chars:
-                content = content[:max_chars] + "\n... (file truncated)"
-            
-            return f"--- File: {file_name} ---\n{content}\n--- End of {file_name} ---"
-        except UnicodeDecodeError:
-            return f"[Binary file attached: {file_name}]"
-        except Exception as e:
-            if self.logger:
-                self.logger.error(f"Failed to read file: {e}")
-            return None
-    
+        return get_working_context_messages(state)
+
     def get_display_messages(self) -> List[BaseMessage]:
         """
         获取用于显示的消息列表（有状态版本）

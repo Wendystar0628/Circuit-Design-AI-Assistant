@@ -38,7 +38,6 @@ class OpenAICompatibleClient(BaseLLMClient):
         self.auth_header = auth_header
         self.auth_prefix = auth_prefix
         self._logger = logging.getLogger(__name__)
-        self._client: Optional[httpx.AsyncClient] = None
         self._sync_client: Optional[httpx.Client] = None
 
     def _get_headers(self) -> Dict[str, str]:
@@ -59,14 +58,12 @@ class OpenAICompatibleClient(BaseLLMClient):
             )
         return self._sync_client
 
-    async def _get_async_client(self) -> httpx.AsyncClient:
-        if self._client is None:
-            self._client = httpx.AsyncClient(
-                base_url=self.base_url,
-                headers=self._get_headers(),
-                timeout=httpx.Timeout(self.timeout, connect=10.0),
-            )
-        return self._client
+    def _create_async_client(self) -> httpx.AsyncClient:
+        return httpx.AsyncClient(
+            base_url=self.base_url,
+            headers=self._get_headers(),
+            timeout=httpx.Timeout(self.timeout, connect=10.0),
+        )
 
     def __del__(self):
         if self._sync_client:
@@ -76,9 +73,6 @@ class OpenAICompatibleClient(BaseLLMClient):
                 pass
 
     async def close(self) -> None:
-        if self._client is not None:
-            await self._client.aclose()
-            self._client = None
         if self._sync_client is not None:
             self._sync_client.close()
             self._sync_client = None
@@ -227,7 +221,27 @@ class OpenAICompatibleClient(BaseLLMClient):
             tool_calls=tool_calls if isinstance(tool_calls, list) else None,
             usage=payload.get("usage") if isinstance(payload.get("usage"), dict) else None,
             finish_reason=choice.get("finish_reason"),
+            metadata=self._parse_metadata(payload),
         )
+
+    def _parse_metadata(self, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        metadata: Dict[str, Any] = {}
+
+        web_search = payload.get("web_search")
+        if isinstance(web_search, list):
+            metadata["web_search_results"] = [
+                item for item in web_search if isinstance(item, dict)
+            ]
+
+        search_info = payload.get("search_info")
+        if isinstance(search_info, dict):
+            raw_results = search_info.get("search_results")
+            if isinstance(raw_results, list):
+                metadata["web_search_results"] = [
+                    item for item in raw_results if isinstance(item, dict)
+                ]
+
+        return metadata or None
 
     def chat(
         self,
@@ -288,73 +302,66 @@ class OpenAICompatibleClient(BaseLLMClient):
         **kwargs,
     ) -> AsyncIterator[StreamChunk]:
         request_body = self._build_request_body(messages, model, True, tools, thinking, **kwargs)
-        client = await self._get_async_client()
-        response: Optional[httpx.Response] = None
         accumulated_tool_calls: Dict[int, Dict[str, Any]] = {}
         try:
-            response = await client.send(
-                client.build_request("POST", self.CHAT_ENDPOINT, json=request_body),
-                stream=True,
-            )
-            if response.status_code != 200:
-                body = await response.aread()
-                error_response = httpx.Response(
-                    status_code=response.status_code,
-                    headers=response.headers,
-                    request=response.request,
-                    content=body,
-                )
-                self._handle_http_error(error_response)
+            async with self._create_async_client() as client:
+                async with client.stream("POST", self.CHAT_ENDPOINT, json=request_body) as response:
+                    if response.status_code != 200:
+                        body = await response.aread()
+                        error_response = httpx.Response(
+                            status_code=response.status_code,
+                            headers=response.headers,
+                            request=response.request,
+                            content=body,
+                        )
+                        self._handle_http_error(error_response)
 
-            async for line in response.aiter_lines():
-                if not line:
-                    continue
-                if not line.startswith("data:"):
-                    continue
-                payload_text = line[5:].strip()
-                if not payload_text:
-                    continue
-                if payload_text == "[DONE]":
-                    yield StreamChunk(
-                        is_finished=True,
-                        tool_calls=self._finalize_tool_calls(accumulated_tool_calls),
-                    )
-                    break
-                try:
-                    payload = json.loads(payload_text)
-                except json.JSONDecodeError as exc:
-                    raise ResponseParseError(f"Invalid streaming payload: {exc}") from exc
+                    async for line in response.aiter_lines():
+                        if not line:
+                            continue
+                        if not line.startswith("data:"):
+                            continue
+                        payload_text = line[5:].strip()
+                        if not payload_text:
+                            continue
+                        if payload_text == "[DONE]":
+                            yield StreamChunk(
+                                is_finished=True,
+                                tool_calls=self._finalize_tool_calls(accumulated_tool_calls),
+                            )
+                            continue
+                        try:
+                            payload = json.loads(payload_text)
+                        except json.JSONDecodeError as exc:
+                            raise ResponseParseError(f"Invalid streaming payload: {exc}") from exc
 
-                choices = payload.get("choices")
-                if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
-                    continue
-                choice = choices[0]
-                delta = choice.get("delta") if isinstance(choice.get("delta"), dict) else {}
-                self._merge_tool_call_delta(accumulated_tool_calls, delta.get("tool_calls"))
+                        choices = payload.get("choices")
+                        if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+                            continue
+                        choice = choices[0]
+                        delta = choice.get("delta") if isinstance(choice.get("delta"), dict) else {}
+                        self._merge_tool_call_delta(accumulated_tool_calls, delta.get("tool_calls"))
 
-                content = self._extract_text(delta.get("content"))
-                reasoning_content = self._extract_text(delta.get("reasoning_content"))
-                if reasoning_content is None:
-                    reasoning_content = self._extract_text(delta.get("reasoning"))
+                        content = self._extract_text(delta.get("content"))
+                        reasoning_content = self._extract_text(delta.get("reasoning_content"))
+                        if reasoning_content is None:
+                            reasoning_content = self._extract_text(delta.get("reasoning"))
 
-                finish_reason = choice.get("finish_reason")
-                usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else None
-                if content or reasoning_content or finish_reason or usage:
-                    yield StreamChunk(
-                        content=content,
-                        reasoning_content=reasoning_content,
-                        is_finished=bool(finish_reason),
-                        usage=usage,
-                        tool_calls=self._finalize_tool_calls(accumulated_tool_calls) if finish_reason else None,
-                        finish_reason=finish_reason,
-                    )
+                        finish_reason = choice.get("finish_reason")
+                        usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else None
+                        if content or reasoning_content or finish_reason or usage:
+                            yield StreamChunk(
+                                content=content,
+                                reasoning_content=reasoning_content,
+                                is_finished=bool(finish_reason),
+                                usage=usage,
+                                tool_calls=self._finalize_tool_calls(accumulated_tool_calls) if finish_reason else None,
+                                finish_reason=finish_reason,
+                            )
         except httpx.TimeoutException as exc:
             raise APIError(f"Stream timeout: {exc}") from exc
         except httpx.RequestError as exc:
             raise APIError(f"Stream error: {exc}") from exc
-        finally:
-            if response is not None:
-                await response.aclose()
 
     def get_model_info(self, model: Optional[str] = None) -> ModelInfo:
         use_model = model or self.model

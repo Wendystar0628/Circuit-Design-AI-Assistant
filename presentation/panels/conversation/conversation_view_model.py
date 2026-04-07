@@ -31,6 +31,9 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
+from domain.llm.llm_message_builder import LLMMessageBuilder
+from domain.llm.message_types import Attachment
+
 # ============================================================
 # 常量定义
 # ============================================================
@@ -79,7 +82,7 @@ class DisplayMessage:
     content: str = ""                            # 原始内容（用于 LaTeX 检测）
     reasoning_html: str = ""                     # 思考过程 HTML（可选）
     operations: List[str] = field(default_factory=list)  # 操作摘要列表
-    attachments: List[Dict[str, Any]] = field(default_factory=list)  # 附件列表
+    attachments: List[Attachment] = field(default_factory=list)  # 附件列表
     timestamp_display: str = ""                  # 格式化的时间戳字符串
     is_streaming: bool = False                   # 是否正在流式输出
     is_partial: bool = False                     # 是否为部分响应（已中断）
@@ -152,6 +155,7 @@ class ConversationViewModel(QObject):
         self._session_state_manager = None
         self._context_compression_service = None
         self._llm_runtime_config_manager = None
+        self._llm_message_builder = LLMMessageBuilder()
         
         # 事件订阅句柄
         self._subscriptions: List[Callable] = []
@@ -639,7 +643,7 @@ class ConversationViewModel(QObject):
     def send_message(
         self,
         text: str,
-        attachments: Optional[List[Dict[str, Any]]] = None
+        attachments: Optional[List[Attachment]] = None
     ) -> bool:
         """
         发送消息并触发 LLM 调用
@@ -669,7 +673,6 @@ class ConversationViewModel(QObject):
         # 注意：不直接操作 _messages 列表，通过 load_messages() 统一同步
         if self.context_manager:
             try:
-                # 附件已经是字典格式，直接传递
                 att_list = attachments if attachments else None
                 
                 # 使用有状态便捷方法添加用户消息
@@ -736,7 +739,9 @@ class ConversationViewModel(QObject):
                 return
             
             # 获取消息历史（用于 LLM 调用）
-            messages = self.context_manager.get_messages_for_llm()
+            messages = self._llm_message_builder.build_messages(
+                self.context_manager.get_working_messages()
+            )
             
             # 使用 start_streaming() 中生成的任务 ID
             task_id = self._current_task_id or f"llm_{uuid.uuid4().hex[:8]}"

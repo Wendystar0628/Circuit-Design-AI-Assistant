@@ -113,7 +113,6 @@ class ZhipuClient(BaseLLMClient):
         self._stream_handler = ZhipuStreamHandler()
         
         # httpx 客户端（延迟初始化）
-        self._client: Optional[httpx.AsyncClient] = None
         self._sync_client: Optional[httpx.Client] = None
     
     # ============================================================
@@ -127,15 +126,13 @@ class ZhipuClient(BaseLLMClient):
             "Authorization": f"Bearer {self.api_key}",
         }
     
-    async def _get_async_client(self) -> httpx.AsyncClient:
-        """获取异步 httpx 客户端（延迟初始化）"""
-        if self._client is None:
-            self._client = httpx.AsyncClient(
-                base_url=self.base_url,
-                headers=self._get_headers(),
-                timeout=httpx.Timeout(self.timeout, connect=10.0),
-            )
-        return self._client
+    def _create_async_client(self) -> httpx.AsyncClient:
+        """获取异步 httpx 客户端（按请求创建）"""
+        return httpx.AsyncClient(
+            base_url=self.base_url,
+            headers=self._get_headers(),
+            timeout=httpx.Timeout(self.timeout, connect=10.0),
+        )
     
     def _get_sync_client(self) -> httpx.Client:
         """获取同步 httpx 客户端（延迟初始化）"""
@@ -149,9 +146,6 @@ class ZhipuClient(BaseLLMClient):
     
     async def close(self) -> None:
         """关闭客户端连接"""
-        if self._client:
-            await self._client.aclose()
-            self._client = None
         if self._sync_client:
             self._sync_client.close()
             self._sync_client = None
@@ -285,24 +279,23 @@ class ZhipuClient(BaseLLMClient):
         timeout = DEFAULT_THINKING_TIMEOUT if thinking else self.timeout
         
         # 发送请求
-        client = await self._get_async_client()
-        
         try:
-            response = await client.post(
-                self.CHAT_ENDPOINT,
-                json=request_body,
-                timeout=timeout,
-            )
-            
-            # 检查 HTTP 状态码
-            if response.status_code != 200:
-                self._response_parser.handle_http_error(
-                    response.status_code,
-                    response.text
+            async with self._create_async_client() as client:
+                response = await client.post(
+                    self.CHAT_ENDPOINT,
+                    json=request_body,
+                    timeout=timeout,
                 )
             
-            # 解析响应
-            return self._response_parser.parse_response(response.json())
+                # 检查 HTTP 状态码
+                if response.status_code != 200:
+                    self._response_parser.handle_http_error(
+                        response.status_code,
+                        response.text
+                    )
+                
+                # 解析响应
+                return self._response_parser.parse_response(response.json())
             
         except httpx.TimeoutException as e:
             self._logger.error(f"Request timeout: {e}")
@@ -348,9 +341,6 @@ class ZhipuClient(BaseLLMClient):
         # 确定超时时间（流式请求使用更长的超时）
         timeout = DEFAULT_THINKING_TIMEOUT if thinking else self.timeout
         
-        # 发送请求
-        client = await self._get_async_client()
-        
         # 记录请求体（调试用）
         self._logger.debug(
             f"Sending stream request: model={request_body.get('model')}, "
@@ -359,38 +349,32 @@ class ZhipuClient(BaseLLMClient):
         )
         
         # 使用显式的响应对象管理，确保在生成器关闭时正确清理
-        response = None
-        stream_iterator = None
-        
         try:
-            response = await client.send(
-                client.build_request(
+            async with self._create_async_client() as client:
+                async with client.stream(
                     "POST",
                     self.CHAT_ENDPOINT,
                     json=request_body,
-                ),
-                stream=True,
-            )
-            
-            # 检查 HTTP 状态码
-            if response.status_code != 200:
-                body = await response.aread()
-                # 记录详细错误信息
-                self._logger.error(
-                    f"Stream API error: status={response.status_code}, "
-                    f"model={request_body.get('model')}, "
-                    f"thinking={request_body.get('thinking')}, "
-                    f"response={body.decode('utf-8')[:500]}"
-                )
-                self._response_parser.handle_http_error(
-                    response.status_code,
-                    body.decode("utf-8")
-                )
-            
-            # 使用流式处理器处理响应
-            stream_iterator = self._stream_handler.create_stream_iterator(response)
-            async for chunk in stream_iterator:
-                yield chunk
+                ) as response:
+                    # 检查 HTTP 状态码
+                    if response.status_code != 200:
+                        body = await response.aread()
+                        # 记录详细错误信息
+                        self._logger.error(
+                            f"Stream API error: status={response.status_code}, "
+                            f"model={request_body.get('model')}, "
+                            f"thinking={request_body.get('thinking')}, "
+                            f"response={body.decode('utf-8')[:500]}"
+                        )
+                        self._response_parser.handle_http_error(
+                            response.status_code,
+                            body.decode("utf-8")
+                        )
+                    
+                    # 使用流式处理器处理响应
+                    stream_iterator = self._stream_handler.create_stream_iterator(response)
+                    async for chunk in stream_iterator:
+                        yield chunk
                     
         except httpx.TimeoutException as e:
             self._logger.error(f"Stream timeout: {e}")
@@ -402,10 +386,6 @@ class ZhipuClient(BaseLLMClient):
             # 生成器被关闭（调用者调用了 aclose()）
             self._logger.debug("Stream generator closed by caller")
             raise
-        finally:
-            # 确保响应被正确关闭
-            if response is not None:
-                await response.aclose()
     
     def get_model_info(self, model: Optional[str] = None) -> ModelInfo:
         """

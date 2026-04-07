@@ -38,6 +38,8 @@ from langchain_core.messages import (
     ToolMessage,
 )
 
+from domain.llm.message_types import Attachment
+
 
 # ============================================================
 # 角色常量
@@ -75,7 +77,7 @@ MESSAGE_TYPE_TO_ROLE = {
 
 def create_human_message(
     content: str,
-    attachments: Optional[List[Dict[str, Any]]] = None,
+    attachments: Optional[List[Attachment]] = None,
     timestamp: Optional[str] = None,
 ) -> HumanMessage:
     """
@@ -83,7 +85,7 @@ def create_human_message(
     
     Args:
         content: 消息内容
-        attachments: 附件列表，每个附件为字典 {"type", "path", "name", "mime_type", "size"}
+        attachments: 附件列表
         timestamp: ISO 时间戳，默认为当前时间
         
     Returns:
@@ -93,7 +95,11 @@ def create_human_message(
         "timestamp": timestamp or datetime.now().isoformat(),
     }
     if attachments:
-        additional_kwargs["attachments"] = attachments
+        additional_kwargs["attachments"] = [
+            attachment
+            for attachment in attachments
+            if isinstance(attachment, Attachment)
+        ]
     
     return HumanMessage(
         content=content,
@@ -225,9 +231,16 @@ def get_usage(msg: BaseMessage) -> Optional[Dict[str, int]]:
     return _get_additional_kwargs(msg).get("usage")
 
 
-def get_attachments(msg: BaseMessage) -> List[Dict[str, Any]]:
+def get_attachments(msg: BaseMessage) -> List[Attachment]:
     """获取附件列表（仅 HumanMessage 有效）"""
-    return _get_additional_kwargs(msg).get("attachments", [])
+    attachments = _get_additional_kwargs(msg).get("attachments", [])
+    normalized: List[Attachment] = []
+    for attachment in attachments:
+        if isinstance(attachment, Attachment):
+            normalized.append(attachment)
+        elif isinstance(attachment, dict):
+            normalized.append(Attachment.from_dict(attachment))
+    return normalized
 
 
 def get_timestamp(msg: BaseMessage) -> str:
@@ -404,7 +417,10 @@ def message_to_dict(msg: BaseMessage) -> Dict[str, Any]:
     # 用户消息特有字段
     if role == ROLE_USER:
         if kwargs.get("attachments"):
-            result["additional_kwargs"]["attachments"] = kwargs["attachments"]
+            result["additional_kwargs"]["attachments"] = [
+                attachment.to_dict() if isinstance(attachment, Attachment) else attachment
+                for attachment in kwargs["attachments"]
+            ]
     
     # 助手消息特有字段
     elif role == ROLE_ASSISTANT:
@@ -449,7 +465,15 @@ def dict_to_message(data: Dict[str, Any]) -> BaseMessage:
     
     content = data.get("content", "")
     kwargs = data.get("additional_kwargs", {})
-    
+
+    if msg_type in (ROLE_USER, "human") and kwargs.get("attachments"):
+        kwargs = dict(kwargs)
+        kwargs["attachments"] = [
+            attachment if isinstance(attachment, Attachment) else Attachment.from_dict(attachment)
+            for attachment in kwargs["attachments"]
+            if isinstance(attachment, (dict, Attachment))
+        ]
+
     if msg_type in (ROLE_USER, "human"):
         return HumanMessage(
             content=content,

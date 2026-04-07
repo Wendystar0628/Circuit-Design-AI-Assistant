@@ -20,8 +20,9 @@
 """
 
 import os
+import mimetypes
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, List, Optional
 
 from PyQt6.QtCore import Qt, pyqtSignal, QSize
 from PyQt6.QtGui import QDragEnterEvent, QDropEvent, QKeyEvent
@@ -39,6 +40,8 @@ from PyQt6.QtWidgets import (
     QSizePolicy,
     QProgressBar,
 )
+
+from domain.llm.message_types import Attachment
 
 # ============================================================
 # 样式常量
@@ -90,8 +93,6 @@ class InputArea(QWidget):
     send_clicked = pyqtSignal()                    # 发送按钮点击
     stop_clicked = pyqtSignal()                    # 停止按钮点击
     text_changed = pyqtSignal(str)                 # 文本变化
-    attachment_added = pyqtSignal(dict)            # 附件添加
-    attachment_removed = pyqtSignal(int)           # 附件移除
     attachment_error = pyqtSignal(str)             # 附件错误
     upload_image_clicked = pyqtSignal()            # 上传图片按钮点击
     select_file_clicked = pyqtSignal()             # 选择文件按钮点击
@@ -102,7 +103,7 @@ class InputArea(QWidget):
         super().__init__(parent)
         
         # 内部状态
-        self._attachments: List[Dict[str, Any]] = []
+        self._attachments: List[Attachment] = []
         self._enabled = True
         self._button_mode: ButtonMode = ButtonMode.SEND
         
@@ -393,19 +394,18 @@ class InputArea(QWidget):
                 return False
         
         # 添加到列表
-        attachment = {
-            "type": att_type,
-            "path": path,
-            "name": os.path.basename(path),
-            "size": os.path.getsize(path),
-        }
+        mime_type, _ = mimetypes.guess_type(path)
+        attachment = Attachment(
+            type=att_type,
+            path=path,
+            name=os.path.basename(path),
+            mime_type=mime_type or ("image/png" if att_type == "image" else "application/octet-stream"),
+            size=os.path.getsize(path),
+        )
         self._attachments.append(attachment)
         
         # 更新 UI
         self._update_attachments_ui()
-        
-        # 发出信号
-        self.attachment_added.emit(attachment)
         
         return True
     
@@ -414,14 +414,13 @@ class InputArea(QWidget):
         if 0 <= index < len(self._attachments):
             self._attachments.pop(index)
             self._update_attachments_ui()
-            self.attachment_removed.emit(index)
     
     def clear_attachments(self) -> None:
         """清空所有附件"""
         self._attachments.clear()
         self._update_attachments_ui()
     
-    def get_attachments(self) -> List[Dict[str, Any]]:
+    def get_attachments(self) -> List[Attachment]:
         """获取附件列表"""
         return self._attachments.copy()
     
@@ -657,7 +656,7 @@ class InputArea(QWidget):
         self._attachments_area.setVisible(len(self._attachments) > 0)
     
     def _create_attachment_preview(
-        self, attachment: Dict[str, Any], index: int
+        self, attachment: Attachment, index: int
     ) -> QWidget:
         """创建附件预览组件（紧凑标签样式）"""
         container = QFrame()
@@ -675,7 +674,7 @@ class InputArea(QWidget):
         layout.setSpacing(4)
         
         # 文件名（截断显示，保留扩展名）
-        name = attachment["name"]
+        name = attachment.name
         if len(name) > 20:
             # 保留扩展名
             base, ext = os.path.splitext(name)

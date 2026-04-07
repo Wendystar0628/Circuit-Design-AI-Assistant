@@ -70,29 +70,29 @@ class WebSearchTool(BaseTool):
             max_results = 5
 
         web_search = get_web_search_tool()
-        search_config = web_search.get_search_config()
-        provider = str(search_config.get("provider", "") or "").strip()
-        model = str(search_config.get("model", "") or "").strip()
+        capability = web_search.resolve_capability()
+        provider = str(capability.provider or "").strip()
+        model = str(capability.model or "").strip()
 
-        if not search_config.get("available", False):
+        if not capability.available:
             return ToolResult(
                 content=(
                     "Provider-native web search is unavailable for the current chat runtime. "
-                    + str(search_config.get("reason", "") or "")
+                    + str(capability.reason or "")
                 ),
                 is_error=True,
                 details={
                     "query": query,
                     "provider": provider,
                     "model": model,
-                    "reason": str(search_config.get("reason", "") or ""),
+                    "reason": str(capability.reason or ""),
                     "results": [],
                     "result_count": 0,
                 },
             )
 
         try:
-            results = await web_search.search_with_current_model(query, max_results=max_results)
+            results = await web_search.search(query, max_results=max_results)
         except Exception as exc:
             return ToolResult(
                 content=f"Web search failed: {exc}",

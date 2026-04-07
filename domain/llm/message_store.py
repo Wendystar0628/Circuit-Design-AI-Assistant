@@ -34,6 +34,7 @@ from domain.llm.message_helpers import (
     ROLE_SYSTEM,
     create_human_message,
     create_ai_message,
+    create_tool_message,
     create_system_message,
     get_role,
     get_operations,
@@ -44,6 +45,7 @@ from domain.llm.message_helpers import (
     dict_to_message,
     dicts_to_messages,
 )
+from domain.llm.message_types import Attachment
 
 
 # ============================================================
@@ -102,7 +104,7 @@ class MessageStore:
         state: Dict[str, Any],
         role: str,
         content: str,
-        attachments: Optional[List[Dict[str, Any]]] = None,
+        attachments: Optional[List[Attachment]] = None,
         operations: Optional[List[str]] = None,
         reasoning_content: str = "",
         usage: Optional[Dict[str, int]] = None,

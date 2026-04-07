@@ -40,9 +40,8 @@ from domain.llm.message_helpers import (
     get_stop_reason,
     is_ai_message,
     get_web_search_results,
-    messages_to_dicts,
 )
-
+from domain.llm.message_types import Attachment
 
 # ============================================================
 # 消息显示格式化
@@ -150,13 +149,13 @@ def _format_code_block(code: str, language: str = "") -> str:
 </div>'''
 
 
-def _format_attachments_html(attachments: List[Dict[str, Any]]) -> str:
+def _format_attachments_html(attachments: List[Attachment]) -> str:
     """格式化附件列表"""
     items = []
     for att in attachments:
-        att_type = att.get("type", "file")
-        att_path = att.get("path", "")
-        att_name = html.escape(att.get("name", "未知文件"))
+        att_type = att.type
+        att_path = att.path
+        att_name = html.escape(att.name or "未知文件")
         
         if att_type == "image":
             items.append(

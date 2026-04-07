@@ -29,6 +29,8 @@ from PyQt6.QtWidgets import (
     QSizePolicy,
 )
 
+from domain.llm.message_types import Attachment
+
 # 尝试导入 WebEngine 用于 LaTeX 渲染
 try:
     from PyQt6.QtWebEngineWidgets import QWebEngineView
@@ -583,7 +585,7 @@ class MessageBubble(QWidget):
         self.reasoning_toggled.emit(is_expanded)
 
 
-    def _render_attachments(self, attachments: List[Dict[str, Any]]) -> QWidget:
+    def _render_attachments(self, attachments: List[Attachment]) -> QWidget:
         """渲染附件预览"""
         container = QWidget()
         layout = QHBoxLayout(container)
@@ -608,7 +610,7 @@ class MessageBubble(QWidget):
         layout.addStretch()
         return container
     
-    def _render_attachment_item(self, attachment: Dict[str, Any]) -> QWidget:
+    def _render_attachment_item(self, attachment: Attachment) -> QWidget:
         """渲染单个附件项"""
         container = QFrame()
         container.setStyleSheet("""
@@ -625,12 +627,12 @@ class MessageBubble(QWidget):
         layout.setSpacing(4)
         
         # 图标
-        icon = "🖼️" if attachment.get("type") == "image" else "📄"
+        icon = "🖼️" if attachment.type == "image" else "📄"
         icon_label = QLabel(icon)
         layout.addWidget(icon_label)
         
         # 文件名
-        name = attachment.get("name", "未知文件")
+        name = attachment.name or "未知文件"
         if len(name) > 15:
             name = name[:12] + "..."
         name_label = QLabel(name)

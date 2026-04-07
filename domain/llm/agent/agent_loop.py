@@ -253,6 +253,7 @@ class AgentLoop:
             tools=schemas if schemas else None,
             thinking=self._thinking,
         )
+        stream_completed = False
 
         try:
             async for chunk in stream_gen:
@@ -282,12 +283,10 @@ class AgentLoop:
                     turn.tool_calls = chunk.tool_calls
                 if chunk.finish_reason:
                     turn.finish_reason = chunk.finish_reason
-
-                if chunk.is_finished:
-                    break
+            stream_completed = True
         finally:
-            # 确保关闭生成器
-            if hasattr(stream_gen, 'aclose'):
+            # 正常完成时让 provider 侧自然收尾；仅在异常/取消提前退出时主动关闭
+            if not stream_completed and hasattr(stream_gen, 'aclose'):
                 try:
                     await stream_gen.aclose()
                 except Exception:

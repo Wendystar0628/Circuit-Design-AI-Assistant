@@ -14,7 +14,7 @@
 """
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import partial
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
@@ -85,6 +85,23 @@ class SearchCapability:
     reason: str = ""
 
 
+@dataclass(frozen=True)
+class SearchRuntime:
+    provider: str
+    model: str
+    api_key: str
+    base_url: str
+    available: bool
+    reason: str = ""
+
+
+@dataclass(frozen=True)
+class SearchExecutionPlan:
+    messages: List[Dict[str, Any]]
+    tools: Optional[List[Dict[str, Any]]] = None
+    request_kwargs: Dict[str, Any] = field(default_factory=dict)
+
+
 
 # ============================================================
 # 联网搜索工具类
@@ -138,12 +155,14 @@ class WebSearchTool:
     # 核心搜索方法
     # ============================================================
     
-    def resolve_capability(self) -> SearchCapability:
+    def resolve_search_runtime(self) -> SearchRuntime:
         runtime_manager = self._get_runtime_config_manager()
         if runtime_manager is None:
-            return SearchCapability(
+            return SearchRuntime(
                 provider="",
                 model="",
+                api_key="",
+                base_url="",
                 available=False,
                 reason="LLM runtime config manager is unavailable.",
             )
@@ -151,29 +170,27 @@ class WebSearchTool:
         active_config = runtime_manager.resolve_active_config()
         provider = str(active_config.provider or "").strip()
         model = str(active_config.model or "").strip()
+        api_key = str(active_config.api_key or "").strip()
+        base_url = str(active_config.base_url or "").strip()
 
         if not provider or not model:
-            return SearchCapability(
+            return SearchRuntime(
                 provider=provider,
                 model=model,
+                api_key=api_key,
+                base_url=base_url,
                 available=False,
                 reason="No active chat provider/model is configured.",
             )
 
-        if not str(active_config.api_key or "").strip():
-            return SearchCapability(
+        if not api_key:
+            return SearchRuntime(
                 provider=provider,
                 model=model,
+                api_key=api_key,
+                base_url=base_url,
                 available=False,
                 reason="The active chat model API key is missing.",
-            )
-
-        if self._get_active_llm_client() is None:
-            return SearchCapability(
-                provider=provider,
-                model=model,
-                available=False,
-                reason="The active chat client has not been initialized.",
             )
 
         try:
@@ -193,32 +210,36 @@ class WebSearchTool:
             supports_web_search = bool(provider_config.supports_web_search)
 
         if not supports_web_search:
-            return SearchCapability(
+            return SearchRuntime(
                 provider=provider,
                 model=model,
+                api_key=api_key,
+                base_url=base_url,
                 available=False,
                 reason=(
                     f"The active chat model '{provider}:{model}' does not support provider-native web search."
                 ),
             )
 
-        return SearchCapability(
+        return SearchRuntime(
             provider=provider,
             model=model,
+            api_key=api_key,
+            base_url=base_url,
             available=True,
             reason="",
         )
 
-    def get_search_config(self) -> Dict[str, Any]:
-        capability = self.resolve_capability()
-        return {
-            "provider": capability.provider,
-            "model": capability.model,
-            "available": capability.available,
-            "reason": capability.reason,
-        }
+    def resolve_capability(self) -> SearchCapability:
+        runtime = self.resolve_search_runtime()
+        return SearchCapability(
+            provider=runtime.provider,
+            model=runtime.model,
+            available=runtime.available,
+            reason=runtime.reason,
+        )
 
-    async def search_with_current_model(
+    async def search(
         self,
         query: str,
         max_results: int = DEFAULT_MAX_RESULTS,
@@ -226,26 +247,25 @@ class WebSearchTool:
         if not query or not query.strip():
             return []
 
-        capability = self.resolve_capability()
-        if not capability.available:
-            raise SearchCapabilityError(capability.reason or "Provider-native web search is unavailable.")
+        runtime = self.resolve_search_runtime()
+        if not runtime.available:
+            raise SearchCapabilityError(runtime.reason or "Provider-native web search is unavailable.")
 
         client = self._get_active_llm_client()
         if client is None:
-            raise SearchCapabilityError("The active chat client is unavailable.")
+            raise SearchExecutionError("The active chat client is unavailable.")
 
-        prompt_messages = self._build_native_search_messages(query.strip(), max_results)
+        plan = self._build_execution_plan(runtime, query.strip(), max_results)
 
         try:
             response = await asyncio.to_thread(
                 partial(
                     client.chat,
-                    messages=prompt_messages,
-                    model=capability.model,
+                    messages=plan.messages,
+                    model=runtime.model,
                     streaming=False,
-                    tools=[self._build_native_web_search_tool(max_results)],
-                    thinking=False,
-                    response_format={"type": "json_object"},
+                    tools=plan.tools,
+                    **plan.request_kwargs,
                 )
             )
         except Exception as exc:
@@ -253,10 +273,43 @@ class WebSearchTool:
 
         results = self._extract_search_results(response, max_results)
         self._log_info(
-            f"Provider-native web search completed: provider={capability.provider}, "
-            f"model={capability.model}, result_count={len(results)}"
+            f"Provider-native web search completed: provider={runtime.provider}, "
+            f"model={runtime.model}, result_count={len(results)}"
         )
         return results
+
+    def _build_execution_plan(
+        self,
+        runtime: SearchRuntime,
+        query: str,
+        max_results: int,
+    ) -> SearchExecutionPlan:
+        messages = self._build_native_search_messages(query, max_results)
+        request_kwargs: Dict[str, Any] = {
+            "thinking": False,
+            "response_format": {"type": "json_object"},
+        }
+
+        if runtime.provider == "zhipu":
+            return SearchExecutionPlan(
+                messages=messages,
+                tools=[self._build_native_web_search_tool(max_results)],
+                request_kwargs=request_kwargs,
+            )
+
+        if runtime.provider == "qwen":
+            request_kwargs["enable_search"] = True
+            request_kwargs["search_options"] = {
+                "forced_search": True,
+            }
+            return SearchExecutionPlan(
+                messages=messages,
+                request_kwargs=request_kwargs,
+            )
+
+        raise SearchCapabilityError(
+            f"Provider-native web search execution is not implemented for '{runtime.provider}:{runtime.model}'."
+        )
 
     def _extract_search_results(
         self,
@@ -470,6 +523,8 @@ __all__ = [
     "SearchResult",
     "SearchError",
     "SearchCapability",
+    "SearchRuntime",
+    "SearchExecutionPlan",
     "SearchCapabilityError",
     "SearchExecutionError",
     # 类

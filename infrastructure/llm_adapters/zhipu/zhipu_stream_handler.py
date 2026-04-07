@@ -81,9 +81,6 @@ class ZhipuStreamHandler:
                 chunk = self._process_line(line, state)
                 if chunk:
                     yield chunk
-                    
-                    if chunk.is_finished:
-                        break
             
             # 确保发送结束标记
             if not state.is_finished:
@@ -279,9 +276,6 @@ class ZhipuStreamHandler:
                     stream_chunk = self._process_line(line, state)
                     if stream_chunk:
                         yield stream_chunk
-                        
-                        if stream_chunk.is_finished:
-                            return
             
             # 处理剩余缓冲区
             if buffer.strip():

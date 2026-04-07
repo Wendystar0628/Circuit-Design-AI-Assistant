@@ -19,6 +19,11 @@ import os
 from typing import Any, Dict, List, Optional
 from PyQt6.QtCore import Qt, pyqtSignal, pyqtSlot, QTimer, QUrl
 
+from domain.llm.attachment_references import (
+    INLINE_ATTACHMENT_PLACEMENT,
+    normalize_attachments,
+    replace_inline_attachment_markers,
+)
 from domain.llm.message_types import Attachment
 
 try:
@@ -160,7 +165,7 @@ class WebMessageView(QWidget):
         if url_str.startswith(('about:', 'data:')):
             return True
         if url_str.startswith('file://'):
-            self.file_clicked.emit(url_str[7:])
+            self.file_clicked.emit(url.toLocalFile() or url_str[7:])
             return False
         if url_str.startswith(('http://', 'https://')):
             self.link_clicked.emit(url_str)
@@ -285,13 +290,18 @@ a:hover { text-decoration: underline; }
 .ops-more { color: #999; font-size: 11px; margin-top: 4px; }
 .file-link { color: #4a9eff; cursor: pointer; text-decoration: underline; }
 .file-link:hover { color: #2979ff; }
-.attachments { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
-.att-item { display: flex; align-items: center; gap: 4px; background: #fff; border: 1px solid #e0e0e0; 
-            border-radius: 4px; padding: 4px 8px; font-size: 12px; cursor: pointer; }
-.att-item:hover { background: #f5f5f5; }
-.att-icon { display: flex; align-items: center; }
-.att-name { color: #333; max-width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.att-more { background: #e0e0e0; border-radius: 4px; padding: 4px 8px; font-size: 12px; color: #666; }
+.inline-file-ref { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px; border-radius: 999px; background: #dbeafe; border: 1px solid #bfdbfe; color: #1d4ed8; font-size: 12px; cursor: pointer; vertical-align: baseline; margin: 0 2px; }
+.inline-file-ref:hover { background: #cfe3ff; text-decoration: none; }
+.inline-file-ref .ref-icon { display: inline-flex; align-items: center; }
+.inline-file-ref .ref-name { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attachment-gallery { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
+.image-thumb { width: 168px; border-radius: 12px; overflow: hidden; border: 1px solid #dbe3f0; background: #ffffff; cursor: pointer; }
+.image-thumb:hover { border-color: #93c5fd; box-shadow: 0 8px 18px rgba(30, 64, 175, 0.12); }
+.image-thumb img { width: 100%; height: 112px; object-fit: cover; display: block; background: #f3f4f6; }
+.image-caption { display: block; padding: 8px 10px; font-size: 12px; color: #374151; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gallery-file-ref { display: inline-flex; align-items: center; gap: 6px; background: #ffffff; border: 1px solid #dbe3f0; border-radius: 10px; padding: 8px 10px; font-size: 12px; color: #1f2937; cursor: pointer; }
+.gallery-file-ref:hover { background: #f8fbff; border-color: #93c5fd; }
+.gallery-file-ref .ref-name { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ops-card.tool-ops { background: #fff8e1; border-left-color: #ff9800; }
 .ops-card.tool-ops .ops-title { color: #e65100; }
 .tool-card { background: #fff8e1; border-left: 3px solid #ff9800; border-radius: 4px; padding: 8px 12px; margin: 8px 0; }
@@ -413,7 +423,7 @@ function toggleThink(id) {
         if(t && t.classList.contains('think-toggle')) t.classList.toggle('expanded');
     } 
 }
-function onFileClick(path) { window.location.href = 'file://' + path; }
+function onFileClick(path) { window.location.href = 'file:///' + String(path || '').replace(/\\/g, '/'); }
 function addToolCard(html) {
     var streaming = document.querySelector('.msg.streaming');
     if (!streaming) { document.getElementById('msgs').insertAdjacentHTML('beforeend', html); }
@@ -462,17 +472,18 @@ function updateToolCard(id, resultHtml, isError) {
         reasoning = getattr(msg, 'reasoning_html', '') or ''
         msg_id = getattr(msg, 'id', 'x')
         operations = getattr(msg, 'operations', []) or []
-        attachments = getattr(msg, 'attachments', []) or []
+        attachments = normalize_attachments(getattr(msg, 'attachments', []) or [])
         web_search_results = getattr(msg, 'web_search_results', []) or []
         
-        content_html = self._md_to_html(content)
-        
         if role == 'user':
+            content_html = self._render_user_content_html(content, attachments)
             att_html = self._render_attachments_html(attachments) if attachments else ''
             return f'<div class="row user"><div class="msg user">{content_html}{att_html}</div></div>'
         elif role == 'system':
+            content_html = self._md_to_html(content)
             return f'<div class="row"><div class="msg system">{content_html}</div></div>'
         else:
+            content_html = self._md_to_html(content)
             think = ""
             if reasoning:
                 think = f'''<div class="think">
@@ -515,27 +526,62 @@ function updateToolCard(id, resultHtml, isError) {
 {more}
 </div>'''
     
+    def _render_user_content_html(self, content: str, attachments: List[Attachment]) -> str:
+        replaced = replace_inline_attachment_markers(
+            content,
+            attachments,
+            self._render_inline_attachment_html,
+            lambda _reference_id, label: self._esc_html(label),
+        )
+        return self._md_to_html(replaced)
+
+    def _render_inline_attachment_html(self, attachment: Attachment) -> str:
+        display_name = self._truncate_attachment_name(attachment.name or "未知文件", 28)
+        onclick = f'onclick="onFileClick(\'{self._esc_attr(attachment.path)}\')"' if attachment.path else ''
+        return (
+            f'<span class="inline-file-ref" {onclick}>'
+            f'<span class="ref-icon">{SVG_FILE}</span>'
+            f'<span class="ref-name">{self._esc_html(display_name)}</span>'
+            f'</span>'
+        )
+
     def _render_attachments_html(self, attachments: List[Attachment]) -> str:
-        if not attachments:
+        gallery_items: List[str] = []
+        for attachment in attachments:
+            if attachment.type == "image":
+                if not attachment.path:
+                    continue
+                image_url = self._local_file_url(attachment.path)
+                display_name = attachment.name or 'image'
+                gallery_items.append(
+                    f'<div class="image-thumb" onclick="onFileClick(\'{self._esc_attr(attachment.path)}\')">'
+                    f'<img src="{self._esc_attr(image_url)}" alt="{self._esc_html(display_name)}">'
+                    f'<span class="image-caption">{self._esc_html(self._truncate_attachment_name(display_name, 28))}</span>'
+                    f'</div>'
+                )
+                continue
+            if attachment.placement == INLINE_ATTACHMENT_PLACEMENT:
+                continue
+            display_name = attachment.name or '文件'
+            gallery_items.append(
+                f'<div class="gallery-file-ref" onclick="onFileClick(\'{self._esc_attr(attachment.path)}\')">'
+                f'<span class="ref-icon">{SVG_FILE}</span>'
+                f'<span class="ref-name">{self._esc_html(self._truncate_attachment_name(display_name, 28))}</span>'
+                f'</div>'
+            )
+        if not gallery_items:
             return ""
-        
-        items = []
-        for att in attachments[:3]:
-            att_type = att.type
-            name = att.name or "未知文件"
-            path = att.path
-            
-            icon = SVG_IMAGE if att_type == "image" else SVG_FILE
-            display_name = name[:12] + "..." if len(name) > 15 else name
-            
-            onclick = f'onclick="onFileClick(\'{self._esc_attr(path)}\')"' if path else ''
-            items.append(f'<div class="att-item" {onclick}><span class="att-icon">{icon}</span><span class="att-name">{display_name}</span></div>')
-        
-        more = ""
-        if len(attachments) > 3:
-            more = f'<span class="att-more">+{len(attachments) - 3}</span>'
-        
-        return f'<div class="attachments">{"".join(items)}{more}</div>'
+        return f'<div class="attachment-gallery">{"".join(gallery_items)}</div>'
+
+    def _local_file_url(self, path: str) -> str:
+        return QUrl.fromLocalFile(path).toString()
+
+    def _truncate_attachment_name(self, name: str, limit: int) -> str:
+        if len(name) <= limit:
+            return name
+        base, ext = os.path.splitext(name)
+        room = max(4, limit - len(ext) - 3)
+        return f'{base[:room]}...{ext}'
     
     def _render_sources_html(self, results: List[Dict[str, Any]]) -> str:
         """

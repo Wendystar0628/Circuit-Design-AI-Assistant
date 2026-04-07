@@ -1,4 +1,5 @@
 from domain.llm.llm_message_builder import LLMMessageBuilder
+from domain.llm.attachment_references import build_inline_attachment_marker
 from domain.llm.message_helpers import create_human_message
 from domain.llm.message_types import Attachment
 from infrastructure.llm_adapters.qwen.qwen_client import QwenClient
@@ -56,6 +57,36 @@ def test_llm_message_builder_reads_csv_attachment_text(tmp_path):
     assert isinstance(payload["content"], str)
     assert "[附件 dataset.csv]" in payload["content"]
     assert "time,value" in payload["content"]
+
+
+def test_llm_message_builder_expands_inline_file_reference_in_place(tmp_path, monkeypatch):
+    file_path = tmp_path / "design_notes.txt"
+    file_path.write_text("line-1\nline-2\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "domain.llm.llm_message_builder.extract_attachment_text",
+        lambda path: "line-1\nline-2",
+    )
+    attachment = Attachment(
+        type="file",
+        path=str(file_path),
+        name="design_notes.txt",
+        mime_type="text/plain",
+        size=file_path.stat().st_size,
+        placement="inline",
+        reference_id="ref_design_notes",
+    )
+    marker = build_inline_attachment_marker(attachment.reference_id, attachment.name)
+    message = create_human_message(
+        f"请先分析前文 {marker} 再继续后文。",
+        attachments=[attachment],
+    )
+
+    payload = LLMMessageBuilder().build_message(message)
+
+    assert isinstance(payload["content"], str)
+    assert payload["content"].startswith("请先分析前文")
+    assert "[附件 design_notes.txt]" in payload["content"]
+    assert payload["content"].index("[附件 design_notes.txt]") < payload["content"].index("再继续后文")
 
 
 @pytest.mark.parametrize(

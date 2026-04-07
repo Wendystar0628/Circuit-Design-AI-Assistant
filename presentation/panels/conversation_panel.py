@@ -23,8 +23,8 @@
 import os
 from typing import Any, Dict, Optional
 
-from PyQt6.QtCore import pyqtSignal, pyqtSlot
-from PyQt6.QtGui import QDragEnterEvent, QDropEvent
+from PyQt6.QtCore import pyqtSignal, pyqtSlot, QUrl
+from PyQt6.QtGui import QDesktopServices, QDragEnterEvent, QDropEvent
 from PyQt6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -32,6 +32,7 @@ from PyQt6.QtWidgets import (
     QFileDialog,
 )
 
+from domain.rag.file_extractor import resolve_attachment_type
 # 从子模块导入组件
 from presentation.panels.conversation import (
     ConversationViewModel,
@@ -209,6 +210,17 @@ class ConversationPanel(QWidget):
             )
             self._input_area.attachment_error.connect(
                 self._on_attachment_error
+            )
+            self._input_area.image_preview_requested.connect(
+                self._on_image_preview_requested
+            )
+
+        if self._message_area:
+            self._message_area.file_clicked.connect(
+                self._on_message_file_clicked
+            )
+            self._message_area.link_clicked.connect(
+                self._on_link_clicked
             )
     
     def _connect_view_model_signals(self) -> None:
@@ -684,6 +696,28 @@ class ConversationPanel(QWidget):
             self._get_text("dialog.warning.title", "警告"),
             message
         )
+
+    def _on_image_preview_requested(self, image_path: str) -> None:
+        self._open_image_preview(image_path)
+
+    def _on_message_file_clicked(self, file_path: str) -> None:
+        attachment_type = resolve_attachment_type(file_path, "")
+        if attachment_type == "image":
+            self._open_image_preview(file_path)
+            return
+        self.file_clicked.emit(file_path)
+
+    def _on_link_clicked(self, url: str) -> None:
+        if url:
+            QDesktopServices.openUrl(QUrl(url))
+
+    def _open_image_preview(self, image_path: str) -> None:
+        if not image_path or not os.path.isfile(image_path):
+            return
+        from presentation.dialogs.image_preview_dialog import ImagePreviewDialog
+
+        dialog = ImagePreviewDialog(image_path, self)
+        dialog.exec()
 
 
     # ============================================================

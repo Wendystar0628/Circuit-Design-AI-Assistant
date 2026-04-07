@@ -25,7 +25,7 @@ from enum import Enum
 from typing import Any, List, Optional
 
 from PyQt6.QtCore import Qt, pyqtSignal, QSize
-from PyQt6.QtGui import QDragEnterEvent, QDropEvent, QKeyEvent
+from PyQt6.QtGui import QDragEnterEvent, QDropEvent, QKeyEvent, QPixmap, QIcon
 from PyQt6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -33,7 +33,6 @@ from PyQt6.QtWidgets import (
     QLabel,
     QFrame,
     QPushButton,
-    QTextEdit,
     QToolButton,
     QFileDialog,
     QMessageBox,
@@ -41,8 +40,14 @@ from PyQt6.QtWidgets import (
     QProgressBar,
 )
 
+from domain.llm.attachment_references import (
+    GALLERY_ATTACHMENT_PLACEMENT,
+    INLINE_ATTACHMENT_PLACEMENT,
+    ensure_attachment_reference_id,
+)
 from domain.llm.message_types import Attachment
 from domain.rag.file_extractor import resolve_attachment_type
+from presentation.panels.conversation.inline_attachment_text_edit import InlineAttachmentTextEdit
 
 # ============================================================
 # 样式常量
@@ -97,6 +102,7 @@ class InputArea(QWidget):
     upload_image_clicked = pyqtSignal()            # 上传图片按钮点击
     select_file_clicked = pyqtSignal()             # 选择文件按钮点击
     model_card_clicked = pyqtSignal()              # 模型卡片点击（打开模型设置）
+    image_preview_requested = pyqtSignal(str)
     
     def __init__(self, parent: Optional[QWidget] = None):
         """初始化输入区域"""
@@ -108,7 +114,7 @@ class InputArea(QWidget):
         self._button_mode: ButtonMode = ButtonMode.SEND
         
         # UI 组件引用
-        self._input_text: Optional[QTextEdit] = None
+        self._input_text: Optional[InlineAttachmentTextEdit] = None
         self._send_button: Optional[QPushButton] = None
         self._model_card_btn: Optional[QPushButton] = None
         self._attachments_area: Optional[QWidget] = None
@@ -170,7 +176,7 @@ class InputArea(QWidget):
         input_container_layout.setSpacing(0)
         
         # 输入框
-        self._input_text = QTextEdit()
+        self._input_text = InlineAttachmentTextEdit()
         self._input_text.setPlaceholderText(
             self._get_text("hint.enter_message", "Enter your message...")
         )
@@ -189,6 +195,9 @@ class InputArea(QWidget):
             }}
         """)
         self._input_text.textChanged.connect(self._on_text_changed)
+        self._input_text.inline_attachment_removed.connect(
+            self._on_inline_attachment_removed
+        )
         self._input_text.installEventFilter(self)
         input_container_layout.addWidget(self._input_text)
         
@@ -349,7 +358,7 @@ class InputArea(QWidget):
     def get_text(self) -> str:
         """获取输入文本"""
         if self._input_text:
-            return self._input_text.toPlainText()
+            return self._input_text.serialize_content()
         return ""
     
     def set_text(self, text: str) -> None:
@@ -402,8 +411,14 @@ class InputArea(QWidget):
             name=os.path.basename(path),
             mime_type=mime_type or ("image/png" if resolved_type == "image" else "application/octet-stream"),
             size=os.path.getsize(path),
+            placement=GALLERY_ATTACHMENT_PLACEMENT if resolved_type == "image" else INLINE_ATTACHMENT_PLACEMENT,
+            reference_id="" if resolved_type == "image" else ensure_attachment_reference_id(),
         )
         self._attachments.append(attachment)
+
+        if attachment.placement == INLINE_ATTACHMENT_PLACEMENT and self._input_text:
+            self._input_text.insert_inline_attachment(attachment)
+            self._input_text.setFocus()
         
         # 更新 UI
         self._update_attachments_ui()
@@ -413,12 +428,28 @@ class InputArea(QWidget):
     def remove_attachment(self, index: int) -> None:
         """移除附件"""
         if 0 <= index < len(self._attachments):
-            self._attachments.pop(index)
+            attachment = self._attachments.pop(index)
+            if (
+                attachment.reference_id
+                and attachment.placement == INLINE_ATTACHMENT_PLACEMENT
+                and self._input_text
+            ):
+                self._input_text.remove_inline_attachment(attachment.reference_id)
             self._update_attachments_ui()
     
     def clear_attachments(self) -> None:
         """清空所有附件"""
         self._attachments.clear()
+        if self._input_text:
+            self._input_text.clear_inline_attachments()
+        self._update_attachments_ui()
+
+    def _remove_attachment_by_reference_id(self, reference_id: str) -> None:
+        self._attachments = [
+            attachment
+            for attachment in self._attachments
+            if attachment.reference_id != reference_id
+        ]
         self._update_attachments_ui()
     
     def get_attachments(self) -> List[Attachment]:
@@ -649,46 +680,84 @@ class InputArea(QWidget):
                 item.widget().deleteLater()
         
         # 添加新预览
-        for i, att in enumerate(self._attachments):
+        image_attachments = [
+            attachment
+            for attachment in self._attachments
+            if attachment.type == "image" and attachment.placement == GALLERY_ATTACHMENT_PLACEMENT
+        ]
+
+        for i, att in enumerate(image_attachments):
             preview = self._create_attachment_preview(att, i)
             self._attachments_layout.insertWidget(i, preview)
         
         # 显示/隐藏附件区
-        self._attachments_area.setVisible(len(self._attachments) > 0)
+        self._attachments_area.setVisible(len(image_attachments) > 0)
     
     def _create_attachment_preview(
         self, attachment: Attachment, index: int
     ) -> QWidget:
-        """创建附件预览组件（紧凑标签样式）"""
+        """创建图片附件缩略图组件"""
+        attachment_index = next(
+            (
+                current_index
+                for current_index, current_attachment in enumerate(self._attachments)
+                if current_attachment is attachment
+            ),
+            index,
+        )
         container = QFrame()
-        container.setFixedHeight(26)
+        container.setFixedSize(112, 112)
         container.setStyleSheet("""
             QFrame {
-                background-color: #f0f0f0;
+                background-color: #ffffff;
                 border: 1px solid #e0e0e0;
-                border-radius: 4px;
+                border-radius: 10px;
             }
         """)
         
-        layout = QHBoxLayout(container)
-        layout.setContentsMargins(8, 2, 4, 2)
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(6, 6, 6, 6)
         layout.setSpacing(4)
-        
-        # 文件名（截断显示，保留扩展名）
-        name = attachment.name
-        if len(name) > 20:
-            # 保留扩展名
-            base, ext = os.path.splitext(name)
-            max_base_len = 16 - len(ext)
-            if max_base_len > 3:
-                name = base[:max_base_len] + "..." + ext
-            else:
-                name = base[:13] + "..."
-        
-        name_label = QLabel(name)
+
+        top_row = QHBoxLayout()
+        top_row.setContentsMargins(0, 0, 0, 0)
+        top_row.addStretch()
+
+        delete_btn = QToolButton()
+        delete_btn.setFixedSize(22, 22)
+        delete_btn.setStyleSheet("""
+            QToolButton {
+                background-color: rgba(17, 24, 39, 0.72);
+                color: white;
+                border: none;
+                border-radius: 11px;
+                padding: 0px;
+            }
+            QToolButton:hover {
+                background-color: rgba(17, 24, 39, 0.9);
+            }
+        """)
+        self._set_close_icon(delete_btn, 14)
+        delete_btn.clicked.connect(lambda: self.remove_attachment(attachment_index))
+        top_row.addWidget(delete_btn)
+        layout.addLayout(top_row)
+
+        thumbnail_btn = QToolButton()
+        thumbnail_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        thumbnail_btn.setToolTip(attachment.name)
+        thumbnail_btn.setAutoRaise(True)
+        thumbnail_btn.setIcon(self._build_thumbnail_icon(attachment.path))
+        thumbnail_btn.setIconSize(QSize(92, 72))
+        thumbnail_btn.setFixedSize(96, 76)
+        thumbnail_btn.clicked.connect(lambda: self.image_preview_requested.emit(attachment.path))
+        layout.addWidget(thumbnail_btn, 0, Qt.AlignmentFlag.AlignCenter)
+
+        name_label = QLabel(self._truncate_file_name(attachment.name, 18))
+        name_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        name_label.setWordWrap(True)
         name_label.setStyleSheet("""
             QLabel {
-                font-size: 12px;
+                font-size: 11px;
                 color: #333333;
                 background: transparent;
                 border: none;
@@ -696,26 +765,29 @@ class InputArea(QWidget):
         """)
         layout.addWidget(name_label)
         
-        # 删除按钮（小叉号）
-        delete_btn = QToolButton()
-        delete_btn.setFixedSize(20, 20)
-        delete_btn.setStyleSheet("""
-            QToolButton {
-                background-color: transparent;
-                border: none;
-                border-radius: 10px;
-                padding: 0px;
-            }
-            QToolButton:hover {
-                background-color: rgba(0, 0, 0, 0.1);
-            }
-        """)
-        # 设置关闭图标
-        self._set_close_icon(delete_btn, 16)
-        delete_btn.clicked.connect(lambda: self.remove_attachment(index))
-        layout.addWidget(delete_btn)
-        
         return container
+
+    def _build_thumbnail_icon(self, path: str) -> QIcon:
+        pixmap = QPixmap(path)
+        if pixmap.isNull():
+            fallback = QPixmap(92, 72)
+            fallback.fill(Qt.GlobalColor.lightGray)
+            return QIcon(fallback)
+        return QIcon(
+            pixmap.scaled(
+                92,
+                72,
+                Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+        )
+
+    def _truncate_file_name(self, name: str, limit: int) -> str:
+        if len(name) <= limit:
+            return name
+        base, ext = os.path.splitext(name)
+        room = max(3, limit - len(ext) - 3)
+        return f"{base[:room]}...{ext}"
     
     def _set_close_icon(self, button: QToolButton, size: int = 16) -> None:
         """设置关闭图标（从本地文件加载）"""
@@ -736,7 +808,10 @@ class InputArea(QWidget):
     def _on_text_changed(self) -> None:
         """处理文本变化"""
         if self._input_text:
-            self.text_changed.emit(self._input_text.toPlainText())
+            self.text_changed.emit(self._input_text.serialize_content())
+
+    def _on_inline_attachment_removed(self, reference_id: str) -> None:
+        self._remove_attachment_by_reference_id(reference_id)
     
     def _on_action_button_clicked(self) -> None:
         """处理发送/停止按钮点击（根据当前模式）"""

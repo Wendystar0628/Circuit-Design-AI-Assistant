@@ -64,6 +64,8 @@ class Attachment:
     name: str              # 显示名称
     mime_type: str = ""    # MIME 类型
     size: int = 0          # 文件大小（字节）
+    placement: str = "gallery"
+    reference_id: str = ""
     
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典"""
@@ -73,6 +75,8 @@ class Attachment:
             "name": self.name,
             "mime_type": self.mime_type,
             "size": self.size,
+            "placement": self.placement,
+            "reference_id": self.reference_id,
         }
     
     @classmethod
@@ -84,6 +88,8 @@ class Attachment:
             name=data.get("name", ""),
             mime_type=data.get("mime_type", ""),
             size=data.get("size", 0),
+            placement=data.get("placement", "gallery"),
+            reference_id=data.get("reference_id", ""),
         )
 
 

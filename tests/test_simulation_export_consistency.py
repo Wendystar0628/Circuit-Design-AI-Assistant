@@ -191,8 +191,8 @@ def test_project_export_root_uses_visible_results_folder_and_unique_timestamp_di
     first_root = simulation_artifact_exporter.create_project_export_root(str(tmp_path), sample_result)
     second_root = simulation_artifact_exporter.create_project_export_root(str(tmp_path), sample_result)
 
-    assert first_root.relative_to(tmp_path).parts == ("仿真结果", "export_consistency", "2026-04-06_00-10-00")
-    assert second_root.relative_to(tmp_path).parts == ("仿真结果", "export_consistency", "2026-04-06_00-10-00_2")
+    assert first_root.relative_to(tmp_path).parts == ("simulation_results", "export_consistency", "2026-04-06_00-10-00")
+    assert second_root.relative_to(tmp_path).parts == ("simulation_results", "export_consistency", "2026-04-06_00-10-00_2")
 
 
 def test_chart_and_waveform_exports_follow_common_payload_schema(qapp, sample_result: SimulationResult, tmp_path: Path):
@@ -242,7 +242,7 @@ def test_export_panel_auto_exports_current_result_into_project_results_tree(qapp
 
     assert execution is not None
     assert execution.errors == []
-    assert execution.export_root.relative_to(tmp_path).parts == ("仿真结果", "export_consistency", "2026-04-06_00-10-00")
+    assert execution.export_root.relative_to(tmp_path).parts == ("simulation_results", "export_consistency", "2026-04-06_00-10-00")
     assert (execution.export_root / "export_manifest.json").exists()
     assert (execution.export_root / "charts" / "charts.json").exists()
     assert (execution.export_root / "waveforms" / "waveform.json").exists()

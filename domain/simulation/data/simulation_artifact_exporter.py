@@ -10,7 +10,7 @@ from domain.simulation.models.simulation_result import SimulationResult
 
 
 EXPORT_SCHEMA_VERSION = 1
-PROJECT_EXPORTS_DIR_NAME = "仿真结果"
+PROJECT_EXPORTS_DIR_NAME = "simulation_results"
 DEFAULT_EXPORT_FOLDER_NAME = "simulation_result"
 
 

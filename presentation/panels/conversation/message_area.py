@@ -14,7 +14,7 @@
 """
 
 from typing import Any, List, Optional
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QSizePolicy
 
 # 导入 WebMessageView
@@ -35,6 +35,9 @@ class MessageArea(QWidget):
     
     使用 WebMessageView 渲染所有消息，支持 Markdown 和 LaTeX。
     """
+
+    file_clicked = pyqtSignal(str)
+    link_clicked = pyqtSignal(str)
     
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -85,6 +88,8 @@ class MessageArea(QWidget):
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Expanding
         )
+        self._web_view.file_clicked.connect(self.file_clicked.emit)
+        self._web_view.link_clicked.connect(self.link_clicked.emit)
         layout.addWidget(self._web_view)
     
     # ============================================================

@@ -363,13 +363,12 @@ class InputArea(QWidget):
             self._input_text.clear()
         self.clear_attachments()
     
-    def add_attachment(self, path: str, att_type: str = "file") -> bool:
+    def add_attachment(self, path: str) -> bool:
         """
         添加附件
         
         Args:
             path: 文件路径
-            att_type: 附件类型（image/file）
             
         Returns:
             bool: 是否添加成功

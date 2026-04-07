@@ -213,10 +213,7 @@ def extract_indexable_content(abs_path: str) -> str:
     if rule is None or not rule.should_index:
         return ""
 
-    ext = rule.extension
-    max_size = rule.max_size
-    extractor = _EXTRACTOR_MAP.get(ext, _extract_text)
-    return extractor(abs_path, max_size)
+    return _extract_by_extension(abs_path, rule.extension, rule.max_size)
 
 
 def extract_attachment_text(abs_path: str) -> str:
@@ -225,8 +222,7 @@ def extract_attachment_text(abs_path: str) -> str:
     if max_size is None:
         return ""
 
-    extractor = _EXTRACTOR_MAP.get(ext, _extract_text)
-    return extractor(abs_path, max_size)
+    return _extract_by_extension(abs_path, ext, max_size)
 
 
 def is_image_attachment_path(path: str, mime_type: str = "") -> bool:
@@ -240,6 +236,11 @@ def resolve_attachment_type(path: str, mime_type: str = "") -> str:
     if is_image_attachment_path(path, mime_type):
         return "image"
     return "file"
+
+
+def _extract_by_extension(abs_path: str, extension: str, max_size: int) -> str:
+    extractor = _EXTRACTOR_MAP.get(extension, _extract_text)
+    return extractor(abs_path, max_size)
 
 
 def get_file_index_rule(abs_path: str) -> Optional[FileIndexRule]:

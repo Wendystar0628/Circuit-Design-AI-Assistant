@@ -1,4 +1,3 @@
-from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
@@ -7,6 +6,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QSplitter, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget
 
 from presentation.panels.simulation.chart_data_cursor import ChartDataCursorController, DataCursorSample, DataCursorTarget, DataCursorValue
+from presentation.panels.simulation.chart_export_utils import build_chart_export_payload
 from presentation.panels.simulation.chart_page_widget import MeasurementBar
 from presentation.panels.simulation.chart_view_types import ChartSeries, ChartSpec
 from presentation.panels.simulation.ltspice_plot_interaction import LTSpiceViewBox, apply_dynamic_tick_spacing, clamp_range, finite_range, merge_ranges, nice_tick_spacing
@@ -279,62 +279,13 @@ class BodeOverlayChartPage(QWidget):
             return False
         return pixmap.save(path)
 
-    def export_chart_data(self, path: str, format_name: str) -> bool:
-        import csv
-        import json
-
-        payload = self.build_export_payload()
-        if payload is None:
-            return False
-        if format_name == "json":
-            Path(path).write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-            return True
-        with open(path, "w", newline="", encoding="utf-8") as handle:
-            writer = csv.writer(handle)
-            headers = [payload["x_label"]] + [series["name"] for series in payload["series"]]
-            writer.writerow(headers)
-            for row in payload["rows"]:
-                writer.writerow([row.get(header, "") for header in headers])
-        return True
-
     def build_export_payload(self) -> Optional[Dict[str, object]]:
         if self._spec is None:
             return None
         visible_series = self._visible_series()
         if not visible_series:
             return None
-        rows: List[Dict[str, float]] = []
-        primary_x = visible_series[0].x_data
-        for index, x_value in enumerate(primary_x):
-            row: Dict[str, float] = {self._spec.x_label: float(x_value)}
-            for series in visible_series:
-                if index < len(series.y_data):
-                    row[series.name] = float(series.y_data[index])
-            rows.append(row)
-        return {
-            "chart_type": self._spec.chart_type.value,
-            "title": self._spec.title,
-            "x_label": self._spec.x_label,
-            "y_label": self._spec.y_label,
-            "secondary_y_label": self._spec.secondary_y_label,
-            "log_x": self._spec.log_x,
-            "log_y": False,
-            "series": [
-                {
-                    "name": series.name,
-                    "color": series.color,
-                    "axis_key": series.axis_key,
-                    "line_style": series.line_style,
-                    "group_key": series.group_key,
-                    "component": series.component,
-                    "x": [float(value) for value in series.x_data],
-                    "y": [float(value) for value in series.y_data],
-                    "point_count": len(series.y_data),
-                }
-                for series in visible_series
-            ],
-            "rows": rows,
-        }
+        return build_chart_export_payload(self._spec, visible_series)
 
     def retranslate_ui(self):
         self._signal_title_label.setText(self._tr("Signals"))

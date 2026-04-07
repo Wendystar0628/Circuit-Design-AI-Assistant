@@ -20,6 +20,7 @@ from domain.simulation.models.chart_type import ChartType
 from domain.simulation.models.simulation_result import SimulationResult
 from presentation.panels.simulation.bode_overlay_chart_page import BodeOverlayChartPage
 from presentation.panels.simulation.chart_data_cursor import DataCursorSelectionDialog
+from presentation.panels.simulation.chart_export_utils import write_chart_csv
 from presentation.panels.simulation.chart_page_widget import ChartPage
 from presentation.panels.simulation.chart_view_types import ChartSeries, ChartSpec
 from presentation.panels.simulation.ltspice_plot_interaction import finite_range
@@ -222,7 +223,7 @@ class ChartViewer(QWidget):
             if page.export_image(str(image_path)):
                 exported_files.append(str(image_path))
                 file_map["image"] = image_path.name
-            if page.export_chart_data(str(csv_path), "csv"):
+            if write_chart_csv(str(csv_path), chart_payload):
                 exported_files.append(str(csv_path))
                 file_map["csv"] = csv_path.name
 

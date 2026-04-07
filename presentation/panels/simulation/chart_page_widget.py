@@ -1,6 +1,3 @@
-import csv
-import json
-from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -9,6 +6,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QSplitter, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget
 
 from presentation.panels.simulation.chart_data_cursor import ChartDataCursorController, DataCursorSample, DataCursorTarget, DataCursorValue
+from presentation.panels.simulation.chart_export_utils import build_chart_export_payload
 from presentation.panels.simulation.chart_view_types import ChartSeries, ChartSpec
 from presentation.panels.simulation.ltspice_plot_interaction import (
     LTSpiceViewBox,
@@ -344,62 +342,11 @@ class ChartPage(QWidget):
             return False
         return pixmap.save(path)
 
-    def export_chart_data(self, path: str, format_name: str) -> bool:
-        export_payload = self.build_export_payload()
-        if export_payload is None:
-            return False
-
-        rows = export_payload["rows"]
-        if format_name == "json":
-            Path(path).write_text(json.dumps(export_payload, ensure_ascii=False, indent=2), encoding="utf-8")
-            return True
-
-        with open(path, "w", newline="", encoding="utf-8") as handle:
-            writer = csv.writer(handle)
-            headers = [export_payload["x_label"]] + [series["name"] for series in export_payload["series"]]
-            writer.writerow(headers)
-            for row in rows:
-                writer.writerow([row.get(header, "") for header in headers])
-        return True
-
     def build_export_payload(self) -> Optional[Dict[str, Any]]:
         visible_series = self._visible_series()
         if self._spec is None or not visible_series:
             return None
-
-        rows = self._build_data_rows(visible_series)
-        return {
-            "chart_type": self._spec.chart_type.value,
-            "title": self._spec.title,
-            "x_label": self._spec.x_label,
-            "y_label": self._spec.y_label,
-            "log_x": self._spec.log_x,
-            "log_y": self._spec.log_y,
-            "series": [self._serialize_series(series) for series in visible_series],
-            "rows": rows,
-        }
-
-    def _serialize_series(self, series: ChartSeries) -> Dict[str, Any]:
-        return {
-            "name": series.name,
-            "color": series.color,
-            "x": [float(value) for value in series.x_data],
-            "y": [float(value) for value in series.y_data],
-            "point_count": len(series.y_data),
-        }
-
-    def _build_data_rows(self, series_list: List[ChartSeries]) -> List[Dict[str, float]]:
-        if self._spec is None or not series_list:
-            return []
-        primary_x = series_list[0].x_data
-        rows: List[Dict[str, float]] = []
-        for index, x_value in enumerate(primary_x):
-            row: Dict[str, float] = {self._spec.x_label: float(x_value)}
-            for series in series_list:
-                if index < len(series.y_data):
-                    row[series.name] = float(series.y_data[index])
-            rows.append(row)
-        return rows
+        return build_chart_export_payload(self._spec, visible_series)
 
     def _ensure_cursors(self):
         if self._spec is None or not self._plot_items:

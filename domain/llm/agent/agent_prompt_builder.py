@@ -130,6 +130,9 @@ def _build_guidelines_section(registry: ToolRegistry) -> str:
         "SPICE files (.cir/.sp/.spice) use specific syntax; "
         "preserve comments and formatting."
     )
+    _add(
+        "If a tool fails, do not end with an empty reply. Retry only when a clear correction is available; otherwise explain the limitation and provide the best possible final answer."
+    )
     _add("Show file paths clearly when working with files.")
     _add("Be concise in your responses.")
 

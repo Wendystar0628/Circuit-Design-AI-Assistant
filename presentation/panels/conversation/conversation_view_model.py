@@ -811,6 +811,12 @@ class ConversationViewModel(QObject):
         tool_operations = self._build_tool_operations()
         web_search_results = self._collect_web_search_results()
 
+        if not content and tool_operations:
+            if web_search_results:
+                content = "本轮已完成工具执行，但模型未返回最终总结文本。请结合下方联网结果与工具记录继续查看。"
+            else:
+                content = "本轮工具调用已结束，但模型未返回最终文本答复。请参考下方工具执行记录。"
+
         # 添加助手消息到 ContextManager
         if self.context_manager and content:
             self.context_manager.add_assistant_message(

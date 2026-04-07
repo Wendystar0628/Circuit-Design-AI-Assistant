@@ -91,6 +91,7 @@ class ChatResponse:
     tool_calls: Optional[List[Dict[str, Any]]] = None  # 工具调用
     usage: Optional[Dict[str, int]] = None  # token 使用统计
     finish_reason: Optional[str] = None  # 完成原因
+    metadata: Optional[Dict[str, Any]] = None
 
 
 @dataclass

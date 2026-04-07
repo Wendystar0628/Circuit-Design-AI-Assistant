@@ -86,13 +86,15 @@ class ZhipuResponseParser:
             
             # 解析 usage
             usage = self._parse_usage(response_data.get("usage", {}))
+            metadata = self._parse_metadata(response_data)
             
             return ChatResponse(
                 content=parsed.content,
                 reasoning_content=parsed.reasoning_content or None,
                 tool_calls=parsed.tool_calls,
                 usage=usage,
-                finish_reason=parsed.finish_reason
+                finish_reason=parsed.finish_reason,
+                metadata=metadata,
             )
             
         except (APIError, AuthError, RateLimitError, ContextOverflowError):
@@ -179,6 +181,17 @@ class ZhipuResponseParser:
             "completion_tokens": usage.get("completion_tokens", 0),
             "total_tokens": usage.get("total_tokens", 0),
         }
+
+    def _parse_metadata(self, response_data: Dict[str, Any]) -> Dict[str, Any]:
+        metadata: Dict[str, Any] = {}
+
+        web_search = response_data.get("web_search")
+        if isinstance(web_search, list):
+            metadata["web_search_results"] = [
+                item for item in web_search if isinstance(item, dict)
+            ]
+
+        return metadata
     
     # ============================================================
     # 便捷方法（符合 3.4.2.4 规范）

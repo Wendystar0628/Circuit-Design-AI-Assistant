@@ -36,6 +36,11 @@ from .settings import (
 )
 
 
+_REMOVED_CONFIG_KEYS = {
+    "general_web_search_provider",
+}
+
+
 class ConfigManager:
     """
     配置统一访问管理器
@@ -95,9 +100,15 @@ class ConfigManager:
                 if self._config_file.exists():
                     with open(self._config_file, "r", encoding="utf-8") as f:
                         loaded_config = json.load(f)
+
+                    removed_keys = [key for key in _REMOVED_CONFIG_KEYS if key in loaded_config]
+                    for key in removed_keys:
+                        loaded_config.pop(key, None)
                     
                     # 合并默认配置（缺失字段使用默认值）
                     self._config = {**DEFAULT_CONFIG, **loaded_config}
+                    if removed_keys:
+                        self._save_config_internal()
                 else:
                     # 配置文件不存在，使用默认配置
                     self._config = DEFAULT_CONFIG.copy()

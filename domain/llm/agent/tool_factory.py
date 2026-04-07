@@ -51,7 +51,6 @@ def create_default_tools() -> ToolRegistry:
     from domain.llm.agent.tools.list_directory import ListDirectoryTool
     from domain.llm.agent.tools.rag_search import RAGSearchTool
     from domain.llm.agent.tools.web_search import WebSearchTool
-    from infrastructure.utils.web_search_tool import get_web_search_tool
 
     registry = ToolRegistry()
 
@@ -66,10 +65,7 @@ def create_default_tools() -> ToolRegistry:
     registry.register(ListDirectoryTool())
 
     registry.register(RAGSearchTool())
-
-    web_search_tool = get_web_search_tool()
-    if web_search_tool.is_available():
-        registry.register(WebSearchTool())
+    registry.register(WebSearchTool())
 
     logger.debug(f"Tool factory created registry: {registry!r}")
     return registry

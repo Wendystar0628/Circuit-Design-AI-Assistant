@@ -119,6 +119,21 @@ class OpenAICompatibleClient(BaseLLMClient):
                     "type": "enabled" if thinking else "disabled"
                 }
 
+        tool_names = []
+        for tool in request_body.get("tools", []) or []:
+            if not isinstance(tool, dict):
+                continue
+            if tool.get("type") == "function":
+                function_def = tool.get("function", {})
+                tool_names.append(str(function_def.get("name", "") or ""))
+            else:
+                tool_names.append(str(tool.get("type", "") or ""))
+
+        self._logger.debug(
+            f"Built request: provider={self.provider_id}, model={use_model}, stream={stream}, "
+            f"thinking={thinking}, tool_count={len(tool_names)}, tools={tool_names}"
+        )
+
         return request_body
 
     def _extract_text(self, value: Any) -> Optional[str]:

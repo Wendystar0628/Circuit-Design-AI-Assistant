@@ -192,6 +192,9 @@ class AgentLoop:
                         "tool_call_id": tc_id,
                         "content": tr.content,
                     })
+
+                if any(tr.is_error for tr in tool_results):
+                    messages.append(self._build_tool_recovery_message(tool_results))
             else:
                 # 达到最大轮次
                 self._logger.warning(
@@ -234,6 +237,15 @@ class AgentLoop:
         turn = TurnResult()
 
         self._raise_if_stop_requested()
+
+        tool_names = []
+        for schema in schemas:
+            function_def = schema.get("function", {}) if isinstance(schema, dict) else {}
+            tool_names.append(str(function_def.get("name", "") or ""))
+
+        self._logger.info(
+            f"Agent turn request tools: count={len(tool_names)}, tools={tool_names}"
+        )
 
         stream_gen = self._client.chat_stream(
             messages=messages,
@@ -436,6 +448,24 @@ class AgentLoop:
             msg["tool_calls"] = formatted_calls
 
         return msg
+
+    def _build_tool_recovery_message(
+        self,
+        tool_results: List[ToolResult],
+    ) -> Dict[str, Any]:
+        failed = [tr.content.strip() for tr in tool_results if tr.is_error and tr.content.strip()]
+        failure_summary = "\n".join(f"- {item}" for item in failed[:3])
+        content = (
+            "One or more tools failed. Continue the ReAct process instead of ending with an empty reply. "
+            "Retry only if you can clearly correct the arguments or approach. Otherwise, provide a final answer that explains the limitation and gives the best possible help based on the available context."
+        )
+        if failure_summary:
+            content += f"\nTool errors:\n{failure_summary}"
+
+        return {
+            "role": "system",
+            "content": content,
+        }
 
     @staticmethod
     def _ensure_json_string(value) -> str:

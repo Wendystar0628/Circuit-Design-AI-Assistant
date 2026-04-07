@@ -14,10 +14,6 @@
     "llm": {
         "zhipu": {"api_key": "plaintext_value", "updated_at": "..."},
         "deepseek": {"api_key": "plaintext_value", "updated_at": "..."}
-    },
-    "search": {
-        "google": {"api_key": "plaintext_value", "cx": "...", "updated_at": "..."},
-        "bing": {"api_key": "plaintext_value", "updated_at": "..."}
     }
 }
 """
@@ -34,7 +30,6 @@ from .settings import (
     CREDENTIALS_FILE,
     CREDENTIAL_TYPE_LLM,
     CREDENTIAL_TYPE_EMBEDDING,
-    CREDENTIAL_TYPE_SEARCH,
 )
 
 
@@ -75,18 +70,19 @@ class CredentialManager:
                 
                 if self._credentials_file.exists():
                     with open(self._credentials_file, "r", encoding="utf-8") as f:
-                        self._credentials = json.load(f)
+                        loaded_credentials = json.load(f)
+                    removed_legacy_search = isinstance(loaded_credentials, dict) and "search" in loaded_credentials
                     self._credentials = {
-                        CREDENTIAL_TYPE_LLM: dict(self._credentials.get(CREDENTIAL_TYPE_LLM, {})),
-                        CREDENTIAL_TYPE_EMBEDDING: dict(self._credentials.get(CREDENTIAL_TYPE_EMBEDDING, {})),
-                        CREDENTIAL_TYPE_SEARCH: dict(self._credentials.get(CREDENTIAL_TYPE_SEARCH, {})),
+                        CREDENTIAL_TYPE_LLM: dict(loaded_credentials.get(CREDENTIAL_TYPE_LLM, {})),
+                        CREDENTIAL_TYPE_EMBEDDING: dict(loaded_credentials.get(CREDENTIAL_TYPE_EMBEDDING, {})),
                     }
+                    if removed_legacy_search:
+                        self._save_credentials_internal()
                 else:
                     # 凭证文件不存在，初始化空结构
                     self._credentials = {
                         CREDENTIAL_TYPE_LLM: {},
                         CREDENTIAL_TYPE_EMBEDDING: {},
-                        CREDENTIAL_TYPE_SEARCH: {},
                     }
                     self._save_credentials_internal()
                 
@@ -99,7 +95,6 @@ class CredentialManager:
                 self._credentials = {
                     CREDENTIAL_TYPE_LLM: {},
                     CREDENTIAL_TYPE_EMBEDDING: {},
-                    CREDENTIAL_TYPE_SEARCH: {},
                 }
                 self._loaded = True
                 return False
@@ -109,7 +104,6 @@ class CredentialManager:
                 self._credentials = {
                     CREDENTIAL_TYPE_LLM: {},
                     CREDENTIAL_TYPE_EMBEDDING: {},
-                    CREDENTIAL_TYPE_SEARCH: {},
                 }
                 self._loaded = True
                 return False
@@ -154,8 +148,8 @@ class CredentialManager:
         获取指定厂商的凭证
         
         Args:
-            provider_type: 厂商类型（llm/search）
-            provider_id: 厂商标识（zhipu/deepseek/google/bing 等）
+            provider_type: 厂商类型（llm/embedding 等）
+            provider_id: 厂商标识（zhipu/deepseek/qwen 等）
             
         Returns:
             凭证字典，不存在则返回 None
@@ -184,7 +178,7 @@ class CredentialManager:
         存储厂商凭证（明文）
         
         Args:
-            provider_type: 厂商类型（llm/search）
+            provider_type: 厂商类型（llm/embedding 等）
             provider_id: 厂商标识
             credential_data: 凭证数据
             
@@ -303,12 +297,6 @@ class CredentialManager:
         if len(api_key) < 10:
             return False, "API Key 长度过短"
         
-        # 特定厂商的额外校验
-        if provider_type == CREDENTIAL_TYPE_SEARCH and provider_id == "google":
-            cx = credential.get("cx", "")
-            if not cx:
-                return False, "Google 搜索引擎 ID (cx) 为空"
-        
         return True, ""
 
     
@@ -367,44 +355,6 @@ class CredentialManager:
             bool: 保存是否成功
         """
         return self.set_credential(CREDENTIAL_TYPE_EMBEDDING, provider_id, {"api_key": api_key})
-
-    # ============================================================
-    # 便捷方法（搜索凭证）
-    # ============================================================
-    
-    def get_search_credential(self, provider_id: str) -> Optional[Dict[str, Any]]:
-        """
-        获取搜索厂商的凭证
-        
-        Args:
-            provider_id: 厂商标识（google/bing）
-            
-        Returns:
-            凭证字典（包含 api_key，Google 还包含 cx），不存在则返回 None
-        """
-        return self.get_credential(CREDENTIAL_TYPE_SEARCH, provider_id)
-    
-    def set_search_credential(
-        self, 
-        provider_id: str, 
-        api_key: str, 
-        cx: Optional[str] = None
-    ) -> bool:
-        """
-        设置搜索厂商的凭证
-        
-        Args:
-            provider_id: 厂商标识
-            api_key: API Key 明文
-            cx: Google 搜索引擎 ID（仅 Google 需要）
-            
-        Returns:
-            bool: 保存是否成功
-        """
-        credential_data = {"api_key": api_key}
-        if cx is not None:
-            credential_data["cx"] = cx
-        return self.set_credential(CREDENTIAL_TYPE_SEARCH, provider_id, credential_data)
 
     
     # ============================================================

@@ -145,22 +145,6 @@ SUPPORTED_LANGUAGES = ["en_US", "zh_CN"]  # 支持的语言列表
 # 功能开关默认值
 # ============================================================
 
-# 联网搜索配置
-# 注意：厂商专属联网搜索与通用联网搜索互斥，只能启用其一
-# 原因：避免搜索结果冲突和重复计费
-
-DEFAULT_GENERAL_WEB_SEARCH_PROVIDER = "google"
-
-# ============================================================
-# 联网搜索提供商常量
-# ============================================================
-
-# 通用联网搜索（与 LLM 厂商无关）
-WEB_SEARCH_GOOGLE = "google"            # Google Custom Search（需 API Key + cx）
-WEB_SEARCH_BING = "bing"                # Bing Web Search（需 API Key）
-SUPPORTED_GENERAL_WEB_SEARCH = [WEB_SEARCH_GOOGLE, WEB_SEARCH_BING]
-
-# ============================================================
 # 配置字段名常量（避免字符串硬编码）
 # ============================================================
 
@@ -177,9 +161,6 @@ CONFIG_LLM_STREAMING = "llm_streaming"
 # 深度思考配置
 CONFIG_ENABLE_THINKING = "enable_thinking"
 CONFIG_THINKING_TIMEOUT = "thinking_timeout"
-
-# 通用联网搜索配置
-CONFIG_GENERAL_WEB_SEARCH_PROVIDER = "general_web_search_provider"
 
 # 嵌入模型配置
 CONFIG_EMBEDDING_PROVIDER = "embedding_provider"
@@ -206,9 +187,6 @@ DEFAULT_CONFIG = {
     # 深度思考配置
     CONFIG_ENABLE_THINKING: DEFAULT_ENABLE_THINKING,
     CONFIG_THINKING_TIMEOUT: DEFAULT_THINKING_TIMEOUT,
-
-    # 通用联网搜索配置
-    CONFIG_GENERAL_WEB_SEARCH_PROVIDER: DEFAULT_GENERAL_WEB_SEARCH_PROVIDER,
     
     # 嵌入模型配置
     CONFIG_EMBEDDING_PROVIDER: DEFAULT_EMBEDDING_PROVIDER,
@@ -250,5 +228,4 @@ CHARS_PER_TOKEN_ESTIMATE = 4
 
 CREDENTIAL_TYPE_LLM = "llm"           # LLM 厂商凭证类型
 CREDENTIAL_TYPE_EMBEDDING = "embedding"  # 嵌入模型厂商凭证类型
-CREDENTIAL_TYPE_SEARCH = "search"     # 搜索厂商凭证类型
 CREDENTIAL_TYPE_COMPONENT = "component"  # 元器件商城凭证类型（阶段十）

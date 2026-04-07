@@ -123,9 +123,19 @@ class ZhipuRequestBuilder:
                 body[key] = value
         
         # 记录请求体日志（调试用）
+        tool_names = []
+        for tool in body.get("tools", []) or []:
+            if not isinstance(tool, dict):
+                continue
+            if tool.get("type") == "function":
+                function_def = tool.get("function", {})
+                tool_names.append(str(function_def.get("name", "") or ""))
+            else:
+                tool_names.append(str(tool.get("type", "") or ""))
         self._logger.debug(
             f"Built request: model={actual_model}, thinking={thinking}, "
-            f"max_tokens={body.get('max_tokens')}, is_vision={is_vision_model}"
+            f"max_tokens={body.get('max_tokens')}, is_vision={is_vision_model}, "
+            f"tool_count={len(tool_names)}, tools={tool_names}"
         )
         
         return body

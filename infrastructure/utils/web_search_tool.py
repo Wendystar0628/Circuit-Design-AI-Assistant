@@ -1,51 +1,42 @@
-# Web Search Tool - Unified Web Search API Wrapper
+# Web Search Tool - Provider-Native Web Search Executor
 """
-联网搜索工具 - 统一封装多个搜索 API
+联网搜索工具
 
 职责：
-- 统一封装厂商专属搜索和通用搜索 API
-- 为 LLM 提供联网搜索能力
-- 格式化搜索结果供 Prompt 注入
+- 统一封装当前对话模型的原生联网搜索能力
+- 复用当前对话 runtime 的 provider / model / API Key
+- 产出结构化搜索结果供 Agent 与 UI 使用
 
-搜索类型：
-- 厂商专属搜索：与特定 LLM 厂商深度集成（如智谱内置搜索）
-- 通用搜索：独立于 LLM 厂商（Google/Bing）
-
-互斥约束：
-- 厂商专属搜索与通用搜索只能启用其一
-- 由 ConfigManager 和 UI 层保证互斥
-
-被调用方：agent_prompt_builder.py（构建 Prompt 时注入搜索结果）
+设计约束：
+- 仅保留大模型厂商原生联网搜索
+- 不再支持独立外部搜索提供商
+- 当前运行时由 LLMRuntimeConfigManager 解析
 """
 
-from typing import Any, Dict, List, Optional, Literal
+import asyncio
 from dataclasses import dataclass
-from enum import Enum
+from functools import partial
+from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
-import httpx
-
-from infrastructure.config.settings import (
-    LLM_PROVIDER_ZHIPU,
-    WEB_SEARCH_GOOGLE,
-    WEB_SEARCH_BING,
-)
+from infrastructure.utils.json_utils import extract_json_from_text
 
 
 # ============================================================
 # 常量定义
 # ============================================================
 
-# 搜索类型
-SEARCH_TYPE_PROVIDER = "provider"  # 厂商专属搜索
-SEARCH_TYPE_GENERAL = "general"    # 通用搜索
-
-# 默认配置
 DEFAULT_MAX_RESULTS = 5
-DEFAULT_TIMEOUT = 10  # 搜索请求超时秒数
-
-# API 端点
-GOOGLE_SEARCH_ENDPOINT = "https://www.googleapis.com/customsearch/v1"
-BING_SEARCH_ENDPOINT = "https://api.bing.microsoft.com/v7.0/search"
+PLACEHOLDER_SOURCE_HOSTS = {
+    "example.com",
+    "www.example.com",
+    "example.org",
+    "www.example.org",
+    "example.net",
+    "www.example.net",
+    "localhost",
+    "127.0.0.1",
+}
 
 
 # ============================================================
@@ -75,14 +66,23 @@ class SearchError(Exception):
     pass
 
 
-class SearchConfigError(SearchError):
-    """搜索配置错误"""
+class SearchCapabilityError(SearchError):
+    """原生联网搜索能力不可用"""
     pass
 
 
-class SearchAPIError(SearchError):
-    """搜索 API 调用错误"""
+class SearchExecutionError(SearchError):
+    """原生联网搜索执行失败"""
     pass
+
+
+@dataclass
+class SearchCapability:
+    """当前运行时的联网搜索能力快照"""
+    provider: str
+    model: str
+    available: bool
+    reason: str = ""
 
 
 
@@ -94,7 +94,7 @@ class WebSearchTool:
     """
     联网搜索工具
     
-    统一封装厂商专属搜索和通用搜索 API。
+    统一封装当前对话模型的原生联网搜索能力。
     """
     
     def __init__(self):
@@ -103,38 +103,7 @@ class WebSearchTool:
         
         注意：遵循延迟获取原则，不在 __init__ 中获取 ServiceLocator 服务
         """
-        self._config_manager = None
-        self._credential_manager = None
         self._logger = None
-        self._http_client: Optional[httpx.Client] = None
-    
-    # ============================================================
-    # 延迟获取服务
-    # ============================================================
-    
-    @property
-    def config_manager(self):
-        """延迟获取 ConfigManager"""
-        if self._config_manager is None:
-            try:
-                from shared.service_locator import ServiceLocator
-                from shared.service_names import SVC_CONFIG_MANAGER
-                self._config_manager = ServiceLocator.get_optional(SVC_CONFIG_MANAGER)
-            except Exception:
-                pass
-        return self._config_manager
-    
-    @property
-    def credential_manager(self):
-        """延迟获取 CredentialManager"""
-        if self._credential_manager is None:
-            try:
-                from shared.service_locator import ServiceLocator
-                from shared.service_names import SVC_CREDENTIAL_MANAGER
-                self._credential_manager = ServiceLocator.get_optional(SVC_CREDENTIAL_MANAGER)
-            except Exception:
-                pass
-        return self._credential_manager
     
     @property
     def logger(self):
@@ -146,337 +115,288 @@ class WebSearchTool:
             except Exception:
                 pass
         return self._logger
-    
-    @property
-    def http_client(self) -> httpx.Client:
-        """获取 HTTP 客户端（延迟创建）"""
-        if self._http_client is None:
-            self._http_client = httpx.Client(timeout=DEFAULT_TIMEOUT)
-        return self._http_client
-    
-    def close(self):
-        """关闭资源"""
-        if self._http_client is not None:
-            self._http_client.close()
-            self._http_client = None
+
+    def _get_runtime_config_manager(self):
+        try:
+            from shared.service_locator import ServiceLocator
+            from shared.service_names import SVC_LLM_RUNTIME_CONFIG_MANAGER
+
+            return ServiceLocator.get_optional(SVC_LLM_RUNTIME_CONFIG_MANAGER)
+        except Exception:
+            return None
+
+    def _get_active_llm_client(self):
+        try:
+            from shared.service_locator import ServiceLocator
+            from shared.service_names import SVC_LLM_CLIENT
+
+            return ServiceLocator.get_optional(SVC_LLM_CLIENT)
+        except Exception:
+            return None
     
     # ============================================================
     # 核心搜索方法
     # ============================================================
     
-    def search(
+    def resolve_capability(self) -> SearchCapability:
+        runtime_manager = self._get_runtime_config_manager()
+        if runtime_manager is None:
+            return SearchCapability(
+                provider="",
+                model="",
+                available=False,
+                reason="LLM runtime config manager is unavailable.",
+            )
+
+        active_config = runtime_manager.resolve_active_config()
+        provider = str(active_config.provider or "").strip()
+        model = str(active_config.model or "").strip()
+
+        if not provider or not model:
+            return SearchCapability(
+                provider=provider,
+                model=model,
+                available=False,
+                reason="No active chat provider/model is configured.",
+            )
+
+        if not str(active_config.api_key or "").strip():
+            return SearchCapability(
+                provider=provider,
+                model=model,
+                available=False,
+                reason="The active chat model API key is missing.",
+            )
+
+        if self._get_active_llm_client() is None:
+            return SearchCapability(
+                provider=provider,
+                model=model,
+                available=False,
+                reason="The active chat client has not been initialized.",
+            )
+
+        try:
+            from shared.model_registry import ModelRegistry
+
+            ModelRegistry.initialize()
+            model_config = ModelRegistry.get_model_by_name(provider, model)
+            provider_config = ModelRegistry.get_provider(provider)
+        except Exception:
+            model_config = None
+            provider_config = None
+
+        supports_web_search = False
+        if model_config is not None:
+            supports_web_search = bool(model_config.supports_web_search)
+        elif provider_config is not None:
+            supports_web_search = bool(provider_config.supports_web_search)
+
+        if not supports_web_search:
+            return SearchCapability(
+                provider=provider,
+                model=model,
+                available=False,
+                reason=(
+                    f"The active chat model '{provider}:{model}' does not support provider-native web search."
+                ),
+            )
+
+        return SearchCapability(
+            provider=provider,
+            model=model,
+            available=True,
+            reason="",
+        )
+
+    def get_search_config(self) -> Dict[str, Any]:
+        capability = self.resolve_capability()
+        return {
+            "provider": capability.provider,
+            "model": capability.model,
+            "available": capability.available,
+            "reason": capability.reason,
+        }
+
+    async def search_with_current_model(
         self,
         query: str,
-        search_type: str = SEARCH_TYPE_GENERAL,
-        provider: Optional[str] = None,
         max_results: int = DEFAULT_MAX_RESULTS,
     ) -> List[SearchResult]:
-        """
-        执行搜索
-        
-        Args:
-            query: 搜索查询
-            search_type: 搜索类型（provider/general）
-            provider: 搜索提供商标识（厂商专属搜索时为 LLM 厂商，通用搜索时为 google/bing）
-            max_results: 最大返回结果数
-            
-        Returns:
-            搜索结果列表
-            
-        Raises:
-            SearchConfigError: 配置错误
-            SearchAPIError: API 调用错误
-        """
         if not query or not query.strip():
             return []
-        
-        query = query.strip()
-        
-        try:
-            if search_type == SEARCH_TYPE_PROVIDER:
-                return self._search_provider(query, provider, max_results)
-            elif search_type == SEARCH_TYPE_GENERAL:
-                return self._search_general(query, provider, max_results)
-            else:
-                self._log_warning(f"未知的搜索类型: {search_type}")
-                return []
-        except SearchError:
-            raise
-        except Exception as e:
-            self._log_error(f"搜索执行失败: {e}")
-            return []
-    
-    def _search_provider(
-        self,
-        query: str,
-        llm_provider: Optional[str],
-        max_results: int,
-    ) -> List[SearchResult]:
-        """
-        执行厂商专属搜索
-        
-        Args:
-            query: 搜索查询
-            llm_provider: LLM 厂商标识
-            max_results: 最大返回结果数
-            
-        Returns:
-            搜索结果列表
-        """
-        if not llm_provider:
-            try:
-                from shared.service_locator import ServiceLocator
-                from shared.service_names import SVC_LLM_RUNTIME_CONFIG_MANAGER
 
-                llm_runtime_config_manager = ServiceLocator.get_optional(SVC_LLM_RUNTIME_CONFIG_MANAGER)
-                if llm_runtime_config_manager:
-                    llm_provider = llm_runtime_config_manager.resolve_active_config().provider
-            except Exception:
-                llm_provider = ""
-        
-        if not llm_provider:
-            self._log_warning("未配置 LLM 厂商，无法执行厂商专属搜索")
-            return []
-        
-        # 检查厂商是否支持专属搜索
-        if not self.is_provider_search_available(llm_provider):
-            self._log_warning(f"厂商 {llm_provider} 不支持专属联网搜索")
-            return []
-        
-        # 根据厂商调用对应的搜索实现
-        if llm_provider == LLM_PROVIDER_ZHIPU:
-            return self._search_zhipu(query, max_results)
-        else:
-            self._log_warning(f"厂商 {llm_provider} 的专属搜索尚未实现")
-            return []
-    
-    def _search_general(
-        self,
-        query: str,
-        search_provider: Optional[str],
-        max_results: int,
-    ) -> List[SearchResult]:
-        """
-        执行通用搜索
-        
-        Args:
-            query: 搜索查询
-            search_provider: 搜索提供商（google/bing）
-            max_results: 最大返回结果数
-            
-        Returns:
-            搜索结果列表
-        """
-        if not search_provider:
-            # 从配置获取当前搜索提供商
-            if self.config_manager:
-                from infrastructure.config.settings import CONFIG_GENERAL_WEB_SEARCH_PROVIDER
-                search_provider = self.config_manager.get(CONFIG_GENERAL_WEB_SEARCH_PROVIDER, WEB_SEARCH_GOOGLE)
-        
-        if not search_provider:
-            search_provider = WEB_SEARCH_GOOGLE
-        
-        # 获取凭证
-        credential = None
-        if self.credential_manager:
-            credential = self.credential_manager.get_search_credential(search_provider)
-        
-        if not credential or not credential.get("api_key"):
-            self._log_warning(f"未配置 {search_provider} 搜索凭证")
-            return []
-        
-        # 根据提供商调用对应的搜索实现
-        if search_provider == WEB_SEARCH_GOOGLE:
-            api_key = credential.get("api_key", "")
-            cx = credential.get("cx", "")
-            if not cx:
-                self._log_warning("Google 搜索缺少搜索引擎 ID (cx)")
-                return []
-            return self._search_google(query, api_key, cx, max_results)
-        elif search_provider == WEB_SEARCH_BING:
-            api_key = credential.get("api_key", "")
-            return self._search_bing(query, api_key, max_results)
-        else:
-            self._log_warning(f"未知的搜索提供商: {search_provider}")
-            return []
+        capability = self.resolve_capability()
+        if not capability.available:
+            raise SearchCapabilityError(capability.reason or "Provider-native web search is unavailable.")
 
-    
-    # ============================================================
-    # 厂商专属搜索实现
-    # ============================================================
-    
-    def _search_zhipu(self, query: str, max_results: int) -> List[SearchResult]:
-        """
-        智谱联网搜索实现
-        
-        说明：智谱 GLM 模型内置的联网搜索工具，通过 LLM 请求中的 tools 参数启用。
-        此方法返回空列表，实际搜索由 LLM 请求时的 web_search 工具完成。
-        
-        Args:
-            query: 搜索查询
-            max_results: 最大返回结果数
-            
-        Returns:
-            空列表（智谱搜索由 LLM 工具调用完成）
-        """
-        # 智谱的联网搜索是通过 LLM 请求中的 tools 参数启用的
-        # 不需要单独调用搜索 API，搜索结果会包含在 LLM 响应中
-        # 此方法仅作为占位，实际逻辑在 zhipu_request_builder.py 中处理
-        self._log_info("智谱联网搜索通过 LLM 工具调用实现，无需单独搜索")
-        return []
-    
-    # ============================================================
-    # 通用搜索实现
-    # ============================================================
-    
-    def _search_google(
-        self,
-        query: str,
-        api_key: str,
-        cx: str,
-        max_results: int,
-    ) -> List[SearchResult]:
-        """
-        Google Custom Search API 搜索实现
-        
-        Args:
-            query: 搜索查询
-            api_key: Google API Key
-            cx: 搜索引擎 ID
-            max_results: 最大返回结果数
-            
-        Returns:
-            搜索结果列表
-        """
+        client = self._get_active_llm_client()
+        if client is None:
+            raise SearchCapabilityError("The active chat client is unavailable.")
+
+        prompt_messages = self._build_native_search_messages(query.strip(), max_results)
+
         try:
-            params = {
-                "key": api_key,
-                "cx": cx,
-                "q": query,
-                "num": min(max_results, 10),  # Google API 最多返回 10 条
-            }
-            
-            response = self.http_client.get(GOOGLE_SEARCH_ENDPOINT, params=params)
-            response.raise_for_status()
-            
-            data = response.json()
-            results = []
-            
-            for item in data.get("items", []):
-                result = SearchResult(
-                    title=item.get("title", ""),
-                    snippet=item.get("snippet", ""),
-                    url=item.get("link", ""),
-                    date=item.get("pagemap", {}).get("metatags", [{}])[0].get("article:published_time"),
+            response = await asyncio.to_thread(
+                partial(
+                    client.chat,
+                    messages=prompt_messages,
+                    model=capability.model,
+                    streaming=False,
+                    tools=[self._build_native_web_search_tool(max_results)],
+                    thinking=False,
+                    response_format={"type": "json_object"},
                 )
-                results.append(result)
-            
-            self._log_info(f"Google 搜索完成，返回 {len(results)} 条结果")
-            return results
-            
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 403:
-                self._log_warning("Google API Key 无效或已达到配额限制")
-            elif e.response.status_code == 400:
-                self._log_warning("Google 搜索请求参数错误")
-            else:
-                self._log_error(f"Google 搜索 HTTP 错误: {e.response.status_code}")
-            return []
-        except httpx.TimeoutException:
-            self._log_warning("Google 搜索请求超时")
-            return []
-        except Exception as e:
-            self._log_error(f"Google 搜索失败: {e}")
-            return []
-    
-    def _search_bing(
-        self,
-        query: str,
-        api_key: str,
-        max_results: int,
-    ) -> List[SearchResult]:
-        """
-        Bing Web Search API 搜索实现
-        
-        Args:
-            query: 搜索查询
-            api_key: Bing API Key
-            max_results: 最大返回结果数
-            
-        Returns:
-            搜索结果列表
-        """
-        try:
-            headers = {
-                "Ocp-Apim-Subscription-Key": api_key,
-            }
-            params = {
-                "q": query,
-                "count": min(max_results, 50),  # Bing API 最多返回 50 条
-                "mkt": "en-US",  # 市场设置
-            }
-            
-            response = self.http_client.get(
-                BING_SEARCH_ENDPOINT,
-                headers=headers,
-                params=params,
             )
-            response.raise_for_status()
-            
-            data = response.json()
-            results = []
-            
-            for item in data.get("webPages", {}).get("value", []):
-                result = SearchResult(
-                    title=item.get("name", ""),
-                    snippet=item.get("snippet", ""),
-                    url=item.get("url", ""),
-                    date=item.get("dateLastCrawled"),
+        except Exception as exc:
+            raise SearchExecutionError(str(exc)) from exc
+
+        results = self._extract_search_results(response, max_results)
+        self._log_info(
+            f"Provider-native web search completed: provider={capability.provider}, "
+            f"model={capability.model}, result_count={len(results)}"
+        )
+        return results
+
+    def _extract_search_results(
+        self,
+        response: Any,
+        max_results: int,
+    ) -> List[SearchResult]:
+        metadata = getattr(response, "metadata", None)
+        if isinstance(metadata, dict):
+            raw_results = metadata.get("web_search_results")
+            parsed = self._parse_provider_metadata_results(raw_results, max_results)
+            if parsed:
+                return parsed
+
+        return self._parse_native_search_results(getattr(response, "content", ""), max_results)
+
+    def _build_native_web_search_tool(self, max_results: int) -> Dict[str, Any]:
+        return {
+            "type": "web_search",
+            "web_search": {
+                "enable": True,
+                "search_result": True,
+                "count": max(1, int(max_results)),
+            },
+        }
+
+    def _parse_provider_metadata_results(
+        self,
+        raw_results: Any,
+        max_results: int,
+    ) -> List[SearchResult]:
+        if not isinstance(raw_results, list):
+            return []
+
+        results: List[SearchResult] = []
+        for item in raw_results[: max(1, int(max_results))]:
+            if not isinstance(item, dict):
+                continue
+
+            url = self._normalize_source_url(item.get("link", ""))
+            title = str(item.get("title", "") or "").strip()
+            snippet = str(item.get("content", "") or item.get("snippet", "") or "").strip()
+            date = str(item.get("publish_date", "") or item.get("date", "") or "").strip() or None
+
+            if not title and not snippet and not url:
+                continue
+
+            results.append(
+                SearchResult(
+                    title=title,
+                    snippet=snippet,
+                    url=url,
+                    date=date,
                 )
-                results.append(result)
-            
-            self._log_info(f"Bing 搜索完成，返回 {len(results)} 条结果")
-            return results
-            
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 401:
-                self._log_warning("Bing API Key 无效")
-            elif e.response.status_code == 403:
-                self._log_warning("Bing API 已达到配额限制")
-            else:
-                self._log_error(f"Bing 搜索 HTTP 错误: {e.response.status_code}")
+            )
+
+        return results
+
+    def _build_native_search_messages(
+        self,
+        query: str,
+        max_results: int,
+    ) -> List[Dict[str, str]]:
+        return [
+            {
+                "role": "system",
+                "content": (
+                    "You are a web search extraction helper. Always use the provider-native web search "
+                    "capability available in this request. Return only a JSON object with the shape "
+                    '{"summary": string, "results": [{"title": string, "snippet": string, "url": string, "date": string}]}. '
+                    "Use absolute URLs. Keep snippets concise. If no useful results are found, return an empty results list."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"Search query: {query}\n"
+                    f"Maximum results: {max(1, int(max_results))}\n"
+                    "Return JSON only."
+                ),
+            },
+        ]
+
+    def _parse_native_search_results(
+        self,
+        response_text: str,
+        max_results: int,
+    ) -> List[SearchResult]:
+        payload = extract_json_from_text(response_text or "")
+        if not isinstance(payload, dict):
+            self._log_warning("Provider-native web search returned no parseable JSON payload")
             return []
-        except httpx.TimeoutException:
-            self._log_warning("Bing 搜索请求超时")
+
+        raw_results = payload.get("results", [])
+        if not isinstance(raw_results, list):
             return []
-        except Exception as e:
-            self._log_error(f"Bing 搜索失败: {e}")
-            return []
+
+        results: List[SearchResult] = []
+        for item in raw_results[: max(1, int(max_results))]:
+            if not isinstance(item, dict):
+                continue
+
+            title = str(item.get("title", "") or "").strip()
+            snippet = str(item.get("snippet", "") or "").strip()
+            url = self._normalize_source_url(item.get("url", ""))
+            date = str(item.get("date", "") or "").strip() or None
+
+            if not title and not snippet and not url:
+                continue
+
+            results.append(
+                SearchResult(
+                    title=title,
+                    snippet=snippet,
+                    url=url,
+                    date=date,
+                )
+            )
+
+        return results
+
+    def _normalize_source_url(self, value: Any) -> str:
+        url = str(value or "").strip()
+        if not url:
+            return ""
+
+        parsed = urlparse(url)
+        if parsed.scheme not in {"http", "https"}:
+            return ""
+
+        hostname = (parsed.netloc or "").lower()
+        if hostname in PLACEHOLDER_SOURCE_HOSTS:
+            return ""
+
+        return url
 
     
     # ============================================================
     # 辅助方法
     # ============================================================
-    
-    def is_provider_search_available(self, llm_provider: str) -> bool:
-        """
-        检查厂商专属搜索是否可用
-        
-        Args:
-            llm_provider: LLM 厂商标识
-            
-        Returns:
-            是否支持厂商专属搜索
-        """
-        try:
-            from shared.model_registry import ModelRegistry
 
-            ModelRegistry.initialize()
-            provider = ModelRegistry.get_provider(llm_provider)
-            return bool(provider and provider.implemented and provider.supports_web_search)
-        except Exception:
-            return False
-    
     def format_search_results(self, results: List[SearchResult]) -> str:
         """
         格式化搜索结果为 Prompt 注入格式
@@ -498,91 +418,6 @@ class WebSearchTool:
             formatted_lines.append(line)
         
         return "\n".join(formatted_lines)
-
-    def get_active_search_provider(self) -> str:
-        provider = ""
-        if self.config_manager:
-            from infrastructure.config.settings import CONFIG_GENERAL_WEB_SEARCH_PROVIDER
-
-            provider = str(
-                self.config_manager.get(
-                    CONFIG_GENERAL_WEB_SEARCH_PROVIDER,
-                    WEB_SEARCH_GOOGLE,
-                ) or ""
-            ).strip()
-
-        if not provider:
-            provider = WEB_SEARCH_GOOGLE
-
-        if provider not in {WEB_SEARCH_GOOGLE, WEB_SEARCH_BING}:
-            return ""
-
-        return provider
-
-    def has_search_credentials(self, search_provider: Optional[str] = None) -> bool:
-        provider = (search_provider or self.get_active_search_provider() or "").strip()
-        if not provider or not self.credential_manager:
-            return False
-
-        credential = self.credential_manager.get_search_credential(provider)
-        if not isinstance(credential, dict):
-            return False
-
-        api_key = str(credential.get("api_key", "") or "").strip()
-        if not api_key:
-            return False
-
-        if provider == WEB_SEARCH_GOOGLE:
-            cx = str(credential.get("cx", "") or "").strip()
-            return bool(cx)
-
-        return True
-
-    def is_available(self) -> bool:
-        return self.has_search_credentials()
-    
-    def get_search_config(self) -> Dict[str, Any]:
-        """
-        获取当前搜索配置
-        
-        Returns:
-            搜索配置字典
-        """
-        config = {
-            "search_provider": "",
-            "available": False,
-        }
-
-        provider = self.get_active_search_provider()
-        config["search_provider"] = provider
-        config["available"] = self.has_search_credentials(provider)
-        
-        return config
-    
-    def search_with_config(self, query: str, max_results: int = DEFAULT_MAX_RESULTS) -> List[SearchResult]:
-        """
-        根据当前配置执行搜索
-        
-        自动判断使用厂商专属搜索还是通用搜索。
-        
-        Args:
-            query: 搜索查询
-            max_results: 最大返回结果数
-            
-        Returns:
-            搜索结果列表
-        """
-        config = self.get_search_config()
-
-        if not config["available"]:
-            return []
-
-        return self.search(
-            query=query,
-            search_type=SEARCH_TYPE_GENERAL,
-            provider=config["search_provider"],
-            max_results=max_results,
-        )
     
     # ============================================================
     # 日志辅助方法
@@ -625,73 +460,20 @@ def get_web_search_tool() -> WebSearchTool:
     return _web_search_tool
 
 
-def search(
-    query: str,
-    search_type: str = SEARCH_TYPE_GENERAL,
-    provider: Optional[str] = None,
-    max_results: int = DEFAULT_MAX_RESULTS,
-) -> List[SearchResult]:
-    """
-    执行搜索（便捷函数）
-    
-    Args:
-        query: 搜索查询
-        search_type: 搜索类型（provider/general）
-        provider: 搜索提供商标识
-        max_results: 最大返回结果数
-        
-    Returns:
-        搜索结果列表
-    """
-    return get_web_search_tool().search(query, search_type, provider, max_results)
-
-
-def search_with_config(query: str, max_results: int = DEFAULT_MAX_RESULTS) -> List[SearchResult]:
-    """
-    根据当前配置执行搜索（便捷函数）
-    
-    Args:
-        query: 搜索查询
-        max_results: 最大返回结果数
-        
-    Returns:
-        搜索结果列表
-    """
-    return get_web_search_tool().search_with_config(query, max_results)
-
-
-def format_search_results(results: List[SearchResult]) -> str:
-    """
-    格式化搜索结果（便捷函数）
-    
-    Args:
-        results: 搜索结果列表
-        
-    Returns:
-        格式化后的字符串
-    """
-    return get_web_search_tool().format_search_results(results)
-
-
 # ============================================================
 # 模块导出
 # ============================================================
 
 __all__ = [
-    # 常量
-    "SEARCH_TYPE_PROVIDER",
-    "SEARCH_TYPE_GENERAL",
     "DEFAULT_MAX_RESULTS",
     # 数据结构
     "SearchResult",
     "SearchError",
-    "SearchConfigError",
-    "SearchAPIError",
+    "SearchCapability",
+    "SearchCapabilityError",
+    "SearchExecutionError",
     # 类
     "WebSearchTool",
     # 便捷函数
     "get_web_search_tool",
-    "search",
-    "search_with_config",
-    "format_search_results",
 ]

@@ -51,18 +51,14 @@ from .json_utils import (
 )
 
 from .web_search_tool import (
-    SEARCH_TYPE_PROVIDER,
-    SEARCH_TYPE_GENERAL,
     DEFAULT_MAX_RESULTS,
     SearchResult,
     SearchError,
-    SearchConfigError,
-    SearchAPIError,
+    SearchCapability,
+    SearchCapabilityError,
+    SearchExecutionError,
     WebSearchTool,
     get_web_search_tool,
-    search,
-    search_with_config,
-    format_search_results,
 )
 
 __all__ = [
@@ -98,16 +94,12 @@ __all__ = [
     "merge_json_objects",
     "extract_json_from_text",
     # 联网搜索
-    "SEARCH_TYPE_PROVIDER",
-    "SEARCH_TYPE_GENERAL",
     "DEFAULT_MAX_RESULTS",
     "SearchResult",
     "SearchError",
-    "SearchConfigError",
-    "SearchAPIError",
+    "SearchCapability",
+    "SearchCapabilityError",
+    "SearchExecutionError",
     "WebSearchTool",
     "get_web_search_tool",
-    "search",
-    "search_with_config",
-    "format_search_results",
 ]

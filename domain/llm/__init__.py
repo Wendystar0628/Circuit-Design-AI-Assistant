@@ -139,9 +139,6 @@ from domain.llm.external_service_manager import (
     SERVICE_LLM_ZHIPU,
     SERVICE_LLM_QWEN,
     SERVICE_LLM_DEEPSEEK,
-    SERVICE_SEARCH_ZHIPU,
-    SERVICE_SEARCH_GOOGLE,
-    SERVICE_SEARCH_BING,
     ALL_SERVICE_TYPES,
 )
 
@@ -231,9 +228,6 @@ __all__ = [
     "SERVICE_LLM_ZHIPU",
     "SERVICE_LLM_QWEN",
     "SERVICE_LLM_DEEPSEEK",
-    "SERVICE_SEARCH_ZHIPU",
-    "SERVICE_SEARCH_GOOGLE",
-    "SERVICE_SEARCH_BING",
     "ALL_SERVICE_TYPES",
     # LLM 执行器
     "LLMExecutor",

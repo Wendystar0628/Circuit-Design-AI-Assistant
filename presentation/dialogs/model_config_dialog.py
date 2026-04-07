@@ -4,8 +4,7 @@
 
 职责：
 - 两级选择：先选择 LLM 厂商，再选择具体模型
-- 厂商专属联网搜索（选择模型后才显示）
-- 通用联网搜索配置（Google/Bing）
+- 管理当前对话模型运行时配置与厂商能力相关选项
 - 未实现的厂商显示占位提示
 
 国际化支持：
@@ -30,9 +29,6 @@ from infrastructure.config.settings import (
     CONFIG_EMBEDDING_BASE_URL,
     CONFIG_EMBEDDING_TIMEOUT,
     CONFIG_EMBEDDING_BATCH_SIZE,
-    WEB_SEARCH_GOOGLE,
-    WEB_SEARCH_BING,
-    CONFIG_GENERAL_WEB_SEARCH_PROVIDER,
     DEFAULT_TIMEOUT,
     DEFAULT_EMBEDDING_TIMEOUT,
     DEFAULT_EMBEDDING_BATCH_SIZE,
@@ -50,8 +46,7 @@ class ModelConfigDialog(QDialog):
     
     功能：
     - 两级选择：厂商 → 模型
-    - 厂商专属功能（深度思考、联网搜索）
-    - 通用联网搜索配置（Google/Bing）
+    - 厂商专属功能（如深度思考）
     - 未实现厂商的占位提示
     """
 
@@ -90,13 +85,6 @@ class ModelConfigDialog(QDialog):
         self._api_config_group: Optional[QGroupBox] = None
         self._deep_think_check: Optional[QCheckBox] = None
         self._thinking_timeout_spin: Optional[QSpinBox] = None
-        
-        # 通用联网搜索组件
-        self._general_search_group: Optional[QGroupBox] = None
-        self._general_search_provider_combo: Optional[QComboBox] = None
-        self._general_search_api_key_edit: Optional[QLineEdit] = None
-        self._google_cx_edit: Optional[QLineEdit] = None
-        self._google_cx_label: Optional[QLabel] = None
         
         # 按钮和状态
         self._test_btn: Optional[QPushButton] = None
@@ -369,9 +357,6 @@ class ModelConfigDialog(QDialog):
 
         self._provider_features_group = self._create_provider_features_group()
         chat_layout.addWidget(self._provider_features_group)
-
-        self._general_search_group = self._create_general_search_group()
-        chat_layout.addWidget(self._general_search_group)
         chat_layout.addStretch()
 
         self._embedding_tab = QWidget()
@@ -540,43 +525,6 @@ class ModelConfigDialog(QDialog):
         
         return group
 
-    def _create_general_search_group(self) -> QGroupBox:
-        """创建通用联网搜索组"""
-        group = QGroupBox()
-        group.setProperty("group_type", "general_search")
-        layout = QFormLayout(group)
-        
-        # 搜索供应商选择
-        self._general_search_provider_combo = QComboBox()
-        self._general_search_provider_combo.addItem("Google", WEB_SEARCH_GOOGLE)
-        self._general_search_provider_combo.addItem("Bing", WEB_SEARCH_BING)
-        self._general_search_provider_combo.currentIndexChanged.connect(
-            self._on_general_search_provider_changed
-        )
-        
-        provider_label = QLabel()
-        provider_label.setProperty("label_type", "general_search_provider")
-        layout.addRow(provider_label, self._general_search_provider_combo)
-        
-        # 搜索 API Key
-        self._general_search_api_key_edit = QLineEdit()
-        self._general_search_api_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
-        
-        api_key_label = QLabel()
-        api_key_label.setProperty("label_type", "general_search_api_key")
-        layout.addRow(api_key_label, self._general_search_api_key_edit)
-        
-        # Google 搜索引擎 ID（仅 Google 时显示）
-        self._google_cx_edit = QLineEdit()
-        self._google_cx_edit.setEnabled(False)
-        self._google_cx_edit.setPlaceholderText("Google Custom Search Engine ID")
-        
-        self._google_cx_label = QLabel()
-        self._google_cx_label.setProperty("label_type", "google_cx")
-        layout.addRow(self._google_cx_label, self._google_cx_edit)
-        
-        return group
-
     def _create_button_area(self) -> QWidget:
         """创建按钮区域"""
         widget = QWidget()
@@ -698,22 +646,6 @@ class ModelConfigDialog(QDialog):
         self._embedding_timeout_spin.setValue(embedding_timeout)
         embedding_batch_size = self.config_manager.get(CONFIG_EMBEDDING_BATCH_SIZE, DEFAULT_EMBEDDING_BATCH_SIZE)
         self._embedding_batch_size_spin.setValue(embedding_batch_size)
-
-        search_provider = self.config_manager.get(CONFIG_GENERAL_WEB_SEARCH_PROVIDER, WEB_SEARCH_GOOGLE)
-        index = self._general_search_provider_combo.findData(search_provider)
-        if index >= 0:
-            self._general_search_provider_combo.setCurrentIndex(index)
-
-        search_api_key = ""
-        google_cx = ""
-        if self.credential_manager:
-            search_cred = self.credential_manager.get_search_credential(search_provider)
-            if search_cred:
-                search_api_key = search_cred.get("api_key", "")
-                google_cx = search_cred.get("cx", "")
-        self._general_search_api_key_edit.setText(search_api_key)
-        self._google_cx_edit.setText(google_cx)
-        self._on_general_search_provider_changed(self._general_search_provider_combo.currentIndex())
         
         # 更新验证状态：检查是否之前已验证过
         self._check_and_update_verification_status(provider)
@@ -730,7 +662,6 @@ class ModelConfigDialog(QDialog):
         # 获取当前选择的厂商
         provider_id = self._provider_combo.currentData()
         embedding_provider_id = self._embedding_provider_combo.currentData()
-        search_provider_id = self._general_search_provider_combo.currentData()
         previous_active_config = self.llm_runtime_config_manager.resolve_active_config()
         previous_model_id = previous_active_config.model_id
 
@@ -761,17 +692,6 @@ class ModelConfigDialog(QDialog):
                 self.credential_manager.set_embedding_api_key(embedding_provider_id, embedding_api_key)
             else:
                 self.credential_manager.delete_credential("embedding", embedding_provider_id)
-        
-        # 保存其他配置
-        self.config_manager.set(CONFIG_GENERAL_WEB_SEARCH_PROVIDER, search_provider_id)
-
-        if self.credential_manager:
-            search_api_key = self._general_search_api_key_edit.text().strip()
-            if search_api_key:
-                google_cx = self._google_cx_edit.text().strip() if search_provider_id == WEB_SEARCH_GOOGLE else None
-                self.credential_manager.set_search_credential(search_provider_id, search_api_key, google_cx)
-            else:
-                self.credential_manager.delete_credential("search", search_provider_id)
         
         if self.logger:
             self.logger.info(f"Model configuration saved: provider={provider_id}, model={self._model_combo.currentText()}")
@@ -810,21 +730,6 @@ class ModelConfigDialog(QDialog):
             )
             self._embedding_batch_size_spin.setFocus()
             return False
-        
-        if self._general_search_provider_combo.currentData() == WEB_SEARCH_GOOGLE:
-            search_api_key = self._general_search_api_key_edit.text().strip()
-            google_cx = self._google_cx_edit.text().strip()
-            if search_api_key and not google_cx:
-                QMessageBox.warning(
-                    self,
-                    self._get_text("dialog.warning", "Warning"),
-                    self._get_text(
-                        "dialog.model_config.error.google_cx_required",
-                        "Google web search requires a Search Engine ID (cx)."
-                    )
-                )
-                self._google_cx_edit.setFocus()
-                return False
 
         return True
 
@@ -1034,32 +939,6 @@ class ModelConfigDialog(QDialog):
         
         self._thinking_timeout_spin.setEnabled(enabled and supports_thinking)
 
-    def _on_general_search_provider_changed(self, index: int):
-        """通用搜索供应商变化"""
-        provider_id = self._general_search_provider_combo.currentData()
-
-        search_api_key = ""
-        google_cx = ""
-        if self.credential_manager and provider_id:
-            search_cred = self.credential_manager.get_search_credential(provider_id)
-            if search_cred:
-                search_api_key = str(search_cred.get("api_key", "") or "")
-                google_cx = str(search_cred.get("cx", "") or "")
-
-        self._general_search_api_key_edit.setText(search_api_key)
-        self._google_cx_edit.setText(google_cx)
-        
-        if provider_id == WEB_SEARCH_GOOGLE:
-            # Google：显示搜索引擎 ID
-            self._google_cx_label.setVisible(True)
-            self._google_cx_edit.setVisible(True)
-            self._google_cx_edit.setEnabled(True)
-        else:
-            # Bing：隐藏搜索引擎 ID
-            self._google_cx_label.setVisible(False)
-            self._google_cx_edit.setVisible(False)
-            self._google_cx_edit.setEnabled(False)
-
     def _on_test_connection(self):
         """测试连接"""
         provider_id = self._provider_combo.currentData()
@@ -1248,8 +1127,6 @@ class ModelConfigDialog(QDialog):
                 group.setTitle(self._get_text("dialog.model_config.group.embedding_config", "Embedding Configuration"))
             elif group_type == "provider_features":
                 group.setTitle(self._get_text("dialog.model_config.group.provider_features", "Provider Features"))
-            elif group_type == "general_search":
-                group.setTitle(self._get_text("dialog.model_config.group.general_search", "General Web Search"))
         
         # 标签文本
         for label in self.findChildren(QLabel):
@@ -1282,12 +1159,6 @@ class ModelConfigDialog(QDialog):
                 label.setText(self._get_text("dialog.model_config.label.deep_think", "Deep Thinking"))
             elif label_type == "thinking_timeout":
                 label.setText(self._get_text("dialog.model_config.label.thinking_timeout", "Thinking Timeout"))
-            elif label_type == "general_search_provider":
-                label.setText(self._get_text("dialog.model_config.label.general_search_provider", "Search Provider"))
-            elif label_type == "general_search_api_key":
-                label.setText(self._get_text("dialog.model_config.label.general_search_api_key", "Search API Key"))
-            elif label_type == "google_cx":
-                label.setText(self._get_text("dialog.model_config.label.google_cx", "Search Engine ID (cx)"))
         
         # 按钮文本
         self._test_btn.setText(

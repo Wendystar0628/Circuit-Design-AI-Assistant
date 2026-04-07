@@ -555,6 +555,8 @@ function updateToolCard(id, resultHtml, isError) {
         for i, result in enumerate(results, 1):
             url = result.get("url", "")
             title = result.get("title", "")
+            if not isinstance(url, str) or not url.strip():
+                continue
             
             # 提取域名
             try:
@@ -563,6 +565,9 @@ function updateToolCard(id, resultHtml, isError) {
                     domain = domain[4:]
             except:
                 domain = url[:30] if url else "unknown"
+
+            if domain in {"example.com", "example.org", "example.net", "localhost", "127.0.0.1"}:
+                continue
             
             # 转义 HTML
             safe_url = html.escape(url)
@@ -575,6 +580,9 @@ function updateToolCard(id, resultHtml, isError) {
                 f'<span class="source-domain">{safe_domain}</span>'
                 f'</a>'
             )
+
+        if not items:
+            return ""
         
         return f'''<div class="sources-card">
 <div class="sources-title">{SVG_SEARCH} Sources</div>

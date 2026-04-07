@@ -3,13 +3,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
-from PyQt6.QtCore import Qt, QSize, pyqtSignal
+from PyQt6.QtCore import Qt, QSize
 from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import (
     QLabel,
     QSizePolicy,
-    QStackedWidget,
-    QTabBar,
     QToolBar,
     QVBoxLayout,
     QWidget,
@@ -19,7 +17,6 @@ from domain.simulation.data.simulation_artifact_exporter import simulation_artif
 from domain.simulation.models.chart_type import ChartType
 from domain.simulation.models.simulation_result import SimulationResult
 from presentation.panels.simulation.bode_overlay_chart_page import BodeOverlayChartPage
-from presentation.panels.simulation.chart_data_cursor import DataCursorSelectionDialog
 from presentation.panels.simulation.chart_export_utils import write_chart_csv
 from presentation.panels.simulation.chart_page_widget import ChartPage
 from presentation.panels.simulation.chart_view_types import ChartSeries, ChartSpec
@@ -48,17 +45,7 @@ SERIES_COLORS = [
     "#e67e22",
     "#e84393",
 ]
-SUPPORTED_CHART_TYPES = (
-    ChartType.WAVEFORM_TIME,
-    ChartType.BODE_OVERLAY,
-    ChartType.DC_SWEEP,
-    ChartType.NOISE_SPECTRUM,
-)
-
-
 class ChartViewer(QWidget):
-    tab_changed = pyqtSignal(str)
-
     def __init__(self, parent=None):
         super().__init__(parent)
         self._result: Optional[SimulationResult] = None
@@ -75,17 +62,14 @@ class ChartViewer(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        self._tab_bar = QTabBar()
-        self._tab_bar.setObjectName("chartTabBar")
-        self._tab_bar.setDrawBase(False)
-        self._tab_bar.currentChanged.connect(self._on_tab_changed)
-        layout.addWidget(self._tab_bar)
-
-        self._stack = QStackedWidget()
+        self._page_host = QWidget()
+        self._page_host_layout = QVBoxLayout(self._page_host)
+        self._page_host_layout.setContentsMargins(0, 0, 0, 0)
+        self._page_host_layout.setSpacing(0)
         self._empty_label = QLabel()
         self._empty_label.setObjectName("emptyLabel")
         self._empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(self._stack, 1)
+        layout.addWidget(self._page_host, 1)
         layout.addWidget(self._empty_label, 1)
         self._empty_label.hide()
 
@@ -118,26 +102,6 @@ class ChartViewer(QWidget):
         self.setStyleSheet(f"""
             ChartViewer {{
                 background-color: {COLOR_BG_SECONDARY};
-            }}
-            #chartTabBar {{
-                background-color: {COLOR_BG_TERTIARY};
-                border-bottom: 1px solid {COLOR_BORDER};
-            }}
-            #chartTabBar::tab {{
-                background-color: transparent;
-                color: {COLOR_TEXT_SECONDARY};
-                padding: 6px 12px;
-                margin-right: 2px;
-                border: none;
-                border-bottom: 2px solid transparent;
-            }}
-            #chartTabBar::tab:selected {{
-                color: {COLOR_ACCENT};
-                border-bottom: 2px solid {COLOR_ACCENT};
-            }}
-            #chartTabBar::tab:hover:!selected {{
-                color: {COLOR_TEXT_PRIMARY};
-                background-color: {COLOR_ACCENT_LIGHT};
             }}
             #chartToolbar {{
                 background-color: {COLOR_BG_TERTIARY};
@@ -179,11 +143,11 @@ class ChartViewer(QWidget):
         self._action_measure.setChecked(False)
         self._action_cursor.setChecked(False)
         self._action_cursor.setEnabled(False)
-        while self._tab_bar.count() > 0:
-            self._tab_bar.removeTab(0)
-        while self._stack.count() > 0:
-            widget = self._stack.widget(0)
-            self._stack.removeWidget(widget)
+        while self._page_host_layout.count() > 0:
+            item = self._page_host_layout.takeAt(0)
+            widget = item.widget()
+            if widget is None:
+                continue
             widget.deleteLater()
         self._pages = []
         self._show_empty_state()
@@ -276,11 +240,11 @@ class ChartViewer(QWidget):
         return exported_files
 
     def _rebuild_pages(self):
-        while self._tab_bar.count() > 0:
-            self._tab_bar.removeTab(0)
-        while self._stack.count() > 0:
-            widget = self._stack.widget(0)
-            self._stack.removeWidget(widget)
+        while self._page_host_layout.count() > 0:
+            item = self._page_host_layout.takeAt(0)
+            widget = item.widget()
+            if widget is None:
+                continue
             widget.deleteLater()
         self._pages = []
 
@@ -289,12 +253,10 @@ class ChartViewer(QWidget):
             page.set_chart(spec)
             page.retranslate_ui()
             self._pages.append(page)
-            self._stack.addWidget(page)
-            self._tab_bar.addTab(ChartType.get_display_name(spec.chart_type))
+            self._page_host_layout.addWidget(page)
 
         if self._pages:
-            self._tab_bar.setCurrentIndex(0)
-            self._stack.setCurrentIndex(0)
+            self._reset_page_interaction_state()
             self._update_toolbar_state()
             self._hide_empty_state()
         else:
@@ -308,10 +270,7 @@ class ChartViewer(QWidget):
         return ChartPage()
 
     def _current_page(self) -> Optional[QWidget]:
-        index = self._tab_bar.currentIndex()
-        if index < 0 or index >= len(self._pages):
-            return None
-        return self._pages[index]
+        return self._pages[0] if self._pages else None
 
     def _build_chart_specs(
         self,
@@ -547,17 +506,13 @@ class ChartViewer(QWidget):
         type_rank = {"voltage": 0, "current": 1, "other": 2}.get(signal_type, 2)
         return (role_rank, type_rank, name_lower)
 
-    def _on_tab_changed(self, index: int):
-        if index < 0 or index >= len(self._chart_specs):
-            return
-        self._stack.setCurrentIndex(index)
+    def _reset_page_interaction_state(self):
         self._action_measure.setChecked(False)
         self._action_cursor.setChecked(False)
         for page in self._pages:
             page.set_measurement_enabled(False)
             page.set_data_cursor_enabled(False)
         self._update_toolbar_state()
-        self.tab_changed.emit(self._chart_specs[index].chart_type.value)
 
     def _on_fit_to_view(self):
         page = self._current_page()
@@ -574,36 +529,22 @@ class ChartViewer(QWidget):
         if page is None:
             self._action_cursor.setChecked(False)
             return
-        if not checked:
-            page.set_data_cursor_enabled(False)
-            return
-
-        targets = page.list_data_cursor_targets()
-        target_id = DataCursorSelectionDialog.select_target(
-            targets,
-            current_target_id=page.current_data_cursor_target_id(),
-            parent=self,
-        )
-        if not target_id or not page.select_data_cursor_target(target_id):
-            self._action_cursor.setChecked(False)
-            page.set_data_cursor_enabled(False)
-            return
-        page.set_data_cursor_enabled(True)
+        page.set_data_cursor_enabled(checked)
 
     def _update_toolbar_state(self):
         page = self._current_page()
-        supports_cursor = bool(page is not None and page.supports_data_cursor() and page.list_data_cursor_targets())
+        supports_cursor = bool(page is not None and page.supports_data_cursor())
         self._action_cursor.setEnabled(supports_cursor)
         if not supports_cursor:
             self._action_cursor.setChecked(False)
 
     def _show_empty_state(self):
-        self._stack.hide()
+        self._page_host.hide()
         self._empty_label.show()
 
     def _hide_empty_state(self):
         self._empty_label.hide()
-        self._stack.show()
+        self._page_host.show()
 
     def _tr(self, text: str) -> str:
         try:
@@ -614,4 +555,4 @@ class ChartViewer(QWidget):
             return text
 
 
-__all__ = ["ChartViewer", "ChartSpec", "ChartSeries", "SUPPORTED_CHART_TYPES"]
+__all__ = ["ChartViewer", "ChartSpec", "ChartSeries"]

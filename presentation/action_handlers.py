@@ -153,7 +153,7 @@ class ActionHandlers:
         
         每次打开项目都会：
         1. 调用 project_service.initialize_project() 初始化项目
-        2. 自动检查并补全目录结构
+        2. 初始化项目状态目录并发布项目打开状态
         """
         if self.logger:
             self.logger.info(f"Opening workspace: {folder_path}")
@@ -177,7 +177,7 @@ class ActionHandlers:
         """
         降级处理：手动创建项目目录结构
         
-        当 project_service 不可用时，手动创建必要的目录结构。
+        当 project_service 不可用时，仅创建必要的隐藏状态目录。
         """
         from pathlib import Path
         
@@ -191,21 +191,12 @@ class ActionHandlers:
         except Exception as e:
             if self.logger:
                 self.logger.warning(f"创建隐藏目录失败: {e}")
-        
-        # 创建推荐目录结构
-        recommended_dirs = ["parameters", "subcircuits", "uploads", "simulation_results"]
-        for dir_name in recommended_dirs:
-            try:
-                (path / dir_name).mkdir(parents=True, exist_ok=True)
-            except Exception as e:
-                if self.logger:
-                    self.logger.warning(f"创建推荐目录失败: {dir_name} - {e}")
-        
+
         # 发布项目打开事件
         try:
             from shared.service_locator import ServiceLocator
             from shared.service_names import SVC_EVENT_BUS
-            
+
             event_bus = ServiceLocator.get_optional(SVC_EVENT_BUS)
             if event_bus:
                 from shared.event_types import EVENT_STATE_PROJECT_OPENED

@@ -3,10 +3,11 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import pyqtgraph as pg
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QSplitter, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QSplitter, QTreeWidgetItem, QVBoxLayout, QWidget
 
-from presentation.panels.simulation.chart_data_cursor import ChartDataCursorController, DataCursorSample, DataCursorTarget, DataCursorValue
+from presentation.panels.simulation.chart_data_cursor import ChartDataCursorController, DataCursorSample, DataCursorValue, build_draggable_vertical_cursor_line
 from presentation.panels.simulation.chart_export_utils import build_chart_export_payload
+from presentation.panels.simulation.chart_signal_tree import SignalTreeWidget
 from presentation.panels.simulation.chart_view_types import ChartSeries, ChartSpec
 from presentation.panels.simulation.ltspice_plot_interaction import (
     LTSpiceViewBox,
@@ -150,11 +151,12 @@ class ChartPage(QWidget):
         signal_header_layout.addWidget(self._clear_all_btn)
         signal_layout.addWidget(signal_header)
 
-        self._signal_tree = QTreeWidget()
+        self._signal_tree = SignalTreeWidget()
         self._signal_tree.setObjectName("signalTree")
         self._signal_tree.setHeaderHidden(True)
         self._signal_tree.setRootIsDecorated(False)
         self._signal_tree.itemChanged.connect(self._on_signal_item_changed)
+        self._signal_tree.signal_label_clicked.connect(self._on_signal_label_clicked)
         signal_layout.addWidget(self._signal_tree)
 
         self._main_splitter.addWidget(self._signal_panel)
@@ -177,7 +179,7 @@ class ChartPage(QWidget):
         self._data_cursor = ChartDataCursorController(
             plot_widget=self._plot_widget,
             sample_at=self._sample_cursor_target,
-            current_view_x_range=self._current_view_x_range,
+            x_bounds=self._data_cursor_x_bounds,
             parent=self,
         )
 
@@ -284,11 +286,14 @@ class ChartPage(QWidget):
             valid_series.append(series)
             item = QTreeWidgetItem(self._signal_tree, [series.name])
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            item.setCheckState(0, Qt.CheckState.Checked)
+            is_default_visible = len(valid_series) == 1
+            item.setCheckState(0, Qt.CheckState.Checked if is_default_visible else Qt.CheckState.Unchecked)
             self._series_items[series.name] = item
         self._updating_tree = False
 
         self._spec.series = valid_series
+        if valid_series:
+            self._signal_tree.setCurrentItem(self._series_items[valid_series[0].name])
         self._rebuild_plot()
 
     def has_chart(self) -> bool:
@@ -300,18 +305,11 @@ class ChartPage(QWidget):
     def supports_data_cursor(self) -> bool:
         return bool(self._spec is not None and self._spec.series)
 
-    def list_data_cursor_targets(self) -> List[DataCursorTarget]:
-        if self._spec is None:
-            return []
-        return [DataCursorTarget(target_id=series.name, display_name=series.name) for series in self._spec.series]
-
-    def current_data_cursor_target_id(self) -> str:
-        return self._data_cursor.target_id()
-
-    def select_data_cursor_target(self, target_id: str) -> bool:
+    def _activate_cursor_target(self, target_id: str) -> bool:
         if not target_id or target_id not in self._series_items:
             return False
         item = self._series_items[target_id]
+        self._signal_tree.setCurrentItem(item)
         if item.checkState(0) != Qt.CheckState.Checked:
             self._updating_tree = True
             item.setCheckState(0, Qt.CheckState.Checked)
@@ -343,24 +341,24 @@ class ChartPage(QWidget):
         return pixmap.save(path)
 
     def build_export_payload(self) -> Optional[Dict[str, Any]]:
-        visible_series = self._visible_series()
-        if self._spec is None or not visible_series:
+        if self._spec is None or not self._spec.series:
             return None
-        return build_chart_export_payload(self._spec, visible_series)
+        return build_chart_export_payload(self._spec, self._spec.series)
 
     def _ensure_cursors(self):
-        if self._spec is None or not self._plot_items:
+        if self._spec is None or not self._plot_items or self._x_domain is None:
             return
         if self._cursor_a is None:
-            pen = pg.mkPen("#ff6b6b", width=1, style=Qt.PenStyle.DashLine)
-            self._cursor_a = pg.InfiniteLine(angle=90, movable=True, pen=pen)
+            self._cursor_a = build_draggable_vertical_cursor_line("#ff6b6b", bounds=self._x_domain)
             self._cursor_a.sigPositionChanged.connect(self._on_cursor_a_moved)
             self._plot_widget.addItem(self._cursor_a)
         if self._cursor_b is None:
-            pen = pg.mkPen("#2ecc71", width=1, style=Qt.PenStyle.DashLine)
-            self._cursor_b = pg.InfiniteLine(angle=90, movable=True, pen=pen)
+            self._cursor_b = build_draggable_vertical_cursor_line("#2ecc71", bounds=self._x_domain)
             self._cursor_b.sigPositionChanged.connect(self._on_cursor_b_moved)
             self._plot_widget.addItem(self._cursor_b)
+
+        self._cursor_a.setBounds(self._x_domain)
+        self._cursor_b.setBounds(self._x_domain)
 
         view_range = self._plot_widget.getPlotItem().viewRange()[0]
         x_min, x_max = view_range[0], view_range[1]
@@ -368,10 +366,12 @@ class ChartPage(QWidget):
         offset = max((x_max - x_min) * 0.08, 1e-12)
         if self._cursor_a_pos is None:
             self._cursor_a_pos = center - offset
-            self._cursor_a.setValue(self._cursor_a_pos)
+        self._cursor_a_pos = min(max(self._cursor_a_pos, self._x_domain[0]), self._x_domain[1])
+        self._cursor_a.setValue(self._cursor_a_pos)
         if self._cursor_b_pos is None:
             self._cursor_b_pos = center + offset
-            self._cursor_b.setValue(self._cursor_b_pos)
+        self._cursor_b_pos = min(max(self._cursor_b_pos, self._x_domain[0]), self._x_domain[1])
+        self._cursor_b.setValue(self._cursor_b_pos)
 
     def _remove_cursors(self):
         if self._cursor_a is not None:
@@ -442,11 +442,8 @@ class ChartPage(QWidget):
         transformed = self._to_view_axis_data(np.asarray([y_value], dtype=float), log_enabled=self._spec.log_y)
         return float(transformed[0])
 
-    def _current_view_x_range(self) -> Optional[Tuple[float, float]]:
-        if self._spec is None:
-            return None
-        view_range = self._plot_widget.getPlotItem().viewRange()[0]
-        return float(view_range[0]), float(view_range[1])
+    def _data_cursor_x_bounds(self) -> Optional[Tuple[float, float]]:
+        return self._x_domain
 
     def _find_series_by_name(self, series_name: str) -> Optional[ChartSeries]:
         if self._spec is None:
@@ -531,7 +528,8 @@ class ChartPage(QWidget):
         if not visible_series:
             self._measurement_bar.clear_values()
             self._remove_cursors()
-            self._data_cursor.clear()
+            if self._data_cursor.is_enabled():
+                self._data_cursor.refresh()
             self._measurement_bar.hide()
             self._x_domain = None
             self._y_domain = None
@@ -600,13 +598,23 @@ class ChartPage(QWidget):
     def _on_signal_item_changed(self, item: QTreeWidgetItem, column: int):
         if self._updating_tree or self._spec is None:
             return
+        if item.checkState(0) != Qt.CheckState.Checked and item.text(0) == self._data_cursor.target_id():
+            self._data_cursor.set_target("")
         self._rebuild_plot()
+
+    def _on_signal_label_clicked(self, item: QTreeWidgetItem):
+        if self._spec is None or self._updating_tree or item is None:
+            return
+        if not self._data_cursor.is_enabled():
+            return
+        self._activate_cursor_target(item.text(0))
 
     def _on_clear_all_series(self):
         self._updating_tree = True
         for item in self._series_items.values():
             item.setCheckState(0, Qt.CheckState.Unchecked)
         self._updating_tree = False
+        self._data_cursor.set_target("")
         self._rebuild_plot()
 
     def _on_rect_selected(

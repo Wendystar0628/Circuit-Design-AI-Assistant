@@ -71,14 +71,6 @@ HIDDEN_DIR_STRUCTURE = [
     "datasheets",     # 元器件数据手册目录
 ]
 
-# 推荐的项目目录结构
-RECOMMENDED_DIRS = [
-    "parameters",
-    "subcircuits",
-    "uploads",
-    "simulation_results",  # 仿真结果存储目录（会话子目录在运行时创建）
-]
-
 # 初始化创建的 JSON 文件
 INIT_JSON_FILES = {
     "design_goals.json": {},
@@ -318,9 +310,6 @@ class ProjectService:
             # - 仿真结果面板：加载 simulation_results
             # - 设计目标：加载 design_goals
             # - 迭代历史：加载 iteration_history
-            
-            # 创建推荐目录结构
-            self._create_recommended_dirs(path)
             
             # 初始化 JSON 文件（仅新项目）
             if not is_existing:
@@ -734,30 +723,6 @@ class ProjectService:
             
         except Exception as e:
             return False, f"创建隐藏目录失败: {e}"
-    
-    def _create_recommended_dirs(self, project_path: Path) -> None:
-        """
-        创建推荐的项目目录结构（自动检查与补全）
-        
-        目录结构自动检查与补全机制：
-        - 若目录结构完全不存在，则创建完整结构
-        - 若目录结构部分存在，则仅补全缺失的部分，不覆盖已有内容
-        - 使用 mkdir(exist_ok=True) 确保幂等性
-        
-        此机制确保：
-        - LLM 在具体的相对文件路径生成文件时，目标目录已存在
-        - 系统生成仿真结果时，simulation_results/ 目录已存在
-        
-        Args:
-            project_path: 项目根目录路径
-        """
-        for dir_name in RECOMMENDED_DIRS:
-            dir_path = project_path / dir_name
-            try:
-                dir_path.mkdir(parents=True, exist_ok=True)
-            except Exception as e:
-                if self.logger:
-                    self.logger.warning(f"创建推荐目录失败: {dir_name} - {e}")
     
     def _init_json_files(self, project_path: Path) -> None:
         """初始化 JSON 文件"""

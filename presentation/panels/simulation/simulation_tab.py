@@ -462,7 +462,7 @@ class SimulationTab(QWidget):
         """
         加载波形数据到各组件
 
-        默认选择第一个电压信号显示；若无电压信号则选第一个可用信号。
+        默认仅显示当前排序后的第一个可用信号。
 
         Args:
             result: SimulationResult 对象
@@ -480,7 +480,8 @@ class SimulationTab(QWidget):
         if signal_names:
             try:
                 from domain.simulation.data.waveform_data_service import waveform_data_service
-                default_signal = waveform_data_service.get_preferred_signal(result)
+                resolved_signal_names = waveform_data_service.get_resolved_signal_names(result)
+                default_signal = resolved_signal_names[0] if resolved_signal_names else None
             except Exception:
                 default_signal = signal_names[0]
 

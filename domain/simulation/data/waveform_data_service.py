@@ -343,22 +343,6 @@ class WaveformDataService:
             key=lambda name: self._get_signal_sort_key(result.data, name),
         )[0]
 
-    def get_preferred_signal(self, result: SimulationResult) -> Optional[str]:
-        if not result.success or result.data is None:
-            return None
-
-        resolved_signals = self.get_resolved_signal_names(result)
-        if not resolved_signals:
-            return None
-
-        signal_types = getattr(result.data, 'signal_types', {})
-
-        for signal_name in resolved_signals:
-            if self.get_signal_type(signal_name, signal_types) == "voltage":
-                return signal_name
-
-        return resolved_signals[0]
-    
     def get_classified_signals(self, result: SimulationResult) -> Dict[str, List[str]]:
         """
         获取分类后的信号列表

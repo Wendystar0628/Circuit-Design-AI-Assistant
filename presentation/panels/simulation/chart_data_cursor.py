@@ -3,19 +3,57 @@ from typing import Callable, List, Optional, Tuple
 
 import pyqtgraph as pg
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QDialog, QDialogButtonBox, QFormLayout, QLabel, QListWidget, QListWidgetItem, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QDialog, QFormLayout, QLabel, QVBoxLayout, QWidget
 
 from resources.theme import COLOR_BG_SECONDARY, COLOR_BORDER, COLOR_TEXT_PRIMARY, FONT_SIZE_SMALL, SPACING_NORMAL, SPACING_SMALL
 
 
-CURSOR_GUIDE_COLOR = "#000000"
-CURSOR_MARKER_COLOR = "#000000"
+_CURSOR_GUIDE_COLOR = "#000000"
+_CURSOR_MARKER_COLOR = "#000000"
+_CURSOR_HOVER_WIDTH = 5
+_CURSOR_Z_VALUE = 10_000
 
 
-@dataclass(frozen=True)
-class DataCursorTarget:
-    target_id: str
-    display_name: str
+def _normalize_bounds(bounds: Optional[Tuple[float, float]]) -> Optional[Tuple[float, float]]:
+    if bounds is None:
+        return None
+    minimum = float(bounds[0])
+    maximum = float(bounds[1])
+    if minimum <= maximum:
+        return minimum, maximum
+    return maximum, minimum
+
+
+def _midpoint_of_bounds(bounds: Optional[Tuple[float, float]]) -> Optional[float]:
+    normalized = _normalize_bounds(bounds)
+    if normalized is None:
+        return None
+    return (normalized[0] + normalized[1]) / 2.0
+
+
+def _clamp_to_bounds(value: Optional[float], bounds: Optional[Tuple[float, float]]) -> Optional[float]:
+    if value is None:
+        return None
+    normalized = _normalize_bounds(bounds)
+    if normalized is None:
+        return float(value)
+    return min(max(float(value), normalized[0]), normalized[1])
+
+
+def build_draggable_vertical_cursor_line(
+    color: str,
+    *,
+    bounds: Optional[Tuple[float, float]] = None,
+) -> pg.InfiniteLine:
+    line = pg.InfiniteLine(
+        angle=90,
+        movable=True,
+        pen=pg.mkPen(color, width=1, style=Qt.PenStyle.DashLine),
+        hoverPen=pg.mkPen(color, width=_CURSOR_HOVER_WIDTH, style=Qt.PenStyle.DashLine),
+        bounds=_normalize_bounds(bounds),
+    )
+    line.setZValue(_CURSOR_Z_VALUE)
+    return line
 
 
 @dataclass(frozen=True)
@@ -29,84 +67,6 @@ class DataCursorSample:
     title: str
     plot_y_value: float
     values: List[DataCursorValue]
-
-
-class DataCursorSelectionDialog(QDialog):
-    def __init__(
-        self,
-        targets: List[DataCursorTarget],
-        *,
-        current_target_id: str = "",
-        parent: Optional[QWidget] = None,
-    ):
-        super().__init__(parent)
-        self.setModal(True)
-        self.setWindowTitle("Select Cursor Signal")
-        self._targets = targets
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(SPACING_NORMAL, SPACING_NORMAL, SPACING_NORMAL, SPACING_NORMAL)
-        layout.setSpacing(SPACING_SMALL)
-
-        title_label = QLabel("Select signal")
-        layout.addWidget(title_label)
-
-        self._list_widget = QListWidget()
-        for target in targets:
-            item = QListWidgetItem(target.display_name)
-            item.setData(Qt.ItemDataRole.UserRole, target.target_id)
-            self._list_widget.addItem(item)
-            if current_target_id and target.target_id == current_target_id:
-                self._list_widget.setCurrentItem(item)
-
-        if self._list_widget.currentItem() is None and self._list_widget.count() > 0:
-            self._list_widget.setCurrentRow(0)
-
-        self._list_widget.itemDoubleClicked.connect(lambda _: self.accept())
-        layout.addWidget(self._list_widget)
-
-        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        button_box.accepted.connect(self.accept)
-        button_box.rejected.connect(self.reject)
-        layout.addWidget(button_box)
-
-        self.setStyleSheet(f"""
-            QDialog {{
-                background-color: {COLOR_BG_SECONDARY};
-                color: {COLOR_TEXT_PRIMARY};
-                border: 1px solid {COLOR_BORDER};
-            }}
-            QLabel {{
-                color: {COLOR_TEXT_PRIMARY};
-                font-size: {FONT_SIZE_SMALL}px;
-            }}
-            QListWidget {{
-                color: {COLOR_TEXT_PRIMARY};
-                font-size: {FONT_SIZE_SMALL}px;
-            }}
-        """)
-        self.resize(320, 360)
-
-    def selected_target_id(self) -> str:
-        current_item = self._list_widget.currentItem()
-        if current_item is None:
-            return ""
-        return str(current_item.data(Qt.ItemDataRole.UserRole) or "")
-
-    @classmethod
-    def select_target(
-        cls,
-        targets: List[DataCursorTarget],
-        *,
-        current_target_id: str = "",
-        parent: Optional[QWidget] = None,
-    ) -> str:
-        if not targets:
-            return ""
-        dialog = cls(targets, current_target_id=current_target_id, parent=parent)
-        if dialog.exec() != int(QDialog.DialogCode.Accepted):
-            return ""
-        return dialog.selected_target_id()
 
 
 class DataCursorValueDialog(QDialog):
@@ -163,12 +123,12 @@ class ChartDataCursorController:
         *,
         plot_widget: pg.PlotWidget,
         sample_at: Callable[[str, float], Optional[DataCursorSample]],
-        current_view_x_range: Callable[[], Optional[Tuple[float, float]]],
+        x_bounds: Callable[[], Optional[Tuple[float, float]]],
         parent: Optional[QWidget] = None,
     ):
         self._plot_widget = plot_widget
         self._sample_at = sample_at
-        self._current_view_x_range = current_view_x_range
+        self._x_bounds = x_bounds
         self._target_id = ""
         self._enabled = False
         self._cursor_x: Optional[float] = None
@@ -176,6 +136,7 @@ class ChartDataCursorController:
         self._horizontal_line: Optional[pg.InfiniteLine] = None
         self._marker: Optional[pg.ScatterPlotItem] = None
         self._dialog = DataCursorValueDialog(parent)
+        self._syncing_vertical_line = False
 
     def is_enabled(self) -> bool:
         return self._enabled
@@ -184,26 +145,32 @@ class ChartDataCursorController:
         return self._target_id
 
     def set_target(self, target_id: str):
-        self._target_id = target_id
-        if self._enabled:
-            self.refresh()
+        next_target_id = target_id or ""
+        if not next_target_id:
+            self._cursor_x = None
+        self._target_id = next_target_id
+        if not self._enabled:
+            return
+        if not self._target_id:
+            self._remove_items()
+            self._dialog.hide()
+            self._dialog.clear_values()
+            return
+        self.refresh()
 
     def set_enabled(self, enabled: bool):
         self._enabled = bool(enabled)
         if not self._enabled:
+            self._cursor_x = None
             self._remove_items()
             self._dialog.hide()
             self._dialog.clear_values()
             return
         if not self._target_id:
-            self._enabled = False
+            self._remove_items()
+            self._dialog.hide()
+            self._dialog.clear_values()
             return
-        self._ensure_items()
-        x_range = self._current_view_x_range()
-        if self._cursor_x is None and x_range is not None:
-            self._cursor_x = (x_range[0] + x_range[1]) / 2
-        if self._vertical_line is not None and self._cursor_x is not None:
-            self._vertical_line.setValue(self._cursor_x)
         self.refresh()
         self._dialog.show()
         self._dialog.raise_()
@@ -222,17 +189,16 @@ class ChartDataCursorController:
         self._ensure_items()
         if self._vertical_line is None:
             return
-        self._cursor_x = float(self._vertical_line.value())
+        bounds = _normalize_bounds(self._x_bounds())
+        self._vertical_line.setBounds(bounds)
+        self._cursor_x = self._resolve_cursor_x(bounds)
+        if self._cursor_x is None:
+            self._hide_cursor_graphics()
+            return
+        self._set_vertical_line_value(self._cursor_x)
         sample = self._sample_at(self._target_id, self._cursor_x)
         if sample is None:
-            self._dialog.hide()
-            self._dialog.clear_values()
-            self._vertical_line.hide()
-            if self._horizontal_line is not None:
-                self._horizontal_line.hide()
-            if self._marker is not None:
-                self._marker.setData([], [])
-                self._marker.hide()
+            self._hide_cursor_graphics()
             return
         self._vertical_line.show()
         if self._horizontal_line is not None:
@@ -245,19 +211,49 @@ class ChartDataCursorController:
         self._dialog.show()
 
     def _ensure_items(self):
-        guide_pen = pg.mkPen(CURSOR_GUIDE_COLOR, width=1, style=Qt.PenStyle.DashLine)
-        marker_pen = pg.mkPen(CURSOR_MARKER_COLOR, width=1)
-        marker_brush = pg.mkBrush(CURSOR_MARKER_COLOR)
+        guide_pen = pg.mkPen(_CURSOR_GUIDE_COLOR, width=1, style=Qt.PenStyle.DashLine)
+        marker_pen = pg.mkPen(_CURSOR_MARKER_COLOR, width=1)
+        marker_brush = pg.mkBrush(_CURSOR_MARKER_COLOR)
         if self._vertical_line is None:
-            self._vertical_line = pg.InfiniteLine(angle=90, movable=True, pen=guide_pen)
+            self._vertical_line = build_draggable_vertical_cursor_line(_CURSOR_GUIDE_COLOR, bounds=self._x_bounds())
             self._vertical_line.sigPositionChanged.connect(self._on_cursor_moved)
             self._plot_widget.addItem(self._vertical_line)
         if self._horizontal_line is None:
             self._horizontal_line = pg.InfiniteLine(angle=0, movable=False, pen=guide_pen)
+            self._horizontal_line.setZValue(_CURSOR_Z_VALUE - 1)
             self._plot_widget.addItem(self._horizontal_line)
         if self._marker is None:
             self._marker = pg.ScatterPlotItem(size=7, pen=marker_pen, brush=marker_brush)
+            self._marker.setZValue(_CURSOR_Z_VALUE)
             self._plot_widget.addItem(self._marker)
+
+    def _resolve_cursor_x(self, bounds: Optional[Tuple[float, float]]) -> Optional[float]:
+        if self._cursor_x is None:
+            self._cursor_x = _midpoint_of_bounds(bounds)
+        return _clamp_to_bounds(self._cursor_x, bounds)
+
+    def _set_vertical_line_value(self, value: float):
+        if self._vertical_line is None:
+            return
+        current_value = float(self._vertical_line.value())
+        if abs(current_value - value) <= 1e-12:
+            return
+        self._syncing_vertical_line = True
+        try:
+            self._vertical_line.setValue(value)
+        finally:
+            self._syncing_vertical_line = False
+
+    def _hide_cursor_graphics(self):
+        self._dialog.hide()
+        self._dialog.clear_values()
+        if self._vertical_line is not None:
+            self._vertical_line.hide()
+        if self._horizontal_line is not None:
+            self._horizontal_line.hide()
+        if self._marker is not None:
+            self._marker.setData([], [])
+            self._marker.hide()
 
     def _remove_items(self):
         if self._vertical_line is not None:
@@ -271,16 +267,19 @@ class ChartDataCursorController:
             self._marker = None
 
     def _on_cursor_moved(self):
+        if self._syncing_vertical_line or self._vertical_line is None:
+            return
+        clamped_x = _clamp_to_bounds(float(self._vertical_line.value()), _normalize_bounds(self._x_bounds()))
+        if clamped_x is None:
+            return
+        self._cursor_x = clamped_x
+        self._set_vertical_line_value(clamped_x)
         self.refresh()
 
 
 __all__ = [
-    "CURSOR_GUIDE_COLOR",
-    "CURSOR_MARKER_COLOR",
-    "DataCursorTarget",
     "DataCursorValue",
     "DataCursorSample",
-    "DataCursorSelectionDialog",
-    "DataCursorValueDialog",
+    "build_draggable_vertical_cursor_line",
     "ChartDataCursorController",
 ]

@@ -109,8 +109,6 @@ from domain.llm.cache_stats_tracker import (
 # Token 监控
 from domain.llm.token_monitor import (
     TokenMonitor,
-    DEFAULT_COMPRESS_THRESHOLD,
-    TARGET_USAGE_AFTER_COMPRESS,
 )
 
 # 消息存储
@@ -125,12 +123,6 @@ from domain.llm.message_store import (
 from domain.llm.session_state_manager import (
     SessionStateManager,
     SessionInfo,
-)
-
-# 上下文压缩
-from domain.llm.context_compressor import (
-    ContextCompressor,
-    CompressPreview,
 )
 
 # 上下文管理器（门面类）
@@ -219,8 +211,6 @@ __all__ = [
     "CacheStatsTracker",
     # Token 监控
     "TokenMonitor",
-    "DEFAULT_COMPRESS_THRESHOLD",
-    "TARGET_USAGE_AFTER_COMPRESS",
     # 消息存储
     "MessageStore",
     "IMPORTANCE_HIGH",
@@ -229,9 +219,6 @@ __all__ = [
     # 会话状态管理器
     "SessionStateManager",
     "SessionInfo",
-    # 上下文压缩
-    "ContextCompressor",
-    "CompressPreview",
     # 上下文管理器
     "ContextManager",
     # 外部服务管理器

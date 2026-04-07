@@ -1,34 +1,17 @@
 # Context Compressor - Context Compression Logic
 """
-上下文压缩 - 上下文压缩逻辑
+上下文压缩引擎。
 
 职责：
-- 生成压缩预览
-- 执行上下文压缩（含增强清理策略）
-- 生成对话摘要
-
-基础压缩策略：
-1. 保留系统消息
-2. 保留最近 N 条消息
-3. 将旧消息压缩为摘要
-4. 保留包含重要操作的消息
-
-增强清理策略（解决无用信息占用 Token 问题）：
-1. 深度思考内容清理：旧消息的 reasoning_content 截断或清空
-2. 操作记录合并：去重并限制每条消息的操作数
-3. 摘要替换：用新摘要替换旧摘要，避免累积
-4. 消息内容截断：对旧消息的过长 content 进行智能截断
-
-使用示例：
-    from domain.llm.context_compressor import ContextCompressor
-    compressor = ContextCompressor()
-    preview = compressor.generate_compress_preview(state, keep_recent=5)
-    result = await compressor.compress(state, llm_worker, keep_recent=5)
+- 基于完整历史选择需要被摘要覆盖的消息
+- 生成工作上下文摘要预览
+- 生成新的 working_context_* 压缩状态
 """
 
 from typing import Any, Dict, List, Tuple
 
 from langchain_core.messages import BaseMessage
+from infrastructure.config.settings import DEFAULT_KEEP_RECENT_MESSAGES
 
 from domain.llm.message_helpers import (
     ROLE_SYSTEM,
@@ -52,9 +35,6 @@ from domain.llm.working_context_builder import (
 # ============================================================
 # 常量
 # ============================================================
-
-# 默认保留的最近消息数（激进压缩策略）
-DEFAULT_KEEP_RECENT = 3
 
 # 摘要生成提示模板
 SUMMARY_PROMPT_TEMPLATE = """请将以下对话历史压缩为极简摘要，仅保留核心信息：
@@ -90,16 +70,6 @@ class CompressPreview:
         self.estimated_tokens_saved = estimated_tokens_saved
         self.summary_preview = summary_preview
         self.compressed_message_count = compressed_message_count
-    
-    def to_dict(self) -> Dict[str, Any]:
-        """转换为字典"""
-        return {
-            "summarized_count": len(self.messages_to_summarize),
-            "direct_count": len(self.direct_messages_after_compress),
-            "estimated_tokens_saved": self.estimated_tokens_saved,
-            "summary_preview": self.summary_preview,
-            "compressed_message_count": self.compressed_message_count,
-        }
 
 
 # ============================================================
@@ -132,7 +102,7 @@ class ContextCompressor:
     def generate_compress_preview(
         self,
         state: Dict[str, Any],
-        keep_recent: int = DEFAULT_KEEP_RECENT,
+        keep_recent: int = DEFAULT_KEEP_RECENT_MESSAGES,
         model: str = "default"
     ) -> CompressPreview:
         """
@@ -171,7 +141,7 @@ class ContextCompressor:
         self,
         state: Dict[str, Any],
         llm_worker: Any,
-        keep_recent: int = DEFAULT_KEEP_RECENT,
+        keep_recent: int = DEFAULT_KEEP_RECENT_MESSAGES,
         context_limit: int = 128000,
         model: str = "default"
     ) -> Dict[str, Any]:
@@ -437,7 +407,7 @@ class ContextCompressor:
         
         from domain.llm.message_helpers import is_human_message
         
-        lines = [f"Conversation summary ({len(messages)} messages):"]
+        lines = [f"工作上下文摘要（覆盖 {len(messages)} 条历史消息）："]
         
         # 提取用户问题
         user_msgs = [m for m in messages if is_human_message(m)]
@@ -499,6 +469,5 @@ __all__ = [
     "ContextCompressor",
     "CompressPreview",
     # 常量
-    "DEFAULT_KEEP_RECENT",
     "SUMMARY_PROMPT_TEMPLATE",
 ]

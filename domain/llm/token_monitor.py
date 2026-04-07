@@ -1,29 +1,13 @@
 # Token Monitor - Token Usage Monitoring
 """
-Token 监控 - 监控 Token 使用量
+Token 监控。
 
 职责：
-- 计算当前 Token 占用
-- 获取占用比例
-- 判断是否需要压缩上下文
-- 获取模型上下文限制
-
-使用示例：
-    from domain.llm.token_monitor import TokenMonitor
-    
-    monitor = TokenMonitor()
-    usage = monitor.calculate_usage(state, model)
-    if monitor.should_compress(state, model):
-        # 执行压缩
-        pass
-
-依赖：
-    - token_counter.py（Token 计数）
-    - working_context_builder.py（工作上下文构建）
+- 计算工作上下文的 Token 占用
+- 提供工作上下文占用比例
 """
 
-import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from domain.llm.token_counter import (
     count_tokens,
@@ -41,19 +25,6 @@ from domain.llm.working_context_builder import (
 
 
 # ============================================================
-# 常量
-# ============================================================
-
-# 默认压缩阈值（上下文占用比例）
-DEFAULT_COMPRESS_THRESHOLD = 0.8
-
-# 压缩后目标占用比例
-TARGET_USAGE_AFTER_COMPRESS = 0.5
-
-_logger = logging.getLogger(__name__)
-
-
-# ============================================================
 # Token 监控器
 # ============================================================
 
@@ -61,18 +32,8 @@ class TokenMonitor:
     """
     Token 使用监控器
     
-    监控上下文 Token 使用情况，判断是否需要压缩。
-    专注于 Token 使用量的计算和监控，不涉及压缩逻辑。
+    专注于工作上下文 Token 使用量的计算和监控，不涉及压缩决策。
     """
-    
-    def __init__(self, compress_threshold: float = DEFAULT_COMPRESS_THRESHOLD):
-        """
-        初始化监控器
-        
-        Args:
-            compress_threshold: 触发压缩的阈值（0.0 - 1.0）
-        """
-        self._compress_threshold = compress_threshold
     
     def calculate_usage(
         self,
@@ -221,75 +182,6 @@ class TokenMonitor:
         """
         usage = self.calculate_usage(state, model)
         return usage["usage_ratio"]
-    
-    def should_compress(
-        self,
-        state: Dict[str, Any],
-        model: str = "default",
-        threshold: Optional[float] = None
-    ) -> bool:
-        """
-        判断是否需要压缩上下文
-        
-        Args:
-            state: GraphState 状态
-            model: 模型名称
-            threshold: 自定义阈值（可选，默认使用初始化时的阈值）
-            
-        Returns:
-            是否需要压缩
-        """
-        threshold = threshold or self._compress_threshold
-        ratio = self.get_usage_ratio(state, model)
-        
-        should = ratio >= threshold
-        
-        if should:
-            _logger.info(
-                f"上下文需要压缩: 占用比例 {ratio:.1%} >= 阈值 {threshold:.1%}"
-            )
-        
-        return should
-    
-    def get_model_limit(self, model: str = "default") -> int:
-        """
-        获取模型上下文限制
-        
-        Args:
-            model: 模型名称
-            
-        Returns:
-            上下文限制（tokens）
-        """
-        return get_model_context_limit(model)
-    
-    def estimate_tokens_to_remove(
-        self,
-        state: Dict[str, Any],
-        model: str = "default",
-        target_ratio: float = TARGET_USAGE_AFTER_COMPRESS
-    ) -> int:
-        """
-        估算需要移除的 token 数量
-        
-        用于压缩前评估需要清理多少内容。
-        
-        Args:
-            state: GraphState 状态
-            model: 模型名称
-            target_ratio: 目标占用比例（默认 0.5）
-            
-        Returns:
-            需要移除的 token 数量
-        """
-        usage = self.calculate_usage(state, model)
-        current_tokens = usage["total_tokens"]
-        input_limit = usage["context_limit"] - usage["output_reserve"]
-        
-        target_tokens = int(input_limit * target_ratio)
-        tokens_to_remove = current_tokens - target_tokens
-        
-        return max(0, tokens_to_remove)
 
 
 # ============================================================
@@ -298,6 +190,4 @@ class TokenMonitor:
 
 __all__ = [
     "TokenMonitor",
-    "DEFAULT_COMPRESS_THRESHOLD",
-    "TARGET_USAGE_AFTER_COMPRESS",
 ]

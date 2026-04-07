@@ -7,7 +7,6 @@
 - 获取消息历史
 - 消息重要性分级
 - 部分响应处理
-- 摘要管理
 
 设计原则：
 - 状态不可变：消息操作返回更新后的 state 副本
@@ -44,11 +43,6 @@ from domain.llm.message_helpers import (
     message_to_dict,
     dict_to_message,
     dicts_to_messages,
-)
-from domain.llm.working_context_builder import (
-    WORKING_CONTEXT_COMPRESSED_COUNT_KEY,
-    WORKING_CONTEXT_KEEP_RECENT_KEY,
-    WORKING_CONTEXT_SUMMARY_KEY,
 )
 
 
@@ -461,95 +455,6 @@ class MessageStore:
             self.logger.info("部分响应已移除")
         
         return new_state
-
-    # ============================================================
-    # 摘要管理
-    # ============================================================
-    
-    def get_summary(self, state: Dict[str, Any]) -> str:
-        """
-        获取当前对话摘要
-        
-        Args:
-            state: 当前状态
-            
-        Returns:
-            摘要文本
-        """
-        return state.get(WORKING_CONTEXT_SUMMARY_KEY, "")
-    
-    def has_summary(self, state: Dict[str, Any]) -> bool:
-        """
-        是否存在摘要
-        
-        Args:
-            state: 当前状态
-            
-        Returns:
-            是否有摘要
-        """
-        summary = self.get_summary(state)
-        return bool(summary and summary.strip())
-    
-    def set_summary(
-        self,
-        state: Dict[str, Any],
-        summary: str
-    ) -> Dict[str, Any]:
-        """
-        设置对话摘要
-        
-        Args:
-            state: 当前状态
-            summary: 摘要文本
-            
-        Returns:
-            更新后的状态副本
-        """
-        with self._lock:
-            new_state = copy.deepcopy(state)
-            new_state[WORKING_CONTEXT_SUMMARY_KEY] = summary
-            return new_state
-    
-    # ============================================================
-    # 会话重置
-    # ============================================================
-    
-    def reset_messages(
-        self,
-        state: Dict[str, Any],
-        keep_system: bool = True
-    ) -> Dict[str, Any]:
-        """
-        重置消息列表
-        
-        Args:
-            state: 当前状态
-            keep_system: 是否保留系统消息
-            
-        Returns:
-            更新后的状态副本
-        """
-        with self._lock:
-            new_state = copy.deepcopy(state)
-            
-            if keep_system:
-                # 过滤保留系统消息
-                messages = new_state.get("messages", [])
-                system_msgs = [msg for msg in messages if is_system_message(msg)]
-                new_state["messages"] = system_msgs
-            else:
-                # 清空所有消息
-                new_state["messages"] = []
-            
-            new_state[WORKING_CONTEXT_SUMMARY_KEY] = ""
-            new_state[WORKING_CONTEXT_COMPRESSED_COUNT_KEY] = 0
-            new_state[WORKING_CONTEXT_KEEP_RECENT_KEY] = 0
-            
-            if self.logger:
-                self.logger.info("消息列表已重置")
-            
-            return new_state
     
     def load_messages_from_data(
         self,

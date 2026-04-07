@@ -76,18 +76,15 @@ class ContextManager:
     本类只负责运行时内存状态（_internal_state），不读写磁盘。
     """
     
-    def __init__(self, compress_threshold: float = 0.8):
+    def __init__(self):
         """
         初始化上下文管理器
-        
-        Args:
-            compress_threshold: 触发压缩的阈值（0.0 - 1.0）
         """
         self._lock = threading.RLock()
         
         # 初始化子模块
         self._message_store = MessageStore()
-        self._token_monitor = TokenMonitor(compress_threshold)
+        self._token_monitor = TokenMonitor()
         self._cache_stats_tracker = CacheStatsTracker()
         
         # 延迟获取的服务
@@ -217,50 +214,9 @@ class ContextManager:
             state: 当前状态
             
         Returns:
-            分级后的消息字典 {"high": [...], "medium": [...], "low": [...]}
+            分级后的消息字典 {"high": [...], "medium": [...], "low": [...]} 
         """
         return self._message_store.classify_messages(state)
-    
-    def get_summary(self, state: Dict[str, Any]) -> str:
-        """
-        获取当前对话摘要
-        
-        Args:
-            state: 当前状态
-            
-        Returns:
-            摘要文本
-        """
-        return self._message_store.get_summary(state)
-    
-    def has_summary(self, state: Dict[str, Any]) -> bool:
-        """
-        是否存在摘要
-        
-        Args:
-            state: 当前状态
-            
-        Returns:
-            是否有摘要
-        """
-        return self._message_store.has_summary(state)
-    
-    def reset_messages(
-        self,
-        state: Dict[str, Any],
-        keep_system: bool = True
-    ) -> Dict[str, Any]:
-        """
-        重置消息列表
-        
-        Args:
-            state: 当前状态
-            keep_system: 是否保留系统消息
-            
-        Returns:
-            更新后的状态副本
-        """
-        return self._message_store.reset_messages(state, keep_system)
 
     # ============================================================
     # Token 监控（委托给 TokenMonitor）
@@ -299,37 +255,6 @@ class ContextManager:
             占用比例（0.0 - 1.0）
         """
         return self._token_monitor.get_usage_ratio(state, model)
-    
-    def should_compress(
-        self,
-        state: Dict[str, Any],
-        model: str = "default",
-        threshold: Optional[float] = None
-    ) -> bool:
-        """
-        判断是否需要压缩上下文
-        
-        Args:
-            state: 当前状态
-            model: 模型名称
-            threshold: 自定义阈值
-            
-        Returns:
-            是否需要压缩
-        """
-        return self._token_monitor.should_compress(state, model, threshold)
-    
-    def get_model_limit(self, model: str = "default") -> int:
-        """
-        获取模型上下文限制
-        
-        Args:
-            model: 模型名称
-            
-        Returns:
-            上下文限制（tokens）
-        """
-        return self._token_monitor.get_model_limit(model)
     
     # ============================================================
     # 缓存统计（委托给 CacheStatsTracker）
@@ -401,37 +326,6 @@ class ContextManager:
             CacheEfficiencyReport: 效率报告
         """
         return self._cache_stats_tracker.generate_efficiency_report(time_window_seconds)
-    
-    # ============================================================
-    # 便捷方法（基于 state 参数）
-    # ============================================================
-    
-    def get_context_status(
-        self,
-        state: Dict[str, Any],
-        model: str = "default"
-    ) -> Dict[str, Any]:
-        """
-        获取上下文状态摘要
-        
-        Args:
-            state: 当前状态
-            model: 模型名称
-            
-        Returns:
-            状态摘要字典
-        """
-        usage = self.calculate_usage(state, model)
-        cache_stats = self.get_session_cache_stats()
-        messages = self.get_messages(state)
-        
-        return {
-            "message_count": len(messages),
-            "token_usage": usage,
-            "has_summary": self.has_summary(state),
-            "should_compress": self.should_compress(state, model),
-            "cache_stats": cache_stats.to_dict(),
-        }
 
     # ============================================================
     # 有状态便捷方法（无 LangGraph 集成场景）

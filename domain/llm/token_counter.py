@@ -59,6 +59,14 @@ def _resolve_active_model_and_provider(
 
         ModelRegistry.initialize()
 
+        if resolved_model not in {"", "default"} and not resolved_provider:
+            matched_provider_ids = []
+            for provider_config in ModelRegistry.list_providers():
+                if ModelRegistry.get_model_by_name(provider_config.id, resolved_model):
+                    matched_provider_ids.append(provider_config.id)
+            if len(matched_provider_ids) == 1:
+                resolved_provider = matched_provider_ids[0]
+
         if not resolved_provider:
             default_provider = ModelRegistry.get_default_provider()
             if default_provider:
@@ -375,10 +383,52 @@ def get_model_output_limit(model: str = "default", provider: Optional[str] = Non
     return DEFAULT_OUTPUT_LIMIT
 
 
+def get_model_input_limit(model: str = "default", provider: Optional[str] = None) -> int:
+    """
+    获取模型的输入限制（优先使用模型显式声明的官方输入上限）
+
+    Args:
+        model: 模型名称
+        provider: 厂商 ID
+
+    Returns:
+        输入限制（tokens）
+    """
+    try:
+        from shared.model_registry import ModelRegistry
+        resolved_model, resolved_provider = _resolve_active_model_and_provider(model, provider)
+        model_id = f"{resolved_provider}:{resolved_model}"
+        model_config = ModelRegistry.get_model(model_id)
+        if model_config:
+            try:
+                from infrastructure.config.llm_runtime_config_manager import LLMRuntimeConfigManager
+
+                active_config = LLMRuntimeConfigManager().resolve_active_config(
+                    provider_id=resolved_provider,
+                    model_name=resolved_model,
+                )
+                if active_config.enable_thinking and model_config.supports_thinking:
+                    if model_config.max_input_tokens_thinking > 0:
+                        return model_config.max_input_tokens_thinking
+            except Exception:
+                pass
+
+            if model_config.max_input_tokens_default > 0:
+                return model_config.max_input_tokens_default
+
+            output_limit = get_model_output_limit(model, provider)
+            return max(0, model_config.context_limit - output_limit)
+    except Exception as e:
+        _logger.debug(f"ModelRegistry not available: {e}")
+
+    return max(0, get_model_context_limit(model, provider) - get_model_output_limit(model, provider))
+
+
 def get_available_context(
     model: str,
     used_tokens: int,
-    reserve_output: bool = True
+    reserve_output: bool = True,
+    provider: Optional[str] = None,
 ) -> int:
     """
     计算可用的上下文空间
@@ -391,12 +441,11 @@ def get_available_context(
     Returns:
         可用的 tokens 数量
     """
-    limit = get_model_context_limit(model)
-    
     if reserve_output:
-        output_limit = get_model_output_limit(model)
-        limit -= output_limit
-    
+        limit = get_model_input_limit(model, provider)
+    else:
+        limit = get_model_context_limit(model, provider)
+
     return max(0, limit - used_tokens)
 
 
@@ -412,6 +461,7 @@ __all__ = [
     # 限制查询
     "get_model_context_limit",
     "get_model_output_limit",
+    "get_model_input_limit",
     "get_available_context",
     # 默认值
     "DEFAULT_CONTEXT_LIMIT",

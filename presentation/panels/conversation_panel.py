@@ -38,7 +38,6 @@ from presentation.panels.conversation import (
     TitleBar,
     MessageArea,
     InputArea,
-    AttachmentManager,
     ButtonMode,
     ALLOWED_IMAGE_EXTENSIONS,
 )
@@ -83,7 +82,6 @@ class ConversationPanel(QWidget):
         self._title_bar: Optional[TitleBar] = None
         self._message_area: Optional[MessageArea] = None
         self._input_area: Optional[InputArea] = None
-        self._attachment_manager: Optional[AttachmentManager] = None
         
         # 初始化 UI
         self._setup_ui()
@@ -172,12 +170,8 @@ class ConversationPanel(QWidget):
         # 2. 消息显示区域
         self._message_area = MessageArea(self)
         main_layout.addWidget(self._message_area, 1)
-        
-        # 3. 附件管理器（隐藏，用于管理附件数据）
-        self._attachment_manager = AttachmentManager(self)
-        main_layout.addWidget(self._attachment_manager)
-        
-        # 4. 输入区域
+
+        # 3. 输入区域
         self._input_area = InputArea(self)
         main_layout.addWidget(self._input_area)
     
@@ -214,13 +208,7 @@ class ConversationPanel(QWidget):
             self._input_area.model_card_clicked.connect(
                 self._on_model_card_clicked
             )
-        
-        # 附件管理器信号
-        if self._attachment_manager:
-            self._attachment_manager.attachments_changed.connect(
-                self._on_attachments_changed
-            )
-            self._attachment_manager.attachment_error.connect(
+            self._input_area.attachment_error.connect(
                 self._on_attachment_error
             )
     
@@ -672,12 +660,7 @@ class ConversationPanel(QWidget):
         except Exception as e:
             if self.logger:
                 self.logger.error(f"Failed to open model config dialog: {e}")
-    
-    def _on_attachments_changed(self, count: int) -> None:
-        """处理附件数量变化"""
-        # 可以在这里更新输入区域的附件预览
-        pass
-    
+
     def _on_attachment_error(self, message: str) -> None:
         """处理附件错误"""
         QMessageBox.warning(
@@ -698,7 +681,7 @@ class ConversationPanel(QWidget):
     
     def dropEvent(self, event: QDropEvent) -> None:
         """处理放下事件"""
-        if self._attachment_manager is None:
+        if self._input_area is None:
             return
         
         for url in event.mimeData().urls():
@@ -706,9 +689,9 @@ class ConversationPanel(QWidget):
             if os.path.isfile(path):
                 ext = os.path.splitext(path)[1].lower()
                 if ext in ALLOWED_IMAGE_EXTENSIONS:
-                    self._attachment_manager.add_attachment(path, "image")
+                    self._input_area.add_attachment(path, "image")
                 else:
-                    self._attachment_manager.add_attachment(path, "file")
+                    self._input_area.add_attachment(path, "file")
 
     # ============================================================
     # 公共方法
@@ -719,24 +702,20 @@ class ConversationPanel(QWidget):
         if self._input_area is None:
             return
         
-        text = self._input_area.get_text().strip()
-        if not text:
+        text = self._input_area.get_text()
+        attachments = self._input_area.get_attachments()
+        if not text.strip() and not attachments:
             return
-        
+
         # 检查是否可以发送
         if self.view_model and not self.view_model.can_send:
             return
-        
-        # 获取附件（从 InputArea 获取）
-        attachments = self._input_area.get_attachments()
-        
-        # 清空输入和附件
-        self._input_area.clear()
         
         # 通过 ViewModel 发送
         if self.view_model:
             success = self.view_model.send_message(text, attachments)
             if success:
+                self._input_area.clear()
                 # 切换按钮为停止模式
                 self._input_area.set_button_mode(ButtonMode.STOP)
     
@@ -744,8 +723,8 @@ class ConversationPanel(QWidget):
         """清空显示区（不清空 ViewModel 数据）"""
         if self._message_area:
             self._message_area.clear_messages()
-        if self._attachment_manager:
-            self._attachment_manager.clear_attachments()
+        if self._input_area:
+            self._input_area.clear_attachments()
     
     def start_new_conversation(self) -> None:
         """
@@ -763,8 +742,8 @@ class ConversationPanel(QWidget):
             success, new_session_name = self.view_model.request_new_session()
             
             if success:
-                if self._attachment_manager:
-                    self._attachment_manager.clear_attachments()
+                if self._input_area:
+                    self._input_area.clear_attachments()
                 
                 if self.logger:
                     self.logger.info(f"New conversation started: {new_session_name}")

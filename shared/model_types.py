@@ -51,8 +51,13 @@ class ModelConfig:
     # ============================================================
     
     context_limit: int = 128000       # 上下文限制（tokens）
+    max_input_tokens_default: int = 0 # 普通模式最大输入长度（tokens，0 表示未单独声明）
+    max_input_tokens_thinking: int = 0 # 思考模式最大输入长度（tokens，0 表示未单独声明）
     max_tokens_default: int = 4096    # 普通模式默认 max_tokens
     max_tokens_thinking: int = 4096   # 深度思考模式 max_tokens
+    max_reasoning_tokens: int = 0     # 最大思维链长度（tokens，0 表示未单独声明）
+    rpm: int = 0                      # Requests Per Minute
+    tpm: int = 0                      # Tokens Per Minute
     
     # ============================================================
     # 深度思考配置

@@ -151,6 +151,7 @@ class ConversationViewModel(QObject):
         self._markdown_converter = None
         self._session_state_manager = None
         self._context_compression_service = None
+        self._llm_runtime_config_manager = None
         
         # 事件订阅句柄
         self._subscriptions: List[Callable] = []
@@ -275,6 +276,20 @@ class ConversationViewModel(QObject):
             except Exception:
                 pass
         return self._context_compression_service
+
+    @property
+    def llm_runtime_config_manager(self):
+        if self._llm_runtime_config_manager is None:
+            try:
+                from shared.service_locator import ServiceLocator
+                from shared.service_names import SVC_LLM_RUNTIME_CONFIG_MANAGER
+
+                self._llm_runtime_config_manager = ServiceLocator.get_optional(
+                    SVC_LLM_RUNTIME_CONFIG_MANAGER
+                )
+            except Exception:
+                pass
+        return self._llm_runtime_config_manager
     
     @property
     def stop_controller(self):
@@ -321,6 +336,7 @@ class ConversationViewModel(QObject):
                     EVENT_ITERATION_AWAITING_CONFIRMATION,
                     EVENT_CONTEXT_COMPRESS_COMPLETE,
                     EVENT_SESSION_CHANGED,
+                    EVENT_MODEL_CHANGED,
                 )
                 
                 self.event_bus.subscribe(
@@ -332,6 +348,7 @@ class ConversationViewModel(QObject):
                     self._on_compress_complete
                 )
                 self.event_bus.subscribe(EVENT_SESSION_CHANGED, self._on_session_changed)
+                self.event_bus.subscribe(EVENT_MODEL_CHANGED, self._on_model_changed)
                 
             except ImportError:
                 if self.logger:
@@ -352,6 +369,7 @@ class ConversationViewModel(QObject):
                     EVENT_ITERATION_AWAITING_CONFIRMATION,
                     EVENT_CONTEXT_COMPRESS_COMPLETE,
                     EVENT_SESSION_CHANGED,
+                    EVENT_MODEL_CHANGED,
                 )
                 
                 self.event_bus.unsubscribe(
@@ -363,6 +381,7 @@ class ConversationViewModel(QObject):
                     self._on_compress_complete
                 )
                 self.event_bus.unsubscribe(EVENT_SESSION_CHANGED, self._on_session_changed)
+                self.event_bus.unsubscribe(EVENT_MODEL_CHANGED, self._on_model_changed)
                 
             except ImportError:
                 pass
@@ -638,7 +657,8 @@ class ConversationViewModel(QObject):
         if not self.can_send:
             return False
         
-        if not text.strip():
+        text_value = text.strip()
+        if not text_value and not attachments:
             return False
         
         # 标记之前的建议选项为过期
@@ -653,7 +673,7 @@ class ConversationViewModel(QObject):
                 att_list = attachments if attachments else None
                 
                 # 使用有状态便捷方法添加用户消息
-                self.context_manager.add_user_message(text, att_list)
+                self.context_manager.add_user_message(text_value, att_list)
                 
                 # 标记会话为脏，确保消息会被保存
                 if self.session_state_manager:
@@ -1037,19 +1057,14 @@ class ConversationViewModel(QObject):
         output_reserve = 0
         display_ratio = 0.0
         
-        if self.context_manager:
-            try:
-                state = self.context_manager.get_current_state()
-                usage = self.context_manager.calculate_usage(state)
-                current_tokens = usage.get("total_tokens", 0)
-                context_limit = usage.get("context_limit", 0)
-                output_reserve = usage.get("output_reserve", 0)
-                input_limit = max(0, context_limit - output_reserve)
-                max_tokens = context_limit
-                if context_limit > 0:
-                    display_ratio = current_tokens / context_limit
-            except Exception:
-                pass
+        usage = self._calculate_usage_snapshot()
+        if usage:
+            current_tokens = usage.get("total_tokens", 0)
+            max_tokens = usage.get("context_limit", 0)
+            input_limit = usage.get("input_limit", 0)
+            output_reserve = usage.get("output_reserve", 0)
+            display_ratio = usage.get("usage_ratio", 0.0)
+            self._usage_ratio = display_ratio
         
         return {
             "ratio": max(0.0, min(1.0, display_ratio)),
@@ -1092,13 +1107,37 @@ class ConversationViewModel(QObject):
     
     def _update_usage_ratio(self) -> None:
         """更新上下文占用比例"""
-        if self.context_manager:
-            try:
-                # 使用有状态版本的方法
-                self._usage_ratio = self.context_manager.get_usage_ratio_stateful()
-                self.usage_changed.emit(self._usage_ratio)
-            except Exception:
-                pass
+        usage = self._calculate_usage_snapshot()
+        self._usage_ratio = usage.get("usage_ratio", 0.0) if usage else 0.0
+        self.usage_changed.emit(self._usage_ratio)
+
+    def _resolve_usage_target(self) -> Tuple[str, Optional[str]]:
+        model = "default"
+        provider: Optional[str] = None
+
+        try:
+            runtime_manager = self.llm_runtime_config_manager
+            if runtime_manager:
+                active_config = runtime_manager.resolve_active_config()
+                if active_config.model:
+                    model = active_config.model
+                if active_config.provider:
+                    provider = active_config.provider
+        except Exception:
+            pass
+
+        return model, provider
+
+    def _calculate_usage_snapshot(self) -> Dict[str, Any]:
+        if self.context_manager is None:
+            return {}
+
+        try:
+            state = self.context_manager.get_current_state()
+            model, provider = self._resolve_usage_target()
+            return self.context_manager.calculate_usage(state, model=model, provider=provider)
+        except Exception:
+            return {}
     
     def _markdown_to_html(self, text: str) -> str:
         """
@@ -1228,6 +1267,9 @@ class ConversationViewModel(QObject):
         self.load_messages()
         
         # 更新使用率
+        self._update_usage_ratio()
+
+    def _on_model_changed(self, event_data: Dict[str, Any]) -> None:
         self._update_usage_ratio()
     
     # ============================================================

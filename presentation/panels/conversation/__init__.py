@@ -52,12 +52,6 @@ from presentation.panels.conversation.message_area import (
     STREAM_THROTTLE_MS,
 )
 
-from presentation.panels.conversation.attachment_manager import (
-    AttachmentManager,
-    ATTACHMENT_TYPE_IMAGE,
-    ATTACHMENT_TYPE_FILE,
-)
-
 __all__ = [
     # ViewModel
     "ConversationViewModel",
@@ -87,8 +81,4 @@ __all__ = [
     "MessageArea",
     "MESSAGE_SPACING",
     "STREAM_THROTTLE_MS",
-    # AttachmentManager
-    "AttachmentManager",
-    "ATTACHMENT_TYPE_IMAGE",
-    "ATTACHMENT_TYPE_FILE",
 ]

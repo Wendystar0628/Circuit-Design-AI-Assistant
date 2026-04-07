@@ -194,19 +194,14 @@ class ZhipuRequestBuilder:
         
         try:
             from shared.model_registry import ModelRegistry
-            
-            model_id = f"zhipu:{model}"
-            model_config = ModelRegistry.get_model(model_id)
-            
-            if model_config:
-                # 如果已经是视觉模型，无需切换
-                if model_config.is_vision_model or model_config.supports_vision:
-                    return model
-                
-                # 获取视觉回退模型
-                if model_config.vision_fallback:
-                    fallback_model = model_config.vision_fallback.split(":")[-1]
-                    return fallback_model
+
+            ModelRegistry.initialize()
+            resolved_model_id = ModelRegistry.resolve_model_for_content(
+                f"zhipu:{model}",
+                has_images=True,
+            )
+            if isinstance(resolved_model_id, str) and resolved_model_id:
+                return resolved_model_id.split(":", 1)[-1]
         except Exception as e:
             self._logger.warning(f"ModelRegistry not available: {e}")
         

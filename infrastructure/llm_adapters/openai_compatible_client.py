@@ -96,8 +96,10 @@ class OpenAICompatibleClient(BaseLLMClient):
         if not use_model:
             raise APIError("Model is required")
 
+        actual_model = self._resolve_model_for_messages(use_model, messages)
+
         request_body: Dict[str, Any] = {
-            "model": use_model,
+            "model": actual_model,
             "messages": messages,
             "stream": stream,
         }
@@ -108,10 +110,10 @@ class OpenAICompatibleClient(BaseLLMClient):
             if value is not None:
                 request_body[key] = value
 
-        if thinking and self.supports_thinking(use_model):
+        if thinking and self.supports_thinking(actual_model):
             request_body.setdefault("temperature", 0.6)
 
-        if self.supports_thinking(use_model):
+        if self.supports_thinking(actual_model):
             if self.provider_id == "qwen":
                 request_body["enable_thinking"] = bool(thinking)
             elif self.provider_id == "deepseek":
@@ -130,11 +132,46 @@ class OpenAICompatibleClient(BaseLLMClient):
                 tool_names.append(str(tool.get("type", "") or ""))
 
         self._logger.debug(
-            f"Built request: provider={self.provider_id}, model={use_model}, stream={stream}, "
+            f"Built request: provider={self.provider_id}, model={actual_model}, stream={stream}, "
             f"thinking={thinking}, tool_count={len(tool_names)}, tools={tool_names}"
         )
 
         return request_body
+
+    def _resolve_model_for_messages(
+        self,
+        model_name: str,
+        messages: List[Dict[str, Any]],
+    ) -> str:
+        try:
+            from shared.model_registry import ModelRegistry
+
+            has_images = any(self._message_contains_images(message) for message in messages)
+            if not has_images:
+                return model_name
+
+            ModelRegistry.initialize()
+            resolved_model_id = ModelRegistry.resolve_model_for_content(
+                f"{self.provider_id}:{model_name}",
+                has_images=True,
+            )
+            if not isinstance(resolved_model_id, str) or not resolved_model_id:
+                return model_name
+            return resolved_model_id.split(":", 1)[-1]
+        except Exception:
+            return model_name
+
+    def _message_contains_images(self, message: Dict[str, Any]) -> bool:
+        content = message.get("content")
+        if not isinstance(content, list):
+            return False
+
+        for item in content:
+            if not isinstance(item, dict):
+                continue
+            if item.get("type") == "image_url":
+                return True
+        return False
 
     def _extract_text(self, value: Any) -> Optional[str]:
         if value is None:

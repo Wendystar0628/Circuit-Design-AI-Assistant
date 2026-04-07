@@ -92,6 +92,7 @@ class InputArea(QWidget):
     text_changed = pyqtSignal(str)                 # 文本变化
     attachment_added = pyqtSignal(dict)            # 附件添加
     attachment_removed = pyqtSignal(int)           # 附件移除
+    attachment_error = pyqtSignal(str)             # 附件错误
     upload_image_clicked = pyqtSignal()            # 上传图片按钮点击
     select_file_clicked = pyqtSignal()             # 选择文件按钮点击
     model_card_clicked = pyqtSignal()              # 模型卡片点击（打开模型设置）
@@ -221,7 +222,7 @@ class InputArea(QWidget):
         self._progress_bar.setFixedHeight(6)
         self._progress_bar.setFixedWidth(80)
         self._progress_bar.setTextVisible(False)
-        self._progress_bar.setRange(0, 100)
+        self._progress_bar.setRange(0, 1000)
         self._progress_bar.setValue(0)
         self._update_progress_style(COLOR_NORMAL)
         bottom_btn_layout.addWidget(self._progress_bar)
@@ -235,7 +236,7 @@ class InputArea(QWidget):
                 border: none;
             }
         """)
-        self._usage_label.setFixedWidth(28)
+        self._usage_label.setFixedWidth(36)
         bottom_btn_layout.addWidget(self._usage_label)
         
         self._token_label = QLabel("")
@@ -374,12 +375,21 @@ class InputArea(QWidget):
         """
         # 检查文件是否存在
         if not os.path.isfile(path):
+            self.attachment_error.emit(
+                self._get_text("error.file_not_found", f"File not found: {path}").format(path=path)
+            )
             return False
         
         # 检查图片大小
         if att_type == "image":
             file_size = os.path.getsize(path)
             if file_size > MAX_IMAGE_SIZE_MB * 1024 * 1024:
+                self.attachment_error.emit(
+                    self._get_text(
+                        "error.image_too_large",
+                        f"Image size exceeds {MAX_IMAGE_SIZE_MB}MB limit",
+                    ).format(size=MAX_IMAGE_SIZE_MB)
+                )
                 return False
         
         # 添加到列表
@@ -559,15 +569,15 @@ class InputArea(QWidget):
             max_tokens: 最大 token 数
         """
         ratio = max(0.0, min(1.0, ratio))
-        percentage = int(ratio * 100)
+        progress_value = int(round(ratio * 1000))
         
         # 更新进度条值
         if self._progress_bar:
-            self._progress_bar.setValue(percentage)
+            self._progress_bar.setValue(progress_value)
         
         # 更新百分比标签
         if self._usage_label:
-            self._usage_label.setText(f"{percentage}%")
+            self._usage_label.setText(self._format_percentage(ratio))
         
         # 更新 token 数量标签
         if self._token_label:
@@ -596,6 +606,16 @@ class InputArea(QWidget):
         if tokens >= 1000:
             return f"{tokens / 1000:.1f}k"
         return str(tokens)
+
+    def _format_percentage(self, ratio: float) -> str:
+        percentage = max(0.0, min(100.0, ratio * 100.0))
+        if percentage >= 100.0:
+            return "100%"
+        if percentage >= 10.0:
+            return f"{percentage:.0f}%"
+        if percentage > 0.0:
+            return f"{percentage:.1f}%"
+        return "0%"
     
     def _update_progress_style(self, color: str) -> None:
         """更新进度条样式"""

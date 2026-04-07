@@ -185,8 +185,8 @@ class ContextCompressionService:
         model: str,
         provider: str,
     ) -> Dict[str, Any]:
-        usage = self.context_manager.calculate_usage(state, model) if self.context_manager else {}
-        input_limit = max(0, usage.get("context_limit", 0) - usage.get("output_reserve", 0))
+        usage = self.context_manager.calculate_usage(state, model, provider=provider) if self.context_manager else {}
+        input_limit = usage.get("input_limit", 0)
         return {
             "provider": provider,
             "model": model,

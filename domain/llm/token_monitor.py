@@ -13,6 +13,7 @@ from domain.llm.token_counter import (
     count_tokens,
     count_message_tokens,
     get_model_context_limit,
+    get_model_input_limit,
     get_model_output_limit,
 )
 from domain.llm.working_context_builder import (
@@ -38,7 +39,8 @@ class TokenMonitor:
     def calculate_usage(
         self,
         state: Dict[str, Any],
-        model: str = "default"
+        model: str = "default",
+        provider: str | None = None,
     ) -> Dict[str, Any]:
         """
         计算当前 Token 占用
@@ -79,12 +81,12 @@ class TokenMonitor:
         total_tokens = message_tokens + summary_tokens
         
         # 获取限制
-        context_limit = get_model_context_limit(model)
-        output_reserve = get_model_output_limit(model)
-        available = context_limit - output_reserve - total_tokens
+        context_limit = get_model_context_limit(model, provider)
+        output_reserve = get_model_output_limit(model, provider)
+        input_limit = get_model_input_limit(model, provider)
+        available = input_limit - total_tokens
         
         # 计算占用比例（相对于可用输入空间）
-        input_limit = context_limit - output_reserve
         usage_ratio = total_tokens / input_limit if input_limit > 0 else 1.0
         
         return {
@@ -168,7 +170,8 @@ class TokenMonitor:
     def get_usage_ratio(
         self,
         state: Dict[str, Any],
-        model: str = "default"
+        model: str = "default",
+        provider: str | None = None,
     ) -> float:
         """
         获取占用比例
@@ -180,7 +183,7 @@ class TokenMonitor:
         Returns:
             占用比例（0.0 - 1.0）
         """
-        usage = self.calculate_usage(state, model)
+        usage = self.calculate_usage(state, model, provider)
         return usage["usage_ratio"]
 
 

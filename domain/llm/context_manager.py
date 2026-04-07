@@ -225,7 +225,8 @@ class ContextManager:
     def calculate_usage(
         self,
         state: Dict[str, Any],
-        model: str = "default"
+        model: str = "default",
+        provider: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         计算当前 Token 占用
@@ -237,24 +238,7 @@ class ContextManager:
         Returns:
             使用情况字典
         """
-        return self._token_monitor.calculate_usage(state, model)
-    
-    def get_usage_ratio(
-        self,
-        state: Dict[str, Any],
-        model: str = "default"
-    ) -> float:
-        """
-        获取占用比例
-        
-        Args:
-            state: 当前状态
-            model: 模型名称
-            
-        Returns:
-            占用比例（0.0 - 1.0）
-        """
-        return self._token_monitor.get_usage_ratio(state, model)
+        return self._token_monitor.calculate_usage(state, model, provider)
     
     # ============================================================
     # 缓存统计（委托给 CacheStatsTracker）
@@ -634,20 +618,7 @@ class ContextManager:
         """
         state = self.get_current_state()
         return self.get_messages(state)
-    
-    def get_usage_ratio_stateful(self, model: str = "default") -> float:
-        """
-        获取占用比例（有状态版本）
-        
-        Args:
-            model: 模型名称
-            
-        Returns:
-            占用比例（0.0 - 1.0）
-        """
-        state = self.get_current_state()
-        return self.get_usage_ratio(state, model)
-    
+
 # ============================================================
 # 模块导出
 # ============================================================

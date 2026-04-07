@@ -316,11 +316,15 @@ class SimulationTab(QWidget):
         self._set_controls_enabled(True)
         
         # 加载仿真结果
+        loaded = False
         if result_path and self._project_root:
-            self._load_simulation_result(result_path, show_op_dialog=True)
+            loaded = self._load_simulation_result(result_path, show_op_dialog=True)
         elif not result_path:
             self._logger.warning("No result_path in event, trying to load latest result")
-            self._load_project_simulation_result(show_op_dialog=True)
+            loaded = self._load_project_simulation_result(show_op_dialog=True)
+
+        if loaded and self._project_root:
+            self._auto_export_current_result()
 
     def _on_language_changed(self, event_data: dict):
         """处理语言切换事件"""
@@ -615,10 +619,10 @@ class SimulationTab(QWidget):
         self._metrics_panel_view.setEnabled(enabled)
         # 图表查看器保持可用（允许查看）
     
-    def _load_project_simulation_result(self, show_op_dialog: bool = False):
+    def _load_project_simulation_result(self, show_op_dialog: bool = False) -> bool:
         """加载项目的仿真结果"""
         if not self._project_root:
-            return
+            return False
         
         try:
             load_result = simulation_result_repository.get_latest(self._project_root)
@@ -626,18 +630,21 @@ class SimulationTab(QWidget):
                 self._last_loaded_result_path = self._normalize_result_path(load_result.file_path)
                 self.load_result(load_result.data, load_result.file_path, show_op_dialog=show_op_dialog)
                 self._logger.info(f"Loaded simulation result: {load_result.file_path}")
+                return True
             else:
                 self._logger.info(f"No simulation result found: {load_result.error_message}")
                 self._show_empty_state()
+                return False
                 
         except Exception as e:
             self._logger.warning(f"Failed to load simulation result: {e}")
             self._show_empty_state()
+            return False
     
-    def _load_simulation_result(self, result_path: str, show_op_dialog: bool = False):
+    def _load_simulation_result(self, result_path: str, show_op_dialog: bool = False) -> bool:
         """加载指定的仿真结果"""
         if not self._project_root:
-            return
+            return False
         
         try:
             load_result = simulation_result_repository.load(self._project_root, result_path)
@@ -645,11 +652,31 @@ class SimulationTab(QWidget):
                 # load_result.data 已经是 SimulationResult 对象
                 self._last_loaded_result_path = self._normalize_result_path(result_path)
                 self.load_result(load_result.data, result_path, show_op_dialog=show_op_dialog)
+                return True
             else:
                 self._logger.warning(f"Failed to load result: {load_result.error_message}")
+                return False
                 
         except Exception as e:
             self._logger.warning(f"Failed to load simulation result: {e}")
+            return False
+
+    def _auto_export_current_result(self):
+        execution = self._chart_viewer_panel.export_panel.auto_export_to_project(self._project_root or "")
+        if execution is None:
+            return
+        if execution.errors:
+            self._logger.warning(
+                "Project auto export completed with errors: root=%s, errors=%s",
+                execution.export_root,
+                execution.errors,
+            )
+            return
+        self._logger.info(
+            "Project auto export completed: root=%s, files=%s",
+            execution.export_root,
+            len(execution.exported_files),
+        )
 
     def _maybe_show_op_result_dialog(self, result, result_path: Optional[str] = None):
         analysis_type = str(getattr(result, "analysis_type", "") or "").lower()

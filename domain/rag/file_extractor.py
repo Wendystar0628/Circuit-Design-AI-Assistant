@@ -23,7 +23,7 @@ import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Dict, Optional
+from typing import Callable, Dict, Optional, Set
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +93,18 @@ INDEXABLE_EXTENSIONS: Dict[str, int] = {
     # 富文档
     ".pdf":   _MAX_SIZE_PDF,
     ".docx":  _MAX_SIZE_DOCX,
+}
+
+ATTACHMENT_TEXT_EXTENSIONS: Dict[str, int] = {
+    **INDEXABLE_EXTENSIONS,
+    ".csv": _MAX_SIZE_TEXT,
+}
+
+ATTACHMENT_IMAGE_EXTENSIONS: Set[str] = {
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".webp",
 }
 
 EXCLUDED_INDEX_RULES: Dict[str, FileIndexRule] = {
@@ -182,7 +194,7 @@ _EXTRACTOR_MAP: Dict[str, Callable[[str, int], str]] = {
 # 统一入口
 # ============================================================
 
-def extract_content(abs_path: str) -> str:
+def extract_indexable_content(abs_path: str) -> str:
     """
     提取文件内容，供 RAGManager 索引使用。
 
@@ -207,6 +219,29 @@ def extract_content(abs_path: str) -> str:
     return extractor(abs_path, max_size)
 
 
+def extract_attachment_text(abs_path: str) -> str:
+    ext = Path(abs_path).suffix.lower()
+    max_size = ATTACHMENT_TEXT_EXTENSIONS.get(ext)
+    if max_size is None:
+        return ""
+
+    extractor = _EXTRACTOR_MAP.get(ext, _extract_text)
+    return extractor(abs_path, max_size)
+
+
+def is_image_attachment_path(path: str, mime_type: str = "") -> bool:
+    if isinstance(mime_type, str) and mime_type.lower().startswith("image/"):
+        return True
+    ext = Path(path).suffix.lower()
+    return ext in ATTACHMENT_IMAGE_EXTENSIONS
+
+
+def resolve_attachment_type(path: str, mime_type: str = "") -> str:
+    if is_image_attachment_path(path, mime_type):
+        return "image"
+    return "file"
+
+
 def get_file_index_rule(abs_path: str) -> Optional[FileIndexRule]:
     ext = Path(abs_path).suffix.lower()
     if ext in INDEXABLE_EXTENSIONS:
@@ -219,4 +254,13 @@ def get_file_index_rule(abs_path: str) -> Optional[FileIndexRule]:
     return EXCLUDED_INDEX_RULES.get(ext)
 
 
-__all__ = ["FileIndexRule", "get_file_index_rule", "extract_content"]
+__all__ = [
+    "ATTACHMENT_IMAGE_EXTENSIONS",
+    "ATTACHMENT_TEXT_EXTENSIONS",
+    "FileIndexRule",
+    "extract_attachment_text",
+    "extract_indexable_content",
+    "get_file_index_rule",
+    "is_image_attachment_path",
+    "resolve_attachment_type",
+]

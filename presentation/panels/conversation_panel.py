@@ -39,7 +39,6 @@ from presentation.panels.conversation import (
     MessageArea,
     InputArea,
     ButtonMode,
-    ALLOWED_IMAGE_EXTENSIONS,
 )
 
 
@@ -628,7 +627,7 @@ class ConversationPanel(QWidget):
         # 添加到 InputArea 的附件列表
         if self._input_area:
             for path in paths:
-                self._input_area.add_attachment(path, "image")
+                self._input_area.add_attachment(path)
     
     def _on_select_file_clicked(self) -> None:
         """处理选择文件按钮点击"""
@@ -642,7 +641,7 @@ class ConversationPanel(QWidget):
         # 添加到 InputArea 的附件列表
         if self._input_area:
             for path in paths:
-                self._input_area.add_attachment(path, "file")
+                self._input_area.add_attachment(path)
 
     def _on_model_card_clicked(self) -> None:
         """处理模型卡片点击，打开模型设置对话框"""
@@ -687,11 +686,7 @@ class ConversationPanel(QWidget):
         for url in event.mimeData().urls():
             path = url.toLocalFile()
             if os.path.isfile(path):
-                ext = os.path.splitext(path)[1].lower()
-                if ext in ALLOWED_IMAGE_EXTENSIONS:
-                    self._input_area.add_attachment(path, "image")
-                else:
-                    self._input_area.add_attachment(path, "file")
+                self._input_area.add_attachment(path)
 
     # ============================================================
     # 公共方法

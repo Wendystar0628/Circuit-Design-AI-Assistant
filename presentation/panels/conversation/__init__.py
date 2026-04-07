@@ -37,7 +37,6 @@ from presentation.panels.conversation.input_area import (
     InputArea,
     ButtonMode,
     MAX_IMAGE_SIZE_MB,
-    ALLOWED_IMAGE_EXTENSIONS,
 )
 
 from presentation.panels.conversation.title_bar import (
@@ -72,7 +71,6 @@ __all__ = [
     "InputArea",
     "ButtonMode",
     "MAX_IMAGE_SIZE_MB",
-    "ALLOWED_IMAGE_EXTENSIONS",
     # TitleBar
     "TitleBar",
     "TITLE_BAR_HEIGHT",

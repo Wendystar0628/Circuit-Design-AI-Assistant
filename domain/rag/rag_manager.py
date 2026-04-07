@@ -36,7 +36,7 @@ from typing import Any, Dict, List, Optional, Set
 
 from domain.rag.chunker import chunk_file
 from domain.rag.embedder import Embedder
-from domain.rag.file_extractor import FileIndexRule, extract_content, get_file_index_rule
+from domain.rag.file_extractor import FileIndexRule, extract_indexable_content, get_file_index_rule
 from domain.rag.rag_worker import RAGWorkerThread
 from domain.rag.vector_store import RAGQueryResult, VectorStore
 from infrastructure.config.settings import (
@@ -456,7 +456,7 @@ class RAGManager:
 
         流程：读取内容 → 分块 → Embedding → upsert 到 VectorStore
         """
-        content = extract_content(abs_path)
+        content = extract_indexable_content(abs_path)
         if not content.strip():
             return
 

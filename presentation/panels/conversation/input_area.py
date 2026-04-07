@@ -42,6 +42,7 @@ from PyQt6.QtWidgets import (
 )
 
 from domain.llm.message_types import Attachment
+from domain.rag.file_extractor import resolve_attachment_type
 
 # ============================================================
 # 样式常量
@@ -56,7 +57,6 @@ INPUT_BORDER_RADIUS = 8
 
 # 附件限制
 MAX_IMAGE_SIZE_MB = 10
-ALLOWED_IMAGE_EXTENSIONS = [".png", ".jpg", ".jpeg", ".webp"]
 
 # 上下文占用阈值
 WARNING_THRESHOLD = 0.60
@@ -380,9 +380,12 @@ class InputArea(QWidget):
                 self._get_text("error.file_not_found", f"File not found: {path}").format(path=path)
             )
             return False
+
+        mime_type, _ = mimetypes.guess_type(path)
+        resolved_type = resolve_attachment_type(path, mime_type or "")
         
         # 检查图片大小
-        if att_type == "image":
+        if resolved_type == "image":
             file_size = os.path.getsize(path)
             if file_size > MAX_IMAGE_SIZE_MB * 1024 * 1024:
                 self.attachment_error.emit(
@@ -394,12 +397,11 @@ class InputArea(QWidget):
                 return False
         
         # 添加到列表
-        mime_type, _ = mimetypes.guess_type(path)
         attachment = Attachment(
-            type=att_type,
+            type=resolved_type,
             path=path,
             name=os.path.basename(path),
-            mime_type=mime_type or ("image/png" if att_type == "image" else "application/octet-stream"),
+            mime_type=mime_type or ("image/png" if resolved_type == "image" else "application/octet-stream"),
             size=os.path.getsize(path),
         )
         self._attachments.append(attachment)
@@ -833,11 +835,7 @@ class InputArea(QWidget):
         for url in event.mimeData().urls():
             path = url.toLocalFile()
             if os.path.isfile(path):
-                ext = os.path.splitext(path)[1].lower()
-                if ext in ALLOWED_IMAGE_EXTENSIONS:
-                    self.add_attachment(path, "image")
-                else:
-                    self.add_attachment(path, "file")
+                self.add_attachment(path)
     
     # ============================================================
     # 键盘事件处理
@@ -922,6 +920,5 @@ __all__ = [
     "InputArea",
     "ButtonMode",
     "MAX_IMAGE_SIZE_MB",
-    "ALLOWED_IMAGE_EXTENSIONS",
 ]
 

@@ -1,4 +1,3 @@
-import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -15,8 +14,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from domain.simulation.data.simulation_artifact_exporter import simulation_artifact_exporter
 from domain.simulation.models.simulation_result import SimulationResult
+from presentation.panels.simulation.simulation_export_coordinator import SimulationExportCoordinator
 from resources.theme import (
     BORDER_RADIUS_NORMAL,
     COLOR_ACCENT,
@@ -36,8 +35,7 @@ from resources.theme import (
 class SimulationExportPanel(QWidget):
     def __init__(self, chart_viewer, waveform_widget, parent=None):
         super().__init__(parent)
-        self._chart_viewer = chart_viewer
-        self._waveform_widget = waveform_widget
+        self._export_coordinator = SimulationExportCoordinator(chart_viewer, waveform_widget)
         self._result: Optional[SimulationResult] = None
         self._metrics: List[Any] = []
         self._overall_score: float = 0.0
@@ -149,7 +147,7 @@ class SimulationExportPanel(QWidget):
             )
             return
 
-        selected_types = [key for key, checkbox in self._checkboxes.items() if checkbox.isChecked()]
+        selected_types = self._get_selected_types()
         if not selected_types:
             QMessageBox.warning(
                 self,
@@ -167,65 +165,22 @@ class SimulationExportPanel(QWidget):
         if not base_directory:
             return
 
-        export_root = simulation_artifact_exporter.create_export_root(base_directory, result)
-        exported_files: List[str] = []
-        category_exports: Dict[str, List[str]] = {}
-        errors: List[Dict[str, str]] = []
-
-        for export_type in selected_types:
-            try:
-                category_file_paths: List[str] = []
-                if export_type == "metrics":
-                    category_file_paths = simulation_artifact_exporter.export_metrics(export_root, result, self._metrics, self._overall_score)
-                elif export_type == "charts":
-                    category_file_paths = self._chart_viewer.export_bundle(str(export_root / "charts"))
-                elif export_type == "waveforms":
-                    category_file_paths = self._waveform_widget.export_bundle(str(export_root / "waveforms"))
-                elif export_type == "analysis_info":
-                    category_file_paths = simulation_artifact_exporter.export_analysis_info(export_root, result)
-                elif export_type == "raw_data":
-                    category_file_paths = simulation_artifact_exporter.export_raw_data(export_root, result)
-                elif export_type == "output_log":
-                    category_file_paths = simulation_artifact_exporter.export_output_log(export_root, result)
-                exported_files.extend(category_file_paths)
-                category_exports[export_type] = self._to_relative_paths(export_root, category_file_paths)
-            except Exception as exc:
-                category_exports[export_type] = []
-                errors.append({
-                    "artifact_type": export_type,
-                    "message": str(exc),
-                })
-
-        manifest_path = export_root / "export_manifest.json"
-        manifest_payload = simulation_artifact_exporter.build_artifact_payload(
+        execution = self._export_coordinator.export_to_base_directory(
+            base_directory,
             result,
-            "export_manifest",
-            summary={
-                "selected_type_count": len(selected_types),
-                "exported_file_count": len(exported_files) + 1,
-                "error_count": len(errors),
-            },
-            files={
-                "categories": category_exports,
-                "manifest": manifest_path.name,
-            },
-            data={
-                "selected_types": selected_types,
-                "exported_files": self._to_relative_paths(export_root, [*exported_files, str(manifest_path)]),
-                "errors": errors,
-            },
+            selected_types,
+            self._metrics,
+            self._overall_score,
         )
-        manifest_path.write_text(json.dumps(manifest_payload, ensure_ascii=False, indent=2), encoding="utf-8")
-        exported_files.append(str(manifest_path))
 
-        if errors:
+        if execution.errors:
             QMessageBox.warning(
                 self,
                 self._get_text("simulation.export.title", "统一数据导出"),
                 self._get_text(
                     "simulation.export.partial_failed",
                     "导出已完成，但部分内容失败。\n根目录：{path}\n错误数量：{count}",
-                ).format(path=str(export_root), count=len(errors)),
+                ).format(path=str(execution.export_root), count=len(execution.errors)),
             )
             return
 
@@ -235,19 +190,31 @@ class SimulationExportPanel(QWidget):
             self._get_text(
                 "simulation.export.success",
                 "导出完成。\n根目录：{path}\n文件数量：{count}",
-            ).format(path=str(export_root), count=len(exported_files)),
+            ).format(path=str(execution.export_root), count=len(execution.exported_files)),
         )
 
-    def _to_relative_paths(self, export_root: Path, file_paths: List[str]) -> List[str]:
-        root = export_root.resolve()
-        relative_paths: List[str] = []
-        for file_path in file_paths:
-            path = Path(file_path)
-            try:
-                relative_paths.append(str(path.resolve().relative_to(root)).replace("\\", "/"))
-            except Exception:
-                relative_paths.append(path.name)
-        return relative_paths
+    def auto_export_to_project(self, project_root: str):
+        result = self._result
+        if result is None or not project_root:
+            return None
+
+        selected_types = self._get_selected_types(fallback_to_all=True)
+        if not selected_types:
+            return None
+
+        return self._export_coordinator.export_to_project_directory(
+            project_root,
+            result,
+            selected_types,
+            self._metrics,
+            self._overall_score,
+        )
+
+    def _get_selected_types(self, fallback_to_all: bool = False) -> List[str]:
+        selected_types = [key for key, checkbox in self._checkboxes.items() if checkbox.isChecked()]
+        if selected_types or not fallback_to_all:
+            return selected_types
+        return self._export_coordinator.all_export_types()
 
     def _update_enabled_state(self):
         has_result = self._result is not None

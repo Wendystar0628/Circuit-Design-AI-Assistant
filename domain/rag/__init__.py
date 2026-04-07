@@ -13,7 +13,7 @@ RAG 知识检索域 - Embedding-only 向量检索架构
 
 from domain.rag.chunker import Chunk, chunk_file
 from domain.rag.embedder import Embedder
-from domain.rag.file_extractor import FileIndexRule, extract_content, get_file_index_rule
+from domain.rag.file_extractor import FileIndexRule, extract_indexable_content, get_file_index_rule
 from domain.rag.rag_manager import RAGManager
 from domain.rag.vector_store import RAGQueryResult, VectorStore
 from domain.rag.document_watcher import DocumentWatcher
@@ -23,7 +23,7 @@ __all__ = [
     "Chunk",
     "chunk_file",
     "Embedder",
-    "extract_content",
+    "extract_indexable_content",
     "FileIndexRule",
     "get_file_index_rule",
     "RAGManager",

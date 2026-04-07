@@ -7,7 +7,7 @@ from langchain_core.messages import BaseMessage
 
 from domain.llm.message_helpers import get_attachments, get_reasoning_content, get_role
 from domain.llm.message_types import Attachment
-from domain.rag.file_extractor import extract_content
+from domain.rag.file_extractor import extract_attachment_text, resolve_attachment_type
 
 
 class LLMMessageBuilder:
@@ -88,7 +88,7 @@ class LLMMessageBuilder:
         if not attachment.path or not os.path.isfile(attachment.path):
             return f"[附件不可用: {attachment.name}]"
 
-        extracted = extract_content(attachment.path).strip()
+        extracted = extract_attachment_text(attachment.path).strip()
         if extracted:
             return f"[附件 {attachment.name}]\n{extracted}"
 
@@ -115,12 +115,16 @@ class LLMMessageBuilder:
     def _normalize_attachments(self, attachments: List[Attachment]) -> List[Attachment]:
         normalized: List[Attachment] = []
         for attachment in attachments or []:
+            resolved_type = resolve_attachment_type(
+                attachment.path,
+                attachment.mime_type,
+            )
             normalized.append(
                 Attachment(
-                    type=attachment.type,
+                    type=resolved_type,
                     path=attachment.path,
                     name=attachment.name,
-                    mime_type=attachment.mime_type or self._guess_mime_type(attachment.path, attachment.type),
+                    mime_type=attachment.mime_type or self._guess_mime_type(attachment.path, resolved_type),
                     size=self._resolve_size(attachment.path, attachment.size),
                 )
             )

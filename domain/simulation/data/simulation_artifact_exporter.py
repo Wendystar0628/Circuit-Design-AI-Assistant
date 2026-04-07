@@ -1,6 +1,6 @@
 import csv
 import json
-import logging
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -10,22 +10,33 @@ from domain.simulation.models.simulation_result import SimulationResult
 
 
 EXPORT_SCHEMA_VERSION = 1
+PROJECT_EXPORTS_DIR_NAME = "仿真结果"
+DEFAULT_EXPORT_FOLDER_NAME = "simulation_result"
 
 
 class SimulationArtifactExporter:
-    def __init__(self):
-        self._logger = logging.getLogger(__name__)
-
     def create_export_root(self, base_directory: str, result: SimulationResult) -> Path:
-        root = Path(base_directory)
-        circuit_folder = (Path(result.file_path).name if result.file_path else "simulation_result") or "simulation_result"
-        timestamp_folder = self.format_timestamp_folder(getattr(result, "timestamp", ""))
-        export_root = root / circuit_folder / timestamp_folder
-        export_root.mkdir(parents=True, exist_ok=True)
+        export_root = self._build_export_root(base_directory, result)
+        export_root.mkdir(parents=True, exist_ok=False)
         return export_root
 
-    def format_timestamp_folder(self, timestamp: str) -> str:
-        return self._format_timestamp_folder(timestamp)
+    def create_project_export_root(self, project_root: str, result: SimulationResult) -> Path:
+        export_root = self._build_export_root(Path(project_root) / PROJECT_EXPORTS_DIR_NAME, result)
+        export_root.mkdir(parents=True, exist_ok=False)
+        return export_root
+
+    def _build_export_root(self, base_directory: str | Path, result: SimulationResult) -> Path:
+        root = Path(base_directory)
+        circuit_folder = self._format_circuit_folder(getattr(result, "file_path", ""))
+        timestamp_folder = self._format_timestamp_folder(getattr(result, "timestamp", ""))
+        return self._ensure_unique_directory(root / circuit_folder / timestamp_folder)
+
+    def _format_circuit_folder(self, file_path: str) -> str:
+        candidate = Path(file_path).stem if file_path else DEFAULT_EXPORT_FOLDER_NAME
+        return self._sanitize_folder_name(candidate or DEFAULT_EXPORT_FOLDER_NAME)
+
+    def dumps_json(self, payload: Dict[str, Any]) -> str:
+        return json.dumps(payload, ensure_ascii=False, indent=2)
 
     def build_artifact_payload(
         self,
@@ -314,11 +325,26 @@ class SimulationArtifactExporter:
         safe = candidate.replace(":", "-").replace("T", "_")
         safe = safe.replace("/", "-").replace("\\", "-")
         safe = safe.replace("+", "_").replace("Z", "")
-        safe = safe.split(".")[0]
+        safe = safe.replace(".", "_")
         return safe or "simulation_time_unknown"
 
+    def _sanitize_folder_name(self, value: str) -> str:
+        safe = re.sub(r'[<>:"/\\|?*]+', "_", str(value or "").strip())
+        safe = safe.rstrip(" .")
+        return safe or DEFAULT_EXPORT_FOLDER_NAME
+
+    def _ensure_unique_directory(self, path: Path) -> Path:
+        if not path.exists():
+            return path
+        suffix = 2
+        while True:
+            candidate = path.with_name(f"{path.name}_{suffix}")
+            if not candidate.exists():
+                return candidate
+            suffix += 1
+
     def _write_json(self, path: Path, payload: Dict[str, Any]) -> None:
-        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        path.write_text(self.dumps_json(payload), encoding="utf-8")
 
     def _is_finite_number(self, value: Any) -> bool:
         try:

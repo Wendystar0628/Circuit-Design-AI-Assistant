@@ -8,6 +8,7 @@ from PyQt6.QtWidgets import QApplication
 from domain.simulation.data.simulation_artifact_exporter import simulation_artifact_exporter
 from domain.simulation.models.simulation_result import SimulationData, SimulationResult
 from presentation.panels.simulation.analysis_chart_viewer import ChartViewer
+from presentation.panels.simulation.simulation_export_panel import SimulationExportPanel
 from presentation.panels.simulation.waveform_widget import WaveformWidget
 
 
@@ -179,6 +180,14 @@ def test_artifact_exporter_outputs_common_payload_schema(sample_result: Simulati
     assert output_log_payload["summary"]["warning_count"] == 1
 
 
+def test_project_export_root_uses_visible_results_folder_and_unique_timestamp_dirs(sample_result: SimulationResult, tmp_path: Path):
+    first_root = simulation_artifact_exporter.create_project_export_root(str(tmp_path), sample_result)
+    second_root = simulation_artifact_exporter.create_project_export_root(str(tmp_path), sample_result)
+
+    assert first_root.relative_to(tmp_path).parts == ("仿真结果", "export_consistency", "2026-04-06_00-10-00")
+    assert second_root.relative_to(tmp_path).parts == ("仿真结果", "export_consistency", "2026-04-06_00-10-00_2")
+
+
 def test_chart_and_waveform_exports_follow_common_payload_schema(qapp, sample_result: SimulationResult, tmp_path: Path):
     chart_viewer = ChartViewer()
     chart_viewer.load_result(sample_result)
@@ -207,6 +216,29 @@ def test_chart_and_waveform_exports_follow_common_payload_schema(qapp, sample_re
     assert waveform_payload["data"]["columns"][0] == "Time (s)"
     assert len(waveform_payload["data"]["series"]) == 2
     assert waveform_payload["summary"]["row_count"] == 4
+
+
+def test_export_panel_auto_exports_current_result_into_project_results_tree(qapp, sample_result: SimulationResult, sample_metrics, tmp_path: Path):
+    chart_viewer = ChartViewer()
+    chart_viewer.load_result(sample_result)
+
+    waveform_widget = WaveformWidget()
+    waveform_widget.load_waveform(sample_result, "V(out)")
+    waveform_widget.add_waveform(sample_result, "V(in)")
+
+    export_panel = SimulationExportPanel(chart_viewer, waveform_widget)
+    export_panel.set_result(sample_result)
+    export_panel.set_metrics(sample_metrics)
+    export_panel.set_overall_score(88.0)
+
+    execution = export_panel.auto_export_to_project(str(tmp_path))
+
+    assert execution is not None
+    assert execution.errors == []
+    assert execution.export_root.relative_to(tmp_path).parts == ("仿真结果", "export_consistency", "2026-04-06_00-10-00")
+    assert (execution.export_root / "export_manifest.json").exists()
+    assert (execution.export_root / "charts" / "charts.json").exists()
+    assert (execution.export_root / "waveforms" / "waveform.json").exists()
 
 
 def test_ac_chart_exports_single_bode_overlay_with_dual_axis_metadata(qapp, sample_ac_result: SimulationResult, tmp_path: Path):

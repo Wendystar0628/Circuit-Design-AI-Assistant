@@ -19,6 +19,7 @@ from domain.simulation.data.simulation_artifact_exporter import simulation_artif
 from domain.simulation.models.chart_type import ChartType
 from domain.simulation.models.simulation_result import SimulationResult
 from presentation.panels.simulation.bode_overlay_chart_page import BodeOverlayChartPage
+from presentation.panels.simulation.chart_data_cursor import DataCursorSelectionDialog
 from presentation.panels.simulation.chart_page_widget import ChartPage
 from presentation.panels.simulation.chart_view_types import ChartSeries, ChartSpec
 from presentation.panels.simulation.ltspice_plot_interaction import finite_range
@@ -569,12 +570,28 @@ class ChartViewer(QWidget):
 
     def _on_toggle_cursor(self, checked: bool):
         page = self._current_page()
-        if page is not None:
-            page.set_data_cursor_enabled(checked)
+        if page is None:
+            self._action_cursor.setChecked(False)
+            return
+        if not checked:
+            page.set_data_cursor_enabled(False)
+            return
+
+        targets = page.list_data_cursor_targets()
+        target_id = DataCursorSelectionDialog.select_target(
+            targets,
+            current_target_id=page.current_data_cursor_target_id(),
+            parent=self,
+        )
+        if not target_id or not page.select_data_cursor_target(target_id):
+            self._action_cursor.setChecked(False)
+            page.set_data_cursor_enabled(False)
+            return
+        page.set_data_cursor_enabled(True)
 
     def _update_toolbar_state(self):
         page = self._current_page()
-        supports_cursor = bool(page is not None and page.supports_data_cursor())
+        supports_cursor = bool(page is not None and page.supports_data_cursor() and page.list_data_cursor_targets())
         self._action_cursor.setEnabled(supports_cursor)
         if not supports_cursor:
             self._action_cursor.setChecked(False)

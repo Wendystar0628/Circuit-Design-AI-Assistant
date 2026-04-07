@@ -8,6 +8,7 @@ import pyqtgraph as pg
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QSplitter, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget
 
+from presentation.panels.simulation.chart_data_cursor import ChartDataCursorController, DataCursorSample, DataCursorTarget, DataCursorValue
 from presentation.panels.simulation.chart_view_types import ChartSeries, ChartSpec
 from presentation.panels.simulation.ltspice_plot_interaction import (
     LTSpiceViewBox,
@@ -175,6 +176,12 @@ class ChartPage(QWidget):
             view_box.rect_selected.connect(self._on_rect_selected)
         self._legend = plot_item.addLegend()
         right_layout.addWidget(self._plot_widget, 1)
+        self._data_cursor = ChartDataCursorController(
+            plot_widget=self._plot_widget,
+            sample_at=self._sample_cursor_target,
+            current_view_x_range=self._current_view_x_range,
+            parent=self,
+        )
 
         self._measurement_bar = MeasurementBar()
         right_layout.addWidget(self._measurement_bar)
@@ -247,6 +254,7 @@ class ChartPage(QWidget):
         plot_item.disableAutoRange()
         self._legend = plot_item.addLegend()
         self._remove_cursors()
+        self._data_cursor.clear()
         self._measurement_bar.clear_values()
         self._measurement_bar.hide()
         self._spec = None
@@ -292,10 +300,30 @@ class ChartPage(QWidget):
         self._rebuild_plot()
 
     def supports_data_cursor(self) -> bool:
-        return False
+        return bool(self._spec is not None and self._spec.series)
+
+    def list_data_cursor_targets(self) -> List[DataCursorTarget]:
+        if self._spec is None:
+            return []
+        return [DataCursorTarget(target_id=series.name, display_name=series.name) for series in self._spec.series]
+
+    def current_data_cursor_target_id(self) -> str:
+        return self._data_cursor.target_id()
+
+    def select_data_cursor_target(self, target_id: str) -> bool:
+        if not target_id or target_id not in self._series_items:
+            return False
+        item = self._series_items[target_id]
+        if item.checkState(0) != Qt.CheckState.Checked:
+            self._updating_tree = True
+            item.setCheckState(0, Qt.CheckState.Checked)
+            self._updating_tree = False
+            self._rebuild_plot()
+        self._data_cursor.set_target(target_id)
+        return True
 
     def set_data_cursor_enabled(self, enabled: bool):
-        return
+        self._data_cursor.set_enabled(enabled)
 
     def set_measurement_enabled(self, enabled: bool):
         if enabled:
@@ -461,6 +489,46 @@ class ChartPage(QWidget):
             return float(10 ** x_position)
         return float(x_position)
 
+    def _to_plot_y_value(self, y_value: float) -> float:
+        if self._spec is None:
+            return float(y_value)
+        transformed = self._to_view_axis_data(np.asarray([y_value], dtype=float), log_enabled=self._spec.log_y)
+        return float(transformed[0])
+
+    def _current_view_x_range(self) -> Optional[Tuple[float, float]]:
+        if self._spec is None:
+            return None
+        view_range = self._plot_widget.getPlotItem().viewRange()[0]
+        return float(view_range[0]), float(view_range[1])
+
+    def _find_series_by_name(self, series_name: str) -> Optional[ChartSeries]:
+        if self._spec is None:
+            return None
+        for series in self._spec.series:
+            if series.name == series_name:
+                return series
+        return None
+
+    def _sample_cursor_target(self, target_id: str, x_position: float) -> Optional[DataCursorSample]:
+        series = self._find_series_by_name(target_id)
+        if series is None or target_id not in self._plot_items:
+            return None
+        x_display = self._to_display_x(x_position)
+        if x_display is None:
+            return None
+        sampled_values = self._sample_series(x_position)
+        if target_id not in sampled_values:
+            return None
+        y_value = float(sampled_values[target_id])
+        return DataCursorSample(
+            title=target_id,
+            plot_y_value=self._to_plot_y_value(y_value),
+            values=[
+                DataCursorValue(label=f"{self._spec.x_label}:", value_text=f"{x_display:.6g}"),
+                DataCursorValue(label=f"{self._spec.y_label}:", value_text=f"{y_value:.6g}"),
+            ],
+        )
+
     def _should_show_frequency(self) -> bool:
         if self._spec is None:
             return False
@@ -516,6 +584,7 @@ class ChartPage(QWidget):
         if not visible_series:
             self._measurement_bar.clear_values()
             self._remove_cursors()
+            self._data_cursor.clear()
             self._measurement_bar.hide()
             self._x_domain = None
             self._y_domain = None
@@ -526,6 +595,8 @@ class ChartPage(QWidget):
 
         if self.is_measurement_enabled():
             self._update_measurement()
+        if self._data_cursor.is_enabled():
+            self._data_cursor.refresh()
 
     def _rebuild_domains(self):
         if self._spec is None:
@@ -614,6 +685,8 @@ class ChartPage(QWidget):
         self._apply_viewport(clamped_x_range, clamped_y_range)
         if self.is_measurement_enabled():
             self._update_measurement()
+        if self._data_cursor.is_enabled():
+            self._data_cursor.refresh()
 
     def _to_view_axis_data(self, values: np.ndarray, *, log_enabled: bool) -> np.ndarray:
         array = np.asarray(values, dtype=float)

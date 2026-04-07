@@ -4,78 +4,13 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import pyqtgraph as pg
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QDialog, QFormLayout, QFrame, QHBoxLayout, QLabel, QPushButton, QSplitter, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QSplitter, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget
 
+from presentation.panels.simulation.chart_data_cursor import ChartDataCursorController, DataCursorSample, DataCursorTarget, DataCursorValue
 from presentation.panels.simulation.chart_page_widget import MeasurementBar
 from presentation.panels.simulation.chart_view_types import ChartSeries, ChartSpec
 from presentation.panels.simulation.ltspice_plot_interaction import LTSpiceViewBox, apply_dynamic_tick_spacing, clamp_range, finite_range, merge_ranges, nice_tick_spacing
 from resources.theme import COLOR_BG_PRIMARY, COLOR_BG_SECONDARY, COLOR_BG_TERTIARY, COLOR_BORDER, COLOR_TEXT_PRIMARY, COLOR_TEXT_SECONDARY, FONT_SIZE_SMALL, SPACING_NORMAL, SPACING_SMALL
-
-
-class BodeCursorDialog(QDialog):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowFlag(Qt.WindowType.Tool, True)
-        self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
-        self.setModal(False)
-        self.setWindowTitle("Bode Cursor")
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(SPACING_NORMAL, SPACING_NORMAL, SPACING_NORMAL, SPACING_NORMAL)
-        layout.setSpacing(SPACING_SMALL)
-
-        self._series_label = QLabel("--")
-        layout.addWidget(self._series_label)
-
-        form = QFormLayout()
-        self._freq_value = QLabel("--")
-        self._mag_value = QLabel("--")
-        self._phase_value = QLabel("--")
-        self._delay_value = QLabel("--")
-        form.addRow("Freq:", self._freq_value)
-        form.addRow("Mag:", self._mag_value)
-        form.addRow("Phase:", self._phase_value)
-        form.addRow("Group Delay:", self._delay_value)
-        layout.addLayout(form)
-
-        self.setStyleSheet(f"""
-            QDialog {{
-                background-color: {COLOR_BG_SECONDARY};
-                color: {COLOR_TEXT_PRIMARY};
-                border: 1px solid {COLOR_BORDER};
-            }}
-            QLabel {{
-                color: {COLOR_TEXT_PRIMARY};
-                font-size: {FONT_SIZE_SMALL}px;
-                font-family: Consolas, monospace;
-            }}
-        """)
-        self.resize(260, 140)
-
-    def clear_values(self):
-        self._series_label.setText("--")
-        self._freq_value.setText("--")
-        self._mag_value.setText("--")
-        self._phase_value.setText("--")
-        self._delay_value.setText("--")
-
-    def update_values(
-        self,
-        *,
-        series_name: str,
-        frequency_hz: float,
-        magnitude_db: float,
-        phase_deg: float,
-        group_delay_seconds: Optional[float],
-    ):
-        self._series_label.setText(series_name)
-        self._freq_value.setText(_format_frequency_value(frequency_hz))
-        self._mag_value.setText(f"{magnitude_db:.6g} dB")
-        self._phase_value.setText(f"{phase_deg:.6g}°")
-        if group_delay_seconds is None or not np.isfinite(group_delay_seconds):
-            self._delay_value.setText("--")
-        else:
-            self._delay_value.setText(_format_duration_value(group_delay_seconds))
 
 
 class BodeOverlayChartPage(QWidget):
@@ -92,13 +27,6 @@ class BodeOverlayChartPage(QWidget):
         self._cursor_b: Optional[pg.InfiniteLine] = None
         self._cursor_a_pos: Optional[float] = None
         self._cursor_b_pos: Optional[float] = None
-        self._data_cursor_enabled = False
-        self._data_cursor_line: Optional[pg.InfiniteLine] = None
-        self._data_cursor_crosshair: Optional[pg.InfiniteLine] = None
-        self._data_cursor_marker: Optional[pg.ScatterPlotItem] = None
-        self._data_cursor_pos: Optional[float] = None
-        self._active_cursor_group: str = ""
-        self._cursor_dialog = BodeCursorDialog(self)
         self._x_domain: Optional[Tuple[float, float]] = None
         self._mag_domain: Optional[Tuple[float, float]] = None
         self._phase_domain: Optional[Tuple[float, float]] = None
@@ -140,7 +68,6 @@ class BodeOverlayChartPage(QWidget):
         self._signal_tree.setHeaderHidden(True)
         self._signal_tree.setRootIsDecorated(False)
         self._signal_tree.itemChanged.connect(self._on_signal_item_changed)
-        self._signal_tree.itemSelectionChanged.connect(self._on_signal_selection_changed)
         signal_layout.addWidget(self._signal_tree)
 
         self._main_splitter.addWidget(self._signal_panel)
@@ -162,6 +89,12 @@ class BodeOverlayChartPage(QWidget):
             view_box.rect_selected.connect(self._on_rect_selected)
         self._legend = self._plot_item.addLegend()
         right_layout.addWidget(self._plot_widget, 1)
+        self._data_cursor = ChartDataCursorController(
+            plot_widget=self._plot_widget,
+            sample_at=self._sample_cursor_target,
+            current_view_x_range=self._current_view_x_range,
+            parent=self,
+        )
 
         self._measurement_bar = MeasurementBar()
         right_layout.addWidget(self._measurement_bar)
@@ -243,11 +176,9 @@ class BodeOverlayChartPage(QWidget):
                 pass
             view_box.rect_selected.connect(self._on_rect_selected)
         self._remove_measurement_cursors()
-        self._remove_data_cursor()
+        self._data_cursor.clear()
         self._measurement_bar.clear_values()
         self._measurement_bar.hide()
-        self._cursor_dialog.hide()
-        self._cursor_dialog.clear_values()
         self._spec = None
         self._series_items = {}
         self._series_groups = {}
@@ -258,8 +189,6 @@ class BodeOverlayChartPage(QWidget):
         self._phase_domain = None
         self._mag_view_range = None
         self._phase_view_range = None
-        self._active_cursor_group = ""
-        self._data_cursor_pos = None
         self._signal_tree.clear()
 
     def set_chart(self, spec: ChartSpec):
@@ -307,6 +236,24 @@ class BodeOverlayChartPage(QWidget):
         return bool(self._plot_items)
 
     def supports_data_cursor(self) -> bool:
+        return bool(self._spec is not None and self._series_items)
+
+    def list_data_cursor_targets(self) -> List[DataCursorTarget]:
+        return [DataCursorTarget(target_id=group_key, display_name=group_key) for group_key in self._series_items.keys()]
+
+    def current_data_cursor_target_id(self) -> str:
+        return self._data_cursor.target_id()
+
+    def select_data_cursor_target(self, target_id: str) -> bool:
+        if not target_id or target_id not in self._series_items:
+            return False
+        item = self._series_items[target_id]
+        if item.checkState(0) != Qt.CheckState.Checked:
+            self._updating_tree = True
+            item.setCheckState(0, Qt.CheckState.Checked)
+            self._updating_tree = False
+            self._rebuild_plot()
+        self._data_cursor.set_target(target_id)
         return True
 
     def fit_to_view(self):
@@ -324,21 +271,7 @@ class BodeOverlayChartPage(QWidget):
             self._measurement_bar.hide()
 
     def set_data_cursor_enabled(self, enabled: bool):
-        self._data_cursor_enabled = bool(enabled)
-        if enabled:
-            self._ensure_active_cursor_group()
-            if not self._active_cursor_group:
-                self._remove_data_cursor()
-                self._cursor_dialog.hide()
-                return
-            self._ensure_data_cursor()
-            self._cursor_dialog.show()
-            self._cursor_dialog.raise_()
-            self._update_data_cursor()
-        else:
-            self._remove_data_cursor()
-            self._cursor_dialog.hide()
-            self._cursor_dialog.clear_values()
+        self._data_cursor.set_enabled(enabled)
 
     def export_image(self, path: str) -> bool:
         pixmap = self._plot_widget.grab()
@@ -455,6 +388,10 @@ class BodeOverlayChartPage(QWidget):
             return float(10 ** x_position)
         return float(x_position)
 
+    def _current_view_x_range(self) -> Optional[Tuple[float, float]]:
+        view_range = self._plot_item.viewRange()[0]
+        return float(view_range[0]), float(view_range[1])
+
     def _rebuild_domains(self):
         x_ranges = []
         mag_ranges = []
@@ -519,8 +456,7 @@ class BodeOverlayChartPage(QWidget):
             self._measurement_bar.clear_values()
             self._measurement_bar.hide()
             self._remove_measurement_cursors()
-            self._remove_data_cursor()
-            self._cursor_dialog.hide()
+            self._data_cursor.clear()
             self._x_domain = None
             self._mag_domain = None
             self._phase_domain = None
@@ -550,11 +486,8 @@ class BodeOverlayChartPage(QWidget):
             self._ensure_measurement_cursors()
             self._measurement_bar.show()
             self._update_measurement()
-        if self._data_cursor_enabled:
-            self._ensure_active_cursor_group()
-            self._ensure_data_cursor()
-            self._cursor_dialog.show()
-            self._update_data_cursor()
+        if self._data_cursor.is_enabled():
+            self._data_cursor.refresh()
 
     def _apply_domain_limits(self):
         view_box = self._plot_item.vb
@@ -612,8 +545,8 @@ class BodeOverlayChartPage(QWidget):
             if item is None:
                 continue
             item.setData(np.asarray(phase_series.x_data, dtype=float), self._map_phase_array_to_display(np.asarray(phase_series.y_data, dtype=float)))
-        if self._data_cursor_enabled:
-            self._update_data_cursor()
+        if self._data_cursor.is_enabled():
+            self._data_cursor.refresh()
 
     def _sample_raw_series(self, series: ChartSeries, x_position: float) -> Optional[float]:
         x_data = self._to_view_axis_data(series.x_data, log_enabled=self._is_log_x())
@@ -689,78 +622,35 @@ class BodeOverlayChartPage(QWidget):
             show_frequency=False,
         )
 
-    def _ensure_active_cursor_group(self):
-        visible_groups = self._visible_group_keys()
-        if self._active_cursor_group in visible_groups:
-            return
-        current_item = self._signal_tree.currentItem()
-        if current_item is not None and current_item.checkState(0) == Qt.CheckState.Checked:
-            self._active_cursor_group = current_item.text(0)
-            return
-        self._active_cursor_group = visible_groups[0] if visible_groups else ""
-
-    def _ensure_data_cursor(self):
-        if not self._active_cursor_group or self._mag_view_range is None:
-            return
-        if self._data_cursor_line is None:
-            self._data_cursor_line = pg.InfiniteLine(angle=90, movable=True, pen=pg.mkPen("#dddddd", width=1, style=Qt.PenStyle.DashLine))
-            self._data_cursor_line.sigPositionChanged.connect(self._on_data_cursor_moved)
-            self._plot_widget.addItem(self._data_cursor_line)
-        if self._data_cursor_crosshair is None:
-            self._data_cursor_crosshair = pg.InfiniteLine(angle=0, movable=False, pen=pg.mkPen("#dddddd", width=1, style=Qt.PenStyle.DashLine))
-            self._plot_widget.addItem(self._data_cursor_crosshair)
-        if self._data_cursor_marker is None:
-            self._data_cursor_marker = pg.ScatterPlotItem(size=7, brush=pg.mkBrush("#ffffff"), pen=pg.mkPen("#ffffff"))
-            self._plot_widget.addItem(self._data_cursor_marker)
-        if self._data_cursor_pos is None:
-            x_min, x_max = self._plot_item.viewRange()[0]
-            self._data_cursor_pos = (x_min + x_max) / 2
-        self._data_cursor_line.setValue(self._data_cursor_pos)
-
-    def _remove_data_cursor(self):
-        if self._data_cursor_line is not None:
-            self._plot_widget.removeItem(self._data_cursor_line)
-            self._data_cursor_line = None
-        if self._data_cursor_crosshair is not None:
-            self._plot_widget.removeItem(self._data_cursor_crosshair)
-            self._data_cursor_crosshair = None
-        if self._data_cursor_marker is not None:
-            self._plot_widget.removeItem(self._data_cursor_marker)
-            self._data_cursor_marker = None
-        self._data_cursor_pos = None
-
-    def _update_data_cursor(self):
-        if not self._data_cursor_enabled or not self._active_cursor_group:
-            return
-        pair = self._series_groups.get(self._active_cursor_group, {})
+    def _sample_cursor_target(self, target_id: str, x_position: float) -> Optional[DataCursorSample]:
+        pair = self._series_groups.get(target_id, {})
         mag_series = pair.get("magnitude")
         phase_series = pair.get("phase")
-        if mag_series is None or phase_series is None or self._data_cursor_line is None:
-            self._cursor_dialog.hide()
-            return
-        x_position = float(self._data_cursor_line.value())
-        self._data_cursor_pos = x_position
+        if mag_series is None or phase_series is None:
+            return None
+        if mag_series.name not in self._plot_items or phase_series.name not in self._plot_items:
+            return None
+        freq_hz = self._to_display_x(x_position)
+        if freq_hz is None:
+            return None
         mag_value = self._sample_raw_series(mag_series, x_position)
         phase_value = self._sample_raw_series(phase_series, x_position)
         if mag_value is None or phase_value is None:
-            self._cursor_dialog.hide()
-            return
-        if self._data_cursor_crosshair is not None:
-            self._data_cursor_crosshair.setValue(mag_value)
-        if self._data_cursor_marker is not None:
-            self._data_cursor_marker.setData([x_position], [mag_value])
-        freq_hz = self._to_display_x(x_position)
-        if freq_hz is None:
-            return
+            return None
         group_delay = self._sample_group_delay(phase_series, freq_hz)
-        self._cursor_dialog.update_values(
-            series_name=self._active_cursor_group,
-            frequency_hz=freq_hz,
-            magnitude_db=mag_value,
-            phase_deg=phase_value,
-            group_delay_seconds=group_delay,
+        return DataCursorSample(
+            title=target_id,
+            plot_y_value=mag_value,
+            values=[
+                DataCursorValue(label="Freq:", value_text=_format_frequency_value(freq_hz)),
+                DataCursorValue(label="Mag:", value_text=f"{mag_value:.6g} dB"),
+                DataCursorValue(label="Phase:", value_text=f"{phase_value:.6g}°"),
+                DataCursorValue(
+                    label="Group Delay:",
+                    value_text=_format_duration_value(group_delay) if group_delay is not None and np.isfinite(group_delay) else "--",
+                ),
+            ],
         )
-        self._cursor_dialog.show()
 
     def _sample_group_delay(self, phase_series: ChartSeries, frequency_hz: float) -> Optional[float]:
         x_data = np.asarray(phase_series.x_data, dtype=float)
@@ -793,32 +683,16 @@ class BodeOverlayChartPage(QWidget):
         self._cursor_b_pos = float(self._cursor_b.value())
         self._update_measurement()
 
-    def _on_data_cursor_moved(self):
-        self._update_data_cursor()
-
     def _on_signal_item_changed(self, item: QTreeWidgetItem, column: int):
         if self._updating_tree or self._spec is None:
             return
-        if item.checkState(0) != Qt.CheckState.Checked and item.text(0) == self._active_cursor_group:
-            self._active_cursor_group = ""
         self._rebuild_plot()
-
-    def _on_signal_selection_changed(self):
-        current_item = self._signal_tree.currentItem()
-        if current_item is None:
-            return
-        self._active_cursor_group = current_item.text(0)
-        if self._data_cursor_enabled:
-            self._ensure_active_cursor_group()
-            self._ensure_data_cursor()
-            self._update_data_cursor()
 
     def _on_clear_all_series(self):
         self._updating_tree = True
         for item in self._series_items.values():
             item.setCheckState(0, Qt.CheckState.Unchecked)
         self._updating_tree = False
-        self._active_cursor_group = ""
         self._rebuild_plot()
 
     def _on_rect_selected(self, requested_x_range: Tuple[float, float], requested_y_range: Tuple[float, float]):
@@ -844,6 +718,8 @@ class BodeOverlayChartPage(QWidget):
         self._apply_viewport(clamped_x_range, clamped_mag_range, clamped_phase_range)
         if self._measurement_enabled:
             self._update_measurement()
+        if self._data_cursor.is_enabled():
+            self._data_cursor.refresh()
 
 
 
@@ -887,4 +763,4 @@ def _format_engineering(value: float, unit: str) -> str:
     return f"{value:.6g}{unit}"
 
 
-__all__ = ["BodeOverlayChartPage", "BodeCursorDialog"]
+__all__ = ["BodeOverlayChartPage"]

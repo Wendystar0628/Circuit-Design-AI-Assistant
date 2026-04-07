@@ -1033,23 +1033,30 @@ class ConversationViewModel(QObject):
         """
         current_tokens = 0
         max_tokens = 0
+        input_limit = 0
+        output_reserve = 0
+        display_ratio = 0.0
         
         if self.context_manager:
             try:
                 state = self.context_manager.get_current_state()
                 usage = self.context_manager.calculate_usage(state)
                 current_tokens = usage.get("total_tokens", 0)
-                # max_tokens 是可用于输入的空间（context_limit - output_reserve）
                 context_limit = usage.get("context_limit", 0)
                 output_reserve = usage.get("output_reserve", 0)
-                max_tokens = context_limit - output_reserve
+                input_limit = max(0, context_limit - output_reserve)
+                max_tokens = context_limit
+                if context_limit > 0:
+                    display_ratio = current_tokens / context_limit
             except Exception:
                 pass
         
         return {
-            "ratio": self._usage_ratio,
+            "ratio": max(0.0, min(1.0, display_ratio)),
             "current_tokens": current_tokens,
             "max_tokens": max_tokens,
+            "input_limit": input_limit,
+            "output_reserve": output_reserve,
             "state": self.compress_button_state,
             "message_count": len(self._messages),
         }

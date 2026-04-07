@@ -541,7 +541,15 @@ class InputArea(QWidget):
         if self._input_text:
             self._input_text.setFocus()
     
-    def update_usage(self, ratio: float, current_tokens: int = 0, max_tokens: int = 0) -> None:
+    def update_usage(
+        self,
+        ratio: float,
+        current_tokens: int = 0,
+        max_tokens: int = 0,
+        input_limit: int = 0,
+        output_reserve: int = 0,
+        state: str = "normal",
+    ) -> None:
         """
         更新上下文占用显示
         
@@ -565,13 +573,20 @@ class InputArea(QWidget):
         if self._token_label:
             if max_tokens > 0:
                 self._token_label.setText(f"{self._format_tokens(current_tokens)} / {self._format_tokens(max_tokens)}")
+                tooltip_lines = [f"总上下文窗口: {self._format_tokens(max_tokens)}"]
+                if input_limit > 0 and input_limit != max_tokens:
+                    tooltip_lines.append(f"当前可输入上限: {self._format_tokens(input_limit)}")
+                if output_reserve > 0:
+                    tooltip_lines.append(f"预留输出: {self._format_tokens(output_reserve)}")
+                self._token_label.setToolTip("\n".join(tooltip_lines))
             else:
                 self._token_label.setText("")
+                self._token_label.setToolTip("")
         
         # 根据占用率更新样式
-        if ratio >= CRITICAL_THRESHOLD:
+        if state == "critical":
             self._update_progress_style(COLOR_CRITICAL)
-        elif ratio >= WARNING_THRESHOLD:
+        elif state == "warning":
             self._update_progress_style(COLOR_WARNING)
         else:
             self._update_progress_style(COLOR_NORMAL)

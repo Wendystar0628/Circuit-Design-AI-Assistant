@@ -376,9 +376,19 @@ class ConversationPanel(QWidget):
         ratio = usage_info.get("ratio", 0.0)
         current_tokens = usage_info.get("current_tokens", 0)
         max_tokens = usage_info.get("max_tokens", 0)
+        input_limit = usage_info.get("input_limit", 0)
+        output_reserve = usage_info.get("output_reserve", 0)
+        state = usage_info.get("state", "normal")
         
         # 更新输入区域的占用显示
-        self._input_area.update_usage(ratio, current_tokens, max_tokens)
+        self._input_area.update_usage(
+            ratio,
+            current_tokens,
+            max_tokens,
+            input_limit=input_limit,
+            output_reserve=output_reserve,
+            state=state,
+        )
 
     # ============================================================
     # 事件处理 - EventBus 事件

@@ -29,6 +29,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QPushButton,
     QSizePolicy,
+    QMessageBox,
 )
 
 from presentation.panels.simulation.simulation_view_model import (
@@ -37,6 +38,7 @@ from presentation.panels.simulation.simulation_view_model import (
     DisplayMetric,
 )
 from domain.simulation.service.simulation_result_repository import simulation_result_repository
+from presentation.panels.simulation.simulation_conversation_attachment_coordinator import SimulationConversationAttachmentCoordinator
 from presentation.panels.simulation.simulation_tab_widgets import (
     SimulationResultTabView,
     SimulationStatusBanner,
@@ -96,6 +98,10 @@ class SimulationTab(QWidget):
         
         # 初始化 UI
         self._setup_ui()
+        self._conversation_attachment_coordinator = SimulationConversationAttachmentCoordinator(
+            self._chart_viewer_panel.chart_viewer,
+            self._chart_viewer_panel.waveform_widget,
+        )
         self._apply_style()
         self._connect_signals()
         
@@ -216,6 +222,17 @@ class SimulationTab(QWidget):
         # 指标摘要面板
         self._metrics_panel_view.history_clicked.connect(self._on_history_clicked)
         self._metrics_panel_view.refresh_clicked.connect(self._on_refresh_clicked)
+        self._metrics_panel_view.add_to_conversation_clicked.connect(self._on_add_metrics_to_conversation_clicked)
+
+        self._chart_viewer_panel.chart_viewer.add_to_conversation_clicked.connect(
+            self._on_add_chart_to_conversation_clicked
+        )
+        self._chart_viewer_panel.waveform_widget.add_to_conversation_clicked.connect(
+            self._on_add_waveform_to_conversation_clicked
+        )
+        self._chart_viewer_panel.output_log_viewer.add_to_conversation_clicked.connect(
+            self._on_add_output_log_to_conversation_clicked
+        )
         
         # 指标卡片点击
         self._metrics_panel_view.metrics_panel.metric_clicked.connect(self._on_metric_clicked)
@@ -367,6 +384,60 @@ class SimulationTab(QWidget):
         """处理刷新按钮点击"""
         self._logger.info("Refresh button clicked")
         self.refresh()
+
+    def _on_add_metrics_to_conversation_clicked(self):
+        result = self._view_model.current_result
+        if result is None:
+            return
+        try:
+            self._conversation_attachment_coordinator.attach_metrics(
+                self._project_root or "",
+                self._get_latest_project_export_root(),
+                result,
+                self._view_model.metrics_list,
+                self._view_model.overall_score,
+            )
+        except Exception as exc:
+            self._show_add_to_conversation_error(exc)
+
+    def _on_add_chart_to_conversation_clicked(self):
+        result = self._view_model.current_result
+        if result is None:
+            return
+        try:
+            self._conversation_attachment_coordinator.attach_chart_image(
+                self._project_root or "",
+                self._get_latest_project_export_root(),
+                result,
+            )
+        except Exception as exc:
+            self._show_add_to_conversation_error(exc)
+
+    def _on_add_waveform_to_conversation_clicked(self):
+        result = self._view_model.current_result
+        if result is None:
+            return
+        try:
+            self._conversation_attachment_coordinator.attach_waveform_image(
+                self._project_root or "",
+                self._get_latest_project_export_root(),
+                result,
+            )
+        except Exception as exc:
+            self._show_add_to_conversation_error(exc)
+
+    def _on_add_output_log_to_conversation_clicked(self):
+        result = self._view_model.current_result
+        if result is None:
+            return
+        try:
+            self._conversation_attachment_coordinator.attach_output_log(
+                self._project_root or "",
+                self._get_latest_project_export_root(),
+                result,
+            )
+        except Exception as exc:
+            self._show_add_to_conversation_error(exc)
     
     def _on_sim_result_file_created(self, event_data: dict):
         """
@@ -578,6 +649,17 @@ class SimulationTab(QWidget):
         """显示错误信息"""
         self._logger.error(f"Simulation error: {message}")
         # 可以在状态栏或对话框中显示错误
+
+    def _show_add_to_conversation_error(self, error: Exception):
+        message = self._get_text(
+            "simulation.add_to_conversation_failed",
+            "添加至对话失败：{message}",
+        ).format(message=str(error))
+        QMessageBox.warning(
+            self,
+            self._get_text("dialog.warning.title", "警告"),
+            message,
+        )
     
     def _show_empty_state(self):
         """显示空状态"""
@@ -677,6 +759,12 @@ class SimulationTab(QWidget):
             execution.export_root,
             len(execution.exported_files),
         )
+
+    def _get_latest_project_export_root(self) -> Optional[str]:
+        export_root = self._chart_viewer_panel.export_panel.latest_project_export_root
+        if export_root is None:
+            return None
+        return str(export_root)
 
     def _maybe_show_op_result_dialog(self, result, result_path: Optional[str] = None):
         analysis_type = str(getattr(result, "analysis_type", "") or "").lower()

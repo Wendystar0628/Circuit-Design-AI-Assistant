@@ -234,6 +234,7 @@ class OutputLogViewer(QWidget):
     """
     
     error_clicked = pyqtSignal(int)
+    add_to_conversation_clicked = pyqtSignal()
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -320,6 +321,11 @@ class OutputLogViewer(QWidget):
         self._refresh_btn = QPushButton()
         self._refresh_btn.setObjectName("refreshBtn")
         toolbar_layout.addWidget(self._refresh_btn)
+
+        self._add_to_conversation_btn = QPushButton()
+        self._add_to_conversation_btn.setObjectName("refreshBtn")
+        self._add_to_conversation_btn.setEnabled(False)
+        toolbar_layout.addWidget(self._add_to_conversation_btn)
         
         main_layout.addWidget(self._toolbar)
         
@@ -446,6 +452,7 @@ class OutputLogViewer(QWidget):
         self._filter_combo.currentIndexChanged.connect(self._on_filter_changed)
         self._jump_error_btn.clicked.connect(self._on_jump_to_error)
         self._refresh_btn.clicked.connect(self._on_refresh)
+        self._add_to_conversation_btn.clicked.connect(self.add_to_conversation_clicked.emit)
     
     # ============================================================
     # 公共方法
@@ -481,6 +488,7 @@ class OutputLogViewer(QWidget):
         
         # 更新状态栏
         self._update_status()
+        self._add_to_conversation_btn.setEnabled(bool(self._log_lines))
         
         self._logger.info(
             f"Loaded log: {len(self._log_lines)} lines, "
@@ -516,7 +524,8 @@ class OutputLogViewer(QWidget):
         
         # 更新状态栏
         self._update_status()
-    
+        self._add_to_conversation_btn.setEnabled(bool(self._log_lines))
+
     def clear(self):
         """清空日志"""
         self._log_lines = []
@@ -528,6 +537,7 @@ class OutputLogViewer(QWidget):
         self._log_view.clear()
         self._highlighter.clear_search()
         self._update_status()
+        self._add_to_conversation_btn.setEnabled(False)
     
     def search(self, keyword: str):
         """
@@ -598,6 +608,7 @@ class OutputLogViewer(QWidget):
         self._filter_label.setText(self._tr("Filter:"))
         self._jump_error_btn.setText(self._tr("Jump to Error"))
         self._refresh_btn.setText(self._tr("Refresh"))
+        self._add_to_conversation_btn.setText(self._tr("Add to Conversation"))
         
         # 更新过滤下拉框
         current_index = self._filter_combo.currentIndex()

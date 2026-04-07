@@ -475,16 +475,22 @@ class MainWindow(QMainWindow):
         """订阅事件"""
         if self.event_bus:
             from shared.event_types import (
+                EVENT_UI_ACTIVATE_CONVERSATION_TAB,
                 EVENT_LANGUAGE_CHANGED,
                 EVENT_STATE_PROJECT_OPENED,
                 EVENT_STATE_PROJECT_CLOSED,
                 EVENT_INIT_COMPLETE,
             )
+            self.event_bus.subscribe(EVENT_UI_ACTIVATE_CONVERSATION_TAB, self._on_activate_conversation_tab)
             self.event_bus.subscribe(EVENT_LANGUAGE_CHANGED, self._on_language_changed)
             self.event_bus.subscribe(EVENT_STATE_PROJECT_OPENED, self._on_project_opened)
             self.event_bus.subscribe(EVENT_STATE_PROJECT_CLOSED, self._on_project_closed)
             # 订阅初始化完成事件，用于延迟初始化对话面板
             self.event_bus.subscribe(EVENT_INIT_COMPLETE, self._on_init_complete)
+
+    def _on_activate_conversation_tab(self, event_data: Dict[str, Any]):
+        if self._tab_controller:
+            self._tab_controller.switch_to_tab(TAB_CONVERSATION)
 
     def _on_init_complete(self, event_data: Dict[str, Any]):
         """

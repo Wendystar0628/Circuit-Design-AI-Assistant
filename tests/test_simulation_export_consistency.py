@@ -8,8 +8,15 @@ from PyQt6.QtWidgets import QApplication
 from domain.simulation.data.simulation_artifact_exporter import simulation_artifact_exporter
 from domain.simulation.models.simulation_result import SimulationData, SimulationResult
 from presentation.panels.simulation.analysis_chart_viewer import ChartViewer
+from presentation.panels.simulation.simulation_conversation_attachment_coordinator import SimulationConversationAttachmentCoordinator
 from presentation.panels.simulation.simulation_export_panel import SimulationExportPanel
 from presentation.panels.simulation.waveform_widget import WaveformWidget
+from shared.event_types import (
+    EVENT_UI_ACTIVATE_CONVERSATION_TAB,
+    EVENT_UI_ATTACH_FILES_TO_CONVERSATION,
+)
+from shared.service_locator import ServiceLocator
+from shared.service_names import SVC_EVENT_BUS
 
 
 @pytest.fixture(scope="session")
@@ -278,3 +285,73 @@ def test_ac_chart_rejects_legacy_derived_only_bode_signals(qapp, sample_legacy_a
 
     assert chart_viewer._chart_specs == []
     assert chart_viewer._pages == []
+
+
+class _FakeEventBus:
+    def __init__(self):
+        self.published = []
+
+    def publish(self, event_type: str, payload: dict):
+        self.published.append((event_type, payload))
+
+
+class _FakeChartExporter:
+    def export_current_image(self, path: str) -> bool:
+        Path(path).write_bytes(b"chart-image")
+        return True
+
+
+class _FakeWaveformExporter:
+    def export_image(self, path: str) -> bool:
+        Path(path).write_bytes(b"waveform-image")
+        return True
+
+
+def test_simulation_conversation_attachment_coordinator_reuses_project_export_root_for_text_artifacts(sample_result: SimulationResult, sample_metrics, tmp_path: Path):
+    export_root = simulation_artifact_exporter.create_project_export_root(str(tmp_path), sample_result)
+    simulation_artifact_exporter.export_metrics(export_root, sample_result, sample_metrics, 88.0)
+
+    event_bus = _FakeEventBus()
+    ServiceLocator.register(SVC_EVENT_BUS, event_bus)
+    coordinator = SimulationConversationAttachmentCoordinator(_FakeChartExporter(), _FakeWaveformExporter())
+
+    try:
+        metrics_path = coordinator.attach_metrics(str(tmp_path), str(export_root), sample_result, sample_metrics, 88.0)
+        output_log_path = coordinator.attach_output_log(str(tmp_path), str(export_root), sample_result)
+    finally:
+        ServiceLocator.unregister(SVC_EVENT_BUS)
+
+    assert metrics_path == str(export_root / "metrics" / "metrics.json")
+    assert output_log_path == str(export_root / "output_log" / "output_log.txt")
+    assert (export_root / "output_log" / "output_log.txt").read_text(encoding="utf-8") == sample_result.raw_output
+    assert event_bus.published == [
+        (EVENT_UI_ATTACH_FILES_TO_CONVERSATION, {"paths": [metrics_path]}),
+        (EVENT_UI_ACTIVATE_CONVERSATION_TAB, {}),
+        (EVENT_UI_ATTACH_FILES_TO_CONVERSATION, {"paths": [output_log_path]}),
+        (EVENT_UI_ACTIVATE_CONVERSATION_TAB, {}),
+    ]
+
+
+def test_simulation_conversation_attachment_coordinator_exports_current_images_into_project_export_root(sample_result: SimulationResult, tmp_path: Path):
+    export_root = simulation_artifact_exporter.create_project_export_root(str(tmp_path), sample_result)
+
+    event_bus = _FakeEventBus()
+    ServiceLocator.register(SVC_EVENT_BUS, event_bus)
+    coordinator = SimulationConversationAttachmentCoordinator(_FakeChartExporter(), _FakeWaveformExporter())
+
+    try:
+        chart_path = coordinator.attach_chart_image(str(tmp_path), str(export_root), sample_result)
+        waveform_path = coordinator.attach_waveform_image(str(tmp_path), str(export_root), sample_result)
+    finally:
+        ServiceLocator.unregister(SVC_EVENT_BUS)
+
+    assert chart_path == str(export_root / "charts" / "current_chart.png")
+    assert waveform_path == str(export_root / "waveforms" / "current_waveform.png")
+    assert Path(chart_path).read_bytes() == b"chart-image"
+    assert Path(waveform_path).read_bytes() == b"waveform-image"
+    assert event_bus.published == [
+        (EVENT_UI_ATTACH_FILES_TO_CONVERSATION, {"paths": [chart_path]}),
+        (EVENT_UI_ACTIVATE_CONVERSATION_TAB, {}),
+        (EVENT_UI_ATTACH_FILES_TO_CONVERSATION, {"paths": [waveform_path]}),
+        (EVENT_UI_ACTIVATE_CONVERSATION_TAB, {}),
+    ]

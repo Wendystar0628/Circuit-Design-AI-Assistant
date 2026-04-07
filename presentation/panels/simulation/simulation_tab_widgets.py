@@ -140,6 +140,7 @@ class SimulationStatusBanner(QFrame):
 class SimulationMetricsSummaryPanel(QFrame):
     history_clicked = pyqtSignal()
     refresh_clicked = pyqtSignal()
+    add_to_conversation_clicked = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -217,6 +218,13 @@ class SimulationMetricsSummaryPanel(QFrame):
         self._refresh_btn.setFixedHeight(24)
         self._refresh_btn.clicked.connect(self.refresh_clicked.emit)
         btn_layout.addWidget(self._refresh_btn)
+
+        self._add_to_conversation_btn = QPushButton()
+        self._add_to_conversation_btn.setObjectName("refreshBtn")
+        self._add_to_conversation_btn.setFixedHeight(24)
+        self._add_to_conversation_btn.setEnabled(False)
+        self._add_to_conversation_btn.clicked.connect(self.add_to_conversation_clicked.emit)
+        btn_layout.addWidget(self._add_to_conversation_btn)
 
         self._history_btn = QPushButton()
         self._history_btn.setObjectName("historyBtn")
@@ -316,6 +324,7 @@ class SimulationMetricsSummaryPanel(QFrame):
 
     def update_metrics(self, metrics_list: List[DisplayMetric]):
         self._metrics_panel.update_metrics(metrics_list)
+        self._add_to_conversation_btn.setEnabled(bool(metrics_list))
 
     def set_overall_score(self, score: float):
         if score < 0:
@@ -366,9 +375,11 @@ class SimulationMetricsSummaryPanel(QFrame):
         self._score_value.setText("0%")
         self._score_bar.setValue(0)
         self._score_bar.setEnabled(True)
+        self._add_to_conversation_btn.setEnabled(False)
 
     def retranslate_ui(self):
         self._refresh_btn.setText(self._get_text("simulation.refresh", "刷新"))
+        self._add_to_conversation_btn.setText(self._get_text("simulation.add_to_conversation", "添加至对话"))
         self._history_btn.setText(self._get_text("simulation.view_history", "查看历史"))
         self._score_title.setText(self._get_text("simulation.overall_score", "Overall Score"))
         self._metrics_panel.retranslate_ui()

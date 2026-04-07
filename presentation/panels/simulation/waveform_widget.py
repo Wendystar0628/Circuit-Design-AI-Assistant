@@ -120,6 +120,7 @@ class WaveformWidget(QWidget):
     measurement_changed = pyqtSignal(object)  # WaveformMeasurement
     viewport_changed = pyqtSignal(float, float, float, float)  # x_min, x_max, y_min, y_max
     signal_selected = pyqtSignal(str)  # signal_name
+    add_to_conversation_clicked = pyqtSignal()
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -265,6 +266,11 @@ class WaveformWidget(QWidget):
         self._fit_btn.setToolTip("Fit")
         self._fit_btn.clicked.connect(self._on_fit_view)
         toolbar_layout.addWidget(self._fit_btn)
+
+        self._add_to_conversation_btn = QToolButton()
+        self._add_to_conversation_btn.setEnabled(False)
+        self._add_to_conversation_btn.clicked.connect(self.add_to_conversation_clicked.emit)
+        toolbar_layout.addWidget(self._add_to_conversation_btn)
         
         toolbar_layout.addStretch()
         
@@ -518,6 +524,7 @@ class WaveformWidget(QWidget):
         resolved_signal_name = waveform_data.signal_name
         if resolved_signal_name in self._plot_items:
             self._logger.debug(f"Signal already displayed: {resolved_signal_name}")
+            self._update_add_to_conversation_enabled()
             return True
         
         # 选择颜色
@@ -560,6 +567,7 @@ class WaveformWidget(QWidget):
             f"Waveform added: {resolved_signal_name} [{axis_label}], "
             f"points={waveform_data.point_count}"
         )
+        self._update_add_to_conversation_enabled()
         return True
     
     def remove_waveform(self, signal_name: str) -> bool:
@@ -604,11 +612,13 @@ class WaveformWidget(QWidget):
             self.fit_to_view()
         
         self._logger.debug(f"Waveform removed: {signal_name}")
+        self._update_add_to_conversation_enabled()
         return True
     
     def clear_waveforms(self):
         """清空所有波形"""
         self._clear_displayed_waveforms(preserve_result_context=False)
+        self._update_add_to_conversation_enabled()
     
     def set_cursor_a(self, x_position: float):
         """
@@ -660,6 +670,8 @@ class WaveformWidget(QWidget):
         )
 
     def export_image(self, path: str) -> bool:
+        if self._current_result is None or not self._plot_items:
+            return False
         pixmap = self._plot_widget.grab()
         if pixmap.isNull():
             return False
@@ -732,6 +744,7 @@ class WaveformWidget(QWidget):
         plot_item = self._plot_widget.getPlotItem()
         plot_item.setLabel('bottom', x_label)
         plot_item.setLogMode(x=result.is_x_axis_log(), y=False)
+        self._update_add_to_conversation_enabled()
 
     def _clear_displayed_waveforms(self, preserve_result_context: bool):
         for plot_item in list(self._plot_items.values()):
@@ -758,6 +771,7 @@ class WaveformWidget(QWidget):
             self._signal_types = {}
             self._signal_tree.clear()
             self._plot_widget.getPlotItem().setLogMode(x=False, y=False)
+        self._update_add_to_conversation_enabled()
 
     def _is_log_x_enabled(self) -> bool:
         return self._current_result is not None and self._current_result.is_x_axis_log()
@@ -1024,6 +1038,10 @@ class WaveformWidget(QWidget):
     def _on_clear_all_signals(self):
         """清除所有已显示的信号（保留信号树）"""
         self._clear_displayed_waveforms(preserve_result_context=True)
+        self._update_add_to_conversation_enabled()
+
+    def _update_add_to_conversation_enabled(self):
+        self._add_to_conversation_btn.setEnabled(bool(self._current_result is not None and self._plot_items))
 
     def _on_grid_changed(self, state: int):
         """网格显示变化"""
@@ -1126,6 +1144,8 @@ class WaveformWidget(QWidget):
         self._cursor_b_btn.setToolTip(self._tr("Toggle Cursor B"))
         self._fit_btn.setText(self._tr("Fit"))
         self._fit_btn.setToolTip(self._tr("Fit"))
+        self._add_to_conversation_btn.setText(self._tr("Add to Conversation"))
+        self._add_to_conversation_btn.setToolTip(self._tr("Add to Conversation"))
 
     def _tr(self, text: str) -> str:
         """翻译文本"""

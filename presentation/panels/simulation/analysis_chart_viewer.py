@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
-from PyQt6.QtCore import Qt, QSize
+from PyQt6.QtCore import Qt, QSize, pyqtSignal
 from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import (
     QLabel,
@@ -46,6 +46,8 @@ SERIES_COLORS = [
     "#e84393",
 ]
 class ChartViewer(QWidget):
+    add_to_conversation_clicked = pyqtSignal()
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._result: Optional[SimulationResult] = None
@@ -98,6 +100,13 @@ class ChartViewer(QWidget):
         self._action_cursor.triggered.connect(self._on_toggle_cursor)
         self._toolbar.addAction(self._action_cursor)
 
+        self._toolbar.addSeparator()
+
+        self._action_add_to_conversation = QAction("Add to Conversation", self)
+        self._action_add_to_conversation.setEnabled(False)
+        self._action_add_to_conversation.triggered.connect(self.add_to_conversation_clicked.emit)
+        self._toolbar.addAction(self._action_add_to_conversation)
+
     def _apply_style(self):
         self.setStyleSheet(f"""
             ChartViewer {{
@@ -143,6 +152,7 @@ class ChartViewer(QWidget):
         self._action_measure.setChecked(False)
         self._action_cursor.setChecked(False)
         self._action_cursor.setEnabled(False)
+        self._action_add_to_conversation.setEnabled(False)
         while self._page_host_layout.count() > 0:
             item = self._page_host_layout.takeAt(0)
             widget = item.widget()
@@ -156,9 +166,16 @@ class ChartViewer(QWidget):
         self._action_fit.setText(self._tr("Fit"))
         self._action_measure.setText(self._tr("Measure"))
         self._action_cursor.setText(self._tr("Cursor"))
+        self._action_add_to_conversation.setText(self._tr("Add to Conversation"))
         self._empty_label.setText(self._tr("No interactive chart available for the current result."))
         for page in self._pages:
             page.retranslate_ui()
+
+    def export_current_image(self, path: str) -> bool:
+        page = self._current_page()
+        if page is None or not page.has_chart():
+            return False
+        return bool(page.export_image(path))
 
     def export_bundle(self, output_dir: str) -> List[str]:
         if self._result is None:
@@ -534,7 +551,9 @@ class ChartViewer(QWidget):
     def _update_toolbar_state(self):
         page = self._current_page()
         supports_cursor = bool(page is not None and page.supports_data_cursor())
+        has_chart = bool(page is not None and page.has_chart())
         self._action_cursor.setEnabled(supports_cursor)
+        self._action_add_to_conversation.setEnabled(has_chart)
         if not supports_cursor:
             self._action_cursor.setChecked(False)
 

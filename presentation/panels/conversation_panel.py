@@ -262,6 +262,7 @@ class ConversationPanel(QWidget):
         
         try:
             from shared.event_types import (
+                EVENT_UI_ATTACH_FILES_TO_CONVERSATION,
                 EVENT_STATE_PROJECT_OPENED,
                 EVENT_STATE_PROJECT_CLOSED,
                 EVENT_LANGUAGE_CHANGED,
@@ -286,6 +287,10 @@ class ConversationPanel(QWidget):
             self.event_bus.subscribe(
                 EVENT_SESSION_CHANGED, self._on_session_changed
             )
+            self.event_bus.subscribe(
+                EVENT_UI_ATTACH_FILES_TO_CONVERSATION,
+                self._on_attach_files_requested,
+            )
             
             # 订阅模型变更事件，更新模型卡片显示
             from shared.event_types import EVENT_MODEL_CHANGED
@@ -304,6 +309,7 @@ class ConversationPanel(QWidget):
         
         try:
             from shared.event_types import (
+                EVENT_UI_ATTACH_FILES_TO_CONVERSATION,
                 EVENT_STATE_PROJECT_OPENED,
                 EVENT_STATE_PROJECT_CLOSED,
                 EVENT_LANGUAGE_CHANGED,
@@ -326,6 +332,10 @@ class ConversationPanel(QWidget):
             )
             self.event_bus.unsubscribe(
                 EVENT_SESSION_CHANGED, self._on_session_changed
+            )
+            self.event_bus.unsubscribe(
+                EVENT_UI_ATTACH_FILES_TO_CONVERSATION,
+                self._on_attach_files_requested,
             )
             
             from shared.event_types import EVENT_MODEL_CHANGED
@@ -429,6 +439,13 @@ class ConversationPanel(QWidget):
         """
         if self._input_area:
             self._input_area.update_model_display()
+
+    def _on_attach_files_requested(self, event_data: Dict[str, Any]) -> None:
+        data = event_data.get("data", event_data)
+        paths = data.get("paths") if isinstance(data, dict) else None
+        if not isinstance(paths, list):
+            return
+        self.add_attachments(paths)
 
     # ============================================================
     # 事件处理 - ViewModel 信号
@@ -713,6 +730,13 @@ class ConversationPanel(QWidget):
                 self._input_area.clear()
                 # 切换按钮为停止模式
                 self._input_area.set_button_mode(ButtonMode.STOP)
+
+    def add_attachments(self, paths: list[str]) -> None:
+        if self._input_area is None:
+            return
+        for path in paths:
+            if isinstance(path, str) and path:
+                self._input_area.add_attachment(path)
     
     def clear_display(self) -> None:
         """清空显示区（不清空 ViewModel 数据）"""

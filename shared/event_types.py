@@ -42,6 +42,12 @@ EVENT_UI_SEND_MESSAGE = "ui_send_message"
 # 用户请求仿真
 EVENT_UI_REQUEST_SIMULATION = "ui_request_simulation"
 
+# 请求将文件添加到对话附件区
+EVENT_UI_ATTACH_FILES_TO_CONVERSATION = "ui_attach_files_to_conversation"
+
+# 请求切换到对话标签页
+EVENT_UI_ACTIVATE_CONVERSATION_TAB = "ui_activate_conversation_tab"
+
 # ============================================================
 # 面板管理事件
 # ============================================================
@@ -772,6 +778,8 @@ __all__ = [
     "EVENT_UI_FILE_SELECTED",
     "EVENT_UI_SEND_MESSAGE",
     "EVENT_UI_REQUEST_SIMULATION",
+    "EVENT_UI_ATTACH_FILES_TO_CONVERSATION",
+    "EVENT_UI_ACTIVATE_CONVERSATION_TAB",
     # 面板管理事件
     "EVENT_PANEL_VISIBILITY_CHANGED",
     "EVENT_TAB_CHANGED",

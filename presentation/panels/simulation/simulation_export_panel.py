@@ -39,6 +39,7 @@ class SimulationExportPanel(QWidget):
         self._result: Optional[SimulationResult] = None
         self._metrics: List[Any] = []
         self._overall_score: float = 0.0
+        self._latest_project_export_root: Optional[Path] = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(SPACING_NORMAL, SPACING_NORMAL, SPACING_NORMAL, SPACING_NORMAL)
@@ -103,6 +104,7 @@ class SimulationExportPanel(QWidget):
 
     def set_result(self, result: Optional[SimulationResult]):
         self._result = result
+        self._latest_project_export_root = None
         self._update_enabled_state()
 
     def set_metrics(self, metrics: List[Any]):
@@ -115,7 +117,12 @@ class SimulationExportPanel(QWidget):
         self._result = None
         self._metrics = []
         self._overall_score = 0.0
+        self._latest_project_export_root = None
         self._update_enabled_state()
+
+    @property
+    def latest_project_export_root(self) -> Optional[Path]:
+        return self._latest_project_export_root
 
     def retranslate_ui(self):
         self._selection_title.setText(self._get_text("simulation.export.selection_title", "导出内容"))
@@ -202,13 +209,15 @@ class SimulationExportPanel(QWidget):
         if not selected_types:
             return None
 
-        return self._export_coordinator.export_to_project_directory(
+        execution = self._export_coordinator.export_to_project_directory(
             project_root,
             result,
             selected_types,
             self._metrics,
             self._overall_score,
         )
+        self._latest_project_export_root = execution.export_root
+        return execution
 
     def _get_selected_types(self, fallback_to_all: bool = False) -> List[str]:
         selected_types = [key for key, checkbox in self._checkboxes.items() if checkbox.isChecked()]

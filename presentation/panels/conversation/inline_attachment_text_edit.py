@@ -22,6 +22,7 @@ class InlineAttachmentTextEdit(QTextEdit):
 
     def insert_inline_attachment(self, attachment: Attachment) -> None:
         cursor = self.textCursor()
+        typing_format = QTextCharFormat(cursor.charFormat())
         if cursor.hasSelection():
             cursor.removeSelectedText()
         if cursor.position() > 0:
@@ -40,7 +41,8 @@ class InlineAttachmentTextEdit(QTextEdit):
         char_format.setToolTip(attachment.path)
         text = f"[{attachment.name}]"
         cursor.insertText(text, char_format)
-        cursor.insertText(" ")
+        cursor.insertText(" ", typing_format)
+        cursor.setCharFormat(typing_format)
         self.setTextCursor(cursor)
 
     def serialize_content(self) -> str:

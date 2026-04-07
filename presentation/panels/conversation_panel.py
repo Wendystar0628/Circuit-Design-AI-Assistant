@@ -222,6 +222,9 @@ class ConversationPanel(QWidget):
             self._message_area.link_clicked.connect(
                 self._on_link_clicked
             )
+            self._message_area.suggestion_clicked.connect(
+                self._on_suggestion_clicked
+            )
     
     def _connect_view_model_signals(self) -> None:
         """连接 ViewModel 信号"""
@@ -233,7 +236,6 @@ class ConversationPanel(QWidget):
         self._view_model.stream_finished.connect(self._on_stream_finished)
         self._view_model.usage_changed.connect(self._on_usage_changed)
         self._view_model.can_send_changed.connect(self._on_can_send_changed)
-        self._view_model.suggestion_added.connect(self._on_suggestion_added)
         self._view_model.new_conversation_suggested.connect(
             self._on_new_conversation_suggested
         )
@@ -278,7 +280,6 @@ class ConversationPanel(QWidget):
                 EVENT_STATE_PROJECT_OPENED,
                 EVENT_STATE_PROJECT_CLOSED,
                 EVENT_LANGUAGE_CHANGED,
-                EVENT_ITERATION_AWAITING_CONFIRMATION,
                 EVENT_SESSION_CHANGED,
             )
             
@@ -290,10 +291,6 @@ class ConversationPanel(QWidget):
             )
             self.event_bus.subscribe(
                 EVENT_LANGUAGE_CHANGED, self._on_language_changed
-            )
-            self.event_bus.subscribe(
-                EVENT_ITERATION_AWAITING_CONFIRMATION,
-                self._on_iteration_awaiting
             )
             # 订阅会话变更事件，更新标题栏
             self.event_bus.subscribe(
@@ -325,7 +322,6 @@ class ConversationPanel(QWidget):
                 EVENT_STATE_PROJECT_OPENED,
                 EVENT_STATE_PROJECT_CLOSED,
                 EVENT_LANGUAGE_CHANGED,
-                EVENT_ITERATION_AWAITING_CONFIRMATION,
                 EVENT_SESSION_CHANGED,
             )
             
@@ -337,10 +333,6 @@ class ConversationPanel(QWidget):
             )
             self.event_bus.unsubscribe(
                 EVENT_LANGUAGE_CHANGED, self._on_language_changed
-            )
-            self.event_bus.unsubscribe(
-                EVENT_ITERATION_AWAITING_CONFIRMATION,
-                self._on_iteration_awaiting
             )
             self.event_bus.unsubscribe(
                 EVENT_SESSION_CHANGED, self._on_session_changed
@@ -418,12 +410,6 @@ class ConversationPanel(QWidget):
         """处理语言变更事件"""
         self.retranslate_ui()
     
-    
-    def _on_iteration_awaiting(self, event_data: Dict[str, Any]) -> None:
-        """处理迭代等待确认事件"""
-        # ViewModel 的 _on_iteration_awaiting 会调用 append_suggestion_message
-        # 它会触发 messages_changed 信号，由 _on_messages_changed 处理刷新
-        pass
     
     def _on_session_changed(self, event_data: Dict[str, Any]) -> None:
         """
@@ -518,20 +504,9 @@ class ConversationPanel(QWidget):
         
         这里只需要刷新显示。
         """
-        # 刷新显示（显示部分响应消息）
-        self.refresh_display()
-        
         if self.logger:
             saved = result.get("saved", False)
             self.logger.info(f"Stop completed, partial saved: {saved}")
-    
-    @pyqtSlot(str)
-    def _on_suggestion_added(self, message_id: str) -> None:
-        """处理建议选项消息添加"""
-        # 不需要调用 refresh_display，因为 append_suggestion_message 
-        # 已经触发了 messages_changed 信号，会由 _on_messages_changed 处理
-        if self._message_area:
-            self._message_area.scroll_to_bottom()
     
     @pyqtSlot()
     def _on_new_conversation_suggested(self) -> None:
@@ -710,6 +685,26 @@ class ConversationPanel(QWidget):
     def _on_link_clicked(self, url: str) -> None:
         if url:
             QDesktopServices.openUrl(QUrl(url))
+
+    def _on_suggestion_clicked(self, suggestion_id: str) -> None:
+        if not suggestion_id or not self.view_model:
+            return
+        selected_value = self.view_model.select_suggestion(suggestion_id)
+        if self.event_bus is not None:
+            try:
+                from shared.event_types import EVENT_ITERATION_USER_CONFIRMED
+
+                self.event_bus.publish(
+                    EVENT_ITERATION_USER_CONFIRMED,
+                    {
+                        "suggestion_id": suggestion_id,
+                        "value": selected_value,
+                    },
+                    source="conversation_panel",
+                )
+            except Exception as exc:
+                if self.logger:
+                    self.logger.warning(f"Failed to publish suggestion selection: {exc}")
 
     def _open_image_preview(self, image_path: str) -> None:
         if not image_path or not os.path.isfile(image_path):

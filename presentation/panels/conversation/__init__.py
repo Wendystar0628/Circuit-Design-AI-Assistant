@@ -20,19 +20,6 @@ from presentation.panels.conversation.conversation_view_model import (
     SUGGESTION_STATE_EXPIRED,
 )
 
-from presentation.panels.conversation.message_bubble import (
-    MessageBubble,
-    USER_MESSAGE_BG,
-    ASSISTANT_MESSAGE_BG,
-)
-
-from presentation.panels.conversation.suggestion_message import (
-    SuggestionMessage,
-    STATE_ACTIVE,
-    STATE_SELECTED,
-    STATE_EXPIRED,
-)
-
 from presentation.panels.conversation.input_area import (
     InputArea,
     ButtonMode,
@@ -58,15 +45,6 @@ __all__ = [
     "SUGGESTION_STATE_ACTIVE",
     "SUGGESTION_STATE_SELECTED",
     "SUGGESTION_STATE_EXPIRED",
-    # MessageBubble
-    "MessageBubble",
-    "USER_MESSAGE_BG",
-    "ASSISTANT_MESSAGE_BG",
-    # SuggestionMessage
-    "SuggestionMessage",
-    "STATE_ACTIVE",
-    "STATE_SELECTED",
-    "STATE_EXPIRED",
     # InputArea
     "InputArea",
     "ButtonMode",

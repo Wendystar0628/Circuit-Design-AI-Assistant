@@ -112,6 +112,7 @@ class WebMessageView(QWidget):
     # 信号定义
     link_clicked = pyqtSignal(str)      # 链接点击 (url)
     file_clicked = pyqtSignal(str)      # 文件点击 (file_path)
+    suggestion_clicked = pyqtSignal(str)  # 建议选项点击 (suggestion_id)
     
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -121,6 +122,7 @@ class WebMessageView(QWidget):
         self._stream_content = ""
         self._stream_reasoning = ""  # 流式思考内容
         self._messages = []
+        self._rendered_message_ids: List[str] = []
         self._page_loaded = False
         self._pending_messages = []
         self._is_rendering = False
@@ -164,6 +166,9 @@ class WebMessageView(QWidget):
         url_str = url.toString()
         if url_str.startswith(('about:', 'data:')):
             return True
+        if url_str.startswith('suggestion://'):
+            self.suggestion_clicked.emit(url_str[len('suggestion://'):])
+            return False
         if url_str.startswith('file://'):
             self.file_clicked.emit(url.toLocalFile() or url_str[7:])
             return False
@@ -183,7 +188,7 @@ class WebMessageView(QWidget):
     def _on_page_loaded(self, ok):
         self._page_loaded = ok
         if ok and self._pending_messages and not self._is_rendering:
-            self._do_render(self._pending_messages)
+            self._render_static_messages(self._pending_messages)
             self._pending_messages = []
     
     def _load_initial_page(self):
@@ -196,7 +201,7 @@ class WebMessageView(QWidget):
 <style>{css}</style>
 <style>{self._get_styles()}</style>
 </head><body>
-<div id="msgs">{content}</div>
+<div id="conversation-root"><div id="message-list">{content}</div><div id="stream-root"></div></div>
 <script>{js}</script>
 <script>{auto_js}</script>
 <script>{self._get_scripts()}</script>
@@ -214,11 +219,14 @@ class WebMessageView(QWidget):
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, "Microsoft YaHei UI", sans-serif;
        font-size: 14px; line-height: 1.6; color: #333; background: #fff; padding: 12px; }
-#msgs { display: flex; flex-direction: column; gap: 12px; }
+#conversation-root { display: flex; flex-direction: column; gap: 12px; }
+#message-list, #stream-root { display: contents; }
 .msg { max-width: 85%; padding: 12px 16px; border-radius: 12px; word-wrap: break-word; }
 .msg.user { align-self: flex-end; background: #e3f2fd; }
 .msg.assistant { align-self: flex-start; background: #f8f9fa; }
 .msg.system { align-self: center; background: transparent; color: #6c757d; font-size: 12px; }
+.msg.suggestion { align-self: flex-start; background: #f8fafc; border: 1px solid #dbe3f0; }
+.partial-badge { display: inline-flex; align-items: center; gap: 4px; margin-top: 10px; padding: 4px 8px; border-radius: 999px; background: #fff7ed; color: #c2410c; font-size: 11px; border: 1px solid #fed7aa; }
 
 .row { display: flex; gap: 8px; align-items: flex-start; }
 .row.user { flex-direction: row-reverse; }
@@ -302,6 +310,15 @@ a:hover { text-decoration: underline; }
 .gallery-file-ref { display: inline-flex; align-items: center; gap: 6px; background: #ffffff; border: 1px solid #dbe3f0; border-radius: 10px; padding: 8px 10px; font-size: 12px; color: #1f2937; cursor: pointer; }
 .gallery-file-ref:hover { background: #f8fbff; border-color: #93c5fd; }
 .gallery-file-ref .ref-name { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.suggestion-card { display: flex; flex-direction: column; gap: 10px; }
+.suggestion-title { font-size: 13px; font-weight: 600; color: #334155; }
+.suggestion-summary { font-size: 12px; color: #64748b; }
+.suggestion-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.suggestion-chip { display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px; border-radius: 999px; border: 1px solid #cbd5e1; background: #ffffff; color: #0f172a; font-size: 12px; text-decoration: none; }
+.suggestion-chip.active:hover { border-color: #60a5fa; background: #eff6ff; }
+.suggestion-chip.selected { background: #2563eb; color: #ffffff; border-color: #2563eb; }
+.suggestion-chip.expired { background: #f8fafc; color: #94a3b8; border-color: #e2e8f0; cursor: default; }
+.suggestion-hint { font-size: 12px; color: #94a3b8; }
 .ops-card.tool-ops { background: #fff8e1; border-left-color: #ff9800; }
 .ops-card.tool-ops .ops-title { color: #e65100; }
 .tool-card { background: #fff8e1; border-left: 3px solid #ff9800; border-radius: 4px; padding: 8px 12px; margin: 8px 0; }
@@ -323,6 +340,20 @@ a:hover { text-decoration: underline; }
 
     def _get_scripts(self) -> str:
         return '''
+var _scrollThreshold = 64;
+var _viewportState = { stickToBottom: true, suppressScrollTracking: false };
+function getScroller() {
+    return document.scrollingElement || document.documentElement || document.body;
+}
+function isNearBottom() {
+    var s = getScroller();
+    return (s.scrollHeight - (s.scrollTop + s.clientHeight)) <= _scrollThreshold;
+}
+function syncViewportState() {
+    if (_viewportState.suppressScrollTracking) return;
+    _viewportState.stickToBottom = isNearBottom();
+}
+window.addEventListener('scroll', syncViewportState, { passive: true });
 function renderMath() {
     if (typeof renderMathInElement !== 'undefined') {
         renderMathInElement(document.body, {
@@ -331,22 +362,52 @@ function renderMath() {
         });
     }
 }
-var _autoScroll = true;
-var _scrollThreshold = 100;
-window.addEventListener('scroll', function() {
-    var atBottom = (window.innerHeight + window.scrollY) >= (document.body.scrollHeight - _scrollThreshold);
-    _autoScroll = atBottom;
-});
-function scrollBottom() { if(_autoScroll) window.scrollTo(0, document.body.scrollHeight); }
-function forceScrollBottom() { window.scrollTo(0, document.body.scrollHeight); _autoScroll = true; }
-function addMsg(html) { document.getElementById('msgs').insertAdjacentHTML('beforeend', html); renderMath(); forceScrollBottom(); }
+function withViewportPreserved(mutator) {
+    var s = getScroller();
+    var preserveBottomStickiness = _viewportState.stickToBottom && isNearBottom();
+    var previousScrollTop = s.scrollTop;
+    mutator();
+    renderMath();
+    if (preserveBottomStickiness) {
+        scrollBottom(true);
+        return;
+    }
+    _viewportState.suppressScrollTracking = true;
+    s.scrollTop = previousScrollTop;
+    _viewportState.suppressScrollTracking = false;
+}
+function scrollBottom(force) {
+    if (!force && !_viewportState.stickToBottom) return;
+    var s = getScroller();
+    _viewportState.suppressScrollTracking = true;
+    s.scrollTop = s.scrollHeight;
+    _viewportState.suppressScrollTracking = false;
+    _viewportState.stickToBottom = true;
+}
+function replaceStaticMessages(html) {
+    withViewportPreserved(function() {
+        document.getElementById('message-list').innerHTML = html;
+    });
+}
+function appendStaticMessages(html) {
+    withViewportPreserved(function() {
+        document.getElementById('message-list').insertAdjacentHTML('beforeend', html);
+    });
+}
+function showStreamMessage(html) {
+    withViewportPreserved(function() {
+        document.getElementById('stream-root').innerHTML = html;
+    });
+}
 function updateStream(html) { 
+    var shouldStick = _viewportState.stickToBottom && isNearBottom();
     var s = document.querySelector('.msg.streaming .stream-content'); 
-    if(s) { s.innerHTML = html; renderMath(); scrollBottom(); } 
+    if(s) { s.innerHTML = html; renderMath(); if (shouldStick) scrollBottom(true); } 
 }
 function updateStreamReasoning(html) {
+    var shouldStick = _viewportState.stickToBottom && isNearBottom();
     var s = document.querySelector('.msg.streaming .think-content');
-    if(s) { s.innerHTML = html; scrollBottom(); }
+    if(s) { s.innerHTML = html; if (shouldStick) scrollBottom(true); }
 }
 function finishThinking() {
     var status = document.querySelector('.msg.streaming .think-status');
@@ -384,8 +445,9 @@ function finishSearching(resultCount) {
     if(think) { think.style.display = 'block'; }
 }
 function updateSearchResults(html) {
+    var shouldStick = _viewportState.stickToBottom && isNearBottom();
     var content = document.querySelector('.msg.streaming .search-content');
-    if(content) { content.innerHTML = html; }
+    if(content) { content.innerHTML = html; if (shouldStick) scrollBottom(true); }
 }
 function toggleSearch(id) {
     var c = document.getElementById('search-'+id);
@@ -395,26 +457,19 @@ function toggleSearch(id) {
         if(t && t.classList.contains('search-toggle')) t.classList.toggle('expanded');
     }
 }
-function finishStream() { 
-    var s = document.querySelector('.msg.streaming'); 
-    if(s) { 
-        s.classList.remove('streaming'); 
-        var think = s.querySelector('.think');
-        if(think) { 
-            var content = think.querySelector('.think-content');
-            if(content) content.classList.remove('show');
-            var toggle = think.querySelector('.think-toggle');
-            if(toggle) toggle.classList.remove('expanded');
-            var status = think.querySelector('.think-status');
-            if(status) {
-                status.classList.remove('thinking');
-                status.classList.add('done');
-                status.textContent = '思考完成';
-            }
+function finishStream(staticHtml) {
+    withViewportPreserved(function() {
+        if (typeof staticHtml === 'string') {
+            document.getElementById('message-list').innerHTML = staticHtml;
         }
-    } 
+        document.getElementById('stream-root').innerHTML = '';
+    });
 }
-function clearMsgs() { document.getElementById('msgs').innerHTML = ''; _autoScroll = true; }
+function clearMsgs() {
+    document.getElementById('message-list').innerHTML = '';
+    document.getElementById('stream-root').innerHTML = '';
+    _viewportState.stickToBottom = true;
+}
 function toggleThink(id) { 
     var c = document.getElementById('think-'+id); 
     var t = c ? c.previousElementSibling : null;
@@ -423,12 +478,16 @@ function toggleThink(id) {
         if(t && t.classList.contains('think-toggle')) t.classList.toggle('expanded');
     } 
 }
-function onFileClick(path) { window.location.href = 'file:///' + String(path || '').replace(/\\/g, '/'); }
+function onFileClick(path) {
+    var normalized = String(path || '').split(String.fromCharCode(92)).join('/');
+    window.location.href = 'file:///' + encodeURI(normalized);
+}
 function addToolCard(html) {
     var streaming = document.querySelector('.msg.streaming');
-    if (!streaming) { document.getElementById('msgs').insertAdjacentHTML('beforeend', html); }
+    var shouldStick = _viewportState.stickToBottom && isNearBottom();
+    if (!streaming) { document.getElementById('stream-root').insertAdjacentHTML('beforeend', html); }
     else { streaming.insertAdjacentHTML('beforeend', html); }
-    scrollBottom();
+    if (shouldStick) scrollBottom(true);
 }
 function updateToolCard(id, resultHtml, isError) {
     var card = document.getElementById('tool-' + id);
@@ -443,7 +502,7 @@ function updateToolCard(id, resultHtml, isError) {
         var result = card.querySelector('.tool-result');
         if (result) { result.innerHTML = resultHtml; result.classList.add('show'); }
     }
-    scrollBottom();
+    if (_viewportState.stickToBottom && isNearBottom()) scrollBottom(true);
 }
 '''
 
@@ -454,17 +513,30 @@ function updateToolCard(id, resultHtml, isError) {
         if not self._page_loaded:
             self._pending_messages = messages
             return
-        self._do_render(messages)
+        self._render_static_messages(messages)
     
-    def _do_render(self, messages: List[Any]):
+    def _render_static_messages(self, messages: List[Any]):
         if not self._web_view or self._is_rendering:
             return
         self._is_rendering = True
-        parts = [self._msg_to_html(m) for m in messages]
-        content = '\n'.join(parts)
-        escaped_content = self._esc(content)
-        self._run_js(f"document.getElementById('msgs').innerHTML = `{escaped_content}`; renderMath();")
+        message_ids = [str(getattr(message, 'id', '')) for message in messages]
+        append_only = (
+            self._rendered_message_ids
+            and len(message_ids) >= len(self._rendered_message_ids)
+            and message_ids[:len(self._rendered_message_ids)] == self._rendered_message_ids
+        )
+        if append_only and len(message_ids) > len(self._rendered_message_ids):
+            appended_html = self._build_messages_html(messages[len(self._rendered_message_ids):])
+            self._run_js(f"appendStaticMessages(`{self._esc(appended_html)}`)")
+        else:
+            content = self._build_messages_html(messages)
+            escaped_content = self._esc(content)
+            self._run_js(f"replaceStaticMessages(`{escaped_content}`)")
+        self._rendered_message_ids = message_ids
         self._is_rendering = False
+
+    def _build_messages_html(self, messages: List[Any]) -> str:
+        return '\n'.join(self._msg_to_html(message) for message in messages)
     
     def _msg_to_html(self, msg) -> str:
         role = getattr(msg, 'role', 'assistant')
@@ -479,6 +551,8 @@ function updateToolCard(id, resultHtml, isError) {
             content_html = self._render_user_content_html(content, attachments)
             att_html = self._render_attachments_html(attachments) if attachments else ''
             return f'<div class="row user"><div class="msg user">{content_html}{att_html}</div></div>'
+        elif role == 'suggestion':
+            return self._render_suggestion_message_html(msg)
         elif role == 'system':
             content_html = self._md_to_html(content)
             return f'<div class="row"><div class="msg system">{content_html}</div></div>'
@@ -489,9 +563,62 @@ function updateToolCard(id, resultHtml, isError) {
                 think = f'''<div class="think">
 <div class="think-toggle" onclick="toggleThink('{msg_id}')">{SVG_THINKING} 思考过程 ▶</div>
 <div class="think-content" id="think-{msg_id}">{reasoning}</div></div>'''
+            partial_badge = ""
+            if getattr(msg, 'is_partial', False):
+                stop_reason = getattr(msg, 'stop_reason', '') or 'stopped'
+                partial_badge = (
+                    f'<div class="partial-badge">'
+                    f'{SVG_ERROR}<span>{self._esc_html(self._get_stop_reason_label(stop_reason))}</span>'
+                    f'</div>'
+                )
             ops_html = self._render_operations_html(operations) if operations else ''
             sources_html = self._render_sources_html(web_search_results) if web_search_results else ''
-            return f'<div class="row"><div class="avatar">{SVG_ROBOT}</div><div class="msg assistant">{think}{content_html}{sources_html}{ops_html}</div></div>'
+            return f'<div class="row"><div class="avatar">{SVG_ROBOT}</div><div class="msg assistant">{think}{content_html}{partial_badge}{sources_html}{ops_html}</div></div>'
+
+    def _render_suggestion_message_html(self, msg) -> str:
+        title_html = '<div class="suggestion-title">下一步建议</div>'
+        summary = self._esc_html(getattr(msg, 'status_summary', '') or '')
+        summary_html = f'<div class="suggestion-summary">{summary}</div>' if summary else ''
+
+        actions: List[str] = []
+        suggestion_state = getattr(msg, 'suggestion_state', '') or 'active'
+        selected_suggestion_id = getattr(msg, 'selected_suggestion_id', '') or ''
+        for suggestion in getattr(msg, 'suggestions', []) or []:
+            suggestion_id = self._esc_attr(getattr(suggestion, 'id', '') or '')
+            label = self._esc_html(getattr(suggestion, 'label', '') or '')
+            description = self._esc_html(getattr(suggestion, 'description', '') or '')
+            is_selected = selected_suggestion_id and getattr(suggestion, 'id', '') == selected_suggestion_id
+            if suggestion_state == 'active':
+                href = f'href="suggestion://{suggestion_id}"'
+                class_name = 'suggestion-chip active'
+            elif is_selected:
+                href = ''
+                class_name = 'suggestion-chip selected'
+                label = f'✓ {label}'
+            else:
+                href = ''
+                class_name = 'suggestion-chip expired'
+            title = f' title="{description}"' if description else ''
+            actions.append(
+                f'<a class="{class_name}" {href}{title}>{label}</a>'
+            )
+
+        hint_html = ''
+        if suggestion_state == 'active':
+            hint_html = '<div class="suggestion-hint">或者直接在输入框中继续输入你的想法</div>'
+
+        return (
+            '<div class="row">'
+            f'<div class="avatar">{SVG_ROBOT}</div>'
+            '<div class="msg suggestion">'
+            '<div class="suggestion-card">'
+            f'{title_html}{summary_html}'
+            f'<div class="suggestion-actions">{"".join(actions)}</div>'
+            f'{hint_html}'
+            '</div>'
+            '</div>'
+            '</div>'
+        )
 
     def _render_operations_html(self, operations: List[str]) -> str:
         if not operations:
@@ -582,6 +709,15 @@ function updateToolCard(id, resultHtml, isError) {
         base, ext = os.path.splitext(name)
         room = max(4, limit - len(ext) - 3)
         return f'{base[:room]}...{ext}'
+
+    def _get_stop_reason_label(self, reason: str) -> str:
+        return {
+            'user_requested': '已由用户停止',
+            'timeout': '响应超时，已中断',
+            'error': '生成出现错误，内容为部分结果',
+            'session_switch': '会话切换，中断了当前输出',
+            'app_shutdown': '应用关闭，中断了当前输出',
+        }.get(reason, '该回复未完整生成')
     
     def _render_sources_html(self, results: List[Dict[str, Any]]) -> str:
         """
@@ -693,7 +829,7 @@ function updateToolCard(id, resultHtml, isError) {
 </div>
 <div class="stream-content"></div>
 </div></div>'''
-        self._run_js(f"addMsg(`{self._esc(html)}`)")
+        self._run_js(f"showStreamMessage(`{self._esc(html)}`)")
         self._stream_timer.start()
     
     def append_streaming_chunk(self, chunk: str, chunk_type: str = "content"):
@@ -844,7 +980,7 @@ function updateToolCard(id, resultHtml, isError) {
         import html
         return html.escape(text) if text else ""
     
-    def finish_streaming(self):
+    def finish_streaming(self, messages: Optional[List[Any]] = None):
         """
         完成流式输出
         
@@ -852,18 +988,21 @@ function updateToolCard(id, resultHtml, isError) {
         """
         self._stream_timer.stop()
         self._is_streaming = False
-        
-        # 最终更新内容
-        html = self._md_to_html(self._stream_content)
-        self._run_js(f"updateStream(`{self._esc(html)}`)")
-        
-        # 如果有思考内容，最终更新（使用 Markdown 渲染）
-        if self._stream_reasoning:
-            reasoning_html = self._md_to_html(self._stream_reasoning)
-            self._run_js(f"updateStreamReasoning(`{self._esc(reasoning_html)}`)")
-        
-        # 调用 finishStream 折叠思考区域
-        self._run_js("finishStream()")
+        if messages is not None:
+            static_html = self._build_messages_html(messages)
+            self._rendered_message_ids = [str(getattr(message, 'id', '')) for message in messages]
+            self._run_js(f"finishStream(`{self._esc(static_html)}`)")
+        else:
+            # 最终更新内容
+            html = self._md_to_html(self._stream_content)
+            self._run_js(f"updateStream(`{self._esc(html)}`)")
+            
+            # 如果有思考内容，最终更新（使用 Markdown 渲染）
+            if self._stream_reasoning:
+                reasoning_html = self._md_to_html(self._stream_reasoning)
+                self._run_js(f"updateStreamReasoning(`{self._esc(reasoning_html)}`)")
+            
+            self._run_js("finishStream()")
         
         self._stream_content = ""
         self._stream_reasoning = ""
@@ -887,10 +1026,11 @@ function updateToolCard(id, resultHtml, isError) {
     
     def clear_messages(self):
         self._messages = []
+        self._rendered_message_ids = []
         self._run_js("clearMsgs()")
     
     def scroll_to_bottom(self):
-        self._run_js("scrollBottom()")
+        self._run_js("scrollBottom(true)")
     
     def _run_js(self, code: str):
         if self._web_view:

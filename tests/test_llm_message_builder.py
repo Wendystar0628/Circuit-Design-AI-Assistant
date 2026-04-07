@@ -2,9 +2,19 @@ from domain.llm.llm_message_builder import LLMMessageBuilder
 from domain.llm.attachment_references import build_inline_attachment_marker
 from domain.llm.message_helpers import create_human_message
 from domain.llm.message_types import Attachment
+from presentation.panels.conversation.inline_attachment_text_edit import InlineAttachmentTextEdit
 from infrastructure.llm_adapters.qwen.qwen_client import QwenClient
 from shared.model_registry import ModelRegistry
 import pytest
+from PyQt6.QtWidgets import QApplication
+
+
+@pytest.fixture(scope="session")
+def qapp():
+    app = QApplication.instance()
+    if app is None:
+        app = QApplication([])
+    return app
 
 
 def test_llm_message_builder_expands_file_attachment_into_user_content(tmp_path, monkeypatch):
@@ -87,6 +97,25 @@ def test_llm_message_builder_expands_inline_file_reference_in_place(tmp_path, mo
     assert payload["content"].startswith("请先分析前文")
     assert "[附件 design_notes.txt]" in payload["content"]
     assert payload["content"].index("[附件 design_notes.txt]") < payload["content"].index("再继续后文")
+
+
+def test_inline_attachment_text_edit_keeps_following_text_outside_attachment(qapp):
+    editor = InlineAttachmentTextEdit()
+    attachment = Attachment(
+        type="file",
+        path="C:/tmp/output_log.txt",
+        name="output_log.txt",
+        mime_type="text/plain",
+        size=0,
+        placement="inline",
+        reference_id="ref_output_log",
+    )
+
+    editor.insert_inline_attachment(attachment)
+    editor.insertPlainText("讲解这个输出日志文件")
+
+    assert editor.toPlainText() == "[output_log.txt] 讲解这个输出日志文件"
+    assert editor.serialize_content() == "[[attachment:ref_output_log|output_log.txt]] 讲解这个输出日志文件"
 
 
 @pytest.mark.parametrize(

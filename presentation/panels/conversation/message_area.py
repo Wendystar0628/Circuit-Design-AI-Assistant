@@ -14,13 +14,12 @@
 """
 
 from typing import Any, List, Optional
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QSizePolicy
 
 # 导入 WebMessageView
 from presentation.panels.conversation.web_message_view import (
-    WebMessageView, 
-    WEBENGINE_AVAILABLE
+    WebMessageView,
 )
 
 
@@ -38,6 +37,7 @@ class MessageArea(QWidget):
 
     file_clicked = pyqtSignal(str)
     link_clicked = pyqtSignal(str)
+    suggestion_clicked = pyqtSignal(str)
     
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -48,6 +48,7 @@ class MessageArea(QWidget):
         self._is_streaming = False
         self._stream_buffer = ""
         self._reasoning_buffer = ""
+        self._pending_messages: Optional[List[Any]] = None
         
         self._setup_ui()
     
@@ -90,6 +91,7 @@ class MessageArea(QWidget):
         )
         self._web_view.file_clicked.connect(self.file_clicked.emit)
         self._web_view.link_clicked.connect(self.link_clicked.emit)
+        self._web_view.suggestion_clicked.connect(self.suggestion_clicked.emit)
         layout.addWidget(self._web_view)
     
     # ============================================================
@@ -98,16 +100,15 @@ class MessageArea(QWidget):
     
     def render_messages(self, messages: List[Any]) -> None:
         """渲染消息列表"""
+        if self._is_streaming:
+            self._pending_messages = list(messages)
+            return
         if self._web_view:
             self._web_view.render_messages(messages)
     
-    def render_message(self, display_msg: Any) -> None:
-        """渲染单条消息（追加到现有消息）"""
-        # WebMessageView 不支持单条追加，需要重新渲染全部
-        pass
-    
     def clear_messages(self) -> None:
         """清空消息显示"""
+        self._pending_messages = None
         if self._web_view:
             self._web_view.clear_messages()
         if self._is_streaming:
@@ -121,14 +122,6 @@ class MessageArea(QWidget):
         """滚动到底部"""
         if self._web_view:
             self._web_view.scroll_to_bottom()
-    
-    def set_auto_scroll(self, enabled: bool) -> None:
-        """设置自动滚动"""
-        pass  # WebMessageView 内部处理
-    
-    def is_auto_scroll_enabled(self) -> bool:
-        """获取自动滚动状态"""
-        return True
     
     # ============================================================
     # 公共方法 - 流式输出
@@ -146,6 +139,7 @@ class MessageArea(QWidget):
         self._is_streaming = True
         self._stream_buffer = ""
         self._reasoning_buffer = ""
+        self._pending_messages = None
         if self._web_view:
             self._web_view.start_streaming(with_search=with_search)
     
@@ -162,7 +156,9 @@ class MessageArea(QWidget):
         """完成流式输出"""
         self._is_streaming = False
         if self._web_view:
-            self._web_view.finish_streaming()
+            pending_messages = self._pending_messages
+            self._pending_messages = None
+            self._web_view.finish_streaming(pending_messages)
         self._stream_buffer = ""
         self._reasoning_buffer = ""
     

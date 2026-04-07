@@ -117,7 +117,6 @@ class ConversationViewModel(QObject):
     stream_finished = pyqtSignal()               # 流式输出完成
     usage_changed = pyqtSignal(float)            # 上下文占用变化 (ratio)
     can_send_changed = pyqtSignal(bool)          # 可发送状态变化
-    suggestion_added = pyqtSignal(str)           # 建议选项消息添加 (message_id)
     compress_suggested = pyqtSignal()            # 建议压缩上下文
     new_conversation_suggested = pyqtSignal()    # 建议开启新对话
     stop_requested = pyqtSignal()                # 停止请求已发出
@@ -599,8 +598,6 @@ class ConversationViewModel(QObject):
         self._messages.append(msg)
         self._active_suggestion_message_id = msg_id
         
-        # 发出信号
-        self.suggestion_added.emit(msg_id)
         self.messages_changed.emit()
         
         return msg_id
@@ -623,6 +620,24 @@ class ConversationViewModel(QObject):
         
         self._active_suggestion_message_id = None
         self.messages_changed.emit()
+
+    def select_suggestion(self, suggestion_id: str) -> str:
+        """选择建议项并返回其 value 文本。"""
+        if self._active_suggestion_message_id is None:
+            return ""
+
+        selected_value = ""
+        for msg in self._messages:
+            if msg.id != self._active_suggestion_message_id:
+                continue
+            for suggestion in msg.suggestions:
+                if suggestion.id == suggestion_id:
+                    selected_value = suggestion.value
+                    break
+            break
+
+        self.mark_suggestion_selected(suggestion_id)
+        return selected_value
     
     def mark_suggestion_expired(self) -> None:
         """标记当前建议选项已过期"""

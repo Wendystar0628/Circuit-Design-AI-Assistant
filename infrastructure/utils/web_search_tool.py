@@ -26,7 +26,6 @@ import httpx
 
 from infrastructure.config.settings import (
     LLM_PROVIDER_ZHIPU,
-    PROVIDER_DEFAULTS,
     WEB_SEARCH_GOOGLE,
     WEB_SEARCH_BING,
 )
@@ -469,10 +468,14 @@ class WebSearchTool:
         Returns:
             是否支持厂商专属搜索
         """
-        defaults = PROVIDER_DEFAULTS.get(llm_provider, {})
-        implemented = defaults.get("implemented", False)
-        supports_web_search = defaults.get("supports_web_search", False)
-        return implemented and supports_web_search
+        try:
+            from shared.model_registry import ModelRegistry
+
+            ModelRegistry.initialize()
+            provider = ModelRegistry.get_provider(llm_provider)
+            return bool(provider and provider.implemented and provider.supports_web_search)
+        except Exception:
+            return False
     
     def format_search_results(self, results: List[SearchResult]) -> str:
         """
@@ -495,6 +498,48 @@ class WebSearchTool:
             formatted_lines.append(line)
         
         return "\n".join(formatted_lines)
+
+    def get_active_search_provider(self) -> str:
+        provider = ""
+        if self.config_manager:
+            from infrastructure.config.settings import CONFIG_GENERAL_WEB_SEARCH_PROVIDER
+
+            provider = str(
+                self.config_manager.get(
+                    CONFIG_GENERAL_WEB_SEARCH_PROVIDER,
+                    WEB_SEARCH_GOOGLE,
+                ) or ""
+            ).strip()
+
+        if not provider:
+            provider = WEB_SEARCH_GOOGLE
+
+        if provider not in {WEB_SEARCH_GOOGLE, WEB_SEARCH_BING}:
+            return ""
+
+        return provider
+
+    def has_search_credentials(self, search_provider: Optional[str] = None) -> bool:
+        provider = (search_provider or self.get_active_search_provider() or "").strip()
+        if not provider or not self.credential_manager:
+            return False
+
+        credential = self.credential_manager.get_search_credential(provider)
+        if not isinstance(credential, dict):
+            return False
+
+        api_key = str(credential.get("api_key", "") or "").strip()
+        if not api_key:
+            return False
+
+        if provider == WEB_SEARCH_GOOGLE:
+            cx = str(credential.get("cx", "") or "").strip()
+            return bool(cx)
+
+        return True
+
+    def is_available(self) -> bool:
+        return self.has_search_credentials()
     
     def get_search_config(self) -> Dict[str, Any]:
         """
@@ -504,37 +549,13 @@ class WebSearchTool:
             搜索配置字典
         """
         config = {
-            "provider_search_enabled": False,
-            "general_search_enabled": False,
-            "llm_provider": "",
             "search_provider": "",
+            "available": False,
         }
-        
-        if self.config_manager:
-            from infrastructure.config.settings import (
-                CONFIG_ENABLE_PROVIDER_WEB_SEARCH,
-                CONFIG_ENABLE_GENERAL_WEB_SEARCH,
-                CONFIG_GENERAL_WEB_SEARCH_PROVIDER,
-            )
-            config["provider_search_enabled"] = self.config_manager.get(
-                CONFIG_ENABLE_PROVIDER_WEB_SEARCH, False
-            )
-            config["general_search_enabled"] = self.config_manager.get(
-                CONFIG_ENABLE_GENERAL_WEB_SEARCH, False
-            )
-            config["search_provider"] = self.config_manager.get(
-                CONFIG_GENERAL_WEB_SEARCH_PROVIDER, WEB_SEARCH_GOOGLE
-            )
 
-        try:
-            from shared.service_locator import ServiceLocator
-            from shared.service_names import SVC_LLM_RUNTIME_CONFIG_MANAGER
-
-            llm_runtime_config_manager = ServiceLocator.get_optional(SVC_LLM_RUNTIME_CONFIG_MANAGER)
-            if llm_runtime_config_manager:
-                config["llm_provider"] = llm_runtime_config_manager.resolve_active_config().provider
-        except Exception:
-            pass
+        provider = self.get_active_search_provider()
+        config["search_provider"] = provider
+        config["available"] = self.has_search_credentials(provider)
         
         return config
     
@@ -552,25 +573,16 @@ class WebSearchTool:
             搜索结果列表
         """
         config = self.get_search_config()
-        
-        # 互斥检查：优先使用厂商专属搜索
-        if config["provider_search_enabled"]:
-            return self.search(
-                query=query,
-                search_type=SEARCH_TYPE_PROVIDER,
-                provider=config["llm_provider"],
-                max_results=max_results,
-            )
-        elif config["general_search_enabled"]:
-            return self.search(
-                query=query,
-                search_type=SEARCH_TYPE_GENERAL,
-                provider=config["search_provider"],
-                max_results=max_results,
-            )
-        else:
-            # 未启用任何搜索
+
+        if not config["available"]:
             return []
+
+        return self.search(
+            query=query,
+            search_type=SEARCH_TYPE_GENERAL,
+            provider=config["search_provider"],
+            max_results=max_results,
+        )
     
     # ============================================================
     # 日志辅助方法

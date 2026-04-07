@@ -158,6 +158,12 @@ class EmbeddingModelRegistry:
             已实现的厂商配置列表
         """
         return [p for p in cls._providers.values() if p.implemented]
+
+    @classmethod
+    def get_default_provider(cls) -> Optional[EmbeddingProviderConfig]:
+        cls.initialize()
+        providers = cls.list_implemented_providers()
+        return providers[0] if providers else None
     
     # ============================================================
     # 模型管理
@@ -232,48 +238,18 @@ class EmbeddingModelRegistry:
             模型名称列表
         """
         return [m.name for m in cls._models.values() if m.provider == provider_id]
-    
-    # ============================================================
-    # 当前配置查询
-    # ============================================================
-    
+
     @classmethod
-    def get_current_model(cls) -> Optional[EmbeddingModelConfig]:
-        """
-        获取当前配置的嵌入模型
-        
-        从 ConfigManager 读取当前配置的嵌入模型厂商和模型名称，
-        返回对应的模型配置。
-        
-        Returns:
-            当前嵌入模型配置，未配置则返回默认智谱模型
-        """
-        try:
-            from shared.service_locator import ServiceLocator
-            from shared.service_names import SVC_CONFIG_MANAGER
-            
-            config_manager = ServiceLocator.get_optional(SVC_CONFIG_MANAGER)
-            if not config_manager:
-                return cls.get_model("zhipu:embedding-3")
-            
-            provider_id = config_manager.get("embedding_provider", "zhipu")
-            model_name = config_manager.get("embedding_model", "")
-            
-            # 如果未指定模型名称，使用厂商默认模型
-            if not model_name:
-                provider = cls.get_provider(provider_id)
-                if provider:
-                    model_name = provider.default_model
-            
-            if model_name:
-                model = cls.get_model_by_name(provider_id, model_name)
-                if model:
-                    return model
-            
-            return cls.get_model("zhipu:embedding-3")
-            
-        except Exception:
-            return cls.get_model("zhipu:embedding-3")
+    def get_default_model(cls, provider_id: str) -> Optional[EmbeddingModelConfig]:
+        cls.initialize()
+        provider = cls.get_provider(provider_id)
+        if provider and provider.default_model:
+            model = cls.get_model_by_name(provider_id, provider.default_model)
+            if model:
+                return model
+
+        models = cls.list_models(provider_id)
+        return models[0] if models else None
     
     # ============================================================
     # 工具方法

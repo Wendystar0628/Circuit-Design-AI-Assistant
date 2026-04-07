@@ -131,13 +131,28 @@ class ContextCompressionService:
             return None
 
     def _resolve_model(self) -> Dict[str, str]:
-        provider = "zhipu"
-        model = "glm-5"
+        provider = ""
+        model = ""
         if self.llm_runtime_config_manager:
             try:
                 active_config = self.llm_runtime_config_manager.resolve_active_config()
                 provider = active_config.provider or provider
                 model = active_config.model or model
+            except Exception:
+                pass
+
+        if not provider or not model:
+            try:
+                from shared.model_registry import ModelRegistry
+
+                default_provider = ModelRegistry.get_default_provider()
+                if default_provider and not provider:
+                    provider = default_provider.id
+
+                if provider and not model:
+                    default_model = ModelRegistry.get_default_model(provider)
+                    if default_model:
+                        model = default_model.name
             except Exception:
                 pass
         return {

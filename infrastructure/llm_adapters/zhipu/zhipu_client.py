@@ -40,9 +40,8 @@ from infrastructure.llm_adapters.base_client import (
 from infrastructure.llm_adapters.zhipu.zhipu_request_builder import ZhipuRequestBuilder
 from infrastructure.llm_adapters.zhipu.zhipu_response_parser import ZhipuResponseParser
 from infrastructure.llm_adapters.zhipu.zhipu_stream_handler import ZhipuStreamHandler
+from infrastructure.llm_adapters.model_configs import ZHIPU_PROVIDER
 from infrastructure.config.settings import (
-    DEFAULT_BASE_URL,
-    DEFAULT_MODEL,
     DEFAULT_TIMEOUT,
     DEFAULT_THINKING_TIMEOUT,
     DEFAULT_ENABLE_THINKING,
@@ -101,8 +100,8 @@ class ZhipuClient(BaseLLMClient):
         """
         super().__init__(
             api_key=api_key,
-            base_url=base_url or DEFAULT_BASE_URL,
-            model=model or DEFAULT_MODEL,
+            base_url=base_url or ZHIPU_PROVIDER.base_url,
+            model=model or ZHIPU_PROVIDER.default_model,
             timeout=timeout,
         )
         

@@ -149,6 +149,18 @@ class ModelRegistry:
             已实现的厂商配置列表
         """
         return [p for p in cls._providers.values() if p.implemented]
+
+    @classmethod
+    def get_default_provider(cls) -> Optional[ProviderConfig]:
+        """
+        获取默认已实现厂商
+
+        Returns:
+            默认厂商配置，不存在则返回 None
+        """
+        cls.initialize()
+        providers = cls.list_implemented_providers()
+        return providers[0] if providers else None
     
     # ============================================================
     # 模型管理
@@ -221,6 +233,24 @@ class ModelRegistry:
             模型名称列表
         """
         return [m.name for m in cls._models.values() if m.provider == provider_id]
+
+    @classmethod
+    def get_default_model(cls, provider_id: str) -> Optional[ModelConfig]:
+        """
+        获取指定厂商的默认模型配置
+
+        Returns:
+            默认模型配置，不存在则返回 None
+        """
+        cls.initialize()
+        provider = cls.get_provider(provider_id)
+        if provider and provider.default_model:
+            model = cls.get_model_by_name(provider_id, provider.default_model)
+            if model:
+                return model
+
+        models = cls.list_models(provider_id)
+        return models[0] if models else None
 
     # ============================================================
     # 视觉模型处理

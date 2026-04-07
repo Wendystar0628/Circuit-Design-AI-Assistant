@@ -120,7 +120,9 @@ class ConversationViewModel(QObject):
     stop_requested = pyqtSignal()                # 停止请求已发出
     stop_completed = pyqtSignal(dict)            # 停止完成 (result)
     tool_call_started = pyqtSignal(str, str, dict)   # 工具调用开始 (tool_call_id, tool_name, arguments)
-    tool_call_ended = pyqtSignal(str, str, bool)     # 工具调用结束 (tool_call_id, result_preview, is_error)
+    tool_call_ended = pyqtSignal(str, str, str, bool, dict)     # 工具调用结束 (tool_call_id, tool_name, result_preview, is_error, details)
+    web_search_started = pyqtSignal(str)         # 联网搜索开始 (query)
+    web_search_finished = pyqtSignal(list, bool, str)  # 联网搜索结束 (results, is_error, message)
     
     def __init__(self, parent: Optional[QObject] = None):
         """初始化 ViewModel"""
@@ -807,6 +809,7 @@ class ConversationViewModel(QObject):
         
         # 构建工具操作摘要（在清空前）
         tool_operations = self._build_tool_operations()
+        web_search_results = self._collect_web_search_results()
 
         # 添加助手消息到 ContextManager
         if self.context_manager and content:
@@ -815,6 +818,7 @@ class ConversationViewModel(QObject):
                 reasoning_content=reasoning_content,
                 usage=usage,
                 operations=tool_operations if tool_operations else None,
+                web_search_results=web_search_results if web_search_results else None,
             )
         
         # 更新状态
@@ -913,15 +917,20 @@ class ConversationViewModel(QObject):
                 "arguments": arguments,
                 "is_error": False,
                 "result_content": "",
+                "details": {},
             })
+            if tool_name == "web_search":
+                self.web_search_started.emit(str(arguments.get("query", "") or "").strip())
             self.tool_call_started.emit(tool_call_id, tool_name, arguments)
 
     def _on_tool_execution_finished(
         self,
         task_id: str,
         tool_call_id: str,
+        tool_name: str,
         result_content: str,
         is_error: bool,
+        details: Dict[str, Any],
     ) -> None:
         """
         处理执行器发出的工具执行结束信号
@@ -932,10 +941,17 @@ class ConversationViewModel(QObject):
         if tool_call_id:
             for rec in self._current_tool_records:
                 if rec["tool_call_id"] == tool_call_id:
+                    rec["tool_name"] = tool_name or rec.get("tool_name", "")
                     rec["is_error"] = is_error
                     rec["result_content"] = result_content
+                    rec["details"] = details or {}
                     break
-            self.tool_call_ended.emit(tool_call_id, result_content, is_error)
+            if tool_name == "web_search":
+                results = details.get("results") if isinstance(details, dict) else []
+                if not isinstance(results, list):
+                    results = []
+                self.web_search_finished.emit(results, is_error, result_content)
+            self.tool_call_ended.emit(tool_call_id, tool_name, result_content, is_error, details or {})
 
     def _build_tool_operations(self) -> List[str]:
         """
@@ -949,6 +965,7 @@ class ConversationViewModel(QObject):
             name = rec["tool_name"]
             args = rec.get("arguments", {})
             is_error = rec.get("is_error", False)
+            details = rec.get("details", {}) if isinstance(rec.get("details", {}), dict) else {}
 
             # 提取关键参数摘要（路径用反引号包裹以支持点击链接）
             arg_summary = ""
@@ -961,12 +978,41 @@ class ConversationViewModel(QObject):
                     val = val[:37] + "..."
                 arg_summary = f"({first_key}={val})"
 
+            if name == "web_search":
+                query = str(args.get("query", "") or "").strip()
+                provider = str(details.get("provider", "") or "").strip()
+                result_count = int(details.get("result_count", 0) or 0)
+                provider_suffix = f", provider={provider}" if provider else ""
+                if is_error:
+                    preview = rec.get("result_content", "")[:60]
+                    operations.append(f"web_search(query={query}{provider_suffix}) 失败: {preview}")
+                else:
+                    operations.append(f"web_search(query={query}{provider_suffix}) 已检索 {result_count} 条结果")
+                continue
+
             if is_error:
                 preview = rec.get("result_content", "")[:60]
                 operations.append(f"{name}{arg_summary} 失败: {preview}")
             else:
                 operations.append(f"{name}{arg_summary}")
         return operations
+
+    def _collect_web_search_results(self) -> List[Dict[str, Any]]:
+        results: List[Dict[str, Any]] = []
+        for rec in self._current_tool_records:
+            if rec.get("tool_name") != "web_search":
+                continue
+
+            details = rec.get("details", {})
+            if not isinstance(details, dict):
+                continue
+
+            tool_results = details.get("results")
+            if isinstance(tool_results, list):
+                for item in tool_results:
+                    if isinstance(item, dict):
+                        results.append(item)
+        return results
     
     # ============================================================
     # 辅助方法

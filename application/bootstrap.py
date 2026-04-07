@@ -648,30 +648,35 @@ def _delayed_init():
                     payload = {}
                 success = refresh_llm_runtime_services()
 
-                provider = payload.get("provider", "")
-                model_name = payload.get("model", "")
                 old_model_id = payload.get("old_model_id", "") or ""
-                new_model_id = (
-                    f"{provider}:{model_name}"
-                    if provider and model_name else ""
-                )
+                provider = ""
+                model_name = ""
+                new_model_id = ""
+                display_name = ""
+                supports_thinking = False
+                supports_vision = False
+
+                try:
+                    from shared.service_names import SVC_LLM_RUNTIME_CONFIG_MANAGER
+                    from shared.model_registry import ModelRegistry
+
+                    llm_runtime_config_manager = ServiceLocator.get_optional(SVC_LLM_RUNTIME_CONFIG_MANAGER)
+                    if llm_runtime_config_manager:
+                        active_config = llm_runtime_config_manager.resolve_active_config()
+                        provider = active_config.provider
+                        model_name = active_config.model
+                        new_model_id = active_config.model_id
+                        display_name = active_config.display_name or model_name
+
+                        if new_model_id:
+                            model_config = ModelRegistry.get_model(new_model_id)
+                            if model_config:
+                                supports_thinking = model_config.supports_thinking
+                                supports_vision = model_config.supports_vision
+                except Exception:
+                    pass
 
                 if new_model_id and new_model_id != old_model_id:
-                    display_name = model_name
-                    supports_thinking = False
-                    supports_vision = False
-
-                    try:
-                        from shared.model_registry import ModelRegistry
-
-                        model_config = ModelRegistry.get_model(new_model_id)
-                        if model_config:
-                            display_name = model_config.display_name
-                            supports_thinking = model_config.supports_thinking
-                            supports_vision = model_config.supports_vision
-                    except Exception:
-                        pass
-
                     _event_bus.publish(
                         EVENT_MODEL_CHANGED,
                         data={

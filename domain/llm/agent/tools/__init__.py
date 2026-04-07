@@ -19,6 +19,7 @@ from domain.llm.agent.tools.grep_search import GrepSearchTool
 from domain.llm.agent.tools.find_files import FindFilesTool
 from domain.llm.agent.tools.list_directory import ListDirectoryTool
 from domain.llm.agent.tools.rag_search import RAGSearchTool
+from domain.llm.agent.tools.web_search import WebSearchTool
 
 
 __all__ = [
@@ -29,4 +30,5 @@ __all__ = [
     "FindFilesTool",
     "ListDirectoryTool",
     "RAGSearchTool",
+    "WebSearchTool",
 ]

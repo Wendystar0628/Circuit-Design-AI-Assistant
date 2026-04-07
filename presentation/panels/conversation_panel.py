@@ -242,6 +242,8 @@ class ConversationPanel(QWidget):
         self._view_model.stop_completed.connect(self._on_stop_completed)
         self._view_model.tool_call_started.connect(self._on_tool_call_started)
         self._view_model.tool_call_ended.connect(self._on_tool_call_ended)
+        self._view_model.web_search_started.connect(self._on_web_search_started)
+        self._view_model.web_search_finished.connect(self._on_web_search_finished)
 
     # ============================================================
     # 初始化和清理
@@ -429,15 +431,7 @@ class ConversationPanel(QWidget):
         更新输入区域的模型卡片显示。
         """
         if self._input_area:
-            # 尝试从事件数据中获取 display_name
-            data = event_data.get("data", {})
-            display_name = data.get("display_name")
-            
-            if display_name:
-                self._input_area.update_model_display(display_name)
-            else:
-                # 没有 display_name，让 InputArea 自己从配置获取
-                self._input_area.update_model_display()
+            self._input_area.update_model_display()
 
     # ============================================================
     # 事件处理 - ViewModel 信号
@@ -530,18 +524,46 @@ class ConversationPanel(QWidget):
         self, tool_call_id: str, tool_name: str, arguments: dict
     ) -> None:
         """处理工具调用开始（插入工具卡片到消息区域）"""
+        if tool_name == "web_search":
+            return
         if self._message_area:
             self._message_area.add_tool_card(tool_call_id, tool_name, arguments)
 
-    @pyqtSlot(str, str, bool)
+    @pyqtSlot(str, str, str, bool, dict)
     def _on_tool_call_ended(
-        self, tool_call_id: str, result_content: str, is_error: bool
+        self, tool_call_id: str, tool_name: str, result_content: str, is_error: bool, details: dict
     ) -> None:
         """处理工具调用结束（更新工具卡片显示结果）"""
+        if tool_name == "web_search":
+            return
         if self._message_area:
             self._message_area.update_tool_card(
                 tool_call_id, result_content, is_error
             )
+
+    @pyqtSlot(str)
+    def _on_web_search_started(self, query: str) -> None:
+        """处理联网搜索开始"""
+        if self._message_area:
+            self._message_area.start_searching()
+
+    @pyqtSlot(list, bool, str)
+    def _on_web_search_finished(self, results: list, is_error: bool, message: str) -> None:
+        """处理联网搜索结束"""
+        if not self._message_area:
+            return
+
+        display_results = results
+        if is_error and not display_results:
+            display_results = [{
+                "title": "搜索失败",
+                "url": "",
+                "snippet": message,
+            }]
+
+        if display_results:
+            self._message_area.update_search_results(display_results)
+        self._message_area.finish_searching(len(results))
 
     # ============================================================
     # 事件处理 - 子组件信号

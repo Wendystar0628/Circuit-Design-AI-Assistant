@@ -711,9 +711,10 @@ function updateToolCard(id, resultHtml, isError) {
             title = r.get("title", "")
             snippet = r.get("snippet", "")
             url = r.get("url", "")
+            url_html = f'<div class="search-item-url"><a href="{url}" target="_blank">{url}</a></div>' if url else ""
             items_html.append(f'''<div class="search-item">
 <div class="search-item-title">{self._esc_html(title)}</div>
-<div class="search-item-url"><a href="{url}" target="_blank">{url}</a></div>
+{url_html}
 <div class="search-item-snippet">{self._esc_html(snippet[:150])}</div>
 </div>''')
         

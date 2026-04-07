@@ -18,10 +18,8 @@ API 文档参考：
 import logging
 from typing import Any, Dict, List, Optional
 
-from infrastructure.config.settings import (
-    DEFAULT_MODEL,
-    DEFAULT_ENABLE_THINKING,
-)
+from infrastructure.config.settings import DEFAULT_ENABLE_THINKING
+from infrastructure.llm_adapters.model_configs import ZHIPU_PROVIDER
 
 
 # ============================================================
@@ -58,7 +56,7 @@ class ZhipuRequestBuilder:
     def build_chat_request(
         self,
         messages: List[Dict[str, Any]],
-        model: str = DEFAULT_MODEL,
+        model: Optional[str] = None,
         stream: bool = True,
         thinking: bool = DEFAULT_ENABLE_THINKING,
         tools: Optional[List[Dict[str, Any]]] = None,
@@ -84,6 +82,8 @@ class ZhipuRequestBuilder:
         Returns:
             符合智谱 API 规范的请求体字典
         """
+        model = model or ZHIPU_PROVIDER.default_model
+
         # 规范化消息
         normalized_messages = self._normalize_messages(messages)
         
@@ -208,7 +208,7 @@ class ZhipuRequestBuilder:
         self,
         messages: List[Dict[str, Any]],
         tools: List[Dict[str, Any]],
-        model: str = DEFAULT_MODEL,
+        model: Optional[str] = None,
         stream: bool = True,
         thinking: bool = False,
         **kwargs

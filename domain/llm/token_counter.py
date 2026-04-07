@@ -60,21 +60,21 @@ def _resolve_active_model_and_provider(
         ModelRegistry.initialize()
 
         if not resolved_provider:
-            providers = ModelRegistry.list_implemented_providers()
-            if providers:
-                resolved_provider = providers[0].id
+            default_provider = ModelRegistry.get_default_provider()
+            if default_provider:
+                resolved_provider = default_provider.id
 
         if resolved_model in {"", "default"} and resolved_provider:
-            provider_config = ModelRegistry.get_provider(resolved_provider)
-            if provider_config and provider_config.default_model:
-                resolved_model = provider_config.default_model
+            default_model = ModelRegistry.get_default_model(resolved_provider)
+            if default_model:
+                resolved_model = default_model.name
     except Exception:
         pass
 
     if resolved_model in {"", "default"}:
-        resolved_model = "glm-5"
+        resolved_model = ""
     if not resolved_provider:
-        resolved_provider = "zhipu"
+        resolved_provider = ""
 
     return resolved_model, resolved_provider
 

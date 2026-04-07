@@ -75,7 +75,7 @@ class LLMExecutor(QObject):
     generation_complete = pyqtSignal(str, dict)  # (task_id, result)
     generation_error = pyqtSignal(str, str)  # (task_id, error_msg)
     tool_execution_started = pyqtSignal(str, str, str, dict)  # (task_id, tool_call_id, tool_name, arguments)
-    tool_execution_finished = pyqtSignal(str, str, str, bool)  # (task_id, tool_call_id, result_content, is_error)
+    tool_execution_finished = pyqtSignal(str, str, str, str, bool, dict)  # (task_id, tool_call_id, tool_name, result_content, is_error, details)
     
     def __init__(self, parent: Optional[QObject] = None, tool_effect_dispatcher: Optional[ToolEffectDispatcher] = None):
         """初始化 LLM 执行器"""
@@ -311,14 +311,17 @@ class LLMExecutor(QObject):
 
         elif event_type == "tool_execution_end":
             tool_call_id = data.get("tool_call_id", "")
-            result_content = data.get("result_content", "")
-            is_error = data.get("is_error", False)
             tool_name = data.get("tool_name", "")
+            result_content = data.get("result_content", "")
+            is_error = bool(data.get("is_error", False))
+            details = data.get("details") if isinstance(data.get("details"), dict) else {}
             self.tool_execution_finished.emit(
                 task_id,
                 tool_call_id,
+                tool_name,
                 result_content,
                 is_error,
+                details,
             )
 
             if not is_error and self._tool_effect_dispatcher is not None:

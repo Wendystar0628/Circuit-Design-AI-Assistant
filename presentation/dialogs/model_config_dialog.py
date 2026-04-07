@@ -32,15 +32,6 @@ from infrastructure.config.settings import (
     CONFIG_EMBEDDING_BATCH_SIZE,
     WEB_SEARCH_GOOGLE,
     WEB_SEARCH_BING,
-    CONFIG_LLM_PROVIDER,
-    CONFIG_LLM_MODEL,
-    CONFIG_LLM_BASE_URL,
-    CONFIG_LLM_TIMEOUT,
-    CONFIG_LLM_STREAMING,
-    CONFIG_ENABLE_THINKING,
-    CONFIG_THINKING_TIMEOUT,
-    CONFIG_ENABLE_PROVIDER_WEB_SEARCH,
-    CONFIG_ENABLE_GENERAL_WEB_SEARCH,
     CONFIG_GENERAL_WEB_SEARCH_PROVIDER,
     DEFAULT_TIMEOUT,
     DEFAULT_EMBEDDING_TIMEOUT,
@@ -99,11 +90,9 @@ class ModelConfigDialog(QDialog):
         self._api_config_group: Optional[QGroupBox] = None
         self._deep_think_check: Optional[QCheckBox] = None
         self._thinking_timeout_spin: Optional[QSpinBox] = None
-        self._provider_web_search_check: Optional[QCheckBox] = None
         
         # 通用联网搜索组件
         self._general_search_group: Optional[QGroupBox] = None
-        self._general_search_check: Optional[QCheckBox] = None
         self._general_search_provider_combo: Optional[QComboBox] = None
         self._general_search_api_key_edit: Optional[QLineEdit] = None
         self._google_cx_edit: Optional[QLineEdit] = None
@@ -547,14 +536,6 @@ class ModelConfigDialog(QDialog):
         thinking_timeout_label.setProperty("label_type", "thinking_timeout")
         form_layout.addRow(thinking_timeout_label, self._thinking_timeout_spin)
         
-        # 厂商专属联网搜索
-        self._provider_web_search_check = QCheckBox()
-        self._provider_web_search_check.stateChanged.connect(self._on_provider_web_search_changed)
-        
-        provider_search_label = QLabel()
-        provider_search_label.setProperty("label_type", "provider_web_search")
-        form_layout.addRow(provider_search_label, self._provider_web_search_check)
-        
         layout.addLayout(form_layout)
         
         return group
@@ -565,19 +546,10 @@ class ModelConfigDialog(QDialog):
         group.setProperty("group_type", "general_search")
         layout = QFormLayout(group)
         
-        # 启用通用联网搜索
-        self._general_search_check = QCheckBox()
-        self._general_search_check.stateChanged.connect(self._on_general_search_changed)
-        
-        search_label = QLabel()
-        search_label.setProperty("label_type", "general_search")
-        layout.addRow(search_label, self._general_search_check)
-        
         # 搜索供应商选择
         self._general_search_provider_combo = QComboBox()
         self._general_search_provider_combo.addItem("Google", WEB_SEARCH_GOOGLE)
         self._general_search_provider_combo.addItem("Bing", WEB_SEARCH_BING)
-        self._general_search_provider_combo.setEnabled(False)
         self._general_search_provider_combo.currentIndexChanged.connect(
             self._on_general_search_provider_changed
         )
@@ -589,7 +561,6 @@ class ModelConfigDialog(QDialog):
         # 搜索 API Key
         self._general_search_api_key_edit = QLineEdit()
         self._general_search_api_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
-        self._general_search_api_key_edit.setEnabled(False)
         
         api_key_label = QLabel()
         api_key_label.setProperty("label_type", "general_search_api_key")
@@ -644,7 +615,7 @@ class ModelConfigDialog(QDialog):
 
     def load_config(self):
         """加载当前配置到界面"""
-        if not self.config_manager:
+        if not self.config_manager or not self.llm_runtime_config_manager:
             # 无配置管理器时使用默认值
             self._on_provider_changed(0)
             self._populate_embedding_providers(force_refresh=True)
@@ -653,15 +624,10 @@ class ModelConfigDialog(QDialog):
                 self._on_embedding_provider_changed(self._embedding_provider_combo.currentIndex())
             return
 
-        active_config = None
-        if self.llm_runtime_config_manager:
-            try:
-                active_config = self.llm_runtime_config_manager.resolve_active_config()
-            except Exception:
-                active_config = None
+        active_config = self.llm_runtime_config_manager.resolve_active_config()
         
         # 厂商
-        provider = active_config.provider if active_config else self.config_manager.get(CONFIG_LLM_PROVIDER, "")
+        provider = active_config.provider
         index = self._provider_combo.findData(provider)
         if index >= 0:
             self._provider_combo.setCurrentIndex(index)
@@ -672,35 +638,35 @@ class ModelConfigDialog(QDialog):
         self._on_provider_changed(self._provider_combo.currentIndex())
 
         # 模型
-        model = active_config.model if active_config else self.config_manager.get(CONFIG_LLM_MODEL, "")
+        model = active_config.model
         index = self._model_combo.findText(model, Qt.MatchFlag.MatchFixedString)
         if index >= 0:
             self._model_combo.setCurrentIndex(index)
 
         # API Key（从 CredentialManager 获取当前厂商的凭证）
-        api_key = active_config.api_key if active_config else ""
+        api_key = active_config.api_key
         if not api_key and self.credential_manager and provider:
             api_key = self.credential_manager.get_llm_api_key(provider)
         self._api_key_edit.setText(api_key)
 
         # Base URL
-        base_url = active_config.base_url if active_config else self.config_manager.get(CONFIG_LLM_BASE_URL, "")
+        base_url = active_config.base_url
         self._base_url_edit.setText(base_url)
 
         # 流式输出
-        streaming = active_config.streaming if active_config else self.config_manager.get(CONFIG_LLM_STREAMING, True)
+        streaming = active_config.streaming
         self._streaming_check.setChecked(streaming)
 
         # 超时
-        timeout = active_config.timeout if active_config else self.config_manager.get(CONFIG_LLM_TIMEOUT, DEFAULT_TIMEOUT)
+        timeout = active_config.timeout
         self._timeout_spin.setValue(timeout)
         
         # 深度思考
-        deep_think = active_config.enable_thinking if active_config else self.config_manager.get(CONFIG_ENABLE_THINKING, True)
+        deep_think = active_config.enable_thinking
         self._deep_think_check.setChecked(deep_think)
         
         # 深度思考超时
-        thinking_timeout = active_config.thinking_timeout if active_config else self.config_manager.get(CONFIG_THINKING_TIMEOUT, DEFAULT_THINKING_TIMEOUT)
+        thinking_timeout = active_config.thinking_timeout
         self._thinking_timeout_spin.setValue(thinking_timeout)
         self._thinking_timeout_spin.setEnabled(deep_think)
 
@@ -747,26 +713,7 @@ class ModelConfigDialog(QDialog):
                 google_cx = search_cred.get("cx", "")
         self._general_search_api_key_edit.setText(search_api_key)
         self._google_cx_edit.setText(google_cx)
-        
-        # 联网搜索配置（互斥处理）
-        # 先读取配置值
-        provider_search = self.config_manager.get(CONFIG_ENABLE_PROVIDER_WEB_SEARCH, False)
-        general_search = self.config_manager.get(CONFIG_ENABLE_GENERAL_WEB_SEARCH, False)
-        
-        # 互斥校验：如果两者都为 True，优先保留厂商专属搜索
-        if provider_search and general_search:
-            general_search = False
-        
-        # 先设置通用搜索（会触发互斥逻辑）
-        self._general_search_check.setChecked(general_search)
-        self._on_general_search_changed(
-            Qt.CheckState.Checked.value if general_search else Qt.CheckState.Unchecked.value
-        )
-        
-        # 再设置厂商专属搜索（会触发互斥逻辑）
-        self._provider_web_search_check.setChecked(provider_search)
-        if provider_search:
-            self._on_provider_web_search_changed(Qt.CheckState.Checked.value)
+        self._on_general_search_provider_changed(self._general_search_provider_combo.currentIndex())
         
         # 更新验证状态：检查是否之前已验证过
         self._check_and_update_verification_status(provider)
@@ -816,8 +763,6 @@ class ModelConfigDialog(QDialog):
                 self.credential_manager.delete_credential("embedding", embedding_provider_id)
         
         # 保存其他配置
-        self.config_manager.set(CONFIG_ENABLE_PROVIDER_WEB_SEARCH, self._provider_web_search_check.isChecked())
-        self.config_manager.set(CONFIG_ENABLE_GENERAL_WEB_SEARCH, self._general_search_check.isChecked())
         self.config_manager.set(CONFIG_GENERAL_WEB_SEARCH_PROVIDER, search_provider_id)
 
         if self.credential_manager:
@@ -832,7 +777,6 @@ class ModelConfigDialog(QDialog):
             self.logger.info(f"Model configuration saved: provider={provider_id}, model={self._model_combo.currentText()}")
         
         self._request_llm_runtime_refresh(
-            provider_id=provider_id,
             old_model_id=previous_model_id,
         )
         
@@ -867,26 +811,25 @@ class ModelConfigDialog(QDialog):
             self._embedding_batch_size_spin.setFocus()
             return False
         
-        # 联网搜索互斥校验（防御性检查，UI 已确保互斥）
-        provider_search = self._provider_web_search_check.isChecked()
-        general_search = self._general_search_check.isChecked()
-        if provider_search and general_search:
-            # 理论上不应该发生，但作为防御性检查
-            QMessageBox.warning(
-                self,
-                self._get_text("dialog.warning", "Warning"),
-                self._get_text(
-                    "dialog.model_config.error.search_mutex",
-                    "Provider web search and general web search cannot be enabled at the same time."
+        if self._general_search_provider_combo.currentData() == WEB_SEARCH_GOOGLE:
+            search_api_key = self._general_search_api_key_edit.text().strip()
+            google_cx = self._google_cx_edit.text().strip()
+            if search_api_key and not google_cx:
+                QMessageBox.warning(
+                    self,
+                    self._get_text("dialog.warning", "Warning"),
+                    self._get_text(
+                        "dialog.model_config.error.google_cx_required",
+                        "Google web search requires a Search Engine ID (cx)."
+                    )
                 )
-            )
-            return False
-        
+                self._google_cx_edit.setFocus()
+                return False
+
         return True
 
     def _request_llm_runtime_refresh(
         self,
-        provider_id: str,
         old_model_id: str,
     ) -> None:
         """
@@ -896,15 +839,11 @@ class ModelConfigDialog(QDialog):
         订阅该事件并负责刷新运行时和统一广播模型变更。界面层不直接操作运行时。
         """
         try:
-            model = self._model_combo.currentText()
-
             if self.event_bus:
                 from shared.event_types import EVENT_LLM_CONFIG_CHANGED
                 self.event_bus.publish(
                     EVENT_LLM_CONFIG_CHANGED,
                     data={
-                        "provider": provider_id,
-                        "model": model,
                         "old_model_id": old_model_id,
                     },
                     source="model_config_dialog",
@@ -981,9 +920,7 @@ class ModelConfigDialog(QDialog):
             self._api_key_edit.setText("")
         
         supports_thinking = self._provider_supports_thinking(provider_id)
-        supports_web_search = provider.supports_web_search if provider else False
-        
-        self._update_provider_features(supports_thinking, supports_web_search)
+        self._update_provider_features(supports_thinking)
         
         # 重置验证状态
         self._reset_validation_status()
@@ -1078,7 +1015,7 @@ class ModelConfigDialog(QDialog):
                 self.credential_manager.get_embedding_api_key(provider_id)
             )
 
-    def _update_provider_features(self, supports_thinking: bool, supports_web_search: bool):
+    def _update_provider_features(self, supports_thinking: bool):
         """更新厂商专属功能组的显示状态"""
         self._deep_think_check.setEnabled(supports_thinking)
         self._thinking_timeout_spin.setEnabled(
@@ -1089,11 +1026,6 @@ class ModelConfigDialog(QDialog):
         if not supports_thinking:
             self._deep_think_check.setChecked(False)
 
-        if not supports_web_search:
-            self._provider_web_search_check.setChecked(False)
-
-        self._update_provider_search_availability()
-
     def _on_deep_think_changed(self, state: int):
         """深度思考开关变化"""
         enabled = state == Qt.CheckState.Checked.value
@@ -1102,98 +1034,26 @@ class ModelConfigDialog(QDialog):
         
         self._thinking_timeout_spin.setEnabled(enabled and supports_thinking)
 
-    def _on_provider_web_search_changed(self, state: int):
-        """厂商专属联网搜索开关变化"""
-        enabled = state == Qt.CheckState.Checked.value
-        
-        # 互斥逻辑：启用厂商专属搜索时禁用通用搜索
-        if enabled:
-            self._general_search_check.setChecked(False)
-            self._general_search_check.setEnabled(False)
-            self._general_search_check.setToolTip(
-                self._get_text(
-                    "dialog.model_config.search_mutex_hint_provider",
-                    "Disabled: Provider web search is enabled"
-                )
-            )
-            # 禁用通用搜索的子控件
-            self._general_search_provider_combo.setEnabled(False)
-            self._general_search_api_key_edit.setEnabled(False)
-            self._google_cx_edit.setEnabled(False)
-        else:
-            # 恢复通用搜索的可用状态
-            self._general_search_check.setEnabled(True)
-            self._general_search_check.setToolTip("")
-
-    def _update_provider_search_availability(self):
-        """更新厂商专属搜索的可用状态"""
-        provider_id = self._provider_combo.currentData()
-        provider = self._get_chat_provider(provider_id)
-        supports_web_search = provider.supports_web_search if provider else False
-        
-        general_search_enabled = self._general_search_check.isChecked()
-        can_enable = supports_web_search and not general_search_enabled
-        
-        self._provider_web_search_check.setEnabled(can_enable)
-        
-        if not can_enable:
-            if general_search_enabled:
-                self._provider_web_search_check.setToolTip(
-                    self._get_text(
-                        "dialog.model_config.search_mutex_hint",
-                        "Disabled: General web search is enabled"
-                    )
-                )
-            elif not supports_web_search:
-                self._provider_web_search_check.setToolTip(
-                    self._get_text(
-                        "dialog.model_config.provider_no_web_search",
-                        "This provider does not support built-in web search"
-                    )
-                )
-            else:
-                self._provider_web_search_check.setToolTip("")
-        else:
-            self._provider_web_search_check.setToolTip("")
-
-    def _on_general_search_changed(self, state: int):
-        """通用联网搜索开关变化"""
-        enabled = state == Qt.CheckState.Checked.value
-        self._general_search_provider_combo.setEnabled(enabled)
-        self._general_search_api_key_edit.setEnabled(enabled)
-        
-        # 互斥逻辑：启用通用搜索时禁用厂商专属搜索
-        if enabled:
-            self._provider_web_search_check.setChecked(False)
-            self._provider_web_search_check.setEnabled(False)
-            self._provider_web_search_check.setToolTip(
-                self._get_text(
-                    "dialog.model_config.search_mutex_hint",
-                    "Disabled: General web search is enabled"
-                )
-            )
-        else:
-            # 恢复厂商专属搜索的可用状态（如果厂商支持）
-            self._update_provider_search_availability()
-        
-        # 根据当前选择的供应商更新 Google cx 可见性
-        if enabled:
-            self._on_general_search_provider_changed(
-                self._general_search_provider_combo.currentIndex()
-            )
-        else:
-            self._google_cx_edit.setEnabled(False)
-
     def _on_general_search_provider_changed(self, index: int):
         """通用搜索供应商变化"""
         provider_id = self._general_search_provider_combo.currentData()
-        enabled = self._general_search_check.isChecked()
+
+        search_api_key = ""
+        google_cx = ""
+        if self.credential_manager and provider_id:
+            search_cred = self.credential_manager.get_search_credential(provider_id)
+            if search_cred:
+                search_api_key = str(search_cred.get("api_key", "") or "")
+                google_cx = str(search_cred.get("cx", "") or "")
+
+        self._general_search_api_key_edit.setText(search_api_key)
+        self._google_cx_edit.setText(google_cx)
         
         if provider_id == WEB_SEARCH_GOOGLE:
             # Google：显示搜索引擎 ID
             self._google_cx_label.setVisible(True)
             self._google_cx_edit.setVisible(True)
-            self._google_cx_edit.setEnabled(enabled)
+            self._google_cx_edit.setEnabled(True)
         else:
             # Bing：隐藏搜索引擎 ID
             self._google_cx_label.setVisible(False)
@@ -1422,10 +1282,6 @@ class ModelConfigDialog(QDialog):
                 label.setText(self._get_text("dialog.model_config.label.deep_think", "Deep Thinking"))
             elif label_type == "thinking_timeout":
                 label.setText(self._get_text("dialog.model_config.label.thinking_timeout", "Thinking Timeout"))
-            elif label_type == "provider_web_search":
-                label.setText(self._get_text("dialog.model_config.label.provider_web_search", "Provider Web Search"))
-            elif label_type == "general_search":
-                label.setText(self._get_text("dialog.model_config.label.general_search", "Enable Web Search"))
             elif label_type == "general_search_provider":
                 label.setText(self._get_text("dialog.model_config.label.general_search_provider", "Search Provider"))
             elif label_type == "general_search_api_key":

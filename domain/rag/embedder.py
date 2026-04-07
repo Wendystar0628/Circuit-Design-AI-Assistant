@@ -17,6 +17,7 @@ import httpx
 from infrastructure.config.settings import (
     CONFIG_EMBEDDING_BASE_URL,
     CONFIG_EMBEDDING_BATCH_SIZE,
+    CONFIG_EMBEDDING_MODEL,
     CONFIG_EMBEDDING_TIMEOUT,
     CONFIG_EMBEDDING_PROVIDER,
 )
@@ -42,17 +43,34 @@ class Embedder:
             from shared.embedding_model_registry import EmbeddingModelRegistry
 
             config_manager = ServiceLocator.get_optional(SVC_CONFIG_MANAGER)
-            current_model = EmbeddingModelRegistry.get_current_model()
-            provider_id = current_model.provider if current_model else "zhipu"
-            model_name = current_model.name if current_model else "embedding-3"
+            EmbeddingModelRegistry.initialize()
+
+            provider_id = ""
+            if config_manager:
+                provider_id = str(config_manager.get(CONFIG_EMBEDDING_PROVIDER, "") or "").strip()
+
+            if not provider_id:
+                default_provider = EmbeddingModelRegistry.get_default_provider()
+                provider_id = default_provider.id if default_provider else "zhipu"
+
+            if provider_id != "zhipu":
+                raise RuntimeError("Only Zhipu embedding is currently supported.")
 
             provider = EmbeddingModelRegistry.get_provider(provider_id)
+            default_model = EmbeddingModelRegistry.get_default_model(provider_id)
+            model_name = default_model.name if default_model else "embedding-3"
             default_base_url = provider.base_url if provider else "https://open.bigmodel.cn/api/paas/v4/embeddings"
 
             if config_manager:
                 configured_provider = config_manager.get(CONFIG_EMBEDDING_PROVIDER, provider_id)
                 if configured_provider != "zhipu":
                     raise RuntimeError("Only Zhipu embedding is currently supported.")
+
+                configured_model = str(config_manager.get(CONFIG_EMBEDDING_MODEL, "") or "").strip()
+                if configured_model:
+                    configured_model_config = EmbeddingModelRegistry.get_model_by_name(configured_provider, configured_model)
+                    if configured_model_config:
+                        model_name = configured_model_config.name
 
                 base_url = config_manager.get(CONFIG_EMBEDDING_BASE_URL, "") or default_base_url
                 timeout = int(config_manager.get(CONFIG_EMBEDDING_TIMEOUT, _TIMEOUT))
@@ -63,6 +81,20 @@ class Embedder:
         except RuntimeError:
             raise
         except Exception as exc:
+            try:
+                from shared.embedding_model_registry import EmbeddingModelRegistry
+
+                EmbeddingModelRegistry.initialize()
+                default_provider = EmbeddingModelRegistry.get_default_provider()
+                provider_id = default_provider.id if default_provider else "zhipu"
+                provider = EmbeddingModelRegistry.get_provider(provider_id)
+                default_model = EmbeddingModelRegistry.get_default_model(provider_id)
+                model_name = default_model.name if default_model else "embedding-3"
+                base_url = provider.base_url if provider else "https://open.bigmodel.cn/api/paas/v4/embeddings"
+                logger.debug(f"Embedding config unavailable, fallback to registry default: {exc}")
+                return provider_id, model_name, base_url, _BATCH_SIZE, int(_TIMEOUT)
+            except Exception:
+                pass
             logger.debug(f"Embedding config unavailable, fallback to default: {exc}")
             return "zhipu", "embedding-3", "https://open.bigmodel.cn/api/paas/v4/embeddings", _BATCH_SIZE, int(_TIMEOUT)
 

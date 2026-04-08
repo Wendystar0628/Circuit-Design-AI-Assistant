@@ -58,6 +58,7 @@ DEFAULT_KEEP_COUNT = 10
 # 快照时忽略的模式
 IGNORE_PATTERNS = [
     ".circuit_ai/snapshots",  # 避免递归快照
+    "simulation_results",
     "__pycache__",
     ".git",
     "*.pyc",
@@ -636,34 +637,78 @@ def _restore_files_from_snapshot(root: Path, snapshot_dir: Path) -> None:
     从快照恢复文件到项目目录
 
     策略：
-    1. 遍历快照中的文件
-    2. 复制到项目目录对应位置
-    3. 跳过 .circuit_ai 目录
+    1. 删除当前项目中快照不存在的可恢复文件
+    2. 用快照内容覆盖当前项目文件
+    3. 保留内部快照存储目录等受保护路径
     """
-    # 需要跳过的目录（不从快照恢复）
-    skip_dirs = {".circuit_ai", ".git", "__pycache__", ".pytest_cache"}
+    _sync_directory_from_snapshot(snapshot_dir, root, Path())
 
-    for item in snapshot_dir.iterdir():
-        if item.name in skip_dirs:
+
+def _sync_directory_from_snapshot(
+    source_dir: Path,
+    dest_dir: Path,
+    relative_dir: Path,
+) -> None:
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    source_entries = {
+        item.name: item
+        for item in source_dir.iterdir()
+        if item.name != ".snapshot_meta.json"
+    }
+    dest_entries = {item.name: item for item in dest_dir.iterdir()}
+
+    for name, dest_item in dest_entries.items():
+        relative_path = relative_dir / name
+        if _is_protected_restore_path(relative_path):
+            continue
+        if name in source_entries:
+            continue
+        _remove_restore_path(dest_item)
+
+    for name, source_item in source_entries.items():
+        relative_path = relative_dir / name
+        if _is_protected_restore_path(relative_path):
             continue
 
-        if item.name == ".snapshot_meta.json":
-            continue
-
-        dest = root / item.name
-
+        dest_item = dest_dir / name
         try:
-            if item.is_dir():
-                # 删除目标目录（如果存在）
-                if dest.exists():
-                    shutil.rmtree(dest)
-                # 复制目录
-                shutil.copytree(item, dest)
+            if source_item.is_dir():
+                if dest_item.exists() and not dest_item.is_dir():
+                    _remove_restore_path(dest_item)
+                dest_item.mkdir(parents=True, exist_ok=True)
+                _sync_directory_from_snapshot(source_item, dest_item, relative_path)
             else:
-                # 复制文件
-                shutil.copy2(item, dest)
+                if dest_item.exists() and dest_item.is_dir():
+                    _remove_restore_path(dest_item)
+                dest_item.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source_item, dest_item)
         except Exception as e:
-            raise RuntimeError(f"Failed to restore {item.name}: {e}") from e
+            raise RuntimeError(f"Failed to restore {relative_path.as_posix()}: {e}") from e
+
+
+def _is_protected_restore_path(relative_path: Path) -> bool:
+    protected_paths = {
+        Path(".git"),
+        Path("__pycache__"),
+        Path(".pytest_cache"),
+        Path(".circuit_ai") / "snapshots",
+        Path("simulation_results"),
+    }
+    normalized = Path(*relative_path.parts) if relative_path.parts else Path()
+    for protected in protected_paths:
+        if normalized == protected or protected in normalized.parents:
+            return True
+    return False
+
+
+def _remove_restore_path(path: Path) -> None:
+    if not path.exists() and not path.is_symlink():
+        return
+    if path.is_dir() and not path.is_symlink():
+        shutil.rmtree(path)
+        return
+    path.unlink()
 
 
 # ============================================================

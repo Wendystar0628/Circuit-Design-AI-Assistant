@@ -11,6 +11,7 @@ class ConversationRollbackService:
         self._lock = threading.RLock()
         self._logger = None
         self._event_bus = None
+        self._file_watcher = None
         self._session_state_manager = None
 
     @property
@@ -44,6 +45,17 @@ class ConversationRollbackService:
             except Exception:
                 pass
         return self._session_state_manager
+
+    @property
+    def file_watcher(self):
+        if self._file_watcher is None:
+            try:
+                from shared.service_locator import ServiceLocator
+                from shared.service_names import SVC_FILE_WATCHER
+                self._file_watcher = ServiceLocator.get_optional(SVC_FILE_WATCHER)
+            except Exception:
+                pass
+        return self._file_watcher
 
     def get_available_anchor_ids(self) -> set[str]:
         session_state_manager = self.session_state_manager
@@ -127,7 +139,18 @@ class ConversationRollbackService:
         if not snapshot_id:
             return {"success": False, "message": "Rollback snapshot is missing"}
 
+        watcher_was_running = False
+        file_watcher = self.file_watcher
         try:
+            if file_watcher is not None:
+                try:
+                    watcher_was_running = bool(getattr(file_watcher, "is_watching", False))
+                    if watcher_was_running:
+                        file_watcher.stop_watching()
+                except Exception as exc:
+                    if self.logger:
+                        self.logger.warning(f"Failed to stop file watcher before rollback: {exc}")
+
             await snapshot_service.restore_snapshot_async(
                 project_root,
                 snapshot_id,
@@ -159,6 +182,13 @@ class ConversationRollbackService:
                     f"anchor_message_id={anchor_message_id}, error={e}"
                 )
             return {"success": False, "message": str(e)}
+        finally:
+            if file_watcher is not None and watcher_was_running:
+                try:
+                    file_watcher.start_watching(project_root)
+                except Exception as exc:
+                    if self.logger:
+                        self.logger.warning(f"Failed to restart file watcher after rollback: {exc}")
 
     def _cleanup_hidden_snapshots(self, project_root: str, session_id: str) -> None:
         snapshots_dir = Path(snapshot_service.get_snapshots_dir(project_root))

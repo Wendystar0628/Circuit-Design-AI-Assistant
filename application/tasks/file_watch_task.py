@@ -63,6 +63,7 @@ DEBOUNCE_INTERVAL_MS = 200
 # 忽略的目录名
 IGNORED_DIRS = {
     ".circuit_ai",
+    "simulation_results",
     ".git",
     "__pycache__",
     ".vscode",

@@ -722,19 +722,6 @@ class ConversationPanel(QWidget):
         if self._rollback_in_progress or self._send_in_progress:
             return
 
-        reply = QMessageBox.question(
-            self,
-            self._get_text("dialog.confirm.title", "确认"),
-            self._get_text(
-                "msg.confirm_rollback_conversation_node",
-                "是否撤回该用户节点及其后续所有对话、上下文与工作区变更？"
-            ),
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if reply != QMessageBox.StandardButton.Yes:
-            return
-
         self._rollback_in_progress = True
         self._sync_input_action_state()
         try:

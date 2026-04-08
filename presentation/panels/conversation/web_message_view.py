@@ -17,7 +17,7 @@
 
 import os
 from typing import Any, Dict, List, Optional
-from PyQt6.QtCore import Qt, pyqtSignal, pyqtSlot, QTimer, QUrl
+from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QUrl
 
 from domain.llm.attachment_references import (
     INLINE_ATTACHMENT_PLACEMENT,
@@ -28,8 +28,7 @@ from domain.llm.message_types import Attachment
 
 try:
     from PyQt6.QtWebEngineWidgets import QWebEngineView
-    from PyQt6.QtWebEngineCore import QWebEngineSettings
-    from PyQt6.QtWebChannel import QWebChannel
+    from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
     WEBENGINE_AVAILABLE = True
 except ImportError:
     WEBENGINE_AVAILABLE = False
@@ -89,6 +88,31 @@ _FALLBACK_ROLLBACK = '''<svg xmlns="http://www.w3.org/2000/svg" width="14" heigh
 SVG_ROLLBACK = _load_svg_icon("panel/undo.svg", _FALLBACK_ROLLBACK)
 
 
+if WEBENGINE_AVAILABLE:
+    class _MessageWebPage(QWebEnginePage):
+        def __init__(self, owner: "WebMessageView"):
+            super().__init__(owner)
+            self._owner = owner
+
+        def acceptNavigationRequest(self, url, nav_type, is_main_frame):
+            url_str = url.toString()
+            if url_str.startswith(("about:", "data:")):
+                return True
+            if url_str.startswith("suggestion://"):
+                self._owner.suggestion_clicked.emit(url_str[len("suggestion://"):])
+                return False
+            if url_str.startswith("rollback://"):
+                self._owner.rollback_requested.emit(url_str[len("rollback://"):])
+                return False
+            if url_str.startswith("file://"):
+                self._owner.file_clicked.emit(url.toLocalFile() or url_str[7:])
+                return False
+            if url_str.startswith(("http://", "https://")):
+                self._owner.link_clicked.emit(url_str)
+                return False
+            return True
+
+
 class WebMessageView(QWidget):
     """
     基于 WebEngine 的消息显示组件
@@ -110,8 +134,7 @@ class WebMessageView(QWidget):
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self._web_view = None
-        self._web_channel = None
-        self._rendered_message_ids: List[str] = []
+        self._rendered_message_keys: List[str] = []
         self._page_loaded = False
         self._pending_messages = []
         self._pending_runtime_steps: Optional[List[Any]] = None
@@ -128,10 +151,9 @@ class WebMessageView(QWidget):
         if WEBENGINE_AVAILABLE:
             self._web_view = QWebEngineView()
             self._web_view.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+            self._web_view.setPage(_MessageWebPage(self))
             settings = self._web_view.settings()
             settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, True)
-            self._setup_web_channel()
-            self._web_view.page().acceptNavigationRequest = self._handle_navigation
             self._web_view.loadFinished.connect(self._on_page_loaded)
             self._load_initial_page()
             layout.addWidget(self._web_view)
@@ -139,43 +161,7 @@ class WebMessageView(QWidget):
             label = QLabel("请安装 PyQt6-WebEngine")
             label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             layout.addWidget(label)
-    
-    def _setup_web_channel(self):
-        if not WEBENGINE_AVAILABLE or not self._web_view:
-            return
-        try:
-            self._web_channel = QWebChannel()
-            self._web_channel.registerObject("pyBridge", self)
-            self._web_view.page().setWebChannel(self._web_channel)
-        except Exception:
-            pass
-    
-    def _handle_navigation(self, url, nav_type, is_main_frame):
-        url_str = url.toString()
-        if url_str.startswith(('about:', 'data:')):
-            return True
-        if url_str.startswith('suggestion://'):
-            self.suggestion_clicked.emit(url_str[len('suggestion://'):])
-            return False
-        if url_str.startswith('rollback://'):
-            self.rollback_requested.emit(url_str[len('rollback://'):])
-            return False
-        if url_str.startswith('file://'):
-            self.file_clicked.emit(url.toLocalFile() or url_str[7:])
-            return False
-        if url_str.startswith(('http://', 'https://')):
-            self.link_clicked.emit(url_str)
-            return False
-        return True
-    
-    @pyqtSlot(str)
-    def handleFileClick(self, path: str):
-        self.file_clicked.emit(path)
-    
-    @pyqtSlot(str)
-    def handleLinkClick(self, url: str):
-        self.link_clicked.emit(url)
-    
+
     def _on_page_loaded(self, ok):
         self._page_loaded = ok
         if ok and self._pending_messages and not self._is_rendering:
@@ -493,20 +479,20 @@ function onRollbackClick(messageId) {
         if not self._web_view or self._is_rendering:
             return
         self._is_rendering = True
-        message_ids = [str(getattr(message, 'id', '')) for message in messages]
+        message_keys = [self._get_message_render_key(message) for message in messages]
         append_only = (
-            self._rendered_message_ids
-            and len(message_ids) >= len(self._rendered_message_ids)
-            and message_ids[:len(self._rendered_message_ids)] == self._rendered_message_ids
+            self._rendered_message_keys
+            and len(message_keys) >= len(self._rendered_message_keys)
+            and message_keys[:len(self._rendered_message_keys)] == self._rendered_message_keys
         )
-        if append_only and len(message_ids) > len(self._rendered_message_ids):
-            appended_html = self._build_messages_html(messages[len(self._rendered_message_ids):])
+        if append_only and len(message_keys) > len(self._rendered_message_keys):
+            appended_html = self._build_messages_html(messages[len(self._rendered_message_keys):])
             self._run_js(f"appendStaticMessages(`{self._esc(appended_html)}`)")
         else:
             content = self._build_messages_html(messages)
             escaped_content = self._esc(content)
             self._run_js(f"replaceStaticMessages(`{escaped_content}`)")
-        self._rendered_message_ids = message_ids
+        self._rendered_message_keys = message_keys
         self._is_rendering = False
 
     def _build_messages_html(self, messages: List[Any]) -> str:
@@ -878,8 +864,15 @@ function onRollbackClick(messageId) {
     def clear_messages(self):
         self._pending_runtime_steps = None
         self._runtime_timer.stop()
-        self._rendered_message_ids = []
+        self._rendered_message_keys = []
         self._run_js("clearMsgs()")
+
+    def _get_message_render_key(self, message: Any) -> str:
+        return "|".join([
+            str(getattr(message, 'id', '') or ''),
+            str(getattr(message, 'role', '') or ''),
+            '1' if bool(getattr(message, 'can_rollback', False)) else '0',
+        ])
     
     def _run_js(self, code: str):
         if self._web_view:

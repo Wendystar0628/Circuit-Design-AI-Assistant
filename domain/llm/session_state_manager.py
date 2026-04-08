@@ -47,9 +47,11 @@
 """
 
 import logging
+import os
 import threading
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 from domain.llm.working_context_builder import (
@@ -356,13 +358,8 @@ class SessionStateManager:
             messages = self.message_store.get_messages(current_state)
             messages_data = messages_to_dicts(messages)
             
-            # 获取首条用户消息作为预览
-            preview = ""
-            for msg in messages:
-                if is_human_message(msg):
-                    content = msg.content if isinstance(msg.content, str) else ""
-                    preview = content[:50]
-                    break
+            # 获取预览文本
+            preview = self._build_session_preview(messages)
             
             # 保存消息到文件
             context_service.save_messages(
@@ -550,6 +547,29 @@ class SessionStateManager:
         with self._lock:
             return self._project_root
 
+    def ensure_current_session_persisted(
+        self,
+        project_root: Optional[str] = None,
+    ) -> bool:
+        with self._lock:
+            if not self._current_session_id:
+                return False
+
+            resolved_project_root = self._resolve_project_root(project_root)
+            if not resolved_project_root:
+                return False
+
+            from domain.services import context_service
+
+            if self._is_dirty or not context_service.session_exists(
+                resolved_project_root,
+                self._current_session_id,
+            ):
+                return self.save_current_session(project_root=resolved_project_root)
+
+            self._project_root = resolved_project_root
+            return True
+
     def get_all_sessions(self, project_root: Optional[str] = None) -> List[SessionInfo]:
         """
         获取所有会话列表
@@ -567,6 +587,16 @@ class SessionStateManager:
             return []
         
         sessions_data = context_service.list_sessions(resolved_project_root, limit=None)
+        sessions_data = [
+            data
+            for data in sessions_data
+            if data.get("session_id", "")
+            and context_service.session_exists(
+                resolved_project_root,
+                data.get("session_id", ""),
+            )
+        ]
+
         live_snapshot = self._build_runtime_session_snapshot(resolved_project_root)
         if live_snapshot:
             snapshot_session_id = live_snapshot.get("session_id", "")
@@ -580,6 +610,11 @@ class SessionStateManager:
                     break
             if not replaced:
                 sessions_data.insert(0, live_snapshot)
+
+        sessions_data.sort(
+            key=lambda data: data.get("updated_at", ""),
+            reverse=True,
+        )
         
         result = []
         for data in sessions_data:
@@ -610,7 +645,7 @@ class SessionStateManager:
 
         if (
             session_id == self._current_session_id
-            and resolved_project_root == self._project_root
+            and resolved_project_root == self._normalize_project_root(self._project_root)
         ):
             current_state = self._get_current_state()
             messages = self.message_store.get_messages(current_state)
@@ -761,11 +796,41 @@ class SessionStateManager:
         """
         return f"Chat {datetime.now().strftime('%Y-%m-%d %H:%M')}"
 
+    def _normalize_project_root(self, project_root: Optional[str]) -> str:
+        if not project_root:
+            return ""
+
+        try:
+            resolved = Path(project_root).expanduser().resolve()
+        except Exception:
+            try:
+                resolved = Path(project_root).expanduser()
+            except Exception:
+                return str(project_root).strip()
+
+        return os.path.normcase(os.path.normpath(str(resolved)))
+
+    def _build_session_preview(self, messages: List[Any]) -> str:
+        from domain.llm.message_helpers import is_human_message
+
+        for msg in reversed(messages):
+            if is_human_message(msg):
+                content = msg.content if isinstance(msg.content, str) else ""
+                if content:
+                    return content[:50]
+
+        for msg in reversed(messages):
+            content = msg.content if isinstance(getattr(msg, "content", ""), str) else ""
+            if content:
+                return content[:50]
+
+        return ""
+
     def _resolve_project_root(self, project_root: Optional[str]) -> str:
         if project_root:
-            return project_root
+            return self._normalize_project_root(project_root)
         if self._project_root:
-            return self._project_root
+            return self._normalize_project_root(self._project_root)
 
         try:
             from shared.service_locator import ServiceLocator
@@ -773,7 +838,7 @@ class SessionStateManager:
 
             session_state = ServiceLocator.get_optional(SVC_SESSION_STATE)
             if session_state and session_state.project_root:
-                return session_state.project_root
+                return self._normalize_project_root(session_state.project_root)
         except Exception:
             pass
 
@@ -789,25 +854,23 @@ class SessionStateManager:
         return {}
 
     def _build_runtime_session_snapshot(self, project_root: str) -> Optional[Dict[str, Any]]:
-        if project_root != self._project_root or not self._current_session_id:
+        normalized_project_root = self._normalize_project_root(project_root)
+        if (
+            normalized_project_root != self._normalize_project_root(self._project_root)
+            or not self._current_session_id
+        ):
             return None
 
         from domain.services import context_service
-        from domain.llm.message_helpers import is_human_message
 
         current_state = self._get_current_state()
         messages = self.message_store.get_messages(current_state)
         metadata = context_service.get_session_metadata(
-            project_root,
+            normalized_project_root,
             self._current_session_id,
         ) or {}
 
-        preview = ""
-        for msg in messages:
-            if is_human_message(msg):
-                content = msg.content if isinstance(msg.content, str) else ""
-                preview = content[:50]
-                break
+        preview = self._build_session_preview(messages)
 
         updated_at = metadata.get("updated_at", "")
         if self._is_dirty:

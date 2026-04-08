@@ -19,6 +19,7 @@
 
 import json
 from datetime import datetime
+from html import escape
 from typing import Any, Dict, List, Optional
 
 from domain.llm.session_state_manager import SessionInfo
@@ -275,12 +276,23 @@ class HistoryDialog(QDialog):
     # 核心功能
     # ============================================================
 
-    def load_sessions(self) -> None:
+    def load_sessions(self, preferred_session_id: Optional[str] = None) -> None:
         """加载所有会话列表"""
+        if self._session_list is None:
+            return
+
+        self._sync_current_session_for_history()
+
+        selected_session_id = (
+            preferred_session_id
+            or self._current_session_id
+            or self._get_current_manager_session_id()
+        )
+
         self._sessions.clear()
+        self._session_list.blockSignals(True)
         self._session_list.clear()
 
-        # 从 SessionStateManager 获取会话列表
         sessions = self._get_sessions_from_manager()
         
         for session in sessions:
@@ -295,6 +307,18 @@ class HistoryDialog(QDialog):
             item.setText(display_text)
             
             self._session_list.addItem(item)
+
+        self._session_list.blockSignals(False)
+
+        if selected_session_id and self._select_session_by_id(selected_session_id):
+            if self.logger:
+                self.logger.info(f"Loaded {len(self._sessions)} sessions")
+            return
+
+        if self._session_list.count() > 0:
+            self._session_list.setCurrentRow(0)
+        else:
+            self._reset_detail_state()
         
         if self.logger:
             self.logger.info(f"Loaded {len(self._sessions)} sessions")
@@ -330,6 +354,14 @@ class HistoryDialog(QDialog):
     
     def _get_project_path(self) -> Optional[str]:
         """获取当前项目路径"""
+        if self.session_state_manager:
+            try:
+                project_root = self.session_state_manager.get_project_root()
+                if project_root:
+                    return project_root
+            except Exception:
+                pass
+
         try:
             from shared.service_locator import ServiceLocator
             from shared.service_names import SVC_SESSION_STATE
@@ -340,6 +372,55 @@ class HistoryDialog(QDialog):
         except Exception:
             pass
         return None
+
+    def _get_current_manager_session_id(self) -> Optional[str]:
+        if not self.session_state_manager:
+            return None
+
+        try:
+            session_id = self.session_state_manager.get_current_session_id()
+            return session_id or None
+        except Exception:
+            return None
+
+    def _sync_current_session_for_history(self) -> None:
+        project_path = self._get_project_path()
+        if not project_path or not self.session_state_manager:
+            return
+
+        try:
+            self.session_state_manager.ensure_current_session_persisted(project_path)
+        except Exception as e:
+            if self.logger:
+                self.logger.warning(f"Failed to persist current session for history: {e}")
+
+    def _find_session_info(self, session_id: str) -> Optional[SessionInfo]:
+        for session in self._sessions:
+            if session.session_id == session_id:
+                return session
+        return None
+
+    def _select_session_by_id(self, session_id: Optional[str]) -> bool:
+        if not session_id or self._session_list is None:
+            return False
+
+        for row, session in enumerate(self._sessions):
+            if session.session_id == session_id:
+                self._session_list.setCurrentRow(row)
+                return True
+        return False
+
+    def _reset_detail_state(self) -> None:
+        self._current_session_id = None
+        self._current_messages = []
+        if self._detail_text:
+            self._detail_text.clear()
+        if self._open_btn:
+            self._open_btn.setEnabled(False)
+        if self._export_btn:
+            self._export_btn.setEnabled(False)
+        if self._delete_btn:
+            self._delete_btn.setEnabled(False)
 
     def _format_session_item(self, session: SessionInfo) -> str:
         """格式化会话列表项显示文本"""
@@ -354,18 +435,20 @@ class HistoryDialog(QDialog):
 
     def show_session_detail(self, session_id: str) -> None:
         """显示会话详情"""
+        session = self._find_session_info(session_id)
+        if session is None:
+            self._reset_detail_state()
+            return
+
         self._current_session_id = session_id
         self._current_messages = []
         
-        # 加载会话消息
         messages = self._load_session_messages(session_id)
         self._current_messages = messages
         
-        # 格式化显示
-        html_content = self._format_messages_for_display(messages)
+        html_content = self._format_messages_for_display(session, messages)
         self._detail_text.setHtml(html_content)
         
-        # 启用操作按钮
         self._open_btn.setEnabled(True)
         self._export_btn.setEnabled(True)
         self._delete_btn.setEnabled(True)
@@ -399,19 +482,58 @@ class HistoryDialog(QDialog):
         
         return messages
 
-    def _format_messages_for_display(self, messages: List[Dict[str, Any]]) -> str:
+    def _get_message_timestamp(self, message: Dict[str, Any]) -> str:
+        additional_kwargs = message.get("additional_kwargs", {})
+        if isinstance(additional_kwargs, dict):
+            timestamp = additional_kwargs.get("timestamp", "")
+            if timestamp:
+                return str(timestamp)
+        return str(message.get("timestamp", "") or "")
+
+    def _format_detail_timestamp(self, timestamp: str) -> str:
+        if not timestamp:
+            return ""
+
+        try:
+            return datetime.fromisoformat(timestamp).strftime("%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            return timestamp
+
+    def _get_message_content(self, message: Dict[str, Any]) -> str:
+        content = message.get("content", "")
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            return "\n".join(
+                item.get("text", "") if isinstance(item, dict) else str(item)
+                for item in content
+            )
+        return str(content or "")
+
+    def _format_messages_for_display(self, session: SessionInfo, messages: List[Dict[str, Any]]) -> str:
         """格式化消息用于显示"""
+        detail_parts = [
+            f"<div style='margin-bottom: 16px;'>"
+            f"<div style='font-size: 16px; font-weight: 600; margin-bottom: 6px;'>{escape(session.name)}</div>"
+            f"<div style='color: #666; font-size: 12px;'>"
+            f"{escape(self._format_detail_timestamp(session.updated_at))} | {session.message_count} msgs"
+            f"</div>"
+            f"</div>"
+        ]
+
         if not messages:
-            return f"<p style='color: #999;'>{self._get_text('dialog.history.no_messages', 'No messages in this session')}</p>"
+            detail_parts.append(
+                f"<p style='color: #999;'>{escape(self._get_text('dialog.history.no_messages', 'No messages in this session'))}</p>"
+            )
+            return "".join(detail_parts)
         
         html_parts = []
         
         for msg in messages:
             role = msg.get("type", "unknown")
-            content = msg.get("content", "")
-            timestamp = msg.get("timestamp", "")
+            content = self._get_message_content(msg)
+            timestamp = self._format_detail_timestamp(self._get_message_timestamp(msg))
             
-            # 根据角色设置样式
             if role == "user":
                 role_color = "#4a9eff"
                 role_label = self._get_text("role.user", "User")
@@ -422,8 +544,7 @@ class HistoryDialog(QDialog):
                 role_color = "#999999"
                 role_label = self._get_text("role.system", "System")
             
-            # 转义 HTML
-            content_escaped = content.replace("<", "&lt;").replace(">", "&gt;")
+            content_escaped = escape(content)
             content_escaped = content_escaped.replace("\n", "<br>")
             
             html_parts.append(f"""
@@ -437,7 +558,8 @@ class HistoryDialog(QDialog):
                 </div>
             """)
         
-        return "".join(html_parts)
+        detail_parts.extend(html_parts)
+        return "".join(detail_parts)
 
     def open_session(self, session_id: str) -> bool:
         """打开会话（委托给 SessionStateManager 切换会话）"""
@@ -445,20 +567,19 @@ class HistoryDialog(QDialog):
             return False
         
         try:
-            # 获取项目路径
             project_path = self._get_project_path()
             if not project_path:
                 if self.logger:
                     self.logger.error("No project path available")
                 return False
 
-            # 使用 ServiceLocator 获取 SessionStateManager 单例
             if not self.session_state_manager:
                 if self.logger:
                     self.logger.error("SessionStateManager not available")
                 return False
+
+            self.session_state_manager.ensure_current_session_persisted(project_path)
             
-            # switch_session 内部会同步状态到 ContextManager
             new_state = self.session_state_manager.switch_session(
                 project_root=project_path,
                 session_id=session_id,
@@ -542,8 +663,8 @@ class HistoryDialog(QDialog):
             lines = []
             for msg in messages:
                 role = msg.get("type", "unknown").upper()
-                content = msg.get("content", "")
-                timestamp = msg.get("timestamp", "")
+                content = self._get_message_content(msg)
+                timestamp = self._get_message_timestamp(msg)
                 lines.append(f"[{role}] {timestamp}")
                 lines.append(content)
                 lines.append("")
@@ -553,8 +674,8 @@ class HistoryDialog(QDialog):
             lines = ["# Conversation Export", ""]
             for msg in messages:
                 role = msg.get("type", "unknown")
-                content = msg.get("content", "")
-                timestamp = msg.get("timestamp", "")
+                content = self._get_message_content(msg)
+                timestamp = self._get_message_timestamp(msg)
                 
                 if role == "user":
                     lines.append(f"## 👤 User ({timestamp})")
@@ -613,10 +734,7 @@ class HistoryDialog(QDialog):
     def _on_session_selected(self, current: QListWidgetItem, previous: QListWidgetItem) -> None:
         """会话选择变化"""
         if current is None:
-            self._detail_text.clear()
-            self._open_btn.setEnabled(False)
-            self._export_btn.setEnabled(False)
-            self._delete_btn.setEnabled(False)
+            self._reset_detail_state()
             return
         
         session_id = current.data(Qt.ItemDataRole.UserRole)
@@ -682,21 +800,7 @@ class HistoryDialog(QDialog):
             return
         
         if self.delete_session(self._current_session_id):
-            # 从列表中移除
-            current_item = self._session_list.currentItem()
-            if current_item:
-                row = self._session_list.row(current_item)
-                self._session_list.takeItem(row)
-            
-            # 清空详情
-            self._detail_text.clear()
-            self._current_session_id = None
-            self._current_messages = []
-            
-            # 禁用按钮
-            self._open_btn.setEnabled(False)
-            self._export_btn.setEnabled(False)
-            self._delete_btn.setEnabled(False)
+            self.load_sessions(preferred_session_id=self._get_current_manager_session_id())
 
     # ============================================================
     # 国际化支持
@@ -748,22 +852,15 @@ class HistoryDialog(QDialog):
         data = event_data.get("data", event_data)
         session_id = data.get("session_id", "") or self._current_session_id
 
-        self.load_sessions()
+        self.load_sessions(preferred_session_id=session_id)
 
         if not session_id:
             return
 
-        for row, session in enumerate(self._sessions):
-            if session.session_id == session_id:
-                self._session_list.setCurrentRow(row)
-                return
+        if self._select_session_by_id(session_id):
+            return
 
-        self._current_session_id = None
-        self._current_messages = []
-        self._detail_text.clear()
-        self._open_btn.setEnabled(False)
-        self._export_btn.setEnabled(False)
-        self._delete_btn.setEnabled(False)
+        self._reset_detail_state()
 
     def closeEvent(self, event) -> None:
         self._unsubscribe_events()

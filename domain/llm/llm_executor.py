@@ -43,7 +43,6 @@ from infrastructure.llm_adapters.base_client import (
     RateLimitError,
     ContextOverflowError,
 )
-from domain.llm.agent.tool_effect_dispatcher import ToolEffectDispatcher
 
 
 # ============================================================
@@ -78,14 +77,13 @@ class LLMExecutor(QObject):
     tool_execution_started = pyqtSignal(str, int, str, str, dict)  # (task_id, step_index, tool_call_id, tool_name, arguments)
     tool_execution_finished = pyqtSignal(str, int, str, str, str, bool, dict)  # (task_id, step_index, tool_call_id, tool_name, result_content, is_error, details)
     
-    def __init__(self, parent: Optional[QObject] = None, tool_effect_dispatcher: Optional[ToolEffectDispatcher] = None):
+    def __init__(self, parent: Optional[QObject] = None):
         """初始化 LLM 执行器"""
         super().__init__(parent)
         
         # 延迟获取的服务
         self._logger = None
         self._stop_controller = None
-        self._tool_effect_dispatcher = tool_effect_dispatcher
     
     # ============================================================
     # 延迟获取服务
@@ -335,12 +333,6 @@ class LLMExecutor(QObject):
                     result_content,
                     is_error,
                     details,
-                )
-
-            if not is_error and self._tool_effect_dispatcher is not None:
-                self._tool_effect_dispatcher.dispatch(
-                    tool_name=tool_name,
-                    effects=data.get("effects"),
                 )
 
     def _get_project_root(self) -> str:

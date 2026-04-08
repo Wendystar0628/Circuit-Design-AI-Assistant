@@ -22,7 +22,7 @@
 import os
 import mimetypes
 from enum import Enum
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 from PyQt6.QtCore import Qt, pyqtSignal, QSize, QTimer, QRectF
 from PyQt6.QtGui import QDragEnterEvent, QDropEvent, QKeyEvent, QPixmap, QIcon, QPainter, QColor, QPen
@@ -48,6 +48,7 @@ from domain.llm.attachment_references import (
 from domain.llm.message_types import Attachment
 from domain.rag.file_extractor import resolve_attachment_type
 from presentation.panels.conversation.inline_attachment_text_edit import InlineAttachmentTextEdit
+from presentation.panels.conversation.pending_workspace_edit_bar import PendingWorkspaceEditBar
 
 # ============================================================
 # 样式常量
@@ -161,6 +162,13 @@ class InputArea(QWidget):
     select_file_clicked = pyqtSignal()             # 选择文件按钮点击
     model_card_clicked = pyqtSignal()              # 模型卡片点击（打开模型设置）
     image_preview_requested = pyqtSignal(str)
+    pending_edit_accept_all_requested = pyqtSignal()
+    pending_edit_reject_all_requested = pyqtSignal()
+    pending_edit_accept_file_requested = pyqtSignal(str)
+    pending_edit_reject_file_requested = pyqtSignal(str)
+    pending_edit_accept_hunk_requested = pyqtSignal(str, str)
+    pending_edit_reject_hunk_requested = pyqtSignal(str, str)
+    pending_edit_file_clicked = pyqtSignal(str)
     
     def __init__(self, parent: Optional[QWidget] = None):
         """初始化输入区域"""
@@ -220,6 +228,32 @@ class InputArea(QWidget):
         # 移除输入区域的白色背景
         self.setStyleSheet("background-color: transparent;")
         
+        # 附件预览区（初始隐藏，位于输入框上方）
+        self._pending_workspace_edit_bar = PendingWorkspaceEditBar(self)
+        self._pending_workspace_edit_bar.accept_all_requested.connect(
+            self.pending_edit_accept_all_requested.emit
+        )
+        self._pending_workspace_edit_bar.reject_all_requested.connect(
+            self.pending_edit_reject_all_requested.emit
+        )
+        self._pending_workspace_edit_bar.accept_file_requested.connect(
+            self.pending_edit_accept_file_requested.emit
+        )
+        self._pending_workspace_edit_bar.reject_file_requested.connect(
+            self.pending_edit_reject_file_requested.emit
+        )
+        self._pending_workspace_edit_bar.accept_hunk_requested.connect(
+            self.pending_edit_accept_hunk_requested.emit
+        )
+        self._pending_workspace_edit_bar.reject_hunk_requested.connect(
+            self.pending_edit_reject_hunk_requested.emit
+        )
+        self._pending_workspace_edit_bar.file_clicked.connect(
+            self.pending_edit_file_clicked.emit
+        )
+        self._pending_workspace_edit_bar.hide()
+        main_layout.addWidget(self._pending_workspace_edit_bar)
+
         # 附件预览区（初始隐藏，位于输入框上方）
         self._attachments_area = QWidget()
         self._attachments_area.setVisible(False)
@@ -444,6 +478,10 @@ class InputArea(QWidget):
         if self._input_text:
             self._input_text.clear()
         self.clear_attachments()
+
+    def set_pending_workspace_edit_state(self, state: Dict[str, Any]) -> None:
+        if hasattr(self, "_pending_workspace_edit_bar") and self._pending_workspace_edit_bar:
+            self._pending_workspace_edit_bar.set_state(state)
     
     def add_attachment(self, path: str) -> bool:
         """

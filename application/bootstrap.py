@@ -606,6 +606,13 @@ def _delayed_init():
         if _logger:
             _logger.info("Phase 3.5.1 ContextCompressionService 初始化完成")
 
+        from application.pending_workspace_edit_service import PendingWorkspaceEditService
+        from shared.service_names import SVC_PENDING_WORKSPACE_EDIT_SERVICE
+        pending_workspace_edit_service = PendingWorkspaceEditService()
+        ServiceLocator.register(SVC_PENDING_WORKSPACE_EDIT_SERVICE, pending_workspace_edit_service)
+        if _logger:
+            _logger.info("Phase 3.5.2 PendingWorkspaceEditService 初始化完成")
+
         # --------------------------------------------------------
         # 3.5.3 StopController 初始化
         # 依赖：Logger、EventBus
@@ -949,13 +956,8 @@ def refresh_llm_runtime_services() -> bool:
         llm_executor = ServiceLocator.get_optional(SVC_LLM_EXECUTOR)
         if llm_executor is None:
             from domain.llm.llm_executor import LLMExecutor
-            from domain.llm.agent.tool_effect_dispatcher import ToolEffectDispatcher
 
-            llm_executor = LLMExecutor(
-                tool_effect_dispatcher=ToolEffectDispatcher(
-                    event_bus=ServiceLocator.get_optional(SVC_EVENT_BUS),
-                )
-            )
+            llm_executor = LLMExecutor()
             ServiceLocator.register(SVC_LLM_EXECUTOR, llm_executor)
 
         if _logger:

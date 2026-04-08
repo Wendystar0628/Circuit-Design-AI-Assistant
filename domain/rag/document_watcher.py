@@ -18,7 +18,7 @@ import asyncio
 import logging
 from typing import Optional, Set
 
-from shared.event_types import EVENT_AGENT_FILE_MODIFIED
+from shared.event_types import EVENT_FILE_CHANGED
 
 
 logger = logging.getLogger(__name__)
@@ -51,7 +51,7 @@ class DocumentWatcher:
 
         try:
             self._event_bus.subscribe(
-                EVENT_AGENT_FILE_MODIFIED,
+                EVENT_FILE_CHANGED,
                 self._on_file_modified,
             )
             self._subscribed = True
@@ -68,7 +68,7 @@ class DocumentWatcher:
         if self._subscribed and self._event_bus is not None:
             try:
                 self._event_bus.unsubscribe(
-                    EVENT_AGENT_FILE_MODIFIED,
+                    EVENT_FILE_CHANGED,
                     self._on_file_modified,
                 )
             except Exception:
@@ -106,6 +106,10 @@ class DocumentWatcher:
             file_path = data
 
         if not file_path:
+            return
+
+        normalized = str(file_path).replace("\\", "/")
+        if normalized.endswith("/.circuit_ai/pending_workspace_edits.json"):
             return
 
         # 加入待处理集合

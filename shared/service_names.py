@@ -103,6 +103,7 @@ SVC_PROJECT_SERVICE = "project_service"
 
 # 文件监听服务 - 文件系统变化监听
 SVC_FILE_WATCHER = "file_watcher"
+SVC_PENDING_WORKSPACE_EDIT_SERVICE = "pending_workspace_edit_service"
 
 # 信息卡片持久化服务 - 信息面板卡片的持久化存储
 SVC_INFO_CARD_PERSISTENCE = "info_card_persistence"
@@ -201,6 +202,7 @@ __all__ = [
     # 应用层 - 其他
     "SVC_PROJECT_SERVICE",
     "SVC_FILE_WATCHER",
+    "SVC_PENDING_WORKSPACE_EDIT_SERVICE",
     "SVC_INFO_CARD_PERSISTENCE",
     "SVC_DESIGN_WORKFLOW",
     "SVC_TOOL_EXECUTOR",

@@ -113,6 +113,9 @@ def _prepare_checkpointed_conversation(tmp_path: Path):
 
 def test_preview_rollback_to_anchor_exposes_workspace_changes_and_message_truncation(tmp_path: Path):
     env = _prepare_checkpointed_conversation(tmp_path)
+    metadata_path = tmp_path / ".circuit_ai" / "pending_workspace_edits.json"
+    metadata_path.parent.mkdir(parents=True, exist_ok=True)
+    metadata_path.write_text('{"files": []}', encoding="utf-8")
 
     preview = asyncio.run(
         env["rollback_service"].preview_rollback_to_anchor("anchor-user")
@@ -132,8 +135,13 @@ def test_preview_rollback_to_anchor_exposes_workspace_changes_and_message_trunca
         not path.startswith(f"{context_service.CONVERSATIONS_DIR}/")
         for path in workspace_paths
     )
+    assert ".circuit_ai/pending_workspace_edits.json" not in workspace_paths
     assert any(
         change.relative_path.startswith(f"{context_service.CONVERSATIONS_DIR}/")
+        for change in preview.changed_files
+    )
+    assert any(
+        change.relative_path == ".circuit_ai/pending_workspace_edits.json"
         for change in preview.changed_files
     )
 

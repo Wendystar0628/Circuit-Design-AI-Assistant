@@ -80,6 +80,7 @@ class ConversationPanel(QWidget):
         self._event_bus = None
         self._i18n = None
         self._logger = None
+        self._pending_workspace_edit_service = None
         self._send_in_progress = False
         self._rollback_in_progress = False
         self._rollback_confirmation_dialog: Optional[RollbackConfirmationDialog] = None
@@ -135,6 +136,19 @@ class ConversationPanel(QWidget):
             except Exception:
                 pass
         return self._i18n
+
+    @property
+    def pending_workspace_edit_service(self):
+        if self._pending_workspace_edit_service is None:
+            try:
+                from shared.service_locator import ServiceLocator
+                from shared.service_names import SVC_PENDING_WORKSPACE_EDIT_SERVICE
+                self._pending_workspace_edit_service = ServiceLocator.get_optional(
+                    SVC_PENDING_WORKSPACE_EDIT_SERVICE
+                )
+            except Exception:
+                pass
+        return self._pending_workspace_edit_service
     
     @property
     def view_model(self):
@@ -221,6 +235,27 @@ class ConversationPanel(QWidget):
             self._input_area.image_preview_requested.connect(
                 self._on_image_preview_requested
             )
+            self._input_area.pending_edit_accept_all_requested.connect(
+                self._on_pending_edit_accept_all_requested
+            )
+            self._input_area.pending_edit_reject_all_requested.connect(
+                self._on_pending_edit_reject_all_requested
+            )
+            self._input_area.pending_edit_accept_file_requested.connect(
+                self._on_pending_edit_accept_file_requested
+            )
+            self._input_area.pending_edit_reject_file_requested.connect(
+                self._on_pending_edit_reject_file_requested
+            )
+            self._input_area.pending_edit_accept_hunk_requested.connect(
+                self._on_pending_edit_accept_hunk_requested
+            )
+            self._input_area.pending_edit_reject_hunk_requested.connect(
+                self._on_pending_edit_reject_hunk_requested
+            )
+            self._input_area.pending_edit_file_clicked.connect(
+                self._on_pending_edit_file_clicked
+            )
 
         if self._message_area:
             self._message_area.file_clicked.connect(
@@ -258,12 +293,21 @@ class ConversationPanel(QWidget):
         """初始化面板，订阅事件"""
         # 确保 ViewModel 已创建
         _ = self.view_model
+
+        if self.pending_workspace_edit_service is not None:
+            try:
+                self.pending_workspace_edit_service.state_changed.connect(
+                    self._on_pending_workspace_edit_state_changed
+                )
+            except Exception:
+                pass
         
         # 订阅事件
         self._subscribe_events()
         
         # 初始刷新
         self.refresh_display()
+        self._refresh_pending_workspace_edit_state()
     
     def cleanup(self) -> None:
         """清理资源"""
@@ -276,6 +320,13 @@ class ConversationPanel(QWidget):
             self._warning_dialog.close()
             self._warning_dialog.deleteLater()
             self._warning_dialog = None
+        if self.pending_workspace_edit_service is not None:
+            try:
+                self.pending_workspace_edit_service.state_changed.disconnect(
+                    self._on_pending_workspace_edit_state_changed
+                )
+            except Exception:
+                pass
         if self._view_model:
             self._view_model.cleanup()
         if self._message_area:
@@ -381,6 +432,27 @@ class ConversationPanel(QWidget):
         
         # 更新状态栏
         self._update_usage_display()
+        self._refresh_pending_workspace_edit_state()
+
+    def _refresh_pending_workspace_edit_state(self) -> None:
+        if self._input_area is None:
+            return
+        service = self.pending_workspace_edit_service
+        if service is None:
+            self._input_area.set_pending_workspace_edit_state(
+                {
+                    "file_count": 0,
+                    "added_lines": 0,
+                    "deleted_lines": 0,
+                    "files": [],
+                }
+            )
+            return
+        try:
+            self._input_area.set_pending_workspace_edit_state(service.get_state())
+        except Exception as exc:
+            if self.logger:
+                self.logger.error(f"Failed to refresh pending workspace edit state: {exc}")
     
     def _update_usage_display(self) -> None:
         """更新上下文占用显示"""
@@ -467,6 +539,11 @@ class ConversationPanel(QWidget):
     @pyqtSlot()
     def _on_display_state_changed(self) -> None:
         self.refresh_display()
+
+    @pyqtSlot(dict)
+    def _on_pending_workspace_edit_state_changed(self, state: Dict[str, Any]) -> None:
+        if self._input_area:
+            self._input_area.set_pending_workspace_edit_state(state)
     
     @pyqtSlot(float)
     def _on_usage_changed(self, ratio: float) -> None:
@@ -619,6 +696,46 @@ class ConversationPanel(QWidget):
 
     def _on_image_preview_requested(self, image_path: str) -> None:
         self._open_image_preview(image_path)
+
+    def _on_pending_edit_accept_all_requested(self) -> None:
+        service = self.pending_workspace_edit_service
+        if service is None:
+            return
+        service.accept_all_edits()
+
+    def _on_pending_edit_reject_all_requested(self) -> None:
+        service = self.pending_workspace_edit_service
+        if service is None:
+            return
+        service.reject_all_edits()
+
+    def _on_pending_edit_accept_file_requested(self, file_path: str) -> None:
+        service = self.pending_workspace_edit_service
+        if service is None or not file_path:
+            return
+        service.accept_file_edits(file_path)
+
+    def _on_pending_edit_reject_file_requested(self, file_path: str) -> None:
+        service = self.pending_workspace_edit_service
+        if service is None or not file_path:
+            return
+        service.reject_file_edits(file_path)
+
+    def _on_pending_edit_accept_hunk_requested(self, file_path: str, hunk_id: str) -> None:
+        service = self.pending_workspace_edit_service
+        if service is None or not file_path or not hunk_id:
+            return
+        service.accept_hunk(file_path, hunk_id)
+
+    def _on_pending_edit_reject_hunk_requested(self, file_path: str, hunk_id: str) -> None:
+        service = self.pending_workspace_edit_service
+        if service is None or not file_path or not hunk_id:
+            return
+        service.reject_hunk(file_path, hunk_id)
+
+    def _on_pending_edit_file_clicked(self, file_path: str) -> None:
+        if file_path:
+            self.file_clicked.emit(file_path)
 
     def _on_message_file_clicked(self, file_path: str) -> None:
         attachment_type = resolve_attachment_type(file_path, "")

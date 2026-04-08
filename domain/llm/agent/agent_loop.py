@@ -356,7 +356,6 @@ class AgentLoop:
                 "result_content": result.content[:200],
                 "is_error": result.is_error,
                 "details": result.details,
-                "effects": result.effects,
             })
 
             results.append(result)

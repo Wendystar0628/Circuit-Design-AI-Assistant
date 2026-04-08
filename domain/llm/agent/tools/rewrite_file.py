@@ -19,12 +19,13 @@
     )
 """
 
-import os
 from typing import Any, Dict, List, Optional
 
 from domain.llm.agent.types import BaseTool, ToolContext, ToolResult
 from domain.llm.agent.utils.path_utils import validate_file_path
 from domain.llm.agent.utils.file_mutex import with_file_mutex
+from shared.service_locator import ServiceLocator
+from shared.service_names import SVC_PENDING_WORKSPACE_EDIT_SERVICE
 
 
 class RewriteFileTool(BaseTool):
@@ -112,13 +113,14 @@ class RewriteFileTool(BaseTool):
 
         # 文件互斥队列保护
         async with with_file_mutex(abs_path):
-            return await self._execute_write(abs_path, path, content)
+            return await self._execute_write(abs_path, path, content, tool_call_id)
 
     async def _execute_write(
         self,
         abs_path: str,
         display_path: str,
         content: str,
+        tool_call_id: str,
     ) -> ToolResult:
         """
         实际写入逻辑
@@ -129,14 +131,21 @@ class RewriteFileTool(BaseTool):
             content: 写入内容
         """
         try:
-            # 创建父目录
-            dir_path = os.path.dirname(abs_path)
-            if dir_path:
-                os.makedirs(dir_path, exist_ok=True)
+            pending_workspace_edit_service = ServiceLocator.get_optional(
+                SVC_PENDING_WORKSPACE_EDIT_SERVICE
+            )
+            if pending_workspace_edit_service is None:
+                return ToolResult(
+                    content="Error: PendingWorkspaceEditService not available",
+                    is_error=True,
+                )
 
-            # 写入文件（使用 newline='' 避免 Python 自动转换换行符）
-            with open(abs_path, "w", encoding="utf-8", newline="") as f:
-                f.write(content)
+            pending_workspace_edit_service.record_agent_edit(
+                abs_path,
+                content,
+                tool_name=self.name,
+                tool_call_id=tool_call_id,
+            )
 
             byte_count = len(content.encode("utf-8"))
             line_count = content.count("\n") + (1 if content else 0)
@@ -148,12 +157,6 @@ class RewriteFileTool(BaseTool):
                     "lines": line_count,
                     "path": abs_path,
                 },
-                effects=[
-                    {
-                        "type": "file_modified",
-                        "path": abs_path,
-                    }
-                ],
             )
         except PermissionError:
             return ToolResult(

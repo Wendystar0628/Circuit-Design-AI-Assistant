@@ -46,6 +46,8 @@ from domain.llm.agent.utils.edit_diff import (
     generate_diff_string,
 )
 from domain.llm.agent.utils.file_mutex import with_file_mutex
+from shared.service_locator import ServiceLocator
+from shared.service_names import SVC_PENDING_WORKSPACE_EDIT_SERVICE
 
 
 class PatchFileTool(BaseTool):
@@ -144,7 +146,7 @@ class PatchFileTool(BaseTool):
         
         # ---- 2. 文件互斥队列保护 ----
         async with with_file_mutex(abs_path):
-            return await self._execute_edit(abs_path, path, old_text, new_text)
+            return await self._execute_edit(abs_path, path, old_text, new_text, tool_call_id)
     
     async def _execute_edit(
         self,
@@ -152,6 +154,7 @@ class PatchFileTool(BaseTool):
         display_path: str,
         old_text: str,
         new_text: str,
+        tool_call_id: str,
     ) -> ToolResult:
         """
         在互斥锁保护下执行编辑操作
@@ -233,9 +236,22 @@ class PatchFileTool(BaseTool):
         # ---- 7. 写回文件（对应 edit.ts 第 259-260 行）----
         final_content = bom + restore_line_endings(new_content, original_ending)
         
+        pending_workspace_edit_service = ServiceLocator.get_optional(
+            SVC_PENDING_WORKSPACE_EDIT_SERVICE
+        )
+        if pending_workspace_edit_service is None:
+            return ToolResult(
+                content="Error: PendingWorkspaceEditService not available",
+                is_error=True,
+            )
+
         try:
-            with open(abs_path, 'w', encoding='utf-8', newline='') as f:
-                f.write(final_content)
+            pending_workspace_edit_service.record_agent_edit(
+                abs_path,
+                final_content,
+                tool_name=self.name,
+                tool_call_id=tool_call_id,
+            )
         except PermissionError:
             return ToolResult(
                 content=f"Error: Permission denied writing to {display_path}",
@@ -258,12 +274,6 @@ class PatchFileTool(BaseTool):
                 "first_changed_line": diff_result.first_changed_line,
                 "path": abs_path,
             },
-            effects=[
-                {
-                    "type": "file_modified",
-                    "path": abs_path,
-                }
-            ],
         )
 
 

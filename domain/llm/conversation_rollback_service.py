@@ -432,7 +432,11 @@ class ConversationRollbackService:
 
     def _is_internal_conversation_change(self, relative_path: str) -> bool:
         normalized_path = str(relative_path or "").replace("\\", "/")
-        return normalized_path.startswith(f"{context_service.CONVERSATIONS_DIR}/")
+        if normalized_path.startswith(f"{context_service.CONVERSATIONS_DIR}/"):
+            return True
+        if normalized_path == ".circuit_ai/pending_workspace_edits.json":
+            return True
+        return False
 
     def _cleanup_hidden_snapshots(self, project_root: str, session_id: str) -> None:
         snapshots_dir = Path(snapshot_service.get_snapshots_dir(project_root))

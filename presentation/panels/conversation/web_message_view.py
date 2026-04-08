@@ -157,9 +157,9 @@ class WebMessageView(QWidget):
             layout.addWidget(label)
 
     def _on_page_loaded(self, ok):
-        self._page_loaded = ok
         if not ok:
             return
+        self._page_loaded = True
         if self._pending_render_state is not None:
             pending_render_state = dict(self._pending_render_state)
             self._pending_render_state = None

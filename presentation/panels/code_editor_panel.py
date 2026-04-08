@@ -89,6 +89,7 @@ class CodeEditorPanel(QWidget):
         self._i18n_manager = None
         self._event_bus = None
         self._file_manager = None
+        self._pending_workspace_edit_service = None
         self._logger = None
         self._tabs: Dict[str, EditorTab] = {}
         self._tab_widget: Optional[QTabWidget] = None
@@ -140,6 +141,19 @@ class CodeEditorPanel(QWidget):
             except Exception:
                 pass
         return self._file_manager
+
+    @property
+    def pending_workspace_edit_service(self):
+        if self._pending_workspace_edit_service is None:
+            try:
+                from shared.service_locator import ServiceLocator
+                from shared.service_names import SVC_PENDING_WORKSPACE_EDIT_SERVICE
+                self._pending_workspace_edit_service = ServiceLocator.get_optional(
+                    SVC_PENDING_WORKSPACE_EDIT_SERVICE
+                )
+            except Exception:
+                pass
+        return self._pending_workspace_edit_service
 
     @property
     def logger(self):
@@ -408,6 +422,12 @@ class CodeEditorPanel(QWidget):
         self._update_tab_title(path)
         self._emit_editable_file_state()
 
+    def _save_content_via_pending_service(self, path: str, content: str) -> None:
+        service = self.pending_workspace_edit_service
+        if service is None:
+            raise RuntimeError("PendingWorkspaceEditService not available")
+        service.record_manual_save(path, content)
+
     def save_file(self) -> bool:
         """保存当前文件"""
         current_widget = self._tab_widget.currentWidget()
@@ -426,12 +446,7 @@ class CodeEditorPanel(QWidget):
         if isinstance(current_widget, CodeEditor):
             content = current_widget.toPlainText()
             try:
-                if self.file_manager:
-                    self.file_manager.update_file(tab.path, content)
-                else:
-                    with open(tab.path, 'w', encoding='utf-8') as f:
-                        f.write(content)
-                
+                self._save_content_via_pending_service(tab.path, content)
                 current_widget.set_modified(False)
                 tab.is_modified = False
                 self._update_tab_title(tab.path)
@@ -454,11 +469,7 @@ class CodeEditorPanel(QWidget):
             if isinstance(tab.widget, CodeEditor) and tab.widget.is_modified():
                 content = tab.widget.toPlainText()
                 try:
-                    if self.file_manager:
-                        self.file_manager.update_file(path, content)
-                    else:
-                        with open(path, 'w', encoding='utf-8') as f:
-                            f.write(content)
+                    self._save_content_via_pending_service(path, content)
                     tab.widget.set_modified(False)
                     tab.is_modified = False
                     self._update_tab_title(path)
@@ -549,6 +560,9 @@ class CodeEditorPanel(QWidget):
         
         if tab is None:
             # 文件未打开，无需刷新
+            return False
+
+        if isinstance(tab.widget, CodeEditor) and tab.widget.is_modified():
             return False
         
         if not os.path.isfile(path):
@@ -806,13 +820,13 @@ class CodeEditorPanel(QWidget):
         if self.event_bus:
             from shared.event_types import (
                 EVENT_LANGUAGE_CHANGED, EVENT_STATE_PROJECT_OPENED,
-                EVENT_STATE_PROJECT_CLOSED, EVENT_AGENT_FILE_MODIFIED,
+                EVENT_STATE_PROJECT_CLOSED, EVENT_FILE_CHANGED,
                 EVENT_SESSION_CHANGED,
             )
             self.event_bus.subscribe(EVENT_LANGUAGE_CHANGED, self._on_language_changed)
             self.event_bus.subscribe(EVENT_STATE_PROJECT_OPENED, self._on_project_opened)
             self.event_bus.subscribe(EVENT_STATE_PROJECT_CLOSED, self._on_project_closed)
-            self.event_bus.subscribe(EVENT_AGENT_FILE_MODIFIED, self._on_agent_file_modified)
+            self.event_bus.subscribe(EVENT_FILE_CHANGED, self._on_file_changed)
             self.event_bus.subscribe(EVENT_SESSION_CHANGED, self._on_session_changed)
 
     def _on_language_changed(self, event_data: Dict[str, Any]):
@@ -826,12 +840,19 @@ class CodeEditorPanel(QWidget):
         self.close_all_tabs()
         self._update_empty_state()
 
-    def _on_agent_file_modified(self, event_data: Dict[str, Any]):
-        """处理 Agent 工具修改文件事件，自动刷新编辑器内容"""
+    def _on_file_changed(self, event_data: Dict[str, Any]):
         data = event_data.get("data", event_data)
-        file_path = data.get("path", "")
-        if file_path:
-            self.reload_file(file_path)
+        file_path = data.get("path", "") if isinstance(data, dict) else ""
+        if not file_path:
+            return
+        normalized = str(file_path).replace("\\", "/")
+        if normalized.endswith("/.circuit_ai/pending_workspace_edits.json"):
+            return
+        operation = data.get("operation", "") if isinstance(data, dict) else ""
+        if operation == "delete":
+            self.sync_open_tabs_with_workspace()
+            return
+        self.reload_file(file_path)
 
     def _on_session_changed(self, event_data: Dict[str, Any]):
         data = event_data.get("data", event_data)

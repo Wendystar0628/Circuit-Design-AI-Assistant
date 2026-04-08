@@ -42,12 +42,15 @@
     path = await snapshot_service.create_snapshot_async(project_root, snapshot_id)
 """
 
+import difflib
 import os
 import shutil
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple
+
+from domain.llm.agent.utils.edit_diff import generate_diff_string
 
 # 快照目录相对路径
 SNAPSHOTS_DIR = ".circuit_ai/snapshots"
@@ -71,6 +74,46 @@ IGNORE_PATTERNS = [
     "venv",
     "node_modules",
 ]
+
+TEXT_PREVIEW_SUFFIXES = {
+    "",
+    ".py",
+    ".json",
+    ".txt",
+    ".md",
+    ".yaml",
+    ".yml",
+    ".toml",
+    ".ini",
+    ".cfg",
+    ".conf",
+    ".cir",
+    ".sp",
+    ".net",
+    ".csv",
+    ".tsv",
+    ".xml",
+    ".html",
+    ".css",
+    ".js",
+    ".ts",
+    ".tsx",
+    ".jsx",
+    ".c",
+    ".cc",
+    ".cpp",
+    ".h",
+    ".hpp",
+    ".java",
+    ".kt",
+    ".rs",
+    ".go",
+    ".sh",
+    ".bat",
+    ".ps1",
+    ".log",
+    ".gitignore",
+}
 
 
 @dataclass
@@ -105,6 +148,26 @@ class SnapshotInfo:
             "path": self.path,
             "iteration_count": self.iteration_count,
         }
+
+
+@dataclass(frozen=True)
+class SnapshotFileChange:
+    relative_path: str
+    change_type: str
+    summary: str
+    added_lines: int
+    deleted_lines: int
+    diff_preview: str = ""
+    is_text: bool = False
+
+
+@dataclass(frozen=True)
+class SnapshotRestorePreview:
+    snapshot_id: str
+    changed_files: List[SnapshotFileChange]
+    changed_file_count: int
+    total_added_lines: int
+    total_deleted_lines: int
 
 
 def create_snapshot(
@@ -350,6 +413,20 @@ def get_snapshot_info(
         return None
 
     return _get_snapshot_info(snapshot_dir)
+
+
+def preview_restore_snapshot(
+    project_root: str,
+    snapshot_id: str,
+) -> SnapshotRestorePreview:
+    safe_id = _sanitize_snapshot_id(snapshot_id)
+    root = Path(project_root).resolve()
+    snapshot_dir = root / SNAPSHOTS_DIR / safe_id
+
+    if not snapshot_dir.exists():
+        raise ValueError(f"Snapshot not found: {safe_id}")
+
+    return _build_restore_preview(root, snapshot_dir, safe_id)
 
 
 def snapshot_exists(project_root: str, snapshot_id: str) -> bool:
@@ -633,6 +710,180 @@ def _get_snapshot_info(snapshot_dir: Path) -> Optional[SnapshotInfo]:
     )
 
 
+def _build_restore_preview(
+    root: Path,
+    snapshot_dir: Path,
+    snapshot_id: str,
+) -> SnapshotRestorePreview:
+    current_files = _collect_restore_files(root)
+    snapshot_files = _collect_restore_files(snapshot_dir)
+
+    changes: List[SnapshotFileChange] = []
+    total_added_lines = 0
+    total_deleted_lines = 0
+
+    for relative_path in sorted(
+        set(current_files.keys()) | set(snapshot_files.keys()),
+        key=lambda path: path.as_posix(),
+    ):
+        current_path = current_files.get(relative_path)
+        snapshot_path = snapshot_files.get(relative_path)
+
+        if current_path and snapshot_path and _files_are_equal(current_path, snapshot_path):
+            continue
+
+        change = _build_snapshot_file_change(
+            relative_path,
+            current_path=current_path,
+            snapshot_path=snapshot_path,
+        )
+        changes.append(change)
+        total_added_lines += change.added_lines
+        total_deleted_lines += change.deleted_lines
+
+    return SnapshotRestorePreview(
+        snapshot_id=snapshot_id,
+        changed_files=changes,
+        changed_file_count=len(changes),
+        total_added_lines=total_added_lines,
+        total_deleted_lines=total_deleted_lines,
+    )
+
+
+def _collect_restore_files(base_dir: Path) -> Dict[Path, Path]:
+    collected: Dict[Path, Path] = {}
+    if not base_dir.exists():
+        return collected
+
+    for file_path in base_dir.rglob("*"):
+        if not file_path.is_file():
+            continue
+
+        relative_path = file_path.relative_to(base_dir)
+        if file_path.name == ".snapshot_meta.json":
+            continue
+        if _is_protected_restore_path(relative_path):
+            continue
+
+        collected[relative_path] = file_path
+
+    return collected
+
+
+def _files_are_equal(first_path: Path, second_path: Path) -> bool:
+    try:
+        return first_path.read_bytes() == second_path.read_bytes()
+    except Exception:
+        return False
+
+
+def _build_snapshot_file_change(
+    relative_path: Path,
+    *,
+    current_path: Optional[Path],
+    snapshot_path: Optional[Path],
+) -> SnapshotFileChange:
+    relative_str = relative_path.as_posix()
+
+    if current_path and snapshot_path:
+        change_type = "modified"
+        summary = "将恢复为快照中的版本"
+    elif snapshot_path:
+        change_type = "added"
+        summary = "将恢复当前缺失的文件"
+    else:
+        change_type = "deleted"
+        summary = "将删除该文件"
+
+    current_text, current_is_text = _read_text_preview(current_path)
+    snapshot_text, snapshot_is_text = _read_text_preview(snapshot_path)
+    text_flags = []
+    if current_path is not None:
+        text_flags.append(current_is_text)
+    if snapshot_path is not None:
+        text_flags.append(snapshot_is_text)
+    is_text = all(text_flags) if text_flags else False
+
+    added_lines = 0
+    deleted_lines = 0
+    diff_preview = ""
+
+    if is_text:
+        current_content = current_text or ""
+        snapshot_content = snapshot_text or ""
+        added_lines, deleted_lines = _calculate_line_changes(
+            current_content,
+            snapshot_content,
+        )
+        diff_preview = _truncate_diff_preview(
+            generate_diff_string(
+                current_content,
+                snapshot_content,
+                context_lines=3,
+            ).diff
+        )
+
+    return SnapshotFileChange(
+        relative_path=relative_str,
+        change_type=change_type,
+        summary=summary,
+        added_lines=added_lines,
+        deleted_lines=deleted_lines,
+        diff_preview=diff_preview,
+        is_text=is_text,
+    )
+
+
+def _read_text_preview(path: Optional[Path]) -> Tuple[str, bool]:
+    if path is None or not path.exists():
+        return "", True
+
+    try:
+        raw = path.read_bytes()
+    except Exception:
+        return "", False
+
+    if b"\x00" in raw:
+        return "", False
+
+    for encoding in ("utf-8-sig", "utf-8", "utf-16"):
+        try:
+            return _normalize_preview_text(raw.decode(encoding)), True
+        except UnicodeError:
+            continue
+
+    if path.suffix.lower() in TEXT_PREVIEW_SUFFIXES:
+        return _normalize_preview_text(raw.decode("utf-8", errors="replace")), True
+
+    return "", False
+
+
+def _normalize_preview_text(text: str) -> str:
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
+def _calculate_line_changes(old_content: str, new_content: str) -> Tuple[int, int]:
+    old_lines = old_content.splitlines()
+    new_lines = new_content.splitlines()
+    matcher = difflib.SequenceMatcher(None, old_lines, new_lines)
+
+    added_lines = 0
+    deleted_lines = 0
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag in {"replace", "insert"}:
+            added_lines += j2 - j1
+        if tag in {"replace", "delete"}:
+            deleted_lines += i2 - i1
+
+    return added_lines, deleted_lines
+
+
+def _truncate_diff_preview(diff_text: str, *, max_chars: int = 20000) -> str:
+    if len(diff_text) <= max_chars:
+        return diff_text
+    return f"{diff_text[:max_chars]}\n...\n[diff truncated]"
+
+
 def _restore_files_from_snapshot(root: Path, snapshot_dir: Path) -> None:
     """
     从快照恢复文件到项目目录
@@ -719,12 +970,15 @@ def _remove_restore_path(path: Path) -> None:
 
 __all__ = [
     "SnapshotInfo",
+    "SnapshotFileChange",
+    "SnapshotRestorePreview",
     "create_snapshot",
     "restore_snapshot",
     "list_snapshots",
     "delete_snapshot",
     "cleanup_old_snapshots",
     "get_snapshot_info",
+    "preview_restore_snapshot",
     "snapshot_exists",
     "get_snapshots_dir",
     # 线性撤回支持

@@ -80,6 +80,7 @@ class ButtonMode(Enum):
     SEND = "send"           # 发送模式（默认）
     STOP = "stop"           # 停止模式（生成中）
     STOPPING = "stopping"   # 正在停止（点击停止后）
+    ROLLBACKING = "rollbacking"
 
 
 class AnimatedActionButton(QPushButton):
@@ -93,7 +94,7 @@ class AnimatedActionButton(QPushButton):
         self._activity_timer.timeout.connect(self._advance_activity)
 
     def set_activity_mode(self, mode: str) -> None:
-        normalized_mode = mode if mode in {"idle", "stopping"} else "idle"
+        normalized_mode = mode if mode in {"idle", "stopping", "rollbacking"} else "idle"
         if self._activity_mode == normalized_mode:
             return
         self._activity_mode = normalized_mode
@@ -112,7 +113,7 @@ class AnimatedActionButton(QPushButton):
 
     def paintEvent(self, event) -> None:
         super().paintEvent(event)
-        if self._activity_mode != "stopping":
+        if self._activity_mode not in {"stopping", "rollbacking"}:
             return
 
         painter = QPainter(self)
@@ -179,6 +180,8 @@ class InputArea(QWidget):
         self._progress_bar: Optional[QProgressBar] = None
         self._usage_label: Optional[QLabel] = None
         self._token_label: Optional[QLabel] = None
+        self._action_status_label: Optional[QLabel] = None
+        self._action_status_text: str = ""
         
         # 延迟获取的服务
         self._i18n = None
@@ -316,7 +319,19 @@ class InputArea(QWidget):
             }
         """)
         bottom_btn_layout.addWidget(self._token_label)
-        
+
+        self._action_status_label = QLabel("")
+        self._action_status_label.setStyleSheet("""
+            QLabel {
+                color: #666666;
+                font-size: 10px;
+                background: transparent;
+                border: none;
+            }
+        """)
+        self._action_status_label.setVisible(False)
+        bottom_btn_layout.addWidget(self._action_status_label)
+
         bottom_btn_layout.addStretch()
         
         # 模型卡片按钮（显示当前模型，点击打开设置）
@@ -519,6 +534,14 @@ class InputArea(QWidget):
         self._send_allowed = enabled
         self._refresh_action_button_state()
 
+    def set_action_status(self, text: str = "") -> None:
+        self._action_status_text = text or ""
+        if self._action_status_label is None:
+            return
+
+        self._action_status_label.setText(self._action_status_text)
+        self._action_status_label.setVisible(bool(self._action_status_text))
+
     def has_send_payload(self) -> bool:
         return bool(self.get_text().strip() or self._attachments)
 
@@ -603,6 +626,18 @@ class InputArea(QWidget):
                     padding: 0px 4px;
                 }}
             """)
+        elif self._button_mode == ButtonMode.ROLLBACKING:
+            self._send_button.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {PRIMARY_COLOR};
+                    color: white;
+                    border: none;
+                    border-radius: 4px;
+                    font-size: 12px;
+                    font-weight: bold;
+                    padding: 0px 4px;
+                }}
+            """)
     
     def _update_button_text(self) -> None:
         """根据当前模式更新按钮文本"""
@@ -614,6 +649,8 @@ class InputArea(QWidget):
         elif self._button_mode == ButtonMode.STOP:
             self._send_button.setText(self._get_text("btn.stop", "Stop"))
         elif self._button_mode == ButtonMode.STOPPING:
+            self._send_button.setText("")
+        elif self._button_mode == ButtonMode.ROLLBACKING:
             self._send_button.setText("")
 
     def _refresh_action_button_state(self) -> None:
@@ -628,6 +665,9 @@ class InputArea(QWidget):
         elif self._button_mode == ButtonMode.STOPPING:
             self._send_button.setEnabled(False)
             self._send_button.set_activity_mode("stopping")
+        elif self._button_mode == ButtonMode.ROLLBACKING:
+            self._send_button.setEnabled(False)
+            self._send_button.set_activity_mode("rollbacking")
     
     def clear_text(self) -> None:
         """清空输入文本"""
@@ -1007,6 +1047,9 @@ class InputArea(QWidget):
         if self._send_button:
             self._update_button_text()
             self._refresh_action_button_state()
+
+        if self._action_status_label:
+            self.set_action_status(self._action_status_text)
         
         if self._input_text:
             self._input_text.setPlaceholderText(

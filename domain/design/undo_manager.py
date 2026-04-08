@@ -46,9 +46,6 @@ from typing import Optional
 from domain.services import snapshot_service
 from shared.event_types import (
     EVENT_STATE_ITERATION_UPDATED,
-    EVENT_UNDO_COMPLETED,
-    EVENT_UNDO_FAILED,
-    EVENT_UNDO_STARTED,
 )
 
 
@@ -351,12 +348,6 @@ class UndoManager:
             self._operation_in_progress = True
             self._operation_start_time = datetime.now()
             
-            # 发布撤回开始事件
-            self._publish_event(EVENT_UNDO_STARTED, {
-                "target_iteration": target_iteration,
-                "current_iteration": current_iteration,
-            })
-            
             if self.logger:
                 self.logger.info(
                     f"开始撤回: 从迭代 {current_iteration} 到迭代 {target_iteration}"
@@ -379,12 +370,6 @@ class UndoManager:
                 if self.logger:
                     self.logger.error(error_msg)
                 
-                self._publish_event(EVENT_UNDO_FAILED, {
-                    "error_code": UndoErrorCode.RESTORE_FAILED.value,
-                    "error_message": error_msg,
-                    "target_iteration": target_iteration,
-                })
-                
                 return UndoResult(
                     success=False,
                     message=error_msg,
@@ -393,12 +378,6 @@ class UndoManager:
             
             # 删除当前迭代的快照（弹出栈顶）
             snapshot_service.pop_snapshot(project_root)
-            
-            # 发布撤回完成事件
-            self._publish_event(EVENT_UNDO_COMPLETED, {
-                "restored_iteration": target_iteration,
-                "previous_iteration": current_iteration,
-            })
             
             # 发布状态更新事件（触发 UI 刷新）
             self._publish_event(EVENT_STATE_ITERATION_UPDATED, {

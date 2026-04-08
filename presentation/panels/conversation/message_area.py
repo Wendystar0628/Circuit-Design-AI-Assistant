@@ -72,20 +72,15 @@ class MessageArea(QWidget):
         messages: List[Any],
         runtime_steps: Optional[List[Any]] = None,
     ) -> None:
-        """渲染历史消息与当前运行时步骤。"""
-        if self._web_view:
-            self._web_view.render_messages(messages)
-            self._web_view.render_runtime_steps(runtime_steps or [])
+        self.render_conversation(messages, runtime_steps)
 
-    def render_runtime_steps(self, runtime_steps: List[Any]) -> None:
-        """仅更新当前运行时步骤区域。"""
+    def render_conversation(
+        self,
+        messages: List[Any],
+        runtime_steps: Optional[List[Any]] = None,
+    ) -> None:
         if self._web_view:
-            self._web_view.render_runtime_steps(runtime_steps)
-
-    def clear_runtime_steps(self) -> None:
-        """清空当前运行时步骤区域。"""
-        if self._web_view:
-            self._web_view.clear_runtime_steps()
+            self._web_view.render_conversation(messages, runtime_steps or [])
     
     def clear_messages(self) -> None:
         """清空消息显示"""

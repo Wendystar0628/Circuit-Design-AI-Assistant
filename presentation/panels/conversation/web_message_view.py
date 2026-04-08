@@ -17,7 +17,7 @@
 
 import os
 from typing import Any, Dict, List, Optional
-from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QUrl
+from PyQt6.QtCore import Qt, pyqtSignal, QUrl
 
 from domain.llm.attachment_references import (
     INLINE_ATTACHMENT_PLACEMENT,
@@ -134,14 +134,8 @@ class WebMessageView(QWidget):
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self._web_view = None
-        self._rendered_message_keys: List[str] = []
         self._page_loaded = False
-        self._pending_messages = []
-        self._pending_runtime_steps: Optional[List[Any]] = None
-        self._is_rendering = False
-        self._runtime_timer = QTimer(self)
-        self._runtime_timer.setInterval(50)
-        self._runtime_timer.timeout.connect(self._flush_runtime_steps)
+        self._pending_render_state: Optional[Dict[str, str]] = None
         self._setup_ui()
     
     def _setup_ui(self):
@@ -164,12 +158,16 @@ class WebMessageView(QWidget):
 
     def _on_page_loaded(self, ok):
         self._page_loaded = ok
-        if ok and self._pending_messages and not self._is_rendering:
-            self._render_static_messages(self._pending_messages)
-            self._pending_messages = []
-        if ok and self._pending_runtime_steps is not None:
-            self._flush_runtime_steps()
-    
+        if not ok:
+            return
+        if self._pending_render_state is not None:
+            pending_render_state = dict(self._pending_render_state)
+            self._pending_render_state = None
+            self._apply_render_state(
+                pending_render_state.get('messages', ''),
+                pending_render_state.get('runtime', ''),
+            )
+
     def _load_initial_page(self):
         self._web_view.setHtml(self._build_html(""))
 
@@ -393,31 +391,16 @@ function scrollBottom(force) {
     _viewportState.suppressScrollTracking = false;
     _viewportState.stickToBottom = true;
 }
-function replaceStaticMessages(html) {
+function replaceConversation(messageHtml, runtimeHtml) {
     withViewportPreserved(function() {
-        document.getElementById('message-list').innerHTML = html;
+        document.getElementById('message-list').innerHTML = messageHtml;
+        document.getElementById('runtime-steps-root').innerHTML = runtimeHtml;
     });
 }
-function appendStaticMessages(html) {
-    withViewportPreserved(function() {
-        document.getElementById('message-list').insertAdjacentHTML('beforeend', html);
-    });
-}
-function replaceRuntimeSteps(html) {
-    withViewportPreserved(function() {
-        document.getElementById('runtime-steps-root').innerHTML = html;
-    });
-}
-function clearMsgs() {
-    document.getElementById('message-list').innerHTML = '';
-    document.getElementById('runtime-steps-root').innerHTML = '';
+function clearConversation() {
     _detailViewportStates = {};
     _viewportState.stickToBottom = true;
-}
-function clearRuntimeSteps() {
-    withViewportPreserved(function() {
-        document.getElementById('runtime-steps-root').innerHTML = '';
-    });
+    replaceConversation('', '');
 }
 function toggleDetail(id) { 
     var c = document.getElementById('detail-'+id); 
@@ -453,47 +436,42 @@ function onRollbackClick(messageId) {
     def render_messages(self, messages: List[Any]) -> None:
         if not self._web_view:
             return
-        if not self._page_loaded:
-            self._pending_messages = messages
+        self.render_conversation(messages)
+
+    def render_conversation(
+        self,
+        messages: List[Any],
+        runtime_steps: Optional[List[Any]] = None,
+    ) -> None:
+        if not self._web_view:
             return
-        self._render_static_messages(messages)
-
-    def render_runtime_steps(self, runtime_steps: List[Any]) -> None:
-        self._pending_runtime_steps = list(runtime_steps)
-        self._runtime_timer.start()
-
-    def _flush_runtime_steps(self) -> None:
-        if not self._web_view or not self._page_loaded or self._pending_runtime_steps is None:
-            return
-        html = ''.join(self._render_runtime_step(step) for step in self._pending_runtime_steps)
-        self._pending_runtime_steps = None
-        self._runtime_timer.stop()
-        self._run_js(f"replaceRuntimeSteps(`{self._esc(html)}`)")
-
-    def clear_runtime_steps(self) -> None:
-        self._pending_runtime_steps = None
-        self._runtime_timer.stop()
-        self._run_js("clearRuntimeSteps()")
-
-    def _render_static_messages(self, messages: List[Any]):
-        if not self._web_view or self._is_rendering:
-            return
-        self._is_rendering = True
-        message_keys = [self._get_message_render_key(message) for message in messages]
-        append_only = (
-            self._rendered_message_keys
-            and len(message_keys) >= len(self._rendered_message_keys)
-            and message_keys[:len(self._rendered_message_keys)] == self._rendered_message_keys
+        message_html = self._build_messages_html(messages)
+        runtime_html = ''.join(
+            self._render_runtime_step(step) for step in (runtime_steps or [])
         )
-        if append_only and len(message_keys) > len(self._rendered_message_keys):
-            appended_html = self._build_messages_html(messages[len(self._rendered_message_keys):])
-            self._run_js(f"appendStaticMessages(`{self._esc(appended_html)}`)")
-        else:
-            content = self._build_messages_html(messages)
-            escaped_content = self._esc(content)
-            self._run_js(f"replaceStaticMessages(`{escaped_content}`)")
-        self._rendered_message_keys = message_keys
-        self._is_rendering = False
+        if not self._page_loaded:
+            self._pending_render_state = {
+                'messages': message_html,
+                'runtime': runtime_html,
+            }
+            return
+        self._apply_render_state(message_html, runtime_html)
+
+    def _apply_render_state(self, message_html: str, runtime_html: str) -> None:
+        escaped_message_html = self._esc(message_html)
+        escaped_runtime_html = self._esc(runtime_html)
+        self._run_js(
+            "(function(){"
+            f"var messageHtml = `{escaped_message_html}`;"
+            f"var runtimeHtml = `{escaped_runtime_html}`;"
+            "if (typeof replaceConversation === 'function') { replaceConversation(messageHtml, runtimeHtml); return; }"
+            "var messageRoot = document.getElementById('message-list');"
+            "var runtimeRoot = document.getElementById('runtime-steps-root');"
+            "if (messageRoot) { messageRoot.innerHTML = messageHtml; }"
+            "if (runtimeRoot) { runtimeRoot.innerHTML = runtimeHtml; }"
+            "if (typeof renderMath === 'function') { renderMath(); }"
+            "})();"
+        )
 
     def _build_messages_html(self, messages: List[Any]) -> str:
         return '\n'.join(self._msg_to_html(message) for message in messages)
@@ -862,22 +840,29 @@ function onRollbackClick(messageId) {
         return html.escape(text) if text else ""
     
     def clear_messages(self):
-        self._pending_runtime_steps = None
-        self._runtime_timer.stop()
-        self._rendered_message_keys = []
-        self._run_js("clearMsgs()")
-
-    def _get_message_render_key(self, message: Any) -> str:
-        return "|".join([
-            str(getattr(message, 'id', '') or ''),
-            str(getattr(message, 'role', '') or ''),
-            '1' if bool(getattr(message, 'can_rollback', False)) else '0',
-        ])
+        self._pending_render_state = {
+            'messages': '',
+            'runtime': '',
+        }
+        if not self._page_loaded:
+            return
+        self._run_js(
+            "(function(){"
+            "if (typeof clearConversation === 'function') { clearConversation(); return; }"
+            "var messageRoot = document.getElementById('message-list');"
+            "var runtimeRoot = document.getElementById('runtime-steps-root');"
+            "if (messageRoot) { messageRoot.innerHTML = ''; }"
+            "if (runtimeRoot) { runtimeRoot.innerHTML = ''; }"
+            "})();"
+        )
     
     def _run_js(self, code: str):
-        if self._web_view:
-            self._web_view.page().runJavaScript(code)
-    
+        if not self._web_view:
+            return
+        if not self._page_loaded:
+            return
+        self._web_view.page().runJavaScript(code)
+
     def _esc(self, text: str) -> str:
         """转义 JavaScript 模板字符串中的特殊字符"""
         return text.replace('\\', '\\\\').replace('`', '\\`').replace('$', '\\$').replace('\r', '').replace('\n', '\\n')
@@ -887,7 +872,7 @@ function onRollbackClick(messageId) {
         return text.replace("'", "\\'").replace('"', '\\"').replace('\\', '\\\\')
     
     def cleanup(self):
-        self._runtime_timer.stop()
+        self._pending_render_state = None
 
 
 __all__ = ["WebMessageView", "WEBENGINE_AVAILABLE"]

@@ -31,6 +31,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
+from domain.llm.conversation_rollback_service import ConversationRollbackPreview
 from domain.llm.llm_message_builder import LLMMessageBuilder
 from domain.llm.message_types import Attachment
 
@@ -132,9 +133,7 @@ class ConversationViewModel(QObject):
     """
     
     # 信号定义
-    messages_changed = pyqtSignal()              # 消息列表变化
-    runtime_steps_changed = pyqtSignal()         # 运行时 step 列表变化
-    runtime_steps_finished = pyqtSignal()        # 运行时 step 会话完成
+    display_state_changed = pyqtSignal()         # 对话显示状态变化
     usage_changed = pyqtSignal(float)            # 上下文占用变化 (ratio)
     can_send_changed = pyqtSignal(bool)          # 可发送状态变化
     compress_suggested = pyqtSignal()            # 建议压缩上下文
@@ -439,7 +438,7 @@ class ConversationViewModel(QObject):
             self._update_usage_ratio()
             
             # 发出信号
-            self.messages_changed.emit()
+            self.display_state_changed.emit()
             
         except Exception as e:
             if self.logger:
@@ -597,13 +596,13 @@ class ConversationViewModel(QObject):
             )
         return serialized
 
-    def _emit_runtime_steps_changed(self) -> None:
-        self.runtime_steps_changed.emit()
+    def _emit_display_state_changed(self) -> None:
+        self.display_state_changed.emit()
 
     def _clear_active_agent_steps(self, emit_signal: bool = True) -> None:
         self._active_agent_steps = []
         if emit_signal:
-            self._emit_runtime_steps_changed()
+            self._emit_display_state_changed()
 
     def _ensure_agent_step(self, step_index: int) -> AgentStep:
         if step_index <= 0:
@@ -711,7 +710,7 @@ class ConversationViewModel(QObject):
         self._messages.append(msg)
         self._active_suggestion_message_id = msg_id
         
-        self.messages_changed.emit()
+        self.display_state_changed.emit()
         
         return msg_id
     
@@ -732,7 +731,7 @@ class ConversationViewModel(QObject):
                 break
         
         self._active_suggestion_message_id = None
-        self.messages_changed.emit()
+        self.display_state_changed.emit()
 
     def select_suggestion(self, suggestion_id: str) -> str:
         """选择建议项并返回其 value 文本。"""
@@ -756,7 +755,7 @@ class ConversationViewModel(QObject):
         """标记当前建议选项已过期"""
         self._expire_previous_suggestions()
         self._active_suggestion_message_id = None
-        self.messages_changed.emit()
+        self.display_state_changed.emit()
     
     def _expire_previous_suggestions(self) -> None:
         """将所有活跃的建议选项标记为过期"""
@@ -835,16 +834,9 @@ class ConversationViewModel(QObject):
         return False
 
     async def rollback_to_message(self, message_id: str) -> Tuple[bool, str]:
-        if not message_id:
-            return False, "无效的撤回目标"
-        if self._is_loading:
-            return False, "当前仍有运行中的对话，请先停止后再撤回"
-
-        target_message = next((msg for msg in self._messages if msg.id == message_id), None)
-        if target_message is None or target_message.role != ROLE_USER:
-            return False, "只能撤回用户消息节点"
-        if self.conversation_rollback_service is None:
-            return False, "撤回服务不可用"
+        error_message = self._validate_rollback_target(message_id)
+        if error_message:
+            return False, error_message
 
         try:
             result = await self.conversation_rollback_service.rollback_to_anchor(message_id)
@@ -856,6 +848,7 @@ class ConversationViewModel(QObject):
                 self._active_suggestion_message_id = None
                 if self.stop_controller:
                     self.stop_controller.reset()
+                self.load_messages()
                 self.can_send_changed.emit(True)
                 return True, ""
             return False, str(result.get("message", "撤回失败") or "撤回失败")
@@ -863,6 +856,35 @@ class ConversationViewModel(QObject):
             if self.logger:
                 self.logger.error(f"Rollback failed: {e}")
             return False, str(e)
+
+    async def preview_rollback_to_message(
+        self,
+        message_id: str,
+    ) -> Tuple[Optional[ConversationRollbackPreview], str]:
+        error_message = self._validate_rollback_target(message_id)
+        if error_message:
+            return None, error_message
+
+        try:
+            preview = await self.conversation_rollback_service.preview_rollback_to_anchor(message_id)
+            return preview, ""
+        except Exception as e:
+            if self.logger:
+                self.logger.error(f"Rollback preview failed: {e}")
+            return None, str(e)
+
+    def _validate_rollback_target(self, message_id: str) -> str:
+        if not message_id:
+            return "无效的撤回目标"
+        if self._is_loading:
+            return "当前仍有运行中的对话，请先停止后再撤回"
+
+        target_message = next((msg for msg in self._messages if msg.id == message_id), None)
+        if target_message is None or target_message.role != ROLE_USER:
+            return "只能撤回用户消息节点"
+        if self.conversation_rollback_service is None:
+            return "撤回服务不可用"
+        return ""
     
     def _trigger_llm_call(self) -> None:
         """
@@ -960,13 +982,13 @@ class ConversationViewModel(QObject):
                 step.reasoning_content += text
             else:
                 step.content += text
-            self._emit_runtime_steps_changed()
+            self._emit_display_state_changed()
 
     def _on_agent_turn_started(self, task_id: str, step_index: int) -> None:
         if task_id != self._current_task_id:
             return
         self._ensure_agent_step(step_index)
-        self._emit_runtime_steps_changed()
+        self._emit_display_state_changed()
 
     def _disconnect_llm_executor_signals(self) -> None:
         try:
@@ -1008,7 +1030,6 @@ class ConversationViewModel(QObject):
         usage = result.get("usage")
         is_partial = result.get("is_partial", False)
         self._mark_active_steps_complete(is_partial=is_partial)
-        self._emit_runtime_steps_changed()
 
         has_tool_activity = any(step.tool_calls for step in self._active_agent_steps)
         has_web_search_activity = any(
@@ -1042,6 +1063,8 @@ class ConversationViewModel(QObject):
         # 重置 StopController 状态为 IDLE
         if self.stop_controller:
             self.stop_controller.reset()
+
+        self._clear_active_agent_steps(emit_signal=False)
         
         # 从 ContextManager 重新加载消息
         self.load_messages()
@@ -1054,9 +1077,6 @@ class ConversationViewModel(QObject):
                 source="llm_generation_complete"
             )
         
-        # 发出信号
-        self.runtime_steps_finished.emit()
-        self._clear_active_agent_steps(emit_signal=False)
         self.can_send_changed.emit(True)
         
         if self.logger:
@@ -1094,16 +1114,12 @@ class ConversationViewModel(QObject):
         self._is_loading = False
         self._current_task_id = None  # 清除任务 ID
         self._mark_active_steps_complete(is_partial=bool(self._active_agent_steps), stop_reason="error")
-        if self._active_agent_steps:
-            self._emit_runtime_steps_changed()
         
         # 重置 StopController
         if self.stop_controller:
             self.stop_controller.reset()
         
-        # 发出信号
-        self.runtime_steps_finished.emit()
-        self._clear_active_agent_steps(emit_signal=False)
+        self._clear_active_agent_steps(emit_signal=True)
         self.can_send_changed.emit(True)
     
     # ============================================================
@@ -1141,7 +1157,7 @@ class ConversationViewModel(QObject):
                         arguments=dict(arguments or {}),
                     )
                 )
-        self._emit_runtime_steps_changed()
+        self._emit_display_state_changed()
 
     def _on_tool_execution_finished(
         self,
@@ -1182,7 +1198,7 @@ class ConversationViewModel(QObject):
             tool_call.is_error = is_error
             tool_call.result_content = result_content
             tool_call.details = dict(details or {})
-        self._emit_runtime_steps_changed()
+        self._emit_display_state_changed()
     
     # ============================================================
     # 辅助方法
@@ -1227,7 +1243,7 @@ class ConversationViewModel(QObject):
         self._is_loading = False
         self._current_task_id = None
         self._active_suggestion_message_id = None
-        self.messages_changed.emit()
+        self.display_state_changed.emit()
     
     # ============================================================
     # 会话名称管理
@@ -1352,7 +1368,6 @@ class ConversationViewModel(QObject):
             self._active_suggestion_message_id = None
             if self.stop_controller:
                 self.stop_controller.reset()
-            self.runtime_steps_finished.emit()
             self.can_send_changed.emit(True)
         
         # 重新加载消息（ContextManager 状态已由 SessionStateManager 同步）
@@ -1439,7 +1454,6 @@ class ConversationViewModel(QObject):
         
         if is_partial and self._active_agent_steps:
             self._mark_active_steps_complete(is_partial=True, stop_reason=reason)
-            self._emit_runtime_steps_changed()
             final_step = self._active_agent_steps[-1]
             if final_step.content:
                 partial_content = final_step.content
@@ -1453,6 +1467,11 @@ class ConversationViewModel(QObject):
         # 清空运行时 step 状态
         self._is_loading = False
         self._current_task_id = None  # 清除任务 ID
+        self._clear_active_agent_steps(emit_signal=False)
+        if saved:
+            self.load_messages()
+        else:
+            self._emit_display_state_changed()
         
         # 发出信号
         result = {
@@ -1465,10 +1484,6 @@ class ConversationViewModel(QObject):
         
         # 发出可发送状态变化信号，恢复发送按钮
         self.can_send_changed.emit(True)
-        
-        # 发出运行时步骤完成信号
-        self.runtime_steps_finished.emit()
-        self._clear_active_agent_steps(emit_signal=False)
     
     def _save_partial_response(self, content: str, reason: str) -> None:
         """
@@ -1509,9 +1524,6 @@ class ConversationViewModel(QObject):
             except Exception as e:
                 if self.logger:
                     self.logger.warning(f"Failed to save partial response to context: {e}")
-        
-        # 发出消息变更信号
-        self.messages_changed.emit()
         
         if self.logger:
             self.logger.info(f"Saved partial response: {len(content)} chars")

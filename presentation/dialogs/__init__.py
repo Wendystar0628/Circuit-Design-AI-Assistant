@@ -19,6 +19,7 @@ from .history_dialog import HistoryDialog, SessionInfo
 from .iteration_history_dialog import IterationHistoryDialog, IterationRecord
 from .design_goals_dialog import DesignGoalsDialog, GoalEditDialog
 from .select_simulation_file_dialog import SelectSimulationFileDialog
+from .rollback_confirmation_dialog import RollbackConfirmationDialog
 __all__ = [
     # 新版模型配置对话框
     "ModelConfigDialog",
@@ -38,4 +39,5 @@ __all__ = [
     "GoalEditDialog",
     # 选择仿真文件对话框
     "SelectSimulationFileDialog",
+    "RollbackConfirmationDialog",
 ]

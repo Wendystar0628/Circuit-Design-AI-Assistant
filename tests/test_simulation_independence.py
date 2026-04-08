@@ -4,7 +4,12 @@ import pytest
 from PyQt6.QtWidgets import QApplication
 
 from domain.llm.session_state_manager import SessionStateManager
-from domain.services.snapshot_service import SNAPSHOTS_DIR, create_snapshot, restore_snapshot
+from domain.services.snapshot_service import (
+    SNAPSHOTS_DIR,
+    create_snapshot,
+    preview_restore_snapshot,
+    restore_snapshot,
+)
 from presentation.panels.simulation.simulation_tab import SimulationTab
 from shared.event_types import EVENT_SESSION_CHANGED
 from shared.service_locator import ServiceLocator
@@ -128,3 +133,38 @@ def test_restore_snapshot_preserves_persisted_simulation_artifacts(tmp_path: Pat
     assert not extra_file.exists()
     assert hidden_result.read_text(encoding="utf-8") == '{"result": "new-hidden"}'
     assert export_file.read_text(encoding="utf-8") == '{"result": "new-export"}'
+
+
+def test_preview_restore_snapshot_reports_authoritative_line_stats(tmp_path: Path):
+    modified_file = tmp_path / "design.txt"
+    modified_file.write_text("base-1\nbase-2\nbase-3\n", encoding="utf-8")
+
+    restored_file = tmp_path / "restored.txt"
+    restored_file.write_text("restore-1\nrestore-2\n", encoding="utf-8")
+
+    create_snapshot(str(tmp_path), "iter_001")
+
+    modified_file.write_text("base-1\nchanged-2\n", encoding="utf-8")
+    restored_file.unlink()
+
+    deleted_file = tmp_path / "deleted.txt"
+    deleted_file.write_text("delete-1\ndelete-2\n", encoding="utf-8")
+
+    preview = preview_restore_snapshot(str(tmp_path), "iter_001")
+    changes = {change.relative_path: change for change in preview.changed_files}
+
+    assert preview.changed_file_count == 3
+    assert preview.total_added_lines == 4
+    assert preview.total_deleted_lines == 3
+
+    assert changes["design.txt"].change_type == "modified"
+    assert changes["design.txt"].added_lines == 2
+    assert changes["design.txt"].deleted_lines == 1
+
+    assert changes["restored.txt"].change_type == "added"
+    assert changes["restored.txt"].added_lines == 2
+    assert changes["restored.txt"].deleted_lines == 0
+
+    assert changes["deleted.txt"].change_type == "deleted"
+    assert changes["deleted.txt"].added_lines == 0
+    assert changes["deleted.txt"].deleted_lines == 2

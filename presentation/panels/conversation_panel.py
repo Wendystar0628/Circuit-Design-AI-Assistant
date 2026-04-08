@@ -24,9 +24,10 @@ import asyncio
 import os
 from typing import Any, Dict, Optional
 
-from PyQt6.QtCore import pyqtSignal, pyqtSlot, QUrl
+from PyQt6.QtCore import pyqtSignal, pyqtSlot, QUrl, Qt
 from PyQt6.QtGui import QDesktopServices, QDragEnterEvent, QDropEvent
 from PyQt6.QtWidgets import (
+    QDialog,
     QWidget,
     QVBoxLayout,
     QMessageBox,
@@ -34,6 +35,7 @@ from PyQt6.QtWidgets import (
 )
 
 from domain.rag.file_extractor import resolve_attachment_type
+from presentation.dialogs.rollback_confirmation_dialog import RollbackConfirmationDialog
 # 从子模块导入组件
 from presentation.panels.conversation import (
     ConversationViewModel,
@@ -80,6 +82,8 @@ class ConversationPanel(QWidget):
         self._logger = None
         self._send_in_progress = False
         self._rollback_in_progress = False
+        self._rollback_confirmation_dialog: Optional[RollbackConfirmationDialog] = None
+        self._warning_dialog: Optional[QMessageBox] = None
         
         # 子组件引用
         self._title_bar: Optional[TitleBar] = None
@@ -237,9 +241,7 @@ class ConversationPanel(QWidget):
         if self._view_model is None:
             return
         
-        self._view_model.messages_changed.connect(self._on_messages_changed)
-        self._view_model.runtime_steps_changed.connect(self._on_runtime_steps_changed)
-        self._view_model.runtime_steps_finished.connect(self._on_runtime_steps_finished)
+        self._view_model.display_state_changed.connect(self._on_display_state_changed)
         self._view_model.usage_changed.connect(self._on_usage_changed)
         self._view_model.can_send_changed.connect(self._on_can_send_changed)
         self._view_model.new_conversation_suggested.connect(
@@ -266,11 +268,19 @@ class ConversationPanel(QWidget):
     def cleanup(self) -> None:
         """清理资源"""
         self._unsubscribe_events()
+        if self._rollback_confirmation_dialog is not None:
+            self._rollback_confirmation_dialog.close()
+            self._rollback_confirmation_dialog.deleteLater()
+            self._rollback_confirmation_dialog = None
+        if self._warning_dialog is not None:
+            self._warning_dialog.close()
+            self._warning_dialog.deleteLater()
+            self._warning_dialog = None
         if self._view_model:
             self._view_model.cleanup()
         if self._message_area:
             self._message_area.cleanup()
-    
+
     def _subscribe_events(self) -> None:
         """订阅事件"""
         if self.event_bus is None:
@@ -364,7 +374,7 @@ class ConversationPanel(QWidget):
         
         # 委托给 MessageArea 渲染消息
         if self._message_area:
-            self._message_area.render_messages(
+            self._message_area.render_conversation(
                 self.view_model.messages,
                 self.view_model.active_agent_steps,
             )
@@ -455,21 +465,8 @@ class ConversationPanel(QWidget):
     # ============================================================
     
     @pyqtSlot()
-    def _on_messages_changed(self) -> None:
-        """处理消息列表变化"""
+    def _on_display_state_changed(self) -> None:
         self.refresh_display()
-    
-    @pyqtSlot()
-    def _on_runtime_steps_changed(self) -> None:
-        """处理运行时步骤更新。"""
-        if self._message_area and self.view_model is not None:
-            self._message_area.render_runtime_steps(self.view_model.active_agent_steps)
-
-    @pyqtSlot()
-    def _on_runtime_steps_finished(self) -> None:
-        """处理运行时步骤结束。"""
-        if self._message_area:
-            self._message_area.clear_runtime_steps()
     
     @pyqtSlot(float)
     def _on_usage_changed(self, ratio: float) -> None:
@@ -486,6 +483,7 @@ class ConversationPanel(QWidget):
         """处理停止请求信号（来自 ViewModel）"""
         if self._input_area and self._input_area.get_button_mode() != ButtonMode.STOPPING:
             self._input_area.set_button_mode(ButtonMode.STOPPING)
+        self._sync_input_action_state()
         if self.logger:
             self.logger.debug("Stop requested, UI updated")
     
@@ -656,7 +654,9 @@ class ConversationPanel(QWidget):
     def _on_rollback_requested(self, message_id: str) -> None:
         if self._rollback_in_progress or self._send_in_progress:
             return
-        asyncio.create_task(self._perform_rollback(message_id))
+        if self._rollback_confirmation_dialog is not None:
+            return
+        asyncio.create_task(self._confirm_and_perform_rollback(message_id))
 
     def _open_image_preview(self, image_path: str) -> None:
         if not image_path or not os.path.isfile(image_path):
@@ -666,37 +666,34 @@ class ConversationPanel(QWidget):
         dialog = ImagePreviewDialog(image_path, self)
         dialog.exec()
 
-
     # ============================================================
     # 拖放处理
     # ============================================================
-    
+
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:
         """处理拖入事件"""
         if event.mimeData().hasUrls():
             event.acceptProposedAction()
-    
+
     def dropEvent(self, event: QDropEvent) -> None:
         """处理放下事件"""
         if self._input_area is None:
             return
-        
+
         for url in event.mimeData().urls():
             path = url.toLocalFile()
             if os.path.isfile(path):
                 self._input_area.add_attachment(path)
 
     # ============================================================
-    # 公共方法
-    # ============================================================
-    
+
     async def _send_message(self) -> None:
         """发送消息"""
         if self._input_area is None:
             return
         if self._send_in_progress:
             return
-        
+
         text = self._input_area.get_text()
         attachments = self._input_area.get_attachments()
         if not text.strip() and not attachments:
@@ -704,7 +701,7 @@ class ConversationPanel(QWidget):
 
         if self.view_model and not self.view_model.can_send:
             return
-        
+
         if self.view_model:
             self._send_in_progress = True
             self._sync_input_action_state()
@@ -715,6 +712,21 @@ class ConversationPanel(QWidget):
             finally:
                 self._send_in_progress = False
                 self._sync_input_action_state()
+
+    async def _confirm_and_perform_rollback(self, message_id: str) -> None:
+        if not message_id or self.view_model is None:
+            return
+        if self._rollback_in_progress or self._send_in_progress:
+            return
+
+        preview, error_message = await self.view_model.preview_rollback_to_message(message_id)
+        if preview is None:
+            self._show_warning_dialog(
+                error_message or self._get_text("msg.rollback_failed", "撤回失败")
+            )
+            return
+
+        self._show_rollback_confirmation_dialog(preview, message_id)
 
     async def _perform_rollback(self, message_id: str) -> None:
         if not message_id or self.view_model is None:
@@ -728,31 +740,90 @@ class ConversationPanel(QWidget):
             success, error_message = await self.view_model.rollback_to_message(message_id)
             self._sync_input_action_state()
             if not success:
-                QMessageBox.warning(
-                    self,
-                    self._get_text("dialog.warning.title", "警告"),
-                    error_message or self._get_text("msg.rollback_failed", "撤回失败"),
+                self._show_warning_dialog(
+                    error_message or self._get_text("msg.rollback_failed", "撤回失败")
                 )
         finally:
             self._rollback_in_progress = False
             self._sync_input_action_state()
 
+    def _show_rollback_confirmation_dialog(self, preview: Any, message_id: str) -> None:
+        if self._rollback_confirmation_dialog is not None:
+            self._rollback_confirmation_dialog.close()
+            self._rollback_confirmation_dialog.deleteLater()
+
+        dialog = RollbackConfirmationDialog(preview, self)
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        dialog.finished.connect(
+            lambda result, target_message_id=message_id: self._on_rollback_confirmation_finished(
+                result,
+                target_message_id,
+            )
+        )
+        self._rollback_confirmation_dialog = dialog
+        dialog.open()
+
+    def _on_rollback_confirmation_finished(self, result: int, message_id: str) -> None:
+        self._rollback_confirmation_dialog = None
+        if result != int(QDialog.DialogCode.Accepted):
+            return
+        if self._rollback_in_progress or self._send_in_progress:
+            return
+        asyncio.create_task(self._perform_rollback(message_id))
+
+    def _show_warning_dialog(self, message: str) -> None:
+        if not message:
+            return
+
+        if self._warning_dialog is not None:
+            self._warning_dialog.close()
+            self._warning_dialog.deleteLater()
+
+        dialog = QMessageBox(self)
+        dialog.setIcon(QMessageBox.Icon.Warning)
+        dialog.setWindowTitle(self._get_text("dialog.warning.title", "警告"))
+        dialog.setText(message)
+        dialog.setStandardButtons(QMessageBox.StandardButton.Ok)
+        dialog.setModal(True)
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        dialog.finished.connect(self._on_warning_dialog_finished)
+        self._warning_dialog = dialog
+        dialog.open()
+
+    def _on_warning_dialog_finished(self, result: int) -> None:
+        del result
+        self._warning_dialog = None
+
     def _sync_input_action_state(self) -> None:
         if self._input_area is None:
             return
         if self._send_in_progress:
+            self._input_area.set_action_status(
+                self._get_text("conversation.send.in_progress", "正在发送…")
+            )
             self._input_area.set_button_mode(ButtonMode.SEND)
             self._input_area.set_send_enabled(False)
             return
         if self._rollback_in_progress:
-            self._input_area.set_button_mode(ButtonMode.SEND)
+            self._input_area.set_action_status(
+                self._get_text("conversation.rollback.in_progress", "正在撤回…")
+            )
+            self._input_area.set_button_mode(ButtonMode.ROLLBACKING)
             self._input_area.set_send_enabled(False)
             return
         if self.view_model and self.view_model.is_loading:
             if self._input_area.get_button_mode() != ButtonMode.STOPPING:
                 self._input_area.set_button_mode(ButtonMode.STOP)
+                self._input_area.set_action_status(
+                    self._get_text("conversation.generate.in_progress", "正在生成…")
+                )
+            else:
+                self._input_area.set_action_status(
+                    self._get_text("conversation.stop.in_progress", "正在停止…")
+                )
             self._input_area.set_send_enabled(False)
             return
+        self._input_area.set_action_status("")
         self._input_area.set_button_mode(ButtonMode.SEND)
         self._input_area.set_send_enabled(self.view_model.can_send if self.view_model else True)
 
@@ -762,18 +833,18 @@ class ConversationPanel(QWidget):
         for path in paths:
             if isinstance(path, str) and path:
                 self._input_area.add_attachment(path)
-    
+
     def clear_display(self) -> None:
         """清空显示区（不清空 ViewModel 数据）"""
         if self._message_area:
             self._message_area.clear_messages()
         if self._input_area:
             self._input_area.clear_attachments()
-    
+
     def start_new_conversation(self) -> None:
         """
         新开对话（委托给 SessionStateManager）
-        
+
         SessionStateManager 原子执行：
         1. 保存当前会话
         2. 清空消息

@@ -1,9 +1,41 @@
+import asyncio
+import json
 import threading
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from domain.services import context_service, snapshot_service
+
+
+@dataclass(frozen=True)
+class RollbackMessageSummary:
+    message_id: str
+    role: str
+    timestamp: str
+    content_preview: str
+
+
+@dataclass(frozen=True)
+class ConversationRollbackPreview:
+    session_id: str
+    snapshot_id: str
+    anchor_message_id: str
+    anchor_timestamp: str
+    anchor_label: str
+    current_message_count: int
+    target_message_count: int
+    removed_message_count: int
+    removed_messages: List[RollbackMessageSummary]
+    changed_files: List[snapshot_service.SnapshotFileChange]
+    changed_file_count: int
+    total_added_lines: int
+    total_deleted_lines: int
+    workspace_changed_files: List[snapshot_service.SnapshotFileChange]
+    workspace_changed_file_count: int
+    workspace_total_added_lines: int
+    workspace_total_deleted_lines: int
 
 
 class ConversationRollbackService:
@@ -74,6 +106,31 @@ class ConversationRollbackService:
             if item.get("anchor_message_id")
         }
 
+    async def preview_rollback_to_anchor(
+        self,
+        anchor_message_id: str,
+    ) -> ConversationRollbackPreview:
+        if not anchor_message_id:
+            raise ValueError("Invalid rollback anchor")
+
+        session_state_manager, session_id, project_root = self._require_active_session()
+
+        persisted = await asyncio.to_thread(
+            session_state_manager.save_current_session,
+            project_root=project_root,
+        )
+        if not persisted:
+            raise RuntimeError("Failed to persist current conversation state before rollback preview")
+
+        checkpoint = self._get_checkpoint(project_root, session_id, anchor_message_id)
+        return await asyncio.to_thread(
+            self._build_preview,
+            project_root,
+            session_id,
+            anchor_message_id,
+            checkpoint,
+        )
+
     async def capture_user_turn_checkpoint(
         self,
         *,
@@ -117,27 +174,21 @@ class ConversationRollbackService:
         if not anchor_message_id:
             return {"success": False, "message": "Invalid rollback anchor"}
 
-        with self._lock:
-            session_state_manager = self.session_state_manager
-            if session_state_manager is None:
-                return {"success": False, "message": "SessionStateManager not available"}
-
-            session_id = session_state_manager.get_current_session_id()
-            project_root = session_state_manager.get_project_root()
-            if not session_id or not project_root:
-                return {"success": False, "message": "No active conversation session"}
-
-        checkpoints = context_service.load_rollback_checkpoints(project_root, session_id)
-        checkpoint = next(
-            (item for item in checkpoints if item.get("anchor_message_id") == anchor_message_id),
-            None,
-        )
-        if checkpoint is None:
-            return {"success": False, "message": "Rollback checkpoint not found"}
-
-        snapshot_id = str(checkpoint.get("snapshot_id", "") or "")
-        if not snapshot_id:
-            return {"success": False, "message": "Rollback snapshot is missing"}
+        try:
+            session_state_manager, session_id, project_root = self._require_active_session()
+            persisted = await asyncio.to_thread(
+                session_state_manager.save_current_session,
+                project_root=project_root,
+            )
+            if not persisted:
+                return {
+                    "success": False,
+                    "message": "Failed to persist current conversation state before rollback",
+                }
+            checkpoint = self._get_checkpoint(project_root, session_id, anchor_message_id)
+            snapshot_id = str(checkpoint.get("snapshot_id", "") or "")
+        except Exception as exc:
+            return {"success": False, "message": str(exc)}
 
         watcher_was_running = False
         file_watcher = self.file_watcher
@@ -190,6 +241,199 @@ class ConversationRollbackService:
                     if self.logger:
                         self.logger.warning(f"Failed to restart file watcher after rollback: {exc}")
 
+    def _require_active_session(self) -> tuple[Any, str, str]:
+        with self._lock:
+            session_state_manager = self.session_state_manager
+            if session_state_manager is None:
+                raise RuntimeError("SessionStateManager not available")
+
+            session_id = session_state_manager.get_current_session_id()
+            project_root = session_state_manager.get_project_root()
+            if not session_id or not project_root:
+                raise RuntimeError("No active conversation session")
+
+            return session_state_manager, session_id, project_root
+
+    def _get_checkpoint(
+        self,
+        project_root: str,
+        session_id: str,
+        anchor_message_id: str,
+    ) -> Dict[str, Any]:
+        checkpoints = context_service.load_rollback_checkpoints(project_root, session_id)
+        checkpoint = next(
+            (item for item in checkpoints if item.get("anchor_message_id") == anchor_message_id),
+            None,
+        )
+        if checkpoint is None:
+            raise RuntimeError("Rollback checkpoint not found")
+
+        snapshot_id = str(checkpoint.get("snapshot_id", "") or "")
+        if not snapshot_id:
+            raise RuntimeError("Rollback snapshot is missing")
+
+        return checkpoint
+
+    def _build_preview(
+        self,
+        project_root: str,
+        session_id: str,
+        anchor_message_id: str,
+        checkpoint: Dict[str, Any],
+    ) -> ConversationRollbackPreview:
+        snapshot_id = str(checkpoint.get("snapshot_id", "") or "")
+        current_messages = context_service.load_messages(project_root, session_id)
+        target_messages = self._load_snapshot_session_messages(
+            project_root,
+            snapshot_id,
+            session_id,
+        )
+        restore_preview = snapshot_service.preview_restore_snapshot(project_root, snapshot_id)
+        workspace_changed_files = [
+            change
+            for change in restore_preview.changed_files
+            if not self._is_internal_conversation_change(change.relative_path)
+        ]
+        removed_messages = self._build_removed_messages(current_messages, target_messages)
+        anchor_message = next(
+            (
+                message
+                for message in current_messages
+                if self._get_message_id(message) == anchor_message_id
+            ),
+            None,
+        )
+
+        return ConversationRollbackPreview(
+            session_id=session_id,
+            snapshot_id=snapshot_id,
+            anchor_message_id=anchor_message_id,
+            anchor_timestamp=str(checkpoint.get("anchor_timestamp", "") or ""),
+            anchor_label=self._build_anchor_label(anchor_message_id, checkpoint, anchor_message, removed_messages),
+            current_message_count=len(current_messages),
+            target_message_count=len(target_messages),
+            removed_message_count=len(removed_messages),
+            removed_messages=removed_messages,
+            changed_files=restore_preview.changed_files,
+            changed_file_count=restore_preview.changed_file_count,
+            total_added_lines=restore_preview.total_added_lines,
+            total_deleted_lines=restore_preview.total_deleted_lines,
+            workspace_changed_files=workspace_changed_files,
+            workspace_changed_file_count=len(workspace_changed_files),
+            workspace_total_added_lines=sum(change.added_lines for change in workspace_changed_files),
+            workspace_total_deleted_lines=sum(change.deleted_lines for change in workspace_changed_files),
+        )
+
+    def _load_snapshot_session_messages(
+        self,
+        project_root: str,
+        snapshot_id: str,
+        session_id: str,
+    ) -> List[Dict[str, Any]]:
+        snapshot_session_file = (
+            Path(project_root).resolve()
+            / snapshot_service.SNAPSHOTS_DIR
+            / snapshot_id
+            / context_service.CONVERSATIONS_DIR
+            / f"{session_id}.json"
+        )
+        if not snapshot_session_file.exists():
+            raise RuntimeError("Rollback session snapshot file is missing")
+
+        try:
+            payload = json.loads(snapshot_session_file.read_text(encoding="utf-8"))
+        except Exception as exc:
+            raise RuntimeError(f"Failed to read rollback session snapshot: {exc}") from exc
+
+        messages = payload.get("messages", [])
+        if not isinstance(messages, list):
+            raise RuntimeError("Rollback session snapshot is invalid")
+        return messages
+
+    def _build_removed_messages(
+        self,
+        current_messages: List[Dict[str, Any]],
+        target_messages: List[Dict[str, Any]],
+    ) -> List[RollbackMessageSummary]:
+        prefix_length = 0
+        max_prefix = min(len(current_messages), len(target_messages))
+        while prefix_length < max_prefix:
+            if self._message_signature(current_messages[prefix_length]) != self._message_signature(target_messages[prefix_length]):
+                break
+            prefix_length += 1
+
+        return [
+            RollbackMessageSummary(
+                message_id=self._get_message_id(message),
+                role=str(message.get("type", "") or ""),
+                timestamp=self._get_message_timestamp(message),
+                content_preview=self._build_message_preview(message),
+            )
+            for message in current_messages[prefix_length:]
+        ]
+
+    def _build_anchor_label(
+        self,
+        anchor_message_id: str,
+        checkpoint: Dict[str, Any],
+        anchor_message: Optional[Dict[str, Any]],
+        removed_messages: List[RollbackMessageSummary],
+    ) -> str:
+        if anchor_message is not None:
+            preview = self._build_message_preview(anchor_message)
+            if preview:
+                return preview
+
+        if removed_messages:
+            preview = removed_messages[0].content_preview
+            if preview:
+                return preview
+
+        timestamp = str(checkpoint.get("anchor_timestamp", "") or "")
+        if timestamp:
+            return timestamp
+
+        short_id = anchor_message_id[:8] if anchor_message_id else ""
+        return short_id or "rollback"
+
+    def _build_message_preview(self, message: Dict[str, Any], limit: int = 120) -> str:
+        content = message.get("content", "")
+        if isinstance(content, list):
+            normalized = " ".join(str(item) for item in content)
+        elif isinstance(content, str):
+            normalized = content
+        else:
+            normalized = str(content or "")
+
+        normalized = " ".join(normalized.split())
+        if len(normalized) <= limit:
+            return normalized
+        return f"{normalized[:limit]}..."
+
+    def _get_message_id(self, message: Dict[str, Any]) -> str:
+        additional_kwargs = message.get("additional_kwargs", {})
+        metadata = additional_kwargs.get("metadata", {}) if isinstance(additional_kwargs, dict) else {}
+        if isinstance(metadata, dict):
+            return str(metadata.get("id", "") or "")
+        return ""
+
+    def _get_message_timestamp(self, message: Dict[str, Any]) -> str:
+        additional_kwargs = message.get("additional_kwargs", {})
+        if isinstance(additional_kwargs, dict):
+            return str(additional_kwargs.get("timestamp", "") or "")
+        return ""
+
+    def _message_signature(self, message: Dict[str, Any]) -> tuple[str, str, str]:
+        return (
+            self._get_message_id(message),
+            str(message.get("type", "") or ""),
+            self._build_message_preview(message, limit=400),
+        )
+
+    def _is_internal_conversation_change(self, relative_path: str) -> bool:
+        normalized_path = str(relative_path or "").replace("\\", "/")
+        return normalized_path.startswith(f"{context_service.CONVERSATIONS_DIR}/")
+
     def _cleanup_hidden_snapshots(self, project_root: str, session_id: str) -> None:
         snapshots_dir = Path(snapshot_service.get_snapshots_dir(project_root))
         if not snapshots_dir.exists():
@@ -226,4 +470,8 @@ class ConversationRollbackService:
         return f"_conv_turn_{safe_session}_"
 
 
-__all__ = ["ConversationRollbackService"]
+__all__ = [
+    "RollbackMessageSummary",
+    "ConversationRollbackPreview",
+    "ConversationRollbackService",
+]

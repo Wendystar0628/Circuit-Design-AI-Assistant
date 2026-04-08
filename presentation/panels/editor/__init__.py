@@ -9,8 +9,10 @@
 
 from .code_editor import CodeEditor
 from .line_number_area import LineNumberArea
+from .pending_workspace_file_review_widget import PendingWorkspaceFileReviewWidget
 
 __all__ = [
     "CodeEditor",
     "LineNumberArea",
+    "PendingWorkspaceFileReviewWidget",
 ]

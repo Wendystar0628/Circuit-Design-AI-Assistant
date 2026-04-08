@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-import html
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
@@ -11,7 +10,6 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
-    QTextBrowser,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -21,15 +19,11 @@ from PyQt6.QtWidgets import (
 class PendingWorkspaceEditBar(QWidget):
     accept_all_requested = pyqtSignal()
     reject_all_requested = pyqtSignal()
-    accept_file_requested = pyqtSignal(str)
-    reject_file_requested = pyqtSignal(str)
-    accept_hunk_requested = pyqtSignal(str, str)
-    reject_hunk_requested = pyqtSignal(str, str)
     file_clicked = pyqtSignal(str)
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
-        self._state: Dict[str, Any] = {
+        self._summary_state: Dict[str, Any] = {
             "file_count": 0,
             "added_lines": 0,
             "deleted_lines": 0,
@@ -46,12 +40,27 @@ class PendingWorkspaceEditBar(QWidget):
         self._setup_ui()
         self._refresh_ui()
 
-    def set_state(self, state: Dict[str, Any]) -> None:
-        self._state = {
-            "file_count": int(state.get("file_count", 0) or 0),
-            "added_lines": int(state.get("added_lines", 0) or 0),
-            "deleted_lines": int(state.get("deleted_lines", 0) or 0),
-            "files": list(state.get("files", []) or []),
+    def set_summary_state(self, summary_state: Dict[str, Any]) -> None:
+        files = []
+        for file_summary in summary_state.get("files", []) or []:
+            if not isinstance(file_summary, dict):
+                continue
+            file_path = str(file_summary.get("path", "") or "")
+            if not file_path:
+                continue
+            files.append(
+                {
+                    "path": file_path,
+                    "relative_path": str(file_summary.get("relative_path", file_path) or file_path),
+                    "added_lines": int(file_summary.get("added_lines", 0) or 0),
+                    "deleted_lines": int(file_summary.get("deleted_lines", 0) or 0),
+                }
+            )
+        self._summary_state = {
+            "file_count": len(files),
+            "added_lines": int(summary_state.get("added_lines", 0) or 0),
+            "deleted_lines": int(summary_state.get("deleted_lines", 0) or 0),
+            "files": files,
         }
         self._refresh_ui()
 
@@ -115,9 +124,9 @@ class PendingWorkspaceEditBar(QWidget):
         self._refresh_ui()
 
     def _refresh_ui(self) -> None:
-        file_count = int(self._state.get("file_count", 0) or 0)
-        added_lines = int(self._state.get("added_lines", 0) or 0)
-        deleted_lines = int(self._state.get("deleted_lines", 0) or 0)
+        file_count = int(self._summary_state.get("file_count", 0) or 0)
+        added_lines = int(self._summary_state.get("added_lines", 0) or 0)
+        deleted_lines = int(self._summary_state.get("deleted_lines", 0) or 0)
         self.setVisible(file_count > 0)
         if self._toggle_btn is not None:
             self._toggle_btn.setText("▼" if self._expanded else "▶")
@@ -144,26 +153,22 @@ class PendingWorkspaceEditBar(QWidget):
             widget = item.widget()
             if widget is not None:
                 widget.deleteLater()
-        for file_state in self._state.get("files", []) or []:
-            if isinstance(file_state, dict):
-                self._body_layout.addWidget(self._build_file_widget(file_state))
+        for file_summary in self._summary_state.get("files", []) or []:
+            if isinstance(file_summary, dict):
+                self._body_layout.addWidget(self._build_file_widget(file_summary))
         self._body_layout.addStretch(1)
 
-    def _build_file_widget(self, file_state: Dict[str, Any]) -> QWidget:
+    def _build_file_widget(self, file_summary: Dict[str, Any]) -> QWidget:
         frame = QFrame(self._body_container)
         frame.setStyleSheet(
             "QFrame { background: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; }"
         )
-        layout = QVBoxLayout(frame)
-        layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(8)
-
-        header_layout = QHBoxLayout()
-        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_layout = QHBoxLayout(frame)
+        header_layout.setContentsMargins(10, 10, 10, 10)
         header_layout.setSpacing(8)
 
-        file_path = str(file_state.get("path", "") or "")
-        relative_path = str(file_state.get("relative_path", file_path) or file_path)
+        file_path = str(file_summary.get("path", "") or "")
+        relative_path = str(file_summary.get("relative_path", file_path) or file_path)
 
         file_btn = QPushButton(relative_path, frame)
         file_btn.setFlat(True)
@@ -176,141 +181,13 @@ class PendingWorkspaceEditBar(QWidget):
         header_layout.addWidget(file_btn, 1)
 
         stats_label = QLabel(
-            f"+{int(file_state.get('added_lines', 0) or 0)} / -{int(file_state.get('deleted_lines', 0) or 0)}",
+            f"+{int(file_summary.get('added_lines', 0) or 0)} / -{int(file_summary.get('deleted_lines', 0) or 0)}",
             frame,
         )
         stats_label.setStyleSheet("QLabel { color: #475569; font-size: 11px; }")
         header_layout.addWidget(stats_label)
 
-        accept_btn = QPushButton("接受文件", frame)
-        accept_btn.setStyleSheet(
-            "QPushButton { background: #ecfdf5; color: #166534; border: 1px solid #bbf7d0; border-radius: 6px; padding: 4px 8px; font-size: 11px; }"
-            "QPushButton:hover { background: #dcfce7; }"
-        )
-        accept_btn.clicked.connect(
-            lambda _=False, target=file_path: self.accept_file_requested.emit(target)
-        )
-        header_layout.addWidget(accept_btn)
-
-        reject_btn = QPushButton("拒绝文件", frame)
-        reject_btn.setStyleSheet(
-            "QPushButton { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; border-radius: 6px; padding: 4px 8px; font-size: 11px; }"
-            "QPushButton:hover { background: #fee2e2; }"
-        )
-        reject_btn.clicked.connect(
-            lambda _=False, target=file_path: self.reject_file_requested.emit(target)
-        )
-        header_layout.addWidget(reject_btn)
-
-        layout.addLayout(header_layout)
-
-        for hunk in file_state.get("hunks", []) or []:
-            if isinstance(hunk, dict):
-                layout.addWidget(self._build_hunk_widget(file_path, hunk))
-
         return frame
-
-    def _build_hunk_widget(self, file_path: str, hunk: Dict[str, Any]) -> QWidget:
-        frame = QFrame(self._body_container)
-        frame.setStyleSheet(
-            "QFrame { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; }"
-        )
-        layout = QVBoxLayout(frame)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(6)
-
-        top_row = QHBoxLayout()
-        top_row.setContentsMargins(0, 0, 0, 0)
-        top_row.setSpacing(8)
-
-        header_label = QLabel(str(hunk.get("header", "") or ""), frame)
-        header_label.setStyleSheet(
-            "QLabel { color: #334155; font-size: 11px; font-family: 'JetBrains Mono', 'Cascadia Code', 'Consolas', monospace; }"
-        )
-        top_row.addWidget(header_label, 1)
-
-        stat_label = QLabel(
-            f"+{int(hunk.get('added_lines', 0) or 0)} / -{int(hunk.get('deleted_lines', 0) or 0)}",
-            frame,
-        )
-        stat_label.setStyleSheet("QLabel { color: #64748b; font-size: 11px; }")
-        top_row.addWidget(stat_label)
-
-        accept_btn = QPushButton("接受", frame)
-        accept_btn.setStyleSheet(
-            "QPushButton { background: #ecfdf5; color: #166534; border: 1px solid #bbf7d0; border-radius: 6px; padding: 3px 8px; font-size: 11px; }"
-            "QPushButton:hover { background: #dcfce7; }"
-        )
-        accept_btn.clicked.connect(
-            lambda _=False, target=file_path, target_hunk=str(hunk.get('id', '') or ''): self.accept_hunk_requested.emit(target, target_hunk)
-        )
-        top_row.addWidget(accept_btn)
-
-        reject_btn = QPushButton("拒绝", frame)
-        reject_btn.setStyleSheet(
-            "QPushButton { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; border-radius: 6px; padding: 3px 8px; font-size: 11px; }"
-            "QPushButton:hover { background: #fee2e2; }"
-        )
-        reject_btn.clicked.connect(
-            lambda _=False, target=file_path, target_hunk=str(hunk.get('id', '') or ''): self.reject_hunk_requested.emit(target, target_hunk)
-        )
-        top_row.addWidget(reject_btn)
-
-        layout.addLayout(top_row)
-
-        preview = QTextBrowser(frame)
-        preview.setOpenLinks(False)
-        preview.setFrameShape(QFrame.Shape.NoFrame)
-        preview.setReadOnly(True)
-        preview.setMaximumHeight(180)
-        preview.setStyleSheet(
-            "QTextBrowser { background: #ffffff; border: 1px solid #e2e8f0; border-radius: 6px; padding: 0; font-family: 'JetBrains Mono', 'Cascadia Code', 'Consolas', monospace; font-size: 11px; }"
-        )
-        preview.setHtml(self._build_hunk_html(hunk))
-        layout.addWidget(preview)
-
-        return frame
-
-    def _build_hunk_html(self, hunk: Dict[str, Any]) -> str:
-        rows: List[str] = []
-        for line in hunk.get("lines", []) or []:
-            if not isinstance(line, dict):
-                continue
-            kind = str(line.get("kind", "") or "")
-            if kind == "added":
-                bg = "#ecfdf5"
-                fg = "#166534"
-                marker = "+"
-            elif kind == "deleted":
-                bg = "#fef2f2"
-                fg = "#991b1b"
-                marker = "-"
-            else:
-                bg = "#f8fafc"
-                fg = "#334155"
-                marker = " "
-            old_line = line.get("old_line_number")
-            new_line = line.get("new_line_number")
-            old_html = "" if old_line is None else str(old_line)
-            new_html = "" if new_line is None else str(new_line)
-            text_html = html.escape(str(line.get("text", "") or "")).replace(" ", "&nbsp;")
-            rows.append(
-                "<div style=\"display:flex; font-family:JetBrains Mono, Cascadia Code, Consolas, monospace; background:"
-                + bg
-                + "; color:"
-                + fg
-                + ";\">"
-                + f"<span style=\"width:56px; padding:2px 6px; color:#64748b; border-right:1px solid #e2e8f0;\">{old_html}</span>"
-                + f"<span style=\"width:56px; padding:2px 6px; color:#64748b; border-right:1px solid #e2e8f0;\">{new_html}</span>"
-                + f"<span style=\"width:24px; padding:2px 6px; color:{fg};\">{marker}</span>"
-                + f"<span style=\"flex:1; padding:2px 6px; white-space:pre-wrap;\">{text_html or '&nbsp;'}</span>"
-                + "</div>"
-            )
-        if not rows:
-            rows.append(
-                "<div style=\"padding:6px 8px; color:#64748b;\">没有可显示的文本 diff。</div>"
-            )
-        return "<html><body style='margin:0; background:#ffffff;'>" + "".join(rows) + "</body></html>"
 
 
 __all__ = ["PendingWorkspaceEditBar"]

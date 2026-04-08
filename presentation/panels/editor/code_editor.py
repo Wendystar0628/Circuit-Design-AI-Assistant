@@ -16,12 +16,12 @@
 - Tab 宽度：4 个空格
 """
 
-from typing import Optional, Tuple
+from typing import Any, Dict, Optional, Set, Tuple
 
 from PyQt6.QtWidgets import QPlainTextEdit, QTextEdit
 from PyQt6.QtCore import Qt, pyqtSignal, QRect
 from PyQt6.QtGui import (
-    QFont, QColor, QPainter, QTextFormat, QSyntaxHighlighter
+    QFont, QColor, QPainter, QTextCursor, QTextFormat, QSyntaxHighlighter
 )
 
 from .line_number_area import LineNumberArea
@@ -58,6 +58,11 @@ class CodeEditor(QPlainTextEdit):
         
         # 文件路径
         self._file_path: Optional[str] = None
+
+        # 待确认 diff 可视状态
+        self._pending_file_state: Optional[Dict[str, Any]] = None
+        self._added_line_numbers: Set[int] = set()
+        self._deleted_anchor_lines: Set[int] = set()
         
         # 是否已修改
         self._is_modified = False
@@ -71,12 +76,12 @@ class CodeEditor(QPlainTextEdit):
         # 连接信号
         self.blockCountChanged.connect(self._update_line_number_area_width)
         self.updateRequest.connect(self._update_line_number_area)
-        self.cursorPositionChanged.connect(self._highlight_current_line)
+        self.cursorPositionChanged.connect(self._refresh_extra_selections)
         self.textChanged.connect(self._on_text_changed)
         
         # 初始化
         self._update_line_number_area_width(0)
-        self._highlight_current_line()
+        self._refresh_extra_selections()
     
     def _setup_font(self):
         """设置编程字体"""
@@ -125,7 +130,7 @@ class CodeEditor(QPlainTextEdit):
         # 最少显示 3 位数字的宽度
         digits = max(3, digits)
         
-        space = 10 + self.fontMetrics().horizontalAdvance('9') * digits
+        space = 18 + self.fontMetrics().horizontalAdvance('9') * digits
         return space
     
     def _update_line_number_area_width(self, _):
@@ -177,11 +182,24 @@ class CodeEditor(QPlainTextEdit):
         
         while block.isValid() and top <= event.rect().bottom():
             if block.isVisible() and bottom >= event.rect().top():
+                line_number = block_number + 1
+                line_height = max(1, bottom - top)
+                line_rect = QRect(0, top, self._line_number_area.width() - 1, line_height)
+                line_bg = self._line_background_color(line_number)
+                if line_bg is not None:
+                    painter.fillRect(line_rect, line_bg)
+                if line_number in self._added_line_numbers and line_number in self._deleted_anchor_lines:
+                    painter.fillRect(0, top, 2, line_height, QColor("#ef4444"))
+                    painter.fillRect(2, top, 2, line_height, QColor("#22c55e"))
+                elif line_number in self._added_line_numbers:
+                    painter.fillRect(0, top, 4, line_height, QColor("#22c55e"))
+                elif line_number in self._deleted_anchor_lines:
+                    painter.fillRect(0, top, 4, line_height, QColor("#ef4444"))
                 number = str(block_number + 1)
                 painter.drawText(
-                    0, top,
-                    self._line_number_area.width() - 5,
-                    self.fontMetrics().height(),
+                    6, top,
+                    self._line_number_area.width() - 11,
+                    line_height,
                     Qt.AlignmentFlag.AlignRight,
                     number
                 )
@@ -191,21 +209,54 @@ class CodeEditor(QPlainTextEdit):
             bottom = top + int(self.blockBoundingRect(block).height())
             block_number += 1
     
-    def _highlight_current_line(self):
-        """高亮当前行"""
+    def _line_background_color(self, line_number: int, current: bool = False) -> Optional[QColor]:
+        if line_number in self._added_line_numbers:
+            return QColor("#dcfce7" if current else "#ecfdf5")
+        if line_number in self._deleted_anchor_lines:
+            return QColor("#fee2e2" if current else "#fef2f2")
+        if current:
+            return QColor("#f0f7ff")
+        return None
+
+    def _build_full_width_selection(
+        self,
+        line_number: int,
+        color: QColor,
+    ) -> Optional[QTextEdit.ExtraSelection]:
+        block = self.document().findBlockByNumber(line_number - 1)
+        if not block.isValid():
+            return None
+        selection = QTextEdit.ExtraSelection()
+        selection.format.setBackground(color)
+        selection.format.setProperty(
+            QTextFormat.Property.FullWidthSelection, True
+        )
+        cursor = QTextCursor(block)
+        cursor.clearSelection()
+        selection.cursor = cursor
+        return selection
+
+    def _refresh_extra_selections(self):
+        """刷新当前行与 pending diff 的可视高亮"""
         extra_selections = []
-        
-        if not self.isReadOnly():
-            selection = QTextEdit.ExtraSelection()
-            line_color = QColor("#f0f7ff")
-            selection.format.setBackground(line_color)
-            selection.format.setProperty(
-                QTextFormat.Property.FullWidthSelection, True
-            )
-            selection.cursor = self.textCursor()
-            selection.cursor.clearSelection()
-            extra_selections.append(selection)
-        
+
+        for line_number in sorted(self._deleted_anchor_lines - self._added_line_numbers):
+            selection = self._build_full_width_selection(line_number, QColor("#fef2f2"))
+            if selection is not None:
+                extra_selections.append(selection)
+
+        for line_number in sorted(self._added_line_numbers):
+            selection = self._build_full_width_selection(line_number, QColor("#ecfdf5"))
+            if selection is not None:
+                extra_selections.append(selection)
+
+        current_line_number = self.textCursor().blockNumber() + 1
+        current_line_color = self._line_background_color(current_line_number, current=True)
+        if current_line_color is not None:
+            selection = self._build_full_width_selection(current_line_number, current_line_color)
+            if selection is not None:
+                extra_selections.append(selection)
+
         self.setExtraSelections(extra_selections)
     
     def _on_text_changed(self):
@@ -214,6 +265,7 @@ class CodeEditor(QPlainTextEdit):
             self._is_modified = True
             # 发出修改状态变化信号
             self.modification_changed.emit(True)
+        self._refresh_extra_selections()
     
     def set_highlighter(self, file_ext: str):
         """根据文件扩展名设置语法高亮器"""
@@ -238,6 +290,32 @@ class CodeEditor(QPlainTextEdit):
     def set_file_path(self, path: str):
         """设置文件路径"""
         self._file_path = path
+
+    def set_pending_file_state(self, file_state: Optional[Dict[str, Any]]):
+        self._pending_file_state = file_state if isinstance(file_state, dict) else None
+        self._added_line_numbers = set()
+        self._deleted_anchor_lines = set()
+        max_line_number = max(1, self.blockCount())
+        if isinstance(self._pending_file_state, dict):
+            for hunk in self._pending_file_state.get("hunks", []) or []:
+                if not isinstance(hunk, dict):
+                    continue
+                if int(hunk.get("deleted_lines", 0) or 0) > 0:
+                    anchor_line = max(1, int(hunk.get("new_start", 0) or 0) + 1)
+                    anchor_line = min(anchor_line, max_line_number)
+                    self._deleted_anchor_lines.add(anchor_line)
+                for line in hunk.get("lines", []) or []:
+                    if not isinstance(line, dict):
+                        continue
+                    if str(line.get("kind", "") or "") != "added":
+                        continue
+                    line_number = line.get("new_line_number")
+                    if line_number is None:
+                        continue
+                    self._added_line_numbers.add(int(line_number))
+        self._line_number_area.update()
+        self.viewport().update()
+        self._refresh_extra_selections()
     
     def is_modified(self) -> bool:
         """是否已修改"""
@@ -250,6 +328,7 @@ class CodeEditor(QPlainTextEdit):
         # 状态变化时发出信号
         if old_modified != modified:
             self.modification_changed.emit(modified)
+        self._refresh_extra_selections()
     
     def get_cursor_position(self) -> Tuple[int, int]:
         """获取光标位置（行号，列号）"""

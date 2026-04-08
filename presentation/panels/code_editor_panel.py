@@ -24,9 +24,10 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QPoint
 from PyQt6.QtGui import QAction, QKeySequence, QShortcut
+from shared.path_utils import normalize_absolute_path, normalize_identity_path
 
 # 从子模块导入组件
-from .editor import CodeEditor
+from .editor import CodeEditor, PendingWorkspaceFileReviewWidget
 from .viewers import ImageViewer, DocumentViewer
 from .highlighters import SpiceHighlighter, JsonHighlighter, PythonHighlighter
 
@@ -38,11 +39,20 @@ DOCUMENT_EXTENSIONS = {'.md', '.markdown', '.docx', '.pdf'}
 
 class EditorTab:
     """编辑器标签页数据"""
-    def __init__(self, path: str, widget: QWidget, is_readonly: bool = False):
-        self.path = path
+    def __init__(
+        self,
+        path: str,
+        widget: QWidget,
+        is_readonly: bool = False,
+        editor: Optional[CodeEditor] = None,
+        review_widget: Optional[PendingWorkspaceFileReviewWidget] = None,
+    ):
+        self.path = normalize_absolute_path(path)
+        self.identity_path = normalize_identity_path(path)
         self.widget = widget
+        self.editor = editor
+        self.review_widget = review_widget
         self.is_readonly = is_readonly
-        self.is_modified = False
 
 
 class EditorTabBar(QTabBar):
@@ -103,11 +113,13 @@ class CodeEditorPanel(QWidget):
         self._scroll_right_btn: Optional[QToolButton] = None
         self._empty_widget: Optional[QWidget] = None
         self._open_workspace_btn: Optional[QPushButton] = None
+        self._pending_workspace_edit_connected = False
         self._is_readonly_mode = False
         self._setup_ui()
         self._setup_shortcuts()
         self.retranslate_ui()
         self._subscribe_events()
+        self._subscribe_pending_workspace_edit_state()
 
     @property
     def i18n_manager(self):
@@ -153,6 +165,17 @@ class CodeEditorPanel(QWidget):
                 )
             except Exception:
                 pass
+        if (
+            self._pending_workspace_edit_service is not None
+            and not self._pending_workspace_edit_connected
+        ):
+            try:
+                self._pending_workspace_edit_service.state_changed.connect(
+                    self._on_pending_workspace_edit_state_changed
+                )
+                self._pending_workspace_edit_connected = True
+            except Exception:
+                pass
         return self._pending_workspace_edit_service
 
     @property
@@ -164,6 +187,86 @@ class CodeEditorPanel(QWidget):
             except Exception:
                 pass
         return self._logger
+
+    def _normalize_display_path(self, path: str) -> str:
+        return normalize_absolute_path(path)
+
+    def _normalize_identity_path(self, path: str) -> str:
+        return normalize_identity_path(path)
+
+    def _find_tab(self, path: str) -> Optional[EditorTab]:
+        if not path:
+            return None
+        return self._tabs.get(self._normalize_identity_path(path))
+
+    def _find_tab_by_widget(self, widget: Optional[QWidget]) -> Optional[EditorTab]:
+        if widget is None:
+            return None
+        for tab in self._tabs.values():
+            if tab.widget == widget:
+                return tab
+        return None
+
+    def _get_current_tab(self) -> Optional[EditorTab]:
+        return self._find_tab_by_widget(self._tab_widget.currentWidget())
+
+    def _get_pending_file_state_map(
+        self,
+        state: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Dict[str, Any]]:
+        if state is None:
+            service = self.pending_workspace_edit_service
+            state = service.get_state() if service is not None else {}
+        file_state_map: Dict[str, Dict[str, Any]] = {}
+        if not isinstance(state, dict):
+            return file_state_map
+        for file_state in state.get("files", []) or []:
+            if not isinstance(file_state, dict):
+                continue
+            identity_path = str(
+                file_state.get("identity_path", file_state.get("path", "")) or ""
+            )
+            if not identity_path:
+                continue
+            file_state_map[self._normalize_identity_path(identity_path)] = file_state
+        return file_state_map
+
+    def _apply_pending_file_state_to_tab(
+        self,
+        tab: EditorTab,
+        file_state: Optional[Dict[str, Any]],
+    ) -> None:
+        if tab.editor is not None:
+            tab.editor.set_pending_file_state(file_state)
+        if tab.review_widget is not None:
+            tab.review_widget.set_file_state(file_state)
+
+    def _refresh_pending_workspace_edit_views(
+        self,
+        state: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        file_state_map = self._get_pending_file_state_map(state)
+        for identity_path, tab in self._tabs.items():
+            self._apply_pending_file_state_to_tab(tab, file_state_map.get(identity_path))
+
+    def _subscribe_pending_workspace_edit_state(self) -> None:
+        _ = self.pending_workspace_edit_service
+
+    def _move_editor_cursor_to_line(self, path: str, line_number: int) -> None:
+        tab = self._find_tab(path)
+        if tab is None or tab.editor is None:
+            return
+        index = self._tab_widget.indexOf(tab.widget)
+        if index >= 0:
+            self._tab_widget.setCurrentIndex(index)
+        block = tab.editor.document().findBlockByNumber(max(0, int(line_number or 1) - 1))
+        if not block.isValid():
+            return
+        cursor = tab.editor.textCursor()
+        cursor.setPosition(block.position())
+        tab.editor.setTextCursor(cursor)
+        tab.editor.centerCursor()
+        tab.editor.setFocus()
 
     def _get_text(self, key: str, default: Optional[str] = None) -> str:
         if self.i18n_manager:
@@ -299,10 +402,10 @@ class CodeEditorPanel(QWidget):
     def _check_has_project(self) -> bool:
         try:
             from shared.service_locator import ServiceLocator
-            from shared.service_names import SVC_SESSION_STATE
-            session_state = ServiceLocator.get_optional(SVC_SESSION_STATE)
-            if session_state:
-                project_path = session_state.project_root
+            from shared.service_names import SVC_SESSION_STATE_MANAGER
+            session_state_manager = ServiceLocator.get_optional(SVC_SESSION_STATE_MANAGER)
+            if session_state_manager:
+                project_path = session_state_manager.get_project_root()
                 return project_path is not None and project_path != ""
         except Exception:
             pass
@@ -318,47 +421,76 @@ class CodeEditorPanel(QWidget):
 
     def load_file(self, path: str) -> bool:
         """加载文件内容"""
-        if not path or not os.path.isfile(path):
+        display_path = self._normalize_display_path(path)
+        if not display_path or not os.path.isfile(display_path):
             if self.logger:
                 self.logger.warning(f"Invalid file path: {path}")
             return False
-        
-        if path in self._tabs:
-            tab = self._tabs[path]
+
+        tab = self._find_tab(display_path)
+        if tab is not None:
             index = self._tab_widget.indexOf(tab.widget)
             if index >= 0:
                 self._tab_widget.setCurrentIndex(index)
             return True
-        
-        ext = os.path.splitext(path)[1].lower()
+
+        ext = os.path.splitext(display_path)[1].lower()
+        editor: Optional[CodeEditor] = None
+        review_widget: Optional[PendingWorkspaceFileReviewWidget] = None
         
         try:
             if ext in EDITABLE_EXTENSIONS:
-                widget = self._create_code_editor(path, ext)
+                widget, editor, review_widget = self._create_code_editor_host(display_path, ext)
             elif ext in IMAGE_EXTENSIONS:
-                widget = self._create_image_viewer(path)
+                widget = self._create_image_viewer(display_path)
             elif ext in DOCUMENT_EXTENSIONS:
-                widget = self._create_document_viewer(path, ext)
+                widget = self._create_document_viewer(display_path, ext)
             else:
-                widget = self._create_code_editor(path, ext)
+                widget, editor, review_widget = self._create_code_editor_host(display_path, ext)
             
             if widget is None:
                 return False
             
             is_readonly = ext in IMAGE_EXTENSIONS or ext in DOCUMENT_EXTENSIONS
-            self._add_tab(path, widget, is_readonly)
+            self._add_tab(
+                display_path,
+                widget,
+                is_readonly,
+                editor=editor,
+                review_widget=review_widget,
+            )
+            self._refresh_pending_workspace_edit_views()
             
             if self.logger:
-                self.logger.info(f"File loaded: {path}")
+                self.logger.info(f"File loaded: {display_path}")
             return True
         except Exception as e:
             if self.logger:
-                self.logger.error(f"Failed to load file: {path}, error: {e}")
+                self.logger.error(f"Failed to load file: {display_path}, error: {e}")
             return False
 
-    def _create_code_editor(self, path: str, ext: str) -> Optional[CodeEditor]:
-        """创建代码编辑器"""
-        editor = CodeEditor()
+    def _create_code_editor_host(
+        self,
+        path: str,
+        ext: str,
+    ) -> tuple[QWidget, CodeEditor, PendingWorkspaceFileReviewWidget]:
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+
+        review_widget = PendingWorkspaceFileReviewWidget(container)
+        review_widget.accept_file_requested.connect(self._on_pending_edit_accept_file_requested)
+        review_widget.reject_file_requested.connect(self._on_pending_edit_reject_file_requested)
+        review_widget.accept_hunk_requested.connect(self._on_pending_edit_accept_hunk_requested)
+        review_widget.reject_hunk_requested.connect(self._on_pending_edit_reject_hunk_requested)
+        review_widget.navigate_to_line_requested.connect(
+            lambda line, target=path: self._move_editor_cursor_to_line(target, line)
+        )
+        review_widget.hide()
+        layout.addWidget(review_widget)
+
+        editor = CodeEditor(container)
         editor.set_file_path(path)
         
         try:
@@ -384,11 +516,12 @@ class CodeEditorPanel(QWidget):
             
             if self._is_readonly_mode:
                 editor.setReadOnly(True)
-            return editor
+            layout.addWidget(editor, 1)
+            return container, editor, review_widget
         except Exception as e:
             if self.logger:
                 self.logger.error(f"Failed to read file: {path}, error: {e}")
-            return None
+            raise
 
     def _create_image_viewer(self, path: str) -> Optional[ImageViewer]:
         """创建图片预览器"""
@@ -409,97 +542,121 @@ class CodeEditorPanel(QWidget):
             viewer.load_pdf(path)
         return viewer
 
-    def _add_tab(self, path: str, widget: QWidget, is_readonly: bool):
+    def _apply_editor_content(self, tab: EditorTab, content: str) -> None:
+        if tab.editor is None:
+            return
+        editor = tab.editor
+        cursor = editor.textCursor()
+        block_number = cursor.blockNumber()
+        column_number = cursor.columnNumber()
+        editor.blockSignals(True)
+        editor.document().blockSignals(True)
+        editor.setPlainText(content)
+        editor.document().blockSignals(False)
+        editor.blockSignals(False)
+        block = editor.document().findBlockByNumber(block_number)
+        if block.isValid():
+            restore_cursor = editor.textCursor()
+            restore_cursor.setPosition(
+                block.position() + min(column_number, max(0, block.length() - 1))
+            )
+            editor.setTextCursor(restore_cursor)
+        editor.document().setModified(False)
+        editor.set_modified(False)
+
+    def _save_tab(self, tab: Optional[EditorTab]) -> bool:
+        if tab is None or tab.is_readonly or tab.editor is None:
+            return False
+
+        content = tab.editor.toPlainText()
+        try:
+            state = self._save_content_via_pending_service(tab.path, content)
+            tab.editor.document().setModified(False)
+            tab.editor.set_modified(False)
+            self._update_tab_title(tab.path)
+            self._refresh_pending_workspace_edit_views(state)
+            self.file_saved.emit(tab.path)
+            if self.logger:
+                self.logger.info(f"File saved: {tab.path}")
+            return True
+        except Exception as e:
+            if self.logger:
+                self.logger.error(f"Failed to save file: {tab.path}, error: {e}")
+            return False
+
+    def _add_tab(
+        self,
+        path: str,
+        widget: QWidget,
+        is_readonly: bool,
+        editor: Optional[CodeEditor] = None,
+        review_widget: Optional[PendingWorkspaceFileReviewWidget] = None,
+    ):
         """添加标签页"""
         file_name = os.path.basename(path)
         index = self._tab_widget.addTab(widget, file_name)
         self._tab_widget.setCurrentIndex(index)
         self._tab_widget.setTabToolTip(index, path)
-        tab = EditorTab(path, widget, is_readonly)
-        self._tabs[path] = tab
+        tab = EditorTab(
+            path,
+            widget,
+            is_readonly,
+            editor=editor,
+            review_widget=review_widget,
+        )
+        self._tabs[tab.identity_path] = tab
         self._update_empty_state()
-        self._update_status_bar(path)
-        self._update_tab_title(path)
+        self._update_status_bar(tab.path)
+        self._update_tab_title(tab.path)
         self._emit_editable_file_state()
 
-    def _save_content_via_pending_service(self, path: str, content: str) -> None:
+    def _save_content_via_pending_service(self, path: str, content: str) -> Dict[str, Any]:
         service = self.pending_workspace_edit_service
         if service is None:
             raise RuntimeError("PendingWorkspaceEditService not available")
-        service.record_manual_save(path, content)
+        return service.record_manual_save(path, content)
 
     def save_file(self) -> bool:
         """保存当前文件"""
-        current_widget = self._tab_widget.currentWidget()
-        if not current_widget:
-            return False
-        
-        tab = None
-        for t in self._tabs.values():
-            if t.widget == current_widget:
-                tab = t
-                break
-        
-        if not tab or tab.is_readonly:
-            return False
-        
-        if isinstance(current_widget, CodeEditor):
-            content = current_widget.toPlainText()
-            try:
-                self._save_content_via_pending_service(tab.path, content)
-                current_widget.set_modified(False)
-                tab.is_modified = False
-                self._update_tab_title(tab.path)
-                self.file_saved.emit(tab.path)
-                if self.logger:
-                    self.logger.info(f"File saved: {tab.path}")
-                return True
-            except Exception as e:
-                if self.logger:
-                    self.logger.error(f"Failed to save file: {tab.path}, error: {e}")
-                return False
-        return False
+        tab = self._get_current_tab()
+        return self._save_tab(tab)
 
     def save_all_files(self) -> int:
         """保存所有已修改的文件"""
         saved_count = 0
-        for path, tab in self._tabs.items():
+        for tab in self._tabs.values():
             if tab.is_readonly:
                 continue
-            if isinstance(tab.widget, CodeEditor) and tab.widget.is_modified():
-                content = tab.widget.toPlainText()
-                try:
-                    self._save_content_via_pending_service(path, content)
-                    tab.widget.set_modified(False)
-                    tab.is_modified = False
-                    self._update_tab_title(path)
-                    self.file_saved.emit(path)
+            if tab.editor is not None and tab.editor.is_modified():
+                if self._save_tab(tab):
                     saved_count += 1
-                except Exception as e:
-                    if self.logger:
-                        self.logger.error(f"Failed to save file: {path}, error: {e}")
         return saved_count
 
     def reset_all_modification_states(self):
         """重置所有打开文件的修改状态"""
-        for path, tab in self._tabs.items():
+        for tab in self._tabs.values():
             if tab.is_readonly:
                 continue
-            if isinstance(tab.widget, CodeEditor):
-                tab.widget.document().setModified(False)
-                tab.widget.set_modified(False)
-                tab.is_modified = False
-                self._update_tab_title(path)
+            if tab.editor is not None:
+                tab.editor.document().setModified(False)
+                tab.editor.set_modified(False)
+                self._update_tab_title(tab.path)
 
     def sync_open_tabs_with_workspace(self):
         removed_paths = []
-        for path in list(self._tabs.keys()):
+        for tab in list(self._tabs.values()):
+            path = tab.path
             if not os.path.isfile(path):
+                if tab.editor is not None and tab.editor.is_modified():
+                    continue
                 if self._discard_tab_by_path(path):
                     removed_paths.append(path)
                 continue
 
-            if not self.reload_file(path) and path in self._tabs:
+            if tab.editor is not None and tab.editor.is_modified():
+                continue
+
+            if not self.reload_file(path) and self._find_tab(path) is not None:
                 was_current = path == self.get_current_file()
                 if self._discard_tab_by_path(path):
                     self.load_file(path)
@@ -509,22 +666,23 @@ class CodeEditorPanel(QWidget):
         if removed_paths and self.logger:
             self.logger.info(f"Closed {len(removed_paths)} editor tabs for files removed by rollback")
 
+        self._refresh_pending_workspace_edit_views()
         self._update_empty_state()
         self._emit_editable_file_state()
         self._update_scroll_buttons()
 
     def get_content(self) -> Optional[str]:
-        current_widget = self._tab_widget.currentWidget()
-        if isinstance(current_widget, CodeEditor):
-            return current_widget.toPlainText()
+        current_tab = self._get_current_tab()
+        if current_tab is not None and current_tab.editor is not None:
+            return current_tab.editor.toPlainText()
         return None
 
     def set_readonly(self, readonly: bool):
         """设置只读模式"""
         self._is_readonly_mode = readonly
         for tab in self._tabs.values():
-            if isinstance(tab.widget, CodeEditor):
-                tab.widget.setReadOnly(readonly or tab.is_readonly)
+            if tab.editor is not None:
+                tab.editor.setReadOnly(readonly or tab.is_readonly)
         if readonly:
             self._readonly_label.setText(self._get_text("status.readonly", "READ ONLY"))
             self._readonly_label.show()
@@ -547,61 +705,45 @@ class CodeEditorPanel(QWidget):
         Returns:
             True 如果重新加载成功
         """
-        # 规范化路径以匹配 _tabs 中的 key
-        norm_path = os.path.normpath(path)
-        
-        # 尝试精确匹配和大小写不敏感匹配（Windows）
-        tab = self._tabs.get(norm_path)
-        if tab is None:
-            for tab_path, t in self._tabs.items():
-                if os.path.normpath(tab_path).lower() == norm_path.lower():
-                    tab = t
-                    break
-        
-        if tab is None:
+        display_path = self._normalize_display_path(path)
+        tab = self._find_tab(display_path)
+
+        if tab is None or tab.editor is None:
             # 文件未打开，无需刷新
             return False
 
-        if isinstance(tab.widget, CodeEditor) and tab.widget.is_modified():
-            return False
-        
-        if not os.path.isfile(path):
+        if not os.path.isfile(display_path):
             return False
         
         try:
             # 读取磁盘最新内容
             if self.file_manager:
-                content = self.file_manager.read_file(path)
+                content = self.file_manager.read_file(display_path)
             else:
-                with open(path, 'r', encoding='utf-8') as f:
+                with open(display_path, 'r', encoding='utf-8') as f:
                     content = f.read()
-            
-            # 更新编辑器内容
-            from presentation.panels.editor.code_editor import CodeEditor
-            if isinstance(tab.widget, CodeEditor):
-                editor = tab.widget
-                editor.blockSignals(True)
-                editor.document().blockSignals(True)
-                editor.setPlainText(content)
-                editor.document().blockSignals(False)
-                editor.blockSignals(False)
-                editor.document().setModified(False)
-                editor.set_modified(False)
-                tab.is_modified = False
-                
-                # 更新标签页标题（移除修改标记）
-                index = self._tab_widget.indexOf(tab.widget)
-                if index >= 0:
-                    file_name = os.path.basename(path)
-                    self._tab_widget.setTabText(index, file_name)
-                
-                if self.logger:
-                    self.logger.info(f"File reloaded from disk: {path}")
-                return True
+
+            editor = tab.editor
+            if editor.is_modified() and editor.toPlainText() != content:
+                return False
+
+            self._apply_editor_content(tab, content)
+
+            # 更新标签页标题（移除修改标记）
+            index = self._tab_widget.indexOf(tab.widget)
+            if index >= 0:
+                file_name = os.path.basename(tab.path)
+                self._tab_widget.setTabText(index, file_name)
+
+            self._refresh_pending_workspace_edit_views()
+
+            if self.logger:
+                self.logger.info(f"File reloaded from disk: {display_path}")
+            return True
             
         except Exception as e:
             if self.logger:
-                self.logger.error(f"Failed to reload file: {path}, error: {e}")
+                self.logger.error(f"Failed to reload file: {display_path}, error: {e}")
         
         return False
 
@@ -611,27 +753,22 @@ class CodeEditorPanel(QWidget):
             return False
         
         widget = self._tab_widget.widget(index)
-        path_to_remove = None
-        for path, tab in self._tabs.items():
-            if tab.widget == widget:
-                path_to_remove = path
-                break
-        
-        if path_to_remove:
-            tab = self._tabs[path_to_remove]
-            if isinstance(widget, CodeEditor) and widget.is_modified():
+        tab = self._find_tab_by_widget(widget)
+        if tab is not None:
+            if tab.editor is not None and tab.editor.is_modified():
                 reply = QMessageBox.question(
                     self, self._get_text("dialog.confirm.title", "Confirm"),
-                    f"Save changes to {os.path.basename(path_to_remove)}?",
+                    f"Save changes to {os.path.basename(tab.path)}?",
                     QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel
                 )
                 if reply == QMessageBox.StandardButton.Save:
-                    self.save_file()
+                    if not self._save_tab(tab):
+                        return False
                 elif reply == QMessageBox.StandardButton.Cancel:
                     return False
             
             self._tab_widget.removeTab(index)
-            del self._tabs[path_to_remove]
+            del self._tabs[tab.identity_path]
             self._update_empty_state()
             self._emit_editable_file_state()
             return True
@@ -642,21 +779,16 @@ class CodeEditorPanel(QWidget):
             self.close_tab(0)
 
     def get_open_files(self) -> list:
-        return list(self._tabs.keys())
+        return [tab.path for tab in self._tabs.values()]
 
     def get_current_file(self) -> Optional[str]:
-        current_widget = self._tab_widget.currentWidget()
-        if not current_widget:
-            return None
-        for path, tab in self._tabs.items():
-            if tab.widget == current_widget:
-                return path
-        return None
+        current_tab = self._get_current_tab()
+        return current_tab.path if current_tab is not None else None
 
     def switch_to_file(self, path: str) -> bool:
-        if path not in self._tabs:
+        tab = self._find_tab(path)
+        if tab is None:
             return False
-        tab = self._tabs[path]
         index = self._tab_widget.indexOf(tab.widget)
         if index >= 0:
             self._tab_widget.setCurrentIndex(index)
@@ -664,14 +796,14 @@ class CodeEditorPanel(QWidget):
         return False
 
     def _discard_tab_by_path(self, path: str) -> bool:
-        tab = self._tabs.get(path)
+        tab = self._find_tab(path)
         if tab is None:
             return False
 
         index = self._tab_widget.indexOf(tab.widget)
         if index >= 0:
             self._tab_widget.removeTab(index)
-        del self._tabs[path]
+        del self._tabs[tab.identity_path]
         return True
 
     def _close_current_tab(self):
@@ -700,10 +832,9 @@ class CodeEditorPanel(QWidget):
             return
 
         widget = self._tab_widget.widget(index)
-        for path, tab in self._tabs.items():
-            if tab.widget == widget:
-                self._update_status_bar(path)
-                break
+        tab = self._find_tab_by_widget(widget)
+        if tab is not None:
+            self._update_status_bar(tab.path)
 
         self._update_scroll_buttons()
 
@@ -761,27 +892,27 @@ class CodeEditorPanel(QWidget):
 
     def _copy_tab_path(self, index: int):
         widget = self._tab_widget.widget(index)
-        for path, tab in self._tabs.items():
+        for tab in self._tabs.values():
             if tab.widget == widget:
                 clipboard = QApplication.clipboard()
-                clipboard.setText(path)
+                clipboard.setText(tab.path)
                 break
 
     def _update_cursor_position(self):
-        current_widget = self._tab_widget.currentWidget()
-        if isinstance(current_widget, CodeEditor):
-            line, col = current_widget.get_cursor_position()
+        current_tab = self._get_current_tab()
+        if current_tab is not None and current_tab.editor is not None:
+            line, col = current_tab.editor.get_cursor_position()
             self._line_col_label.setText(f"Ln {line}, Col {col}")
 
     def _update_tab_title(self, path: str):
-        if path not in self._tabs:
+        tab = self._find_tab(path)
+        if tab is None:
             return
-        tab = self._tabs[path]
         index = self._tab_widget.indexOf(tab.widget)
         if index < 0:
             return
-        file_name = os.path.basename(path)
-        if isinstance(tab.widget, CodeEditor) and tab.widget.is_modified():
+        file_name = os.path.basename(tab.path)
+        if tab.editor is not None and tab.editor.is_modified():
             self._tab_widget.setTabText(index, f"{file_name} ●")
         else:
             self._tab_widget.setTabText(index, file_name)
@@ -840,6 +971,9 @@ class CodeEditorPanel(QWidget):
         self.close_all_tabs()
         self._update_empty_state()
 
+    def _on_pending_workspace_edit_state_changed(self, state: Dict[str, Any]):
+        self._refresh_pending_workspace_edit_views(state)
+
     def _on_file_changed(self, event_data: Dict[str, Any]):
         data = event_data.get("data", event_data)
         file_path = data.get("path", "") if isinstance(data, dict) else ""
@@ -853,6 +987,34 @@ class CodeEditorPanel(QWidget):
             self.sync_open_tabs_with_workspace()
             return
         self.reload_file(file_path)
+
+    def _on_pending_edit_accept_file_requested(self, file_path: str):
+        service = self.pending_workspace_edit_service
+        if service is None or not file_path:
+            return
+        state = service.accept_file_edits(file_path)
+        self._refresh_pending_workspace_edit_views(state)
+
+    def _on_pending_edit_reject_file_requested(self, file_path: str):
+        service = self.pending_workspace_edit_service
+        if service is None or not file_path:
+            return
+        state = service.reject_file_edits(file_path)
+        self._refresh_pending_workspace_edit_views(state)
+
+    def _on_pending_edit_accept_hunk_requested(self, file_path: str, hunk_id: str):
+        service = self.pending_workspace_edit_service
+        if service is None or not file_path or not hunk_id:
+            return
+        state = service.accept_hunk(file_path, hunk_id)
+        self._refresh_pending_workspace_edit_views(state)
+
+    def _on_pending_edit_reject_hunk_requested(self, file_path: str, hunk_id: str):
+        service = self.pending_workspace_edit_service
+        if service is None or not file_path or not hunk_id:
+            return
+        state = service.reject_hunk(file_path, hunk_id)
+        self._refresh_pending_workspace_edit_views(state)
 
     def _on_session_changed(self, event_data: Dict[str, Any]):
         data = event_data.get("data", event_data)

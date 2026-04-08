@@ -164,10 +164,6 @@ class InputArea(QWidget):
     image_preview_requested = pyqtSignal(str)
     pending_edit_accept_all_requested = pyqtSignal()
     pending_edit_reject_all_requested = pyqtSignal()
-    pending_edit_accept_file_requested = pyqtSignal(str)
-    pending_edit_reject_file_requested = pyqtSignal(str)
-    pending_edit_accept_hunk_requested = pyqtSignal(str, str)
-    pending_edit_reject_hunk_requested = pyqtSignal(str, str)
     pending_edit_file_clicked = pyqtSignal(str)
     
     def __init__(self, parent: Optional[QWidget] = None):
@@ -235,18 +231,6 @@ class InputArea(QWidget):
         )
         self._pending_workspace_edit_bar.reject_all_requested.connect(
             self.pending_edit_reject_all_requested.emit
-        )
-        self._pending_workspace_edit_bar.accept_file_requested.connect(
-            self.pending_edit_accept_file_requested.emit
-        )
-        self._pending_workspace_edit_bar.reject_file_requested.connect(
-            self.pending_edit_reject_file_requested.emit
-        )
-        self._pending_workspace_edit_bar.accept_hunk_requested.connect(
-            self.pending_edit_accept_hunk_requested.emit
-        )
-        self._pending_workspace_edit_bar.reject_hunk_requested.connect(
-            self.pending_edit_reject_hunk_requested.emit
         )
         self._pending_workspace_edit_bar.file_clicked.connect(
             self.pending_edit_file_clicked.emit
@@ -479,9 +463,9 @@ class InputArea(QWidget):
             self._input_text.clear()
         self.clear_attachments()
 
-    def set_pending_workspace_edit_state(self, state: Dict[str, Any]) -> None:
+    def set_pending_workspace_edit_summary_state(self, summary_state: Dict[str, Any]) -> None:
         if hasattr(self, "_pending_workspace_edit_bar") and self._pending_workspace_edit_bar:
-            self._pending_workspace_edit_bar.set_state(state)
+            self._pending_workspace_edit_bar.set_summary_state(summary_state)
     
     def add_attachment(self, path: str) -> bool:
         """

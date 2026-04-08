@@ -10,10 +10,12 @@ from typing import Any, Dict, List, Optional
 from PyQt6.QtCore import QObject, pyqtSignal
 
 from domain.llm.agent.utils.edit_diff import normalize_to_lf
+from shared.path_utils import normalize_absolute_path, normalize_identity_path
 
 
 class PendingWorkspaceEditService(QObject):
     state_changed = pyqtSignal(dict)
+    summary_changed = pyqtSignal(dict)
 
     def __init__(self):
         super().__init__()
@@ -203,7 +205,8 @@ class PendingWorkspaceEditService(QObject):
                     relative_path = str(item.get("relative_path", "") or "")
                     if not relative_path:
                         continue
-                    abs_path = self._normalize_path(os.path.join(project_root, relative_path))
+                    display_path = normalize_absolute_path(os.path.join(project_root, relative_path))
+                    abs_path = self._normalize_path(display_path)
                     if self._is_internal_path(abs_path, project_root):
                         continue
                     baseline_exists = bool(item.get("baseline_exists", False))
@@ -215,6 +218,7 @@ class PendingWorkspaceEditService(QObject):
                     sources = item.get("sources", [])
                     self._records[abs_path] = {
                         "relative_path": relative_path,
+                        "display_path": display_path,
                         "baseline_exists": baseline_exists,
                         "baseline_content": baseline_content,
                         "sources": list(sources) if isinstance(sources, list) else [],
@@ -222,12 +226,16 @@ class PendingWorkspaceEditService(QObject):
             self._save_storage_locked()
             state = self._build_state_locked()
         if emit_signal:
-            self.state_changed.emit(state)
+            self._emit_signals_for_state(state)
         return state
 
     def get_state(self) -> Dict[str, Any]:
         with self._lock:
             return self._build_state_locked()
+
+    def get_summary_state(self) -> Dict[str, Any]:
+        with self._lock:
+            return self._build_summary_state(self._build_state_locked())
 
     def _subscribe_events(self) -> None:
         if self._subscribed or self.event_bus is None:
@@ -254,7 +262,7 @@ class PendingWorkspaceEditService(QObject):
         with self._lock:
             self._records = {}
             state = self._build_state_locked()
-        self.state_changed.emit(state)
+        self._emit_signals_for_state(state)
 
     def _on_session_changed(self, event_data: Dict[str, Any]) -> None:
         data = event_data.get("data", event_data) if isinstance(event_data, dict) else {}
@@ -269,8 +277,9 @@ class PendingWorkspaceEditService(QObject):
         new_content: str,
         source: Dict[str, Any],
     ) -> Dict[str, Any]:
-        abs_path = self._normalize_path(path)
-        project_root = self._get_project_root(abs_path)
+        display_path = normalize_absolute_path(path)
+        abs_path = self._normalize_path(display_path)
+        project_root = self._get_project_root(display_path)
         if not project_root or self._is_internal_path(abs_path, project_root):
             return self.get_state()
         with self._lock:
@@ -279,7 +288,8 @@ class PendingWorkspaceEditService(QObject):
                 file_exists = os.path.isfile(abs_path)
                 baseline_content = self._read_disk_text(abs_path) if file_exists else ""
                 record = {
-                    "relative_path": self._to_relative_path(abs_path, project_root),
+                    "relative_path": self._to_relative_path(display_path, project_root),
+                    "display_path": display_path,
                     "baseline_exists": file_exists,
                     "baseline_content": baseline_content,
                     "sources": [],
@@ -297,7 +307,8 @@ class PendingWorkspaceEditService(QObject):
                 if not sources or sources[-1] != source:
                     sources.append(dict(source))
                 record["sources"] = sources
-                record["relative_path"] = self._to_relative_path(abs_path, project_root)
+                record["relative_path"] = self._to_relative_path(display_path, project_root)
+                record["display_path"] = display_path
                 self._records[abs_path] = record
             else:
                 self._records.pop(abs_path, None)
@@ -318,8 +329,44 @@ class PendingWorkspaceEditService(QObject):
 
     def _emit_state_changed(self) -> Dict[str, Any]:
         state = self.get_state()
-        self.state_changed.emit(state)
+        self._emit_signals_for_state(state)
         return state
+
+    def _emit_signals_for_state(self, state: Dict[str, Any]) -> None:
+        self.state_changed.emit(state)
+        self.summary_changed.emit(self._build_summary_state(state))
+
+    def _build_summary_state(self, state: Dict[str, Any]) -> Dict[str, Any]:
+        if not isinstance(state, dict):
+            return {
+                "file_count": 0,
+                "added_lines": 0,
+                "deleted_lines": 0,
+                "files": [],
+            }
+
+        files: List[Dict[str, Any]] = []
+        for file_state in state.get("files", []) or []:
+            if not isinstance(file_state, dict):
+                continue
+            file_path = str(file_state.get("path", "") or "")
+            if not file_path:
+                continue
+            files.append(
+                {
+                    "path": file_path,
+                    "relative_path": str(file_state.get("relative_path", file_path) or file_path),
+                    "added_lines": int(file_state.get("added_lines", 0) or 0),
+                    "deleted_lines": int(file_state.get("deleted_lines", 0) or 0),
+                }
+            )
+
+        return {
+            "file_count": len(files),
+            "added_lines": sum(int(item["added_lines"]) for item in files),
+            "deleted_lines": sum(int(item["deleted_lines"]) for item in files),
+            "files": files,
+        }
 
     def _build_state_locked(self) -> Dict[str, Any]:
         files: List[Dict[str, Any]] = []
@@ -359,7 +406,8 @@ class PendingWorkspaceEditService(QObject):
             return None
         hunks = self._build_hunks(baseline_content, current_content)
         return {
-            "path": abs_path,
+            "path": str(record.get("display_path", abs_path) or abs_path),
+            "identity_path": abs_path,
             "relative_path": str(record.get("relative_path", abs_path) or abs_path),
             "added_lines": sum(int(item["added_lines"]) for item in hunks),
             "deleted_lines": sum(int(item["deleted_lines"]) for item in hunks),
@@ -516,7 +564,7 @@ class PendingWorkspaceEditService(QObject):
         return "\n".join(lines)
 
     def _normalize_path(self, path: str) -> str:
-        return os.path.normcase(os.path.normpath(os.path.abspath(path)))
+        return normalize_identity_path(path)
 
     def _is_internal_path(self, abs_path: str, project_root: str) -> bool:
         relative_path = self._to_relative_path(abs_path, project_root)

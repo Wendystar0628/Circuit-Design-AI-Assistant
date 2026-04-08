@@ -948,17 +948,19 @@ class ConversationViewModel(QObject):
         is_partial = result.get("is_partial", False)
         self._mark_active_steps_complete(is_partial=is_partial)
         self._emit_runtime_steps_changed()
-        
-        # 构建工具操作摘要（在清空前）
-        tool_operations = self._build_tool_operations()
-        web_search_results = self._collect_web_search_results()
+
+        has_tool_activity = any(step.tool_calls for step in self._active_agent_steps)
+        has_web_search_activity = any(
+            step.web_search_query or step.web_search_results
+            for step in self._active_agent_steps
+        )
         agent_steps = self._serialize_agent_steps()
 
         if not reasoning_content and self._active_agent_steps:
             reasoning_content = self._active_agent_steps[-1].reasoning_content
 
-        if not content and tool_operations:
-            if web_search_results:
+        if not content and (has_tool_activity or has_web_search_activity):
+            if has_web_search_activity:
                 content = "本轮已完成工具执行，但模型未返回最终总结文本。请结合下方联网结果与工具记录继续查看。"
             else:
                 content = "本轮工具调用已结束，但模型未返回最终文本答复。请参考下方工具执行记录。"
@@ -969,8 +971,6 @@ class ConversationViewModel(QObject):
                 content,
                 reasoning_content=reasoning_content,
                 usage=usage,
-                operations=tool_operations if tool_operations else None,
-                web_search_results=web_search_results if web_search_results else None,
                 agent_steps=agent_steps,
             )
         
@@ -1122,58 +1122,6 @@ class ConversationViewModel(QObject):
             tool_call.result_content = result_content
             tool_call.details = dict(details or {})
         self._emit_runtime_steps_changed()
-
-    def _build_tool_operations(self) -> List[str]:
-        """
-        将累积的工具调用记录转换为 operations 字符串列表
-
-        Returns:
-            操作摘要列表，供 ContextManager 持久化和 UI 渲染
-        """
-        operations: List[str] = []
-        for step in self._active_agent_steps:
-            if step.web_search_query:
-                provider = ""
-                result_count = len(step.web_search_results)
-                if step.web_search_state == "error":
-                    preview = step.web_search_message[:60]
-                    operations.append(
-                        f"web_search(query={step.web_search_query}{', provider=' + provider if provider else ''}) 失败: {preview}"
-                    )
-                elif step.web_search_state == "complete":
-                    operations.append(
-                        f"web_search(query={step.web_search_query}{', provider=' + provider if provider else ''}) 已检索 {result_count} 条结果"
-                    )
-
-            for tool_call in step.tool_calls:
-                name = tool_call.tool_name
-                args = tool_call.arguments if isinstance(tool_call.arguments, dict) else {}
-                is_error = tool_call.is_error
-
-                arg_summary = ""
-                if "path" in args:
-                    arg_summary = f"(`{args['path']}`)"
-                elif args:
-                    first_key = next(iter(args))
-                    val = str(args[first_key])
-                    if len(val) > 40:
-                        val = val[:37] + "..."
-                    arg_summary = f"({first_key}={val})"
-
-                if is_error:
-                    preview = tool_call.result_content[:60]
-                    operations.append(f"{name}{arg_summary} 失败: {preview}")
-                else:
-                    operations.append(f"{name}{arg_summary}")
-        return operations
-
-    def _collect_web_search_results(self) -> List[Dict[str, Any]]:
-        results: List[Dict[str, Any]] = []
-        for step in self._active_agent_steps:
-            for item in step.web_search_results:
-                if isinstance(item, dict):
-                    results.append(item)
-        return results
     
     # ============================================================
     # 辅助方法
@@ -1485,8 +1433,6 @@ class ConversationViewModel(QObject):
                     reasoning_content=latest_reasoning,
                     is_partial=True,
                     stop_reason=reason,
-                    operations=self._build_tool_operations() or None,
-                    web_search_results=self._collect_web_search_results() or None,
                     agent_steps=serialized_steps,
                 )
             except Exception as e:

@@ -72,14 +72,12 @@ def _load_svg_icon(relative_path: str, fallback: str) -> str:
     return fallback
 
 # 内联 SVG 后备定义（仅在本地文件不存在时使用）
-_FALLBACK_ROBOT = '''<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#4a9eff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="8" width="18" height="12" rx="2"/><circle cx="9" cy="14" r="2"/><circle cx="15" cy="14" r="2"/><path d="M12 2v4"/><path d="M8 8V6a4 4 0 0 1 8 0v2"/></svg>'''
 _FALLBACK_THINKING = '''<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#666" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><circle cx="9" cy="10" r="1" fill="#666"/><circle cx="12" cy="10" r="1" fill="#666"/><circle cx="15" cy="10" r="1" fill="#666"/></svg>'''
 _FALLBACK_GLOBE = '''<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4a9eff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>'''
 _FALLBACK_ERROR = '''<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>'''
 _FALLBACK_FILE = '''<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#666" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>'''
 
 # 从本地文件加载图标（带后备）
-SVG_ROBOT = _load_svg_icon("panel/robot.svg", _FALLBACK_ROBOT)
 SVG_THINKING = _load_svg_icon("panel/thinking.svg", _FALLBACK_THINKING)
 SVG_SEARCH = _load_svg_icon("panel/globe.svg", _FALLBACK_GLOBE)
 SVG_ERROR = _load_svg_icon("status/error.svg", _FALLBACK_ERROR)
@@ -211,21 +209,16 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial
 #conversation-root { display: flex; flex-direction: column; gap: 12px; }
 #message-list, #runtime-steps-root { display: contents; }
 .msg { max-width: 85%; padding: 12px 16px; border-radius: 12px; word-wrap: break-word; }
-.msg.user { align-self: flex-end; background: #e3f2fd; }
-.msg.assistant { align-self: flex-start; background: #f8f9fa; }
+.msg.user { margin-left: auto; background: #e3f2fd; }
+.msg.assistant { margin-right: auto; background: #f8f9fa; }
 .msg.system { align-self: center; background: transparent; color: #6c757d; font-size: 12px; }
-.msg.suggestion { align-self: flex-start; background: #f8fafc; border: 1px solid #dbe3f0; }
-.msg.assistant.step { border: 1px solid #e2e8f0; box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04); }
+.msg.suggestion { margin-right: auto; background: #f8fafc; border: 1px solid #dbe3f0; }
+.msg.assistant.step { border: 1px solid #e2e8f0; box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04); background: #fbfcfe; }
 .partial-badge { display: inline-flex; align-items: center; gap: 4px; margin-top: 10px; padding: 4px 8px; border-radius: 999px; background: #fff7ed; color: #c2410c; font-size: 11px; border: 1px solid #fed7aa; }
-.step-label { display: inline-flex; align-items: center; gap: 6px; margin-bottom: 10px; padding: 4px 8px; border-radius: 999px; background: #eef2ff; color: #4338ca; font-size: 11px; font-weight: 600; }
-.step-label.running { background: #eff6ff; color: #2563eb; }
-.step-label.partial { background: #fff7ed; color: #c2410c; }
 
-.row { display: flex; gap: 8px; align-items: flex-start; }
-.row.user { flex-direction: row-reverse; }
-.avatar { width: 32px; height: 32px; border-radius: 50%; display: flex; 
-          align-items: center; justify-content: center; background: #e8f5e9; flex-shrink: 0; }
-.avatar svg { width: 20px; height: 20px; }
+.row { display: flex; width: 100%; }
+.row.user { justify-content: flex-end; }
+.row.system { justify-content: center; }
 h1,h2,h3 { margin: 16px 0 8px; font-weight: 600; }
 h1 { font-size: 1.5em; } h2 { font-size: 1.3em; } h3 { font-size: 1.1em; }
 p { margin-bottom: 8px; }
@@ -240,31 +233,12 @@ a { color: #4a9eff; text-decoration: none; }
 a:hover { text-decoration: underline; }
 .katex-block,.katex-display { text-align: center; margin: 12px 0; overflow-x: auto; }
 .katex { font-size: 1.1em; }
-.think { background: #f5f5f5; border-radius: 8px; padding: 8px 12px; margin-bottom: 8px; font-size: 13px; color: #555; }
-.think-toggle { cursor: pointer; color: #666; font-size: 12px; display: flex; align-items: center; gap: 4px; user-select: none; }
-.think-toggle svg { vertical-align: middle; }
-.think-toggle .arrow { transition: transform 0.2s; display: inline-block; }
-.think-toggle.expanded .arrow { transform: rotate(90deg); }
-.think-content { display: none; margin-top: 8px; max-height: 300px; overflow-y: auto; }
-.think-content.show { display: block; }
-.think-status { color: #999; font-size: 11px; margin-left: 4px; }
-.think-status.thinking::after { content: "..."; animation: dots 1.5s infinite; }
-.think-status.searching::after { content: "..."; animation: dots 1.5s infinite; }
-.think-status.done { color: #4caf50; }
 @keyframes dots { 0%,20% { content: "."; } 40% { content: ".."; } 60%,100% { content: "..."; } }
-.search-card { background: #e8f4fd; border-left: 3px solid #4a9eff; border-radius: 4px; padding: 8px 12px; margin-bottom: 8px; }
-.search-toggle { cursor: pointer; color: #4a9eff; font-size: 12px; display: flex; align-items: center; gap: 4px; user-select: none; }
-.search-toggle svg { vertical-align: middle; }
-.search-toggle .arrow { transition: transform 0.2s; display: inline-block; }
-.search-toggle.expanded .arrow { transform: rotate(90deg); }
-.search-content { display: none; margin-top: 8px; max-height: 200px; overflow-y: auto; }
-.search-content.show { display: block; }
 .search-item { padding: 4px 0; border-bottom: 1px solid #e0e0e0; font-size: 12px; }
 .search-item:last-child { border-bottom: none; }
 .search-item-title { color: #333; font-weight: 500; }
 .search-item-url { color: #4a9eff; font-size: 11px; word-break: break-all; }
 .search-item-snippet { color: #666; font-size: 11px; margin-top: 2px; }
-.search-status { color: #999; font-size: 11px; margin-left: 4px; }
 .inline-file-ref { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px; border-radius: 999px; background: #dbeafe; border: 1px solid #bfdbfe; color: #1d4ed8; font-size: 12px; cursor: pointer; vertical-align: baseline; margin: 0 2px; }
 .inline-file-ref:hover { background: #cfe3ff; text-decoration: none; }
 .inline-file-ref .ref-icon { display: inline-flex; align-items: center; }
@@ -286,27 +260,48 @@ a:hover { text-decoration: underline; }
 .suggestion-chip.selected { background: #2563eb; color: #ffffff; border-color: #2563eb; }
 .suggestion-chip.expired { background: #f8fafc; color: #94a3b8; border-color: #e2e8f0; cursor: default; }
 .suggestion-hint { font-size: 12px; color: #94a3b8; }
-.tool-card { background: #fff8e1; border-left: 3px solid #ff9800; border-radius: 4px; padding: 8px 12px; margin: 8px 0; }
-.tool-header { display: flex; align-items: center; gap: 6px; font-size: 12px; }
-.tool-header svg { flex-shrink: 0; }
-.tool-name { font-weight: 600; color: #e65100; }
-.tool-status { margin-left: auto; font-size: 11px; padding: 1px 6px; border-radius: 3px; white-space: nowrap; }
-.tool-status.running { color: #ff9800; background: #fff3e0; }
-.tool-status.running::after { content: "..."; animation: dots 1.5s infinite; }
-.tool-status.done { color: #4caf50; background: #e8f5e9; }
-.tool-status.error { color: #f44336; background: #ffebee; }
-.tool-args { font-size: 11px; color: #666; margin-top: 4px; font-family: "JetBrains Mono","Cascadia Code","Consolas",monospace; line-height: 1.4; }
-.tool-result { display: none; margin-top: 6px; padding-top: 6px; border-top: 1px solid #ffe0b2; }
-.tool-result.show { display: block; }
+.tool-args { font-size: 11px; color: #666; margin-bottom: 8px; font-family: "JetBrains Mono","Cascadia Code","Consolas",monospace; line-height: 1.4; }
 .tool-result-content { font-size: 11px; color: #555; background: #f5f5f5; border-radius: 4px; padding: 6px 8px;
     max-height: 120px; overflow-y: auto; white-space: pre-wrap; word-break: break-all;
     font-family: "JetBrains Mono","Cascadia Code","Consolas",monospace; }
+.detail-card { border-radius: 10px; border: 1px solid #e5e7eb; overflow: hidden; margin-bottom: 8px; background: #ffffff; }
+.detail-card.thinking { background: #f8fafc; border-color: #e2e8f0; }
+.detail-card.search { background: #eff6ff; border-color: #bfdbfe; }
+.detail-card.tool { background: #fff7ed; border-color: #fed7aa; }
+.detail-toggle { cursor: pointer; display: flex; align-items: center; gap: 8px; padding: 10px 12px; color: #334155; font-size: 12px; user-select: none; }
+.detail-toggle svg { flex-shrink: 0; }
+.detail-toggle .arrow { transition: transform 0.2s; margin-left: auto; display: inline-block; }
+.detail-toggle.expanded .arrow { transform: rotate(90deg); }
+.detail-title { color: #0f172a; font-weight: 600; }
+.detail-summary { color: #64748b; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.detail-status { font-size: 11px; padding: 1px 6px; border-radius: 999px; white-space: nowrap; }
+.detail-status.running, .detail-status.thinking { color: #2563eb; background: #dbeafe; }
+.detail-status.running::after, .detail-status.thinking::after { content: "..."; animation: dots 1.5s infinite; }
+.detail-status.done { color: #166534; background: #dcfce7; }
+.detail-status.error { color: #b91c1c; background: #fee2e2; }
+.detail-content { display: none; padding: 0 12px 12px; max-height: 300px; overflow-y: auto; overscroll-behavior: contain; }
+.detail-content.show { display: block; }
+.detail-body-muted { font-size: 12px; color: #64748b; }
 '''
 
     def _get_scripts(self) -> str:
         return '''
 var _scrollThreshold = 64;
 var _viewportState = { stickToBottom: true, suppressScrollTracking: false };
+var _detailViewportStates = {};
+function ensureDetailViewportState(key) {
+    var normalizedKey = String(key || '');
+    if (!normalizedKey) return null;
+    if (!_detailViewportStates[normalizedKey]) {
+        _detailViewportStates[normalizedKey] = {
+            stickToBottom: true,
+            suppressScrollTracking: false,
+            scrollTop: 0,
+            expanded: false
+        };
+    }
+    return _detailViewportStates[normalizedKey];
+}
 function getScroller() {
     return document.scrollingElement || document.documentElement || document.body;
 }
@@ -314,11 +309,24 @@ function isNearBottom() {
     var s = getScroller();
     return (s.scrollHeight - (s.scrollTop + s.clientHeight)) <= _scrollThreshold;
 }
+function isElementNearBottom(el) {
+    if (!el) return true;
+    return (el.scrollHeight - (el.scrollTop + el.clientHeight)) <= _scrollThreshold;
+}
 function syncViewportState() {
     if (_viewportState.suppressScrollTracking) return;
     _viewportState.stickToBottom = isNearBottom();
 }
 window.addEventListener('scroll', syncViewportState, { passive: true });
+document.addEventListener('scroll', function(event) {
+    var target = event.target;
+    if (!target || !target.classList || !target.classList.contains('detail-content')) return;
+    var state = ensureDetailViewportState(target.dataset.detailKey || '');
+    if (!state || state.suppressScrollTracking) return;
+    state.scrollTop = target.scrollTop;
+    state.stickToBottom = isElementNearBottom(target);
+    state.expanded = target.classList.contains('show');
+}, { passive: true, capture: true });
 function renderMath() {
     if (typeof renderMathInElement !== 'undefined') {
         renderMathInElement(document.body, {
@@ -327,19 +335,53 @@ function renderMath() {
         });
     }
 }
+function captureDetailViewportStates() {
+    document.querySelectorAll('.detail-content[data-detail-key]').forEach(function(el) {
+        var state = ensureDetailViewportState(el.dataset.detailKey || '');
+        if (!state) return;
+        state.scrollTop = el.scrollTop;
+        state.stickToBottom = isElementNearBottom(el);
+        state.expanded = el.classList.contains('show');
+    });
+}
+function restoreDetailViewportStates() {
+    document.querySelectorAll('.detail-content[data-detail-key]').forEach(function(el) {
+        var state = ensureDetailViewportState(el.dataset.detailKey || '');
+        if (!state) return;
+        var toggle = el.previousElementSibling;
+        var isExpanded = state.expanded !== false;
+        el.classList.toggle('show', isExpanded);
+        if (toggle && toggle.classList.contains('detail-toggle')) {
+            toggle.classList.toggle('expanded', isExpanded);
+        }
+        if (!isExpanded) return;
+        state.suppressScrollTracking = true;
+        if (state.stickToBottom) {
+            el.scrollTop = el.scrollHeight;
+        } else {
+            var maxScrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
+            el.scrollTop = Math.min(state.scrollTop || 0, maxScrollTop);
+        }
+        state.suppressScrollTracking = false;
+    });
+}
 function withViewportPreserved(mutator) {
     var s = getScroller();
     var preserveBottomStickiness = _viewportState.stickToBottom && isNearBottom();
     var previousScrollTop = s.scrollTop;
+    captureDetailViewportStates();
     mutator();
     renderMath();
-    if (preserveBottomStickiness) {
-        scrollBottom(true);
-        return;
-    }
-    _viewportState.suppressScrollTracking = true;
-    s.scrollTop = previousScrollTop;
-    _viewportState.suppressScrollTracking = false;
+    requestAnimationFrame(function() {
+        restoreDetailViewportStates();
+        if (preserveBottomStickiness) {
+            scrollBottom(true);
+            return;
+        }
+        _viewportState.suppressScrollTracking = true;
+        s.scrollTop = previousScrollTop;
+        _viewportState.suppressScrollTracking = false;
+    });
 }
 function scrollBottom(force) {
     if (!force && !_viewportState.stickToBottom) return;
@@ -364,17 +406,10 @@ function replaceRuntimeSteps(html) {
         document.getElementById('runtime-steps-root').innerHTML = html;
     });
 }
-function toggleSearch(id) {
-    var c = document.getElementById('search-'+id);
-    var t = c ? c.previousElementSibling : null;
-    if(c) {
-        c.classList.toggle('show');
-        if(t && t.classList.contains('search-toggle')) t.classList.toggle('expanded');
-    }
-}
 function clearMsgs() {
     document.getElementById('message-list').innerHTML = '';
     document.getElementById('runtime-steps-root').innerHTML = '';
+    _detailViewportStates = {};
     _viewportState.stickToBottom = true;
 }
 function clearRuntimeSteps() {
@@ -382,12 +417,26 @@ function clearRuntimeSteps() {
         document.getElementById('runtime-steps-root').innerHTML = '';
     });
 }
-function toggleThink(id) { 
-    var c = document.getElementById('think-'+id); 
+function toggleDetail(id) { 
+    var c = document.getElementById('detail-'+id); 
     var t = c ? c.previousElementSibling : null;
     if(c) { 
         c.classList.toggle('show'); 
-        if(t && t.classList.contains('think-toggle')) t.classList.toggle('expanded');
+        if(t && t.classList.contains('detail-toggle')) t.classList.toggle('expanded');
+        var state = ensureDetailViewportState(id);
+        if (state) {
+            state.expanded = c.classList.contains('show');
+            if (state.expanded) {
+                state.suppressScrollTracking = true;
+                if (state.stickToBottom) {
+                    c.scrollTop = c.scrollHeight;
+                } else {
+                    var maxScrollTop = Math.max(0, c.scrollHeight - c.clientHeight);
+                    c.scrollTop = Math.min(state.scrollTop || 0, maxScrollTop);
+                }
+                state.suppressScrollTracking = false;
+            }
+        }
     } 
 }
 function onFileClick(path) {
@@ -420,7 +469,7 @@ function onFileClick(path) {
         self._pending_runtime_steps = None
         self._runtime_timer.stop()
         self._run_js("clearRuntimeSteps()")
-    
+
     def _render_static_messages(self, messages: List[Any]):
         if not self._web_view or self._is_rendering:
             return
@@ -443,14 +492,14 @@ function onFileClick(path) {
 
     def _build_messages_html(self, messages: List[Any]) -> str:
         return '\n'.join(self._msg_to_html(message) for message in messages)
-    
+
     def _msg_to_html(self, msg) -> str:
         role = getattr(msg, 'role', 'assistant')
         content = getattr(msg, 'content', '') or ''
         msg_id = getattr(msg, 'id', 'x')
         attachments = normalize_attachments(getattr(msg, 'attachments', []) or [])
         agent_steps = getattr(msg, 'agent_steps', []) or []
-        
+
         if role == 'user':
             content_html = self._render_user_content_html(content, attachments)
             att_html = self._render_attachments_html(attachments) if attachments else ''
@@ -459,7 +508,7 @@ function onFileClick(path) {
             return self._render_suggestion_message_html(msg)
         elif role == 'system':
             content_html = self._md_to_html(content)
-            return f'<div class="row"><div class="msg system">{content_html}</div></div>'
+            return f'<div class="row system"><div class="msg system">{content_html}</div></div>'
         else:
             return ''.join(self._render_persisted_agent_step(msg_id, step) for step in agent_steps)
 
@@ -472,7 +521,6 @@ function onFileClick(path) {
         return self._render_agent_step_html(step, step_id)
 
     def _render_agent_step_html(self, step: Any, step_dom_id: str) -> str:
-        step_index = int(getattr(step, 'step_index', 0) or 0)
         content_html = self._md_to_html(getattr(step, 'content', '') or '')
         reasoning_text = getattr(step, 'reasoning_content', '') or ''
         reasoning_html = self._md_to_html(reasoning_text) if reasoning_text else ''
@@ -485,15 +533,6 @@ function onFileClick(path) {
         is_partial = bool(getattr(step, 'is_partial', False))
         stop_reason = getattr(step, 'stop_reason', '') or ''
 
-        label_state_class = ''
-        status_text = '已完成' if is_complete else '进行中'
-        if not is_complete:
-            label_state_class = ' running'
-        if is_partial:
-            label_state_class += ' partial'
-            status_text = self._get_stop_reason_label(stop_reason) if stop_reason else '已中断'
-
-        label_html = f'<div class="step-label{label_state_class}">Step {step_index}<span>{self._esc_html(status_text)}</span></div>' if step_index else ''
         think_html = self._render_reasoning_block(step_dom_id, reasoning_html, is_complete) if reasoning_html else ''
         search_html = self._render_step_search_html(step_dom_id, web_search_query, web_search_results, web_search_message, web_search_state)
         tools_html = ''.join(self._render_tool_call_html(tool_call) for tool_call in tool_calls)
@@ -505,23 +544,78 @@ function onFileClick(path) {
                 f'</div>'
             )
 
-        body_html = content_html or ('<div class="tool-result-content">当前步骤暂无文本输出</div>' if (tools_html or search_html) else '')
+        body_html = content_html or ''
+        sections_html = f'{search_html}{think_html}{tools_html}{body_html}{partial_badge}'
+        if not sections_html:
+            return ''
         return (
-            '<div class="row">'
-            f'<div class="avatar">{SVG_ROBOT}</div>'
+            '<div class="row assistant">'
             '<div class="msg assistant step">'
-            f'{label_html}{search_html}{think_html}{tools_html}{body_html}{partial_badge}'
+            f'{sections_html}'
             '</div>'
             '</div>'
         )
 
+    def _render_detail_card_html(
+        self,
+        detail_key: str,
+        variant: str,
+        icon_svg: str,
+        title: str,
+        body_html: str,
+        summary: str = '',
+        status_text: str = '',
+        status_class: str = '',
+    ) -> str:
+        summary_html = f'<span class="detail-summary">{self._esc_html(summary)}</span>' if summary else ''
+        status_html = f'<span class="detail-status {status_class}">{self._esc_html(status_text)}</span>' if status_text else ''
+        detail_key_attr = self._esc_attr(detail_key)
+        return (
+            f'<div class="detail-card {variant}">'
+            f'<div class="detail-toggle" onclick="toggleDetail(\'{detail_key_attr}\')">'
+            f'{icon_svg}'
+            f'<span class="detail-title">{self._esc_html(title)}</span>'
+            f'{summary_html}'
+            f'{status_html}'
+            f'<span class="arrow">▶</span>'
+            f'</div>'
+            f'<div class="detail-content" id="detail-{detail_key_attr}" data-detail-key="{detail_key_attr}">{body_html}</div>'
+            f'</div>'
+        )
+
+    def _build_tool_target_label(self, arguments: Dict[str, Any]) -> str:
+        candidate_keys = (
+            'path',
+            'file_path',
+            'target_file',
+            'TargetFile',
+            'SearchPath',
+            'SearchDirectory',
+        )
+        for key in candidate_keys:
+            value = arguments.get(key)
+            if not value:
+                continue
+            normalized = str(value).strip().rstrip('\\/')
+            if not normalized:
+                continue
+            normalized = normalized.replace('\\', '/')
+            name = os.path.basename(normalized)
+            return name or normalized
+        return ''
+
     def _render_reasoning_block(self, block_id: str, reasoning_html: str, is_complete: bool) -> str:
         status_class = 'done' if is_complete else 'thinking'
         status_text = '已完成' if is_complete else '思考中'
-        return f'''<div class="think">
-<div class="think-toggle expanded" onclick="toggleThink('{block_id}')">{SVG_THINKING} 思考过程<span class="arrow">▶</span><span class="think-status {status_class}">{status_text}</span></div>
-<div class="think-content show" id="think-{block_id}">{reasoning_html}</div>
-</div>'''
+        return self._render_detail_card_html(
+            detail_key=f'{block_id}-thinking',
+            variant='thinking',
+            icon_svg=SVG_THINKING,
+            title='思考过程',
+            body_html=reasoning_html,
+            status_text=status_text,
+            status_class=status_class,
+        )
 
     def _render_step_search_html(
         self,
@@ -534,13 +628,16 @@ function onFileClick(path) {
         if not query and not results and not message and state == 'idle':
             return ''
 
-        title = self._esc_html(query or '联网搜索')
         status_text = {
             'running': '搜索中',
             'complete': f'已搜索 {len(results)} 条结果',
             'error': '搜索失败',
         }.get(state, '')
-        status_class = 'searching' if state == 'running' else ''
+        status_class = {
+            'running': 'running',
+            'complete': 'done',
+            'error': 'error',
+        }.get(state, '')
 
         content_items: List[str] = []
         display_results = results or []
@@ -565,12 +662,20 @@ function onFileClick(path) {
         if not content_items and message and state != 'error':
             content_items.append(f'<div class="search-item"><div class="search-item-snippet">{self._esc_html(message)}</div></div>')
 
-        expanded_class = ' expanded' if content_items else ''
-        show_class = ' show' if content_items else ''
-        return f'''<div class="search-card">
-<div class="search-toggle{expanded_class}" onclick="toggleSearch('{block_id}')">{SVG_SEARCH} 联网搜索：{title}<span class="arrow">▶</span><span class="search-status {status_class}">{self._esc_html(status_text)}</span></div>
-<div class="search-content{show_class}" id="search-{block_id}">{''.join(content_items)}</div>
-</div>'''
+        body_html = ''.join(content_items)
+        if not body_html and message:
+            body_html = f'<div class="detail-body-muted">{self._esc_html(message)}</div>'
+
+        return self._render_detail_card_html(
+            detail_key=f'{block_id}-search',
+            variant='search',
+            icon_svg=SVG_SEARCH,
+            title='联网搜索',
+            summary=query or '',
+            body_html=body_html,
+            status_text=status_text,
+            status_class=status_class,
+        )
 
     def _render_tool_call_html(self, tool_call: Any) -> str:
         tool_call_id = self._esc_attr(getattr(tool_call, 'tool_call_id', '') or '')
@@ -578,6 +683,7 @@ function onFileClick(path) {
         arguments = getattr(tool_call, 'arguments', {}) or {}
         result_content = getattr(tool_call, 'result_content', '') or ''
         is_error = bool(getattr(tool_call, 'is_error', False))
+        target_label = self._build_tool_target_label(arguments)
 
         args_lines = []
         for key, value in arguments.items():
@@ -589,18 +695,22 @@ function onFileClick(path) {
 
         status_class = 'error' if is_error else ('done' if result_content else 'running')
         status_text = '失败' if is_error else ('完成' if result_content else '执行中')
-        result_html = ''
+        detail_blocks: List[str] = []
+        if args_html:
+            detail_blocks.append(f'<div class="tool-args">{args_html}</div>')
         if result_content:
             display = result_content[:300] + ('...' if len(result_content) > 300 else '')
-            result_html = f'<div class="tool-result show"><div class="tool-result-content">{self._esc_html(display)}</div></div>'
+            detail_blocks.append(f'<div class="tool-result-content">{self._esc_html(display)}</div>')
 
-        return (
-            f'<div class="tool-card" id="tool-{tool_call_id}">'
-            f'<div class="tool-header">{SVG_TOOL}<span class="tool-name">{tool_name}</span>'
-            f'<span class="tool-status {status_class}">{status_text}</span></div>'
-            f'<div class="tool-args">{args_html}</div>'
-            f'{result_html}'
-            f'</div>'
+        return self._render_detail_card_html(
+            detail_key=f'{tool_call_id or tool_name}-tool',
+            variant='tool',
+            icon_svg=SVG_TOOL,
+            title=tool_name or '工具调用',
+            summary=target_label,
+            body_html=''.join(detail_blocks),
+            status_text=status_text,
+            status_class=status_class,
         )
 
     def _render_suggestion_message_html(self, msg) -> str:
@@ -636,8 +746,7 @@ function onFileClick(path) {
             hint_html = '<div class="suggestion-hint">或者直接在输入框中继续输入你的想法</div>'
 
         return (
-            '<div class="row">'
-            f'<div class="avatar">{SVG_ROBOT}</div>'
+            '<div class="row suggestion">'
             '<div class="msg suggestion">'
             '<div class="suggestion-card">'
             f'{title_html}{summary_html}'

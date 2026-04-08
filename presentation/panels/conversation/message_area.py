@@ -25,7 +25,6 @@ from presentation.panels.conversation.web_message_view import (
 
 # 常量
 MESSAGE_SPACING = 12
-STREAM_THROTTLE_MS = 50
 
 
 class MessageArea(QWidget):
@@ -42,41 +41,11 @@ class MessageArea(QWidget):
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         
-        self._i18n = None
-        self._logger = None
         self._web_view: Optional[WebMessageView] = None
         self._is_streaming = False
-        self._stream_buffer = ""
-        self._reasoning_buffer = ""
         self._pending_messages: Optional[List[Any]] = None
         
         self._setup_ui()
-    
-    @property
-    def i18n(self):
-        if self._i18n is None:
-            try:
-                from shared.service_locator import ServiceLocator
-                from shared.service_names import SVC_I18N_MANAGER
-                self._i18n = ServiceLocator.get_optional(SVC_I18N_MANAGER)
-            except:
-                pass
-        return self._i18n
-    
-    @property
-    def logger(self):
-        if self._logger is None:
-            try:
-                from infrastructure.utils.logger import get_logger
-                self._logger = get_logger("message_area")
-            except:
-                pass
-        return self._logger
-    
-    def _get_text(self, key: str, default: str = "") -> str:
-        if self.i18n:
-            return self.i18n.get_text(key, default)
-        return default
     
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -115,15 +84,6 @@ class MessageArea(QWidget):
             self.finish_streaming()
     
     # ============================================================
-    # 公共方法 - 滚动控制
-    # ============================================================
-    
-    def scroll_to_bottom(self) -> None:
-        """滚动到底部"""
-        if self._web_view:
-            self._web_view.scroll_to_bottom()
-    
-    # ============================================================
     # 公共方法 - 流式输出
     # ============================================================
     
@@ -137,8 +97,6 @@ class MessageArea(QWidget):
         if self._is_streaming:
             return
         self._is_streaming = True
-        self._stream_buffer = ""
-        self._reasoning_buffer = ""
         self._pending_messages = None
         if self._web_view:
             self._web_view.start_streaming(with_search=with_search)
@@ -147,8 +105,6 @@ class MessageArea(QWidget):
         """更新流式内容"""
         if not self._is_streaming:
             self.start_streaming()
-        self._stream_buffer = content
-        self._reasoning_buffer = reasoning
         if self._web_view:
             self._web_view.update_streaming(content, reasoning)
     
@@ -159,13 +115,6 @@ class MessageArea(QWidget):
             pending_messages = self._pending_messages
             self._pending_messages = None
             self._web_view.finish_streaming(pending_messages)
-        self._stream_buffer = ""
-        self._reasoning_buffer = ""
-    
-    def finish_thinking(self) -> None:
-        """完成思考阶段，更新状态显示"""
-        if self._web_view:
-            self._web_view.finish_thinking()
     
     def start_searching(self) -> None:
         """开始搜索阶段"""
@@ -195,23 +144,6 @@ class MessageArea(QWidget):
         """更新工具调用卡片的执行结果"""
         if self._web_view:
             self._web_view.update_tool_card(tool_call_id, result_content, is_error)
-
-    def is_streaming(self) -> bool:
-        """获取流式输出状态"""
-        return self._is_streaming
-    
-    def append_stream_chunk(self, chunk_type: str, text: str) -> None:
-        """追加流式输出块"""
-        if not self._is_streaming:
-            self.start_streaming()
-        
-        if chunk_type == "reasoning":
-            self._reasoning_buffer += text
-        else:
-            self._stream_buffer += text
-        
-        if self._web_view:
-            self._web_view.append_streaming_chunk(text, chunk_type)
     
     # ============================================================
     # 清理
@@ -228,5 +160,4 @@ class MessageArea(QWidget):
 __all__ = [
     "MessageArea",
     "MESSAGE_SPACING",
-    "STREAM_THROTTLE_MS",
 ]

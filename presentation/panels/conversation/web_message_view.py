@@ -101,7 +101,7 @@ class WebMessageView(QWidget):
     """
     基于 WebEngine 的消息显示组件
     
-    整合了原 MessageBubble 的所有功能：
+    负责对话消息的统一渲染与流式更新：
     - 消息渲染（用户/助手/系统）
     - 深度思考折叠
     - 操作摘要卡片
@@ -409,23 +409,13 @@ function updateStreamReasoning(html) {
     var s = document.querySelector('.msg.streaming .think-content');
     if(s) { s.innerHTML = html; if (shouldStick) scrollBottom(true); }
 }
-function finishThinking() {
-    var status = document.querySelector('.msg.streaming .think-status');
-    if(status) { 
-        status.classList.remove('thinking');
-        status.classList.add('done');
-        status.textContent = '思考完成';
-    }
-}
 function startSearching() {
     var search = document.querySelector('.msg.streaming .search-card');
-    if(search) {
-        search.style.display = 'block';
-        var status = search.querySelector('.search-status');
-        if(status) {
-            status.classList.add('searching');
-            status.textContent = '搜索中';
-        }
+    if(search) { search.classList.add('show'); }
+    var status = search.querySelector('.search-status');
+    if(status) {
+        status.classList.add('searching');
+        status.textContent = '搜索中';
     }
     // 搜索时隐藏思考区域
     var think = document.querySelector('.msg.streaming .think');
@@ -861,14 +851,6 @@ function updateToolCard(id, resultHtml, isError) {
             html = self._md_to_html(self._stream_content)
             self._run_js(f"updateStream(`{self._esc(html)}`)")
     
-    def finish_thinking(self):
-        """
-        完成思考阶段
-        
-        更新思考状态显示为"思考完成"，但不折叠思考区域。
-        """
-        self._run_js("finishThinking()")
-    
     def start_searching(self):
         """
         开始搜索阶段
@@ -1009,7 +991,7 @@ function updateToolCard(id, resultHtml, isError) {
     
     def update_streaming(self, content: str, reasoning: str = ""):
         """
-        更新流式内容（兼容旧接口）
+        更新流式内容
         
         Args:
             content: 主内容
@@ -1021,16 +1003,10 @@ function updateToolCard(id, resultHtml, isError) {
         if reasoning:
             self._pending_reasoning_update = True
     
-    def is_streaming(self) -> bool:
-        return self._is_streaming
-    
     def clear_messages(self):
         self._messages = []
         self._rendered_message_ids = []
         self._run_js("clearMsgs()")
-    
-    def scroll_to_bottom(self):
-        self._run_js("scrollBottom(true)")
     
     def _run_js(self, code: str):
         if self._web_view:

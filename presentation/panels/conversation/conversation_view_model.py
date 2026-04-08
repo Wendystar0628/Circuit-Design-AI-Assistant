@@ -197,21 +197,6 @@ class ConversationViewModel(QObject):
         return self._is_loading
     
     @property
-    def current_stream_content(self) -> str:
-        """当前流式输出内容"""
-        return self._current_stream_content
-    
-    @property
-    def current_reasoning_content(self) -> str:
-        """当前思考过程内容"""
-        return self._current_reasoning_content
-    
-    @property
-    def active_suggestion_message_id(self) -> Optional[str]:
-        """当前活跃的建议选项消息 ID"""
-        return self._active_suggestion_message_id
-    
-    @property
     def can_send(self) -> bool:
         """是否可以发送消息"""
         return self._can_send and not self._is_loading
@@ -1405,13 +1390,13 @@ class ConversationViewModel(QObject):
             content: 部分响应内容
             reason: 停止原因
         """
-        # 转换为 HTML（不再在内容中添加中断标记，由 MessageBubble 渲染）
+        # 转换为 HTML（不再在内容中添加中断标记，由消息渲染层统一展示）
         content_html = self._markdown_to_html(content)
         reasoning_html = ""
         if self._current_reasoning_content:
             reasoning_html = self._markdown_to_html(self._current_reasoning_content)
         
-        # 创建消息（设置 is_partial 和 stop_reason 供 MessageBubble 渲染中断标记）
+        # 创建消息（设置 is_partial 和 stop_reason 供消息渲染层展示中断标记）
         msg = DisplayMessage(
             id=str(uuid.uuid4()),
             role=ROLE_ASSISTANT,
@@ -1445,25 +1430,6 @@ class ConversationViewModel(QObject):
         
         if self.logger:
             self.logger.info(f"Saved partial response: {len(content)} chars")
-    
-    def _get_stop_reason_text(self, reason: str) -> str:
-        """
-        获取停止原因的显示文本
-        
-        Args:
-            reason: 停止原因代码
-            
-        Returns:
-            str: 显示文本
-        """
-        reason_texts = {
-            "user_requested": "用户停止",
-            "timeout": "超时",
-            "error": "错误",
-            "session_switch": "会话切换",
-            "app_shutdown": "应用关闭",
-        }
-        return reason_texts.get(reason, "已停止")
 
 
 # ============================================================

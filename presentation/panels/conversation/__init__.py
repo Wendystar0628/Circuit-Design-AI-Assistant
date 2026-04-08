@@ -4,8 +4,6 @@
 
 包含对话面板的各个组件：
 - ConversationViewModel - ViewModel 层，隔离 UI 与数据层
-- MessageBubble - 消息气泡组件
-- SuggestionMessage - 建议选项消息组件
 - InputArea - 输入区域组件
 - TitleBar - 标题栏组件
 - MessageArea - 消息显示区域
@@ -34,7 +32,6 @@ from presentation.panels.conversation.title_bar import (
 from presentation.panels.conversation.message_area import (
     MessageArea,
     MESSAGE_SPACING,
-    STREAM_THROTTLE_MS,
 )
 
 __all__ = [
@@ -55,5 +52,4 @@ __all__ = [
     # MessageArea
     "MessageArea",
     "MESSAGE_SPACING",
-    "STREAM_THROTTLE_MS",
 ]

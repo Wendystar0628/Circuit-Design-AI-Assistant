@@ -383,7 +383,6 @@ class SessionStateManager:
                     WORKING_CONTEXT_COMPRESSED_COUNT_KEY: current_state.get(WORKING_CONTEXT_COMPRESSED_COUNT_KEY, 0),
                     WORKING_CONTEXT_KEEP_RECENT_KEY: current_state.get(WORKING_CONTEXT_KEEP_RECENT_KEY, 0),
                     "circuit_file_path": current_state.get("circuit_file_path", ""),
-                    "sim_result_path": current_state.get("sim_result_path", ""),
                     "design_goals_path": current_state.get("design_goals_path", ".circuit_ai/design_goals.json"),
                     "last_metrics": current_state.get("last_metrics", {}),
                     "error_context": current_state.get("error_context", ""),
@@ -850,7 +849,6 @@ class SessionStateManager:
             base_state[WORKING_CONTEXT_COMPRESSED_COUNT_KEY] = metadata.get(WORKING_CONTEXT_COMPRESSED_COUNT_KEY, 0)
             base_state[WORKING_CONTEXT_KEEP_RECENT_KEY] = metadata.get(WORKING_CONTEXT_KEEP_RECENT_KEY, 0)
             base_state["circuit_file_path"] = metadata.get("circuit_file_path", "")
-            base_state["sim_result_path"] = metadata.get("sim_result_path", "")
             base_state["design_goals_path"] = metadata.get("design_goals_path", ".circuit_ai/design_goals.json")
             base_state["last_metrics"] = metadata.get("last_metrics", {})
             base_state["error_context"] = metadata.get("error_context", "")
@@ -975,7 +973,6 @@ class SessionStateManager:
                     "action": action,
                     "previous_session_id": previous_session_id,
                     "project_root": self._project_root,
-                    "sim_result_path": current_state.get("sim_result_path", ""),
                     "circuit_file_path": current_state.get("circuit_file_path", ""),
                     "design_goals_path": current_state.get("design_goals_path", ".circuit_ai/design_goals.json"),
                 })

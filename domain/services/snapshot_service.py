@@ -58,6 +58,7 @@ DEFAULT_KEEP_COUNT = 10
 # 快照时忽略的模式
 IGNORE_PATTERNS = [
     ".circuit_ai/snapshots",  # 避免递归快照
+    ".circuit_ai/sim_results",
     "simulation_results",
     "__pycache__",
     ".git",
@@ -693,6 +694,7 @@ def _is_protected_restore_path(relative_path: Path) -> bool:
         Path("__pycache__"),
         Path(".pytest_cache"),
         Path(".circuit_ai") / "snapshots",
+        Path(".circuit_ai") / "sim_results",
         Path("simulation_results"),
     }
     normalized = Path(*relative_path.parts) if relative_path.parts else Path()

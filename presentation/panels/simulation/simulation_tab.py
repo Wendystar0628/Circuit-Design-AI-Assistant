@@ -64,7 +64,6 @@ from shared.event_types import (
     EVENT_ITERATION_AWAITING_CONFIRMATION,
     EVENT_ITERATION_USER_CONFIRMED,
     EVENT_SIM_RESULT_FILE_CREATED,
-    EVENT_SESSION_CHANGED,
 )
 
 
@@ -254,7 +253,6 @@ class SimulationTab(QWidget):
             (EVENT_ITERATION_AWAITING_CONFIRMATION, self._on_awaiting_confirmation),
             (EVENT_ITERATION_USER_CONFIRMED, self._on_user_confirmed),
             (EVENT_SIM_RESULT_FILE_CREATED, self._on_sim_result_file_created),
-            (EVENT_SESSION_CHANGED, self._on_session_changed),
         ]
         
         for event_type, handler in subscriptions:
@@ -321,26 +319,6 @@ class SimulationTab(QWidget):
         self.clear()
         self._show_empty_state()
 
-    def _on_session_changed(self, event_data: dict):
-        data = event_data.get("data", event_data)
-        if not isinstance(data, dict) or not self._project_root:
-            return
-
-        project_root = data.get("project_root", "")
-        if project_root and project_root != self._project_root:
-            return
-
-        action = str(data.get("action", "") or "")
-        if action not in {"new", "switch", "rollback", "reload"}:
-            return
-
-        sim_result_path = str(data.get("sim_result_path", "") or "")
-        self.clear()
-        if sim_result_path:
-            self._load_simulation_result(sim_result_path, show_op_dialog=False)
-        else:
-            self._show_empty_state()
-
     def _on_simulation_started(self, event_data: dict):
         """处理仿真开始事件"""
         # 事件数据在 "data" 字段中
@@ -383,22 +361,11 @@ class SimulationTab(QWidget):
     def _on_awaiting_confirmation(self, event_data: dict):
         """处理等待确认事件"""
         self._status_indicator.show_awaiting_confirmation()
-    
+
     def _on_user_confirmed(self, event_data: dict):
         """处理用户确认事件"""
         self._status_indicator.hide_status()
-    
-    def _on_simulation_started(self, event_data: dict):
-        """处理仿真开始事件"""
-        # 事件数据在 "data" 字段中
-        data = event_data.get("data", event_data)
-        circuit_file = data.get("circuit_file", "")
-        self._logger.info(f"Simulation started: {circuit_file}")
-        self._status_indicator.show_running(
-            self._get_text("simulation.running", "仿真进行中，请等待...")
-        )
-        self._set_controls_enabled(False)
-    
+
     def _on_simulation_error(self, event_data: dict):
         """处理仿真错误事件"""
         # 事件数据在 "data" 字段中

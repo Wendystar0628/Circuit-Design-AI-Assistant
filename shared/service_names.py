@@ -143,6 +143,9 @@ SVC_CONTEXT_COMPRESSION_SERVICE = "context_compression_service"
 # 会话状态管理器 - 会话状态的唯一数据源
 SVC_SESSION_STATE_MANAGER = "session_state_manager"
 
+# 对话节点撤回服务 - 以用户消息为锚点恢复会话与工作区
+SVC_CONVERSATION_ROLLBACK_SERVICE = "conversation_rollback_service"
+
 # 外部服务管理器 - API 调用熔断和重试
 SVC_EXTERNAL_SERVICE_MANAGER = "external_service_manager"
 
@@ -205,6 +208,7 @@ __all__ = [
     "SVC_CONTEXT_MANAGER",
     "SVC_CONTEXT_COMPRESSION_SERVICE",
     "SVC_SESSION_STATE_MANAGER",
+    "SVC_CONVERSATION_ROLLBACK_SERVICE",
     "SVC_EXTERNAL_SERVICE_MANAGER",
     "SVC_ITERATION_HISTORY_SERVICE",
     "SVC_RAG_MANAGER",

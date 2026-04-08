@@ -85,6 +85,8 @@ SVG_FILE = _load_svg_icon("file/file.svg", _FALLBACK_FILE)
 
 _FALLBACK_TOOL = '''<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ff9800" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>'''
 SVG_TOOL = _load_svg_icon("panel/tool.svg", _FALLBACK_TOOL)
+_FALLBACK_ROLLBACK = '''<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7v6h6"/><path d="M3 13a9 9 0 1 0 3-6.7L3 7"/></svg>'''
+SVG_ROLLBACK = _load_svg_icon("panel/undo.svg", _FALLBACK_ROLLBACK)
 
 
 class WebMessageView(QWidget):
@@ -103,6 +105,7 @@ class WebMessageView(QWidget):
     link_clicked = pyqtSignal(str)      # 链接点击 (url)
     file_clicked = pyqtSignal(str)      # 文件点击 (file_path)
     suggestion_clicked = pyqtSignal(str)  # 建议选项点击 (suggestion_id)
+    rollback_requested = pyqtSignal(str)
     
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -153,6 +156,9 @@ class WebMessageView(QWidget):
             return True
         if url_str.startswith('suggestion://'):
             self.suggestion_clicked.emit(url_str[len('suggestion://'):])
+            return False
+        if url_str.startswith('rollback://'):
+            self.rollback_requested.emit(url_str[len('rollback://'):])
             return False
         if url_str.startswith('file://'):
             self.file_clicked.emit(url.toLocalFile() or url_str[7:])
@@ -217,8 +223,12 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial
 .partial-badge { display: inline-flex; align-items: center; gap: 4px; margin-top: 10px; padding: 4px 8px; border-radius: 999px; background: #fff7ed; color: #c2410c; font-size: 11px; border: 1px solid #fed7aa; }
 
 .row { display: flex; width: 100%; }
-.row.user { justify-content: flex-end; }
+.row.user { justify-content: flex-end; align-items: flex-end; gap: 8px; }
 .row.system { justify-content: center; }
+.message-actions { display: flex; align-items: center; }
+.rollback-btn { width: 28px; height: 28px; border-radius: 999px; border: 1px solid #bfdbfe; background: #eff6ff; color: #2563eb; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease; }
+.rollback-btn:hover { background: #dbeafe; border-color: #93c5fd; transform: translateY(-1px); }
+.rollback-btn svg { width: 14px; height: 14px; display: block; }
 h1,h2,h3 { margin: 16px 0 8px; font-weight: 600; }
 h1 { font-size: 1.5em; } h2 { font-size: 1.3em; } h3 { font-size: 1.1em; }
 p { margin-bottom: 8px; }
@@ -449,6 +459,9 @@ function onFileClick(path) {
     var normalized = String(path || '').split(String.fromCharCode(92)).join('/');
     window.location.href = 'file:///' + encodeURI(normalized);
 }
+function onRollbackClick(messageId) {
+    window.location.href = 'rollback://' + encodeURIComponent(String(messageId || ''));
+}
 '''
 
     def render_messages(self, messages: List[Any]) -> None:
@@ -509,7 +522,14 @@ function onFileClick(path) {
         if role == 'user':
             content_html = self._render_user_content_html(content, attachments)
             att_html = self._render_attachments_html(attachments) if attachments else ''
-            return f'<div class="row user"><div class="msg user">{content_html}{att_html}</div></div>'
+            rollback_html = ''
+            if getattr(msg, 'can_rollback', False):
+                rollback_html = (
+                    f'<div class="message-actions">'
+                    f'<button class="rollback-btn" type="button" onclick="onRollbackClick(\'{self._esc_attr(msg_id)}\')">{SVG_ROLLBACK}</button>'
+                    f'</div>'
+                )
+            return f'<div class="row user"><div class="msg user">{content_html}{att_html}</div>{rollback_html}</div>'
         elif role == 'suggestion':
             return self._render_suggestion_message_html(msg)
         elif role == 'system':

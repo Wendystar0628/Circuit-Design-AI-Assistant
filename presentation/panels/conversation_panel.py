@@ -20,6 +20,7 @@
     panel.refresh_display()
 """
 
+import asyncio
 import os
 from typing import Any, Dict, Optional
 
@@ -77,6 +78,8 @@ class ConversationPanel(QWidget):
         self._event_bus = None
         self._i18n = None
         self._logger = None
+        self._send_in_progress = False
+        self._rollback_in_progress = False
         
         # 子组件引用
         self._title_bar: Optional[TitleBar] = None
@@ -224,6 +227,9 @@ class ConversationPanel(QWidget):
             )
             self._message_area.suggestion_clicked.connect(
                 self._on_suggestion_clicked
+            )
+            self._message_area.rollback_requested.connect(
+                self._on_rollback_requested
             )
     
     def _connect_view_model_signals(self) -> None:
@@ -549,7 +555,9 @@ class ConversationPanel(QWidget):
     
     def _on_send_clicked(self) -> None:
         """处理发送按钮点击"""
-        self._send_message()
+        if self._rollback_in_progress:
+            return
+        asyncio.create_task(self._send_message())
     
     def _on_stop_clicked(self) -> None:
         """处理停止按钮点击"""
@@ -645,6 +653,11 @@ class ConversationPanel(QWidget):
                 if self.logger:
                     self.logger.warning(f"Failed to publish suggestion selection: {exc}")
 
+    def _on_rollback_requested(self, message_id: str) -> None:
+        if self._rollback_in_progress or self._send_in_progress:
+            return
+        asyncio.create_task(self._perform_rollback(message_id))
+
     def _open_image_preview(self, image_path: str) -> None:
         if not image_path or not os.path.isfile(image_path):
             return
@@ -677,9 +690,11 @@ class ConversationPanel(QWidget):
     # 公共方法
     # ============================================================
     
-    def _send_message(self) -> None:
+    async def _send_message(self) -> None:
         """发送消息"""
         if self._input_area is None:
+            return
+        if self._send_in_progress:
             return
         
         text = self._input_area.get_text()
@@ -691,13 +706,60 @@ class ConversationPanel(QWidget):
             return
         
         if self.view_model:
-            success = self.view_model.send_message(text, attachments)
-            if success:
-                self._input_area.clear()
+            self._send_in_progress = True
+            self._sync_input_action_state()
+            try:
+                success = await self.view_model.send_message(text, attachments)
+                if success:
+                    self._input_area.clear()
+            finally:
+                self._send_in_progress = False
                 self._sync_input_action_state()
+
+    async def _perform_rollback(self, message_id: str) -> None:
+        if not message_id or self.view_model is None:
+            return
+        if self._rollback_in_progress or self._send_in_progress:
+            return
+
+        reply = QMessageBox.question(
+            self,
+            self._get_text("dialog.confirm.title", "确认"),
+            self._get_text(
+                "msg.confirm_rollback_conversation_node",
+                "是否撤回该用户节点及其后续所有对话、上下文与工作区变更？"
+            ),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        self._rollback_in_progress = True
+        self._sync_input_action_state()
+        try:
+            success, error_message = await self.view_model.rollback_to_message(message_id)
+            self._sync_input_action_state()
+            if not success:
+                QMessageBox.warning(
+                    self,
+                    self._get_text("dialog.warning.title", "警告"),
+                    error_message or self._get_text("msg.rollback_failed", "撤回失败"),
+                )
+        finally:
+            self._rollback_in_progress = False
+            self._sync_input_action_state()
 
     def _sync_input_action_state(self) -> None:
         if self._input_area is None:
+            return
+        if self._send_in_progress:
+            self._input_area.set_button_mode(ButtonMode.SEND)
+            self._input_area.set_send_enabled(False)
+            return
+        if self._rollback_in_progress:
+            self._input_area.set_button_mode(ButtonMode.SEND)
+            self._input_area.set_send_enabled(False)
             return
         if self.view_model and self.view_model.is_loading:
             if self._input_area.get_button_mode() != ButtonMode.STOPPING:

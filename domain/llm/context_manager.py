@@ -121,6 +121,8 @@ class ContextManager:
         is_partial: bool = False,
         stop_reason: str = "",
         agent_steps: Optional[List[Dict[str, Any]]] = None,
+        timestamp: Optional[str] = None,
+        message_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         添加消息到状态
@@ -152,6 +154,8 @@ class ContextManager:
             is_partial=is_partial,
             stop_reason=stop_reason,
             agent_steps=agent_steps,
+            timestamp=timestamp,
+            message_id=message_id,
         )
     
     def get_messages(
@@ -355,7 +359,9 @@ class ContextManager:
     def add_user_message(
         self,
         content: str,
-        attachments: Optional[List[Attachment]] = None
+        attachments: Optional[List[Attachment]] = None,
+        timestamp: Optional[str] = None,
+        message_id: Optional[str] = None,
     ) -> None:
         """
         添加用户消息（有状态版本）
@@ -370,6 +376,8 @@ class ContextManager:
             role="user",
             content=content,
             attachments=attachments,
+            timestamp=timestamp,
+            message_id=message_id,
         )
         self.sync_state(new_state)
         
@@ -387,6 +395,8 @@ class ContextManager:
         stop_reason: str = "",
         operations: Optional[List[str]] = None,
         agent_steps: Optional[List[Dict[str, Any]]] = None,
+        timestamp: Optional[str] = None,
+        message_id: Optional[str] = None,
     ) -> None:
         """
         添加助手消息（有状态版本）
@@ -421,6 +431,8 @@ class ContextManager:
             is_partial=is_partial,
             stop_reason=stop_reason,
             agent_steps=agent_steps,
+            timestamp=timestamp,
+            message_id=message_id,
         )
         self.sync_state(new_state)
         

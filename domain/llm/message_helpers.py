@@ -268,6 +268,14 @@ def get_timestamp(msg: BaseMessage) -> str:
     return _get_additional_kwargs(msg).get("timestamp", "")
 
 
+def get_message_id(msg: BaseMessage) -> str:
+    """获取消息唯一标识"""
+    metadata = _get_additional_kwargs(msg).get("metadata", {})
+    if isinstance(metadata, dict):
+        return str(metadata.get("id", "") or "")
+    return ""
+
+
 def is_partial_response(msg: BaseMessage) -> bool:
     """是否为部分响应（用户中断）"""
     return _get_additional_kwargs(msg).get("is_partial", False)
@@ -561,6 +569,7 @@ __all__ = [
     "get_usage",
     "get_attachments",
     "get_timestamp",
+    "get_message_id",
     "is_partial_response",
     "get_stop_reason",
     "get_tool_calls_pending",

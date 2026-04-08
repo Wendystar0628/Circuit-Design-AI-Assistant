@@ -25,6 +25,7 @@
 """
 
 import uuid
+from datetime import datetime
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -112,6 +113,7 @@ class DisplayMessage:
     status_summary: str = ""                     # 状态摘要文本
     suggestion_state: str = ""                   # 建议选项状态
     selected_suggestion_id: str = ""             # 已选择的建议 ID
+    can_rollback: bool = False
     
     def is_suggestion(self) -> bool:
         """是否为建议选项消息"""
@@ -163,6 +165,7 @@ class ConversationViewModel(QObject):
         self._session_state_manager = None
         self._context_compression_service = None
         self._llm_runtime_config_manager = None
+        self._conversation_rollback_service = None
         self._llm_message_builder = LLMMessageBuilder()
         
         # 事件订阅句柄
@@ -304,6 +307,20 @@ class ConversationViewModel(QObject):
             except Exception:
                 pass
         return self._stop_controller
+
+    @property
+    def conversation_rollback_service(self):
+        if self._conversation_rollback_service is None:
+            try:
+                from shared.service_locator import ServiceLocator
+                from shared.service_names import SVC_CONVERSATION_ROLLBACK_SERVICE
+
+                self._conversation_rollback_service = ServiceLocator.get_optional(
+                    SVC_CONVERSATION_ROLLBACK_SERVICE
+                )
+            except Exception:
+                pass
+        return self._conversation_rollback_service
     
     # ============================================================
     # 初始化和清理
@@ -406,11 +423,15 @@ class ConversationViewModel(QObject):
             else:
                 # 使用有状态版本的方法
                 messages = self.context_manager.get_display_messages()
+
+            rollback_anchor_ids = set()
+            if self.conversation_rollback_service is not None:
+                rollback_anchor_ids = self.conversation_rollback_service.get_available_anchor_ids()
             
             # 转换为显示格式
             from domain.llm.message_helpers import is_system_message
             self._messages = [
-                self.format_message(msg) for msg in messages
+                self.format_message(msg, rollback_anchor_ids=rollback_anchor_ids) for msg in messages
                 if not is_system_message(msg)  # 不显示系统消息
             ]
             
@@ -424,7 +445,7 @@ class ConversationViewModel(QObject):
             if self.logger:
                 self.logger.error(f"加载消息失败: {e}")
     
-    def format_message(self, lc_msg) -> DisplayMessage:
+    def format_message(self, lc_msg, rollback_anchor_ids: Optional[set[str]] = None) -> DisplayMessage:
         """
         将 LangChain 消息转换为 DisplayMessage
         
@@ -483,6 +504,11 @@ class ConversationViewModel(QObject):
             content=content,
             attachments=attachments,
             agent_steps=agent_steps,
+            can_rollback=(
+                role == ROLE_USER
+                and not self._is_loading
+                and msg_id in (rollback_anchor_ids or set())
+            ),
         )
 
     # ============================================================
@@ -635,6 +661,7 @@ class ConversationViewModel(QObject):
             self.stop_controller.register_task(self._current_task_id)
         
         self.can_send_changed.emit(False)
+        self.load_messages()
     
     # ============================================================
     # 建议选项消息处理
@@ -741,7 +768,7 @@ class ConversationViewModel(QObject):
     # 消息发送和压缩
     # ============================================================
     
-    def send_message(
+    async def send_message(
         self,
         text: str,
         attachments: Optional[List[Attachment]] = None
@@ -761,47 +788,81 @@ class ConversationViewModel(QObject):
         """
         if not self.can_send:
             return False
-        
+
         text_value = text.strip()
         if not text_value and not attachments:
             return False
-        
-        # 标记之前的建议选项为过期
+
         if self._active_suggestion_message_id:
             self.mark_suggestion_expired()
-        
-        # 委托给 ContextManager 发送（使用有状态便捷方法）
-        # 注意：不直接操作 _messages 列表，通过 load_messages() 统一同步
+
         if self.context_manager:
             try:
+                if self.conversation_rollback_service is None:
+                    raise RuntimeError("Conversation rollback service unavailable")
+
                 att_list = attachments if attachments else None
-                
-                # 使用有状态便捷方法添加用户消息
-                self.context_manager.add_user_message(text_value, att_list)
-                
-                # 标记会话为脏，确保消息会被保存
+                anchor_message_id = str(uuid.uuid4())
+                anchor_timestamp = datetime.now().isoformat()
+
+                await self.conversation_rollback_service.capture_user_turn_checkpoint(
+                    anchor_message_id=anchor_message_id,
+                    anchor_timestamp=anchor_timestamp,
+                )
+
+                self.context_manager.add_user_message(
+                    text_value,
+                    att_list,
+                    timestamp=anchor_timestamp,
+                    message_id=anchor_message_id,
+                )
+
                 if self.session_state_manager:
                     self.session_state_manager.mark_dirty()
-                
-                # 从 ContextManager 重新加载消息以保持同步
+
                 self.load_messages()
-                
-                # 开始新的 Agent 运行
                 self._start_agent_run()
-                
-                # 触发 LLM 调用
                 self._trigger_llm_call()
-                
                 return True
-                
+
             except Exception as e:
                 if self.logger:
                     self.logger.error(f"发送消息失败: {e}")
                 self._is_loading = False
                 self.can_send_changed.emit(True)
                 return False
-        
+
         return False
+
+    async def rollback_to_message(self, message_id: str) -> Tuple[bool, str]:
+        if not message_id:
+            return False, "无效的撤回目标"
+        if self._is_loading:
+            return False, "当前仍有运行中的对话，请先停止后再撤回"
+
+        target_message = next((msg for msg in self._messages if msg.id == message_id), None)
+        if target_message is None or target_message.role != ROLE_USER:
+            return False, "只能撤回用户消息节点"
+        if self.conversation_rollback_service is None:
+            return False, "撤回服务不可用"
+
+        try:
+            result = await self.conversation_rollback_service.rollback_to_anchor(message_id)
+            success = bool(result.get("success", False))
+            if success:
+                self._clear_active_agent_steps(emit_signal=False)
+                self._is_loading = False
+                self._current_task_id = None
+                self._active_suggestion_message_id = None
+                if self.stop_controller:
+                    self.stop_controller.reset()
+                self.can_send_changed.emit(True)
+                return True, ""
+            return False, str(result.get("message", "撤回失败") or "撤回失败")
+        except Exception as e:
+            if self.logger:
+                self.logger.error(f"Rollback failed: {e}")
+            return False, str(e)
     
     def _trigger_llm_call(self) -> None:
         """

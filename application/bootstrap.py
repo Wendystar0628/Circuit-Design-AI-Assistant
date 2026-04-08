@@ -592,6 +592,13 @@ def _delayed_init():
         if _logger:
             _logger.info("Phase 3.5 SessionStateManager 初始化完成")
 
+        from domain.llm.conversation_rollback_service import ConversationRollbackService
+        from shared.service_names import SVC_CONVERSATION_ROLLBACK_SERVICE
+        conversation_rollback_service = ConversationRollbackService()
+        ServiceLocator.register(SVC_CONVERSATION_ROLLBACK_SERVICE, conversation_rollback_service)
+        if _logger:
+            _logger.info("Phase 3.5.0.1 ConversationRollbackService 初始化完成")
+
         from domain.llm.context_compression_service import ContextCompressionService
         from shared.service_names import SVC_CONTEXT_COMPRESSION_SERVICE
         context_compression_service = ContextCompressionService()

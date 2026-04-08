@@ -41,6 +41,7 @@ from domain.llm.message_helpers import (
     is_partial_response,
     is_ai_message,
     is_system_message,
+    get_message_id,
     message_to_dict,
     dict_to_message,
     dicts_to_messages,
@@ -113,6 +114,8 @@ class MessageStore:
         stop_reason: str = "",
         tool_calls_pending: Optional[List[Dict[str, Any]]] = None,
         agent_steps: Optional[List[Dict[str, Any]]] = None,
+        timestamp: Optional[str] = None,
+        message_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         添加消息到状态
@@ -139,6 +142,8 @@ class MessageStore:
                 msg = create_human_message(
                     content=content,
                     attachments=attachments,
+                    timestamp=timestamp,
+                    message_id=message_id,
                 )
             elif role == ROLE_ASSISTANT:
                 msg = create_ai_message(
@@ -151,9 +156,15 @@ class MessageStore:
                     tool_calls_pending=tool_calls_pending,
                     web_search_results=web_search_results,
                     agent_steps=agent_steps,
+                    timestamp=timestamp,
+                    message_id=message_id,
                 )
             elif role == ROLE_SYSTEM:
-                msg = create_system_message(content=content)
+                msg = create_system_message(
+                    content=content,
+                    timestamp=timestamp,
+                    message_id=message_id,
+                )
             else:
                 raise ValueError(f"Invalid role: {role}")
             
@@ -214,6 +225,32 @@ class MessageStore:
             消息列表
         """
         return self.get_messages(state, limit=n)
+
+    def truncate_after_message_id(
+        self,
+        state: Dict[str, Any],
+        message_id: str,
+        *,
+        include_target: bool = False,
+    ) -> Dict[str, Any]:
+        with self._lock:
+            if not message_id:
+                return copy.deepcopy(state)
+
+            new_state = copy.deepcopy(state)
+            messages = list(new_state.get("messages", []))
+            cutoff_index = None
+            for index, msg in enumerate(messages):
+                if get_message_id(msg) == message_id:
+                    cutoff_index = index
+                    break
+
+            if cutoff_index is None:
+                return new_state
+
+            end_index = cutoff_index if include_target else cutoff_index + 1
+            new_state["messages"] = messages[:end_index]
+            return new_state
 
     # ============================================================
     # 消息分类

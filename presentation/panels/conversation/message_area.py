@@ -37,6 +37,7 @@ class MessageArea(QWidget):
     file_clicked = pyqtSignal(str)
     link_clicked = pyqtSignal(str)
     suggestion_clicked = pyqtSignal(str)
+    rollback_requested = pyqtSignal(str)
     
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -59,6 +60,7 @@ class MessageArea(QWidget):
         self._web_view.file_clicked.connect(self.file_clicked.emit)
         self._web_view.link_clicked.connect(self.link_clicked.emit)
         self._web_view.suggestion_clicked.connect(self.suggestion_clicked.emit)
+        self._web_view.rollback_requested.connect(self.rollback_requested.emit)
         layout.addWidget(self._web_view)
     
     # ============================================================

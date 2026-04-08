@@ -66,6 +66,9 @@ CONVERSATIONS_DIR = ".circuit_ai/conversations"
 # 会话索引文件名
 SESSIONS_INDEX_FILE = "sessions.json"
 
+# 会话节点回滚清单后缀
+ROLLBACK_CHECKPOINTS_SUFFIX = ".rollback.json"
+
 
 def save_messages(
     project_root: str,
@@ -261,14 +264,21 @@ def delete_session(
     """
     root = Path(project_root)
     file_path = root / CONVERSATIONS_DIR / f"{session_id}.json"
+    rollback_path = _get_rollback_checkpoints_path(project_root, session_id)
     
+    existed = file_path.exists() or rollback_path.exists()
+    success = True
     if file_path.exists():
         try:
             file_path.unlink()
-            return True
         except Exception:
-            return False
-    return False
+            success = False
+    if rollback_path.exists():
+        try:
+            rollback_path.unlink()
+        except Exception:
+            success = False
+    return existed and success and not file_path.exists() and not rollback_path.exists()
 
 
 def clear_messages(
@@ -305,6 +315,64 @@ def session_exists(
     root = Path(project_root)
     file_path = root / CONVERSATIONS_DIR / f"{session_id}.json"
     return file_path.exists()
+
+
+def load_rollback_checkpoints(
+    project_root: str,
+    session_id: str,
+) -> List[Dict[str, Any]]:
+    if not session_id:
+        return []
+
+    file_path = _get_rollback_checkpoints_path(project_root, session_id)
+    if not file_path.exists():
+        return []
+
+    data = _read_json_file(file_path)
+    checkpoints = data.get("checkpoints", [])
+    return checkpoints if isinstance(checkpoints, list) else []
+
+
+def save_rollback_checkpoints(
+    project_root: str,
+    session_id: str,
+    checkpoints: List[Dict[str, Any]],
+) -> None:
+    if not session_id:
+        raise ValueError("Session ID cannot be empty")
+
+    file_path = _get_rollback_checkpoints_path(project_root, session_id)
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    _write_json_file(
+        file_path,
+        {
+            "session_id": session_id,
+            "updated_at": datetime.now().isoformat(),
+            "checkpoint_count": len(checkpoints),
+            "checkpoints": checkpoints,
+        },
+    )
+
+
+def append_rollback_checkpoint(
+    project_root: str,
+    session_id: str,
+    checkpoint: Dict[str, Any],
+) -> None:
+    checkpoints = load_rollback_checkpoints(project_root, session_id)
+    checkpoints = [
+        item for item in checkpoints
+        if item.get("anchor_message_id") != checkpoint.get("anchor_message_id")
+    ]
+    checkpoints.append(dict(checkpoint))
+    save_rollback_checkpoints(project_root, session_id, checkpoints)
+
+
+def clear_rollback_checkpoints(
+    project_root: str,
+    session_id: str,
+) -> None:
+    save_rollback_checkpoints(project_root, session_id, [])
 
 
 # ============================================================
@@ -465,6 +533,10 @@ def _get_sessions_index_path(project_root: str) -> Path:
     return Path(project_root) / CONVERSATIONS_DIR / SESSIONS_INDEX_FILE
 
 
+def _get_rollback_checkpoints_path(project_root: str, session_id: str) -> Path:
+    return Path(project_root) / CONVERSATIONS_DIR / f"{session_id}{ROLLBACK_CHECKPOINTS_SUFFIX}"
+
+
 def _load_sessions_index(project_root: str) -> Dict[str, Any]:
     """
     加载会话索引文件
@@ -530,6 +602,10 @@ __all__ = [
     "get_recent_messages",
     "get_message_count",
     "clear_messages",
+    "load_rollback_checkpoints",
+    "save_rollback_checkpoints",
+    "append_rollback_checkpoint",
+    "clear_rollback_checkpoints",
     # 会话管理
     "list_sessions",
     "delete_session",
@@ -543,4 +619,5 @@ __all__ = [
     # 常量
     "CONVERSATIONS_DIR",
     "SESSIONS_INDEX_FILE",
+    "ROLLBACK_CHECKPOINTS_SUFFIX",
 ]

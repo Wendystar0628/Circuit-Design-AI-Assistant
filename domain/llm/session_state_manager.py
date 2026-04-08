@@ -382,6 +382,11 @@ class SessionStateManager:
                     WORKING_CONTEXT_SUMMARY_KEY: current_state.get(WORKING_CONTEXT_SUMMARY_KEY, ""),
                     WORKING_CONTEXT_COMPRESSED_COUNT_KEY: current_state.get(WORKING_CONTEXT_COMPRESSED_COUNT_KEY, 0),
                     WORKING_CONTEXT_KEEP_RECENT_KEY: current_state.get(WORKING_CONTEXT_KEEP_RECENT_KEY, 0),
+                    "circuit_file_path": current_state.get("circuit_file_path", ""),
+                    "sim_result_path": current_state.get("sim_result_path", ""),
+                    "design_goals_path": current_state.get("design_goals_path", ".circuit_ai/design_goals.json"),
+                    "last_metrics": current_state.get("last_metrics", {}),
+                    "error_context": current_state.get("error_context", ""),
                 }
             )
             
@@ -542,6 +547,10 @@ class SessionStateManager:
             
             return metadata.get("name", self._current_session_id) if metadata else ""
 
+    def get_project_root(self) -> str:
+        with self._lock:
+            return self._project_root
+
     def get_all_sessions(self, project_root: Optional[str] = None) -> List[SessionInfo]:
         """
         获取所有会话列表
@@ -609,6 +618,36 @@ class SessionStateManager:
             return messages_to_dicts(messages)
 
         return context_service.load_messages(resolved_project_root, session_id)
+
+    def reload_current_session(
+        self,
+        project_root: Optional[str] = None,
+        *,
+        action: str = "reload",
+    ) -> Dict[str, Any]:
+        with self._lock:
+            resolved_project_root = self._resolve_project_root(project_root)
+            if not resolved_project_root:
+                raise ValueError("No project root available")
+            if not self._current_session_id:
+                raise ValueError("No current session to reload")
+
+            session_id = self._current_session_id
+            new_state = self._build_session_state(
+                resolved_project_root,
+                session_id,
+            )
+            self._activate_session(
+                resolved_project_root,
+                session_id,
+                new_state,
+                sync_to_context_manager=True,
+            )
+            self._publish_session_changed_event(
+                action=action,
+                previous_session_id=session_id,
+            )
+            return new_state
 
     # ============================================================
     # 应用生命周期集成
@@ -811,10 +850,23 @@ class SessionStateManager:
             base_state[WORKING_CONTEXT_SUMMARY_KEY] = metadata.get(WORKING_CONTEXT_SUMMARY_KEY, "")
             base_state[WORKING_CONTEXT_COMPRESSED_COUNT_KEY] = metadata.get(WORKING_CONTEXT_COMPRESSED_COUNT_KEY, 0)
             base_state[WORKING_CONTEXT_KEEP_RECENT_KEY] = metadata.get(WORKING_CONTEXT_KEEP_RECENT_KEY, 0)
+            base_state["circuit_file_path"] = metadata.get("circuit_file_path", "")
+            base_state["sim_result_path"] = metadata.get("sim_result_path", "")
+            base_state["design_goals_path"] = metadata.get("design_goals_path", ".circuit_ai/design_goals.json")
+            base_state["last_metrics"] = metadata.get("last_metrics", {})
+            base_state["error_context"] = metadata.get("error_context", "")
         else:
             base_state[WORKING_CONTEXT_SUMMARY_KEY] = ""
             base_state[WORKING_CONTEXT_COMPRESSED_COUNT_KEY] = 0
             base_state[WORKING_CONTEXT_KEEP_RECENT_KEY] = 0
+            base_state["circuit_file_path"] = ""
+            base_state["sim_result_path"] = ""
+            base_state["design_goals_path"] = ".circuit_ai/design_goals.json"
+            base_state["last_metrics"] = {}
+            base_state["error_context"] = ""
+
+        base_state["session_id"] = session_id
+        base_state["project_root"] = project_root
 
         return base_state
 
@@ -834,6 +886,11 @@ class SessionStateManager:
         base_state[WORKING_CONTEXT_SUMMARY_KEY] = ""
         base_state[WORKING_CONTEXT_COMPRESSED_COUNT_KEY] = 0
         base_state[WORKING_CONTEXT_KEEP_RECENT_KEY] = 0
+        base_state["circuit_file_path"] = ""
+        base_state["sim_result_path"] = ""
+        base_state["design_goals_path"] = ".circuit_ai/design_goals.json"
+        base_state["last_metrics"] = {}
+        base_state["error_context"] = ""
         return base_state
 
     def _activate_session(
@@ -894,12 +951,17 @@ class SessionStateManager:
         if self.event_bus:
             try:
                 from shared.event_types import EVENT_SESSION_CHANGED
+                current_state = self._get_current_state()
                 
                 self.event_bus.publish(EVENT_SESSION_CHANGED, {
                     "session_id": self._current_session_id,
                     "session_name": self.get_current_session_name(),
                     "action": action,
                     "previous_session_id": previous_session_id,
+                    "project_root": self._project_root,
+                    "sim_result_path": current_state.get("sim_result_path", ""),
+                    "circuit_file_path": current_state.get("circuit_file_path", ""),
+                    "design_goals_path": current_state.get("design_goals_path", ".circuit_ai/design_goals.json"),
                 })
             except ImportError:
                 if self.logger:

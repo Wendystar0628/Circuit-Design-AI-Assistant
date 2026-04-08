@@ -5,7 +5,7 @@
 职责：
 - 作为 UI 与 ContextManager 之间的中间层
 - 将内部消息格式转换为 UI 友好的 DisplayMessage 格式
-- 管理流式输出状态
+- 管理 Agent step 运行时状态
 - 处理建议选项消息
 - 提供上下文使用信息
 
@@ -26,7 +26,6 @@
 
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from PyQt6.QtCore import QObject, pyqtSignal
@@ -101,21 +100,11 @@ class AgentStep:
 class DisplayMessage:
     """
     UI 友好的消息格式
-    
-    用于在对话面板中显示，包含已渲染的 HTML 内容。
     """
     id: str                                      # 消息唯一标识
     role: str                                    # 角色（user/assistant/system/suggestion）
-    content_html: str                            # 已渲染的 HTML 内容
-    content: str = ""                            # 原始内容（用于 LaTeX 检测）
-    reasoning_html: str = ""                     # 思考过程 HTML（可选）
-    operations: List[str] = field(default_factory=list)  # 操作摘要列表
+    content: str = ""
     attachments: List[Attachment] = field(default_factory=list)  # 附件列表
-    timestamp_display: str = ""                  # 格式化的时间戳字符串
-    is_streaming: bool = False                   # 是否正在流式输出
-    is_partial: bool = False                     # 是否为部分响应（已中断）
-    stop_reason: str = ""                        # 停止原因（仅 is_partial=True 时有效）
-    web_search_results: List[Dict[str, Any]] = field(default_factory=list)  # 联网搜索结果
     agent_steps: List[AgentStep] = field(default_factory=list)  # Agent 逐步反应轨迹
     
     # 建议选项相关（仅 role=suggestion 时有效）
@@ -171,7 +160,6 @@ class ConversationViewModel(QObject):
         self._context_manager = None
         self._event_bus = None
         self._logger = None
-        self._markdown_converter = None
         self._session_state_manager = None
         self._context_compression_service = None
         self._llm_runtime_config_manager = None
@@ -317,18 +305,6 @@ class ConversationViewModel(QObject):
                 pass
         return self._stop_controller
     
-    def _get_markdown_converter(self):
-        """获取 Markdown 转换器"""
-        if self._markdown_converter is None:
-            try:
-                import markdown
-                self._markdown_converter = markdown.Markdown(
-                    extensions=['fenced_code', 'tables', 'nl2br']
-                )
-            except ImportError:
-                self._markdown_converter = None
-        return self._markdown_converter
-
     # ============================================================
     # 初始化和清理
     # ============================================================
@@ -460,11 +436,9 @@ class ConversationViewModel(QObject):
         """
         from domain.llm.message_helpers import (
             get_role,
-            get_reasoning_content,
-            get_operations,
             get_attachments,
             get_agent_steps,
-            get_timestamp,
+            get_reasoning_content,
             is_partial_response,
             get_stop_reason,
             get_web_search_results,
@@ -477,41 +451,38 @@ class ConversationViewModel(QObject):
         kwargs = getattr(lc_msg, "additional_kwargs", {}) or {}
         metadata = kwargs.get("metadata", {})
         msg_id = metadata.get("id", str(uuid.uuid4()))
-        
-        # 转换 Markdown 为 HTML
-        content_html = self._markdown_to_html(content)
-        reasoning_html = ""
-        reasoning = get_reasoning_content(lc_msg)
-        if reasoning:
-            reasoning_html = self._markdown_to_html(reasoning)
-        
-        # 格式化时间戳
-        timestamp_display = self._format_timestamp(get_timestamp(lc_msg))
-        
+
         # 获取附件
         attachments = get_attachments(lc_msg)
-        
-        # 获取联网搜索结果
-        web_search_results = get_web_search_results(lc_msg)
-        
+
         # 获取部分响应标记（3.0.10 数据稳定性）
         is_partial = is_partial_response(lc_msg)
         stop_reason = get_stop_reason(lc_msg)
+        role = get_role(lc_msg)
+        agent_steps = self._deserialize_agent_steps(get_agent_steps(lc_msg))
+        web_search_results = get_web_search_results(lc_msg)
+
+        if role == ROLE_ASSISTANT and not agent_steps:
+            agent_steps = [
+                AgentStep(
+                    step_index=1,
+                    step_id=f"{msg_id}_step_1",
+                    content=content,
+                    reasoning_content=get_reasoning_content(lc_msg),
+                    web_search_results=web_search_results,
+                    web_search_state="complete" if web_search_results else "idle",
+                    is_complete=True,
+                    is_partial=is_partial,
+                    stop_reason=stop_reason,
+                )
+            ]
         
         return DisplayMessage(
             id=msg_id,
-            role=get_role(lc_msg),
-            content_html=content_html,
-            content=content,  # 保留原始内容用于 LaTeX 检测
-            reasoning_html=reasoning_html,
-            operations=list(get_operations(lc_msg)),
+            role=role,
+            content=content,
             attachments=attachments,
-            timestamp_display=timestamp_display,
-            is_streaming=False,
-            is_partial=is_partial,
-            stop_reason=stop_reason,
-            web_search_results=web_search_results,
-            agent_steps=self._deserialize_agent_steps(get_agent_steps(lc_msg)),
+            agent_steps=agent_steps,
         )
 
     # ============================================================
@@ -701,11 +672,9 @@ class ConversationViewModel(QObject):
         msg = DisplayMessage(
             id=msg_id,
             role=ROLE_SUGGESTION,
-            content_html="",
             suggestions=suggestion_items,
             status_summary=status_summary,
             suggestion_state=SUGGESTION_STATE_ACTIVE,
-            timestamp_display=self._format_timestamp(datetime.now().isoformat()),
         )
         
         # 标记之前的建议选项为过期
@@ -875,7 +844,7 @@ class ConversationViewModel(QObject):
                 self.context_manager.get_working_messages()
             )
             
-            # 使用 start_streaming() 中生成的任务 ID
+            # 使用当前 Agent 运行的任务 ID
             task_id = self._current_task_id or f"llm_{uuid.uuid4().hex[:8]}"
             self._current_task_id = task_id
             
@@ -913,7 +882,7 @@ class ConversationViewModel(QObject):
         chunk_data: Dict[str, Any]
     ) -> None:
         """
-        处理 LLM 流式输出块
+        处理 LLM step 增量输出
         
         Args:
             task_id: 任务 ID
@@ -1305,68 +1274,6 @@ class ConversationViewModel(QObject):
         except Exception:
             return {}
     
-    def _markdown_to_html(self, text: str) -> str:
-        """
-        将 Markdown 转换为 HTML（使用 MarkdownRenderer 支持 LaTeX）
-        
-        Args:
-            text: Markdown 文本
-            
-        Returns:
-            str: HTML 字符串
-        """
-        if not text:
-            return ""
-        
-        # 优先使用 MarkdownRenderer（支持 LaTeX 公式保护）
-        try:
-            from infrastructure.utils.markdown_renderer import render_markdown
-            return render_markdown(text)
-        except ImportError:
-            pass
-        
-        # 回退：使用普通 markdown 库
-        converter = self._get_markdown_converter()
-        if converter:
-            try:
-                converter.reset()
-                return converter.convert(text)
-            except Exception:
-                pass
-        
-        # 最终回退：简单转义
-        return text.replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br>")
-    
-    def _format_timestamp(self, iso_timestamp: str) -> str:
-        """
-        格式化时间戳为显示字符串
-        
-        Args:
-            iso_timestamp: ISO 格式时间戳
-            
-        Returns:
-            str: 格式化的时间字符串
-        """
-        if not iso_timestamp:
-            return ""
-        
-        try:
-            dt = datetime.fromisoformat(iso_timestamp.replace("Z", "+00:00"))
-            now = datetime.now()
-            
-            # 今天的消息只显示时间
-            if dt.date() == now.date():
-                return dt.strftime("%H:%M")
-            # 昨天的消息
-            elif (now.date() - dt.date()).days == 1:
-                return f"昨天 {dt.strftime('%H:%M')}"
-            # 更早的消息显示日期
-            else:
-                return dt.strftime("%m-%d %H:%M")
-                
-        except Exception:
-            return ""
-
     # ============================================================
     # 事件处理
     # ============================================================
@@ -1493,7 +1400,7 @@ class ConversationViewModel(QObject):
         
         关键步骤：
         1. 处理部分响应（保存或丢弃）
-        2. 清空流式状态
+        2. 清空运行时 step 状态
         3. 发出信号通知 UI 恢复
         """
         reason = result_data.get("reason", "")
@@ -1524,7 +1431,7 @@ class ConversationViewModel(QObject):
             self._auto_save_session()
             saved = True
         
-        # 清空流式状态
+        # 清空运行时 step 状态
         self._is_loading = False
         self._current_task_id = None  # 清除任务 ID
         
@@ -1557,27 +1464,13 @@ class ConversationViewModel(QObject):
             if last_step.tool_calls or last_step.web_search_query:
                 content = "本轮已中断，已保留当前步骤轨迹。请参考下方步骤中的搜索与工具记录继续处理。"
 
-        # 转换为 HTML（不再在内容中添加中断标记，由消息渲染层统一展示）
-        content_html = self._markdown_to_html(content)
-        reasoning_html = ""
-        latest_reasoning = ""
-        if self._active_agent_steps:
-            latest_reasoning = self._active_agent_steps[-1].reasoning_content
-        if latest_reasoning:
-            reasoning_html = self._markdown_to_html(latest_reasoning)
         serialized_steps = self._serialize_agent_steps()
         
         # 创建消息（设置 is_partial 和 stop_reason 供消息渲染层展示中断标记）
         msg = DisplayMessage(
             id=str(uuid.uuid4()),
             role=ROLE_ASSISTANT,
-            content_html=content_html,
             content=content,
-            reasoning_html=reasoning_html,
-            timestamp_display=self._format_timestamp(datetime.now().isoformat()),
-            is_streaming=False,
-            is_partial=True,
-            stop_reason=reason,
             agent_steps=self._deserialize_agent_steps(serialized_steps),
         )
         

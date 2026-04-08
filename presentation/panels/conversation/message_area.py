@@ -5,7 +5,7 @@
 职责：
 - 管理消息显示区域
 - 使用 WebMessageView 渲染消息（支持 Markdown + LaTeX）
-- 流式输出显示
+- 渲染历史消息与当前运行时步骤
 
 架构说明：
 - 使用单个 QWebEngineView 渲染所有消息

@@ -7,11 +7,11 @@
 功能特性：
 - Markdown 渲染（标题、列表、代码块、表格等）
 - LaTeX 公式渲染（行内 $...$ 和块级 $$...$$）
+- Agent step 气泡渲染
 - 深度思考内容折叠
-- 操作摘要卡片（显示 AI 执行的操作）
 - 附件预览（图片、文件）
 - 文件路径点击处理
-- 流式输出支持
+- 当前运行时步骤渲染
 - 使用 SVG 图标（无 emoji）
 """
 
@@ -74,23 +74,15 @@ def _load_svg_icon(relative_path: str, fallback: str) -> str:
 # 内联 SVG 后备定义（仅在本地文件不存在时使用）
 _FALLBACK_ROBOT = '''<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#4a9eff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="8" width="18" height="12" rx="2"/><circle cx="9" cy="14" r="2"/><circle cx="15" cy="14" r="2"/><path d="M12 2v4"/><path d="M8 8V6a4 4 0 0 1 8 0v2"/></svg>'''
 _FALLBACK_THINKING = '''<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#666" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><circle cx="9" cy="10" r="1" fill="#666"/><circle cx="12" cy="10" r="1" fill="#666"/><circle cx="15" cy="10" r="1" fill="#666"/></svg>'''
-_FALLBACK_CLIPBOARD = '''<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4a9eff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/><path d="M9 12h6"/><path d="M9 16h6"/></svg>'''
 _FALLBACK_GLOBE = '''<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4a9eff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>'''
-_FALLBACK_SUCCESS = '''<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>'''
-_FALLBACK_PROGRESS = '''<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ff9800" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>'''
 _FALLBACK_ERROR = '''<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>'''
-_FALLBACK_IMAGE = '''<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#666" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>'''
 _FALLBACK_FILE = '''<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#666" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>'''
 
 # 从本地文件加载图标（带后备）
 SVG_ROBOT = _load_svg_icon("panel/robot.svg", _FALLBACK_ROBOT)
 SVG_THINKING = _load_svg_icon("panel/thinking.svg", _FALLBACK_THINKING)
-SVG_CLIPBOARD = _load_svg_icon("panel/clipboard.svg", _FALLBACK_CLIPBOARD)
 SVG_SEARCH = _load_svg_icon("panel/globe.svg", _FALLBACK_GLOBE)
-SVG_SUCCESS = _load_svg_icon("status/success.svg", _FALLBACK_SUCCESS)
-SVG_LOADING = _load_svg_icon("status/progress.svg", _FALLBACK_PROGRESS)
 SVG_ERROR = _load_svg_icon("status/error.svg", _FALLBACK_ERROR)
-SVG_IMAGE = _load_svg_icon("panel/image.svg", _FALLBACK_IMAGE)
 SVG_FILE = _load_svg_icon("file/file.svg", _FALLBACK_FILE)
 
 _FALLBACK_TOOL = '''<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ff9800" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>'''
@@ -101,10 +93,10 @@ class WebMessageView(QWidget):
     """
     基于 WebEngine 的消息显示组件
     
-    负责对话消息的统一渲染与流式更新：
+    负责对话消息与运行时 Agent steps 的统一渲染：
     - 消息渲染（用户/助手/系统）
     - 深度思考折叠
-    - 操作摘要卡片
+    - Agent step 工具与搜索卡片
     - 附件预览
     - 文件/链接点击处理
     """
@@ -118,8 +110,6 @@ class WebMessageView(QWidget):
         super().__init__(parent)
         self._web_view = None
         self._web_channel = None
-        self._messages = []
-        self._runtime_steps: List[Any] = []
         self._rendered_message_ids: List[str] = []
         self._page_loaded = False
         self._pending_messages = []
@@ -200,7 +190,7 @@ class WebMessageView(QWidget):
 <style>{css}</style>
 <style>{self._get_styles()}</style>
 </head><body>
-<div id="conversation-root"><div id="message-list">{content}</div><div id="stream-root"></div></div>
+<div id="conversation-root"><div id="message-list">{content}</div><div id="runtime-steps-root"></div></div>
 <script>{js}</script>
 <script>{auto_js}</script>
 <script>{self._get_scripts()}</script>
@@ -219,7 +209,7 @@ class WebMessageView(QWidget):
 body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, "Microsoft YaHei UI", sans-serif;
        font-size: 14px; line-height: 1.6; color: #333; background: #fff; padding: 12px; }
 #conversation-root { display: flex; flex-direction: column; gap: 12px; }
-#message-list, #stream-root { display: contents; }
+#message-list, #runtime-steps-root { display: contents; }
 .msg { max-width: 85%; padding: 12px 16px; border-radius: 12px; word-wrap: break-word; }
 .msg.user { align-self: flex-end; background: #e3f2fd; }
 .msg.assistant { align-self: flex-start; background: #f8f9fa; }
@@ -275,32 +265,6 @@ a:hover { text-decoration: underline; }
 .search-item-url { color: #4a9eff; font-size: 11px; word-break: break-all; }
 .search-item-snippet { color: #666; font-size: 11px; margin-top: 2px; }
 .search-status { color: #999; font-size: 11px; margin-left: 4px; }
-.sources-card { margin-top: 16px; padding-top: 12px; border-top: 1px solid #e0e0e0; }
-.sources-title { color: #666; font-size: 12px; margin-bottom: 8px; display: flex; align-items: center; gap: 4px; }
-.sources-list { display: flex; flex-wrap: wrap; gap: 6px; }
-.source-item { display: inline-flex; align-items: center; gap: 4px; background: #f5f5f5; border-radius: 4px; padding: 4px 8px; font-size: 12px; color: #4a9eff; text-decoration: none; transition: background 0.2s; }
-.source-item:hover { background: #e8f4fd; }
-.source-num { color: #999; font-size: 11px; }
-.source-domain { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rag-card { background: #f3e8fd; border-left: 3px solid #9c27b0; border-radius: 4px; padding: 8px 12px; margin-top: 8px; }
-.rag-title { color: #7b1fa2; font-size: 12px; font-weight: bold; margin-bottom: 4px; display: flex; align-items: center; gap: 4px; cursor: pointer; user-select: none; }
-.rag-toggle .arrow { transition: transform 0.2s; display: inline-block; }
-.rag-toggle.expanded .arrow { transform: rotate(90deg); }
-.rag-content { display: none; margin-top: 6px; }
-.rag-content.show { display: block; }
-.rag-item { padding: 4px 0; border-bottom: 1px solid #e1bee7; font-size: 12px; }
-.rag-item:last-child { border-bottom: none; }
-.rag-file { color: #7b1fa2; cursor: pointer; text-decoration: underline; font-size: 11px; }
-.rag-file:hover { color: #4a148c; }
-.rag-snippet { color: #555; font-size: 11px; margin-top: 2px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.rag-score { color: #999; font-size: 10px; float: right; }
-.ops-card { background: #f0f7ff; border-left: 3px solid #4a9eff; border-radius: 4px; padding: 8px 12px; margin-top: 8px; }
-.ops-title { color: #4a9eff; font-size: 12px; font-weight: bold; margin-bottom: 4px; display: flex; align-items: center; gap: 4px; }
-.ops-item { display: flex; align-items: center; gap: 6px; padding: 2px 0; font-size: 12px; color: #555; }
-.ops-icon { width: 16px; display: flex; align-items: center; justify-content: center; }
-.ops-more { color: #999; font-size: 11px; margin-top: 4px; }
-.file-link { color: #4a9eff; cursor: pointer; text-decoration: underline; }
-.file-link:hover { color: #2979ff; }
 .inline-file-ref { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px; border-radius: 999px; background: #dbeafe; border: 1px solid #bfdbfe; color: #1d4ed8; font-size: 12px; cursor: pointer; vertical-align: baseline; margin: 0 2px; }
 .inline-file-ref:hover { background: #cfe3ff; text-decoration: none; }
 .inline-file-ref .ref-icon { display: inline-flex; align-items: center; }
@@ -322,8 +286,6 @@ a:hover { text-decoration: underline; }
 .suggestion-chip.selected { background: #2563eb; color: #ffffff; border-color: #2563eb; }
 .suggestion-chip.expired { background: #f8fafc; color: #94a3b8; border-color: #e2e8f0; cursor: default; }
 .suggestion-hint { font-size: 12px; color: #94a3b8; }
-.ops-card.tool-ops { background: #fff8e1; border-left-color: #ff9800; }
-.ops-card.tool-ops .ops-title { color: #e65100; }
 .tool-card { background: #fff8e1; border-left: 3px solid #ff9800; border-radius: 4px; padding: 8px 12px; margin: 8px 0; }
 .tool-header { display: flex; align-items: center; gap: 6px; font-size: 12px; }
 .tool-header svg { flex-shrink: 0; }
@@ -399,7 +361,7 @@ function appendStaticMessages(html) {
 }
 function replaceRuntimeSteps(html) {
     withViewportPreserved(function() {
-        document.getElementById('stream-root').innerHTML = html;
+        document.getElementById('runtime-steps-root').innerHTML = html;
     });
 }
 function toggleSearch(id) {
@@ -412,12 +374,12 @@ function toggleSearch(id) {
 }
 function clearMsgs() {
     document.getElementById('message-list').innerHTML = '';
-    document.getElementById('stream-root').innerHTML = '';
+    document.getElementById('runtime-steps-root').innerHTML = '';
     _viewportState.stickToBottom = true;
 }
 function clearRuntimeSteps() {
     withViewportPreserved(function() {
-        document.getElementById('stream-root').innerHTML = '';
+        document.getElementById('runtime-steps-root').innerHTML = '';
     });
 }
 function toggleThink(id) { 
@@ -435,7 +397,6 @@ function onFileClick(path) {
 '''
 
     def render_messages(self, messages: List[Any]) -> None:
-        self._messages = messages
         if not self._web_view:
             return
         if not self._page_loaded:
@@ -444,7 +405,6 @@ function onFileClick(path) {
         self._render_static_messages(messages)
 
     def render_runtime_steps(self, runtime_steps: List[Any]) -> None:
-        self._runtime_steps = list(runtime_steps)
         self._pending_runtime_steps = list(runtime_steps)
         self._runtime_timer.start()
 
@@ -457,7 +417,6 @@ function onFileClick(path) {
         self._run_js(f"replaceRuntimeSteps(`{self._esc(html)}`)")
 
     def clear_runtime_steps(self) -> None:
-        self._runtime_steps = []
         self._pending_runtime_steps = None
         self._runtime_timer.stop()
         self._run_js("clearRuntimeSteps()")
@@ -488,11 +447,8 @@ function onFileClick(path) {
     def _msg_to_html(self, msg) -> str:
         role = getattr(msg, 'role', 'assistant')
         content = getattr(msg, 'content', '') or ''
-        reasoning = getattr(msg, 'reasoning_html', '') or ''
         msg_id = getattr(msg, 'id', 'x')
-        operations = getattr(msg, 'operations', []) or []
         attachments = normalize_attachments(getattr(msg, 'attachments', []) or [])
-        web_search_results = getattr(msg, 'web_search_results', []) or []
         agent_steps = getattr(msg, 'agent_steps', []) or []
         
         if role == 'user':
@@ -505,25 +461,7 @@ function onFileClick(path) {
             content_html = self._md_to_html(content)
             return f'<div class="row"><div class="msg system">{content_html}</div></div>'
         else:
-            if agent_steps:
-                return ''.join(self._render_persisted_agent_step(msg_id, step) for step in agent_steps)
-            content_html = self._md_to_html(content)
-            think = ""
-            if reasoning:
-                think = f'''<div class="think">
-<div class="think-toggle" onclick="toggleThink('{msg_id}')">{SVG_THINKING} 思考过程 ▶</div>
-<div class="think-content" id="think-{msg_id}">{reasoning}</div></div>'''
-            partial_badge = ""
-            if getattr(msg, 'is_partial', False):
-                stop_reason = getattr(msg, 'stop_reason', '') or 'stopped'
-                partial_badge = (
-                    f'<div class="partial-badge">'
-                    f'{SVG_ERROR}<span>{self._esc_html(self._get_stop_reason_label(stop_reason))}</span>'
-                    f'</div>'
-                )
-            ops_html = self._render_operations_html(operations) if operations else ''
-            sources_html = self._render_sources_html(web_search_results) if web_search_results else ''
-            return f'<div class="row"><div class="avatar">{SVG_ROBOT}</div><div class="msg assistant">{think}{content_html}{partial_badge}{sources_html}{ops_html}</div></div>'
+            return ''.join(self._render_persisted_agent_step(msg_id, step) for step in agent_steps)
 
     def _render_persisted_agent_step(self, message_id: str, step: Any) -> str:
         step_id = getattr(step, 'step_id', '') or f'{message_id}-step-{getattr(step, "step_index", 0)}'
@@ -710,39 +648,6 @@ function onFileClick(path) {
             '</div>'
         )
 
-    def _render_operations_html(self, operations: List[str]) -> str:
-        if not operations:
-            return ""
-        
-        # 检测是否为 Agent 工具调用（工具名称开头，含括号）
-        is_tool_ops = any("(" in op and ")" in op for op in operations)
-        title_icon = SVG_TOOL if is_tool_ops else SVG_CLIPBOARD
-        title_text = "工具调用" if is_tool_ops else "操作记录"
-        
-        max_display = 10
-        items = []
-        for op in operations[:max_display]:
-            if "进行中" in op or "running" in op.lower():
-                icon = SVG_LOADING
-            elif "失败" in op or "error" in op.lower():
-                icon = SVG_ERROR
-            else:
-                icon = SVG_SUCCESS
-            
-            op_html = self._linkify_file_paths(op)
-            items.append(f'<div class="ops-item"><span class="ops-icon">{icon}</span><span>{op_html}</span></div>')
-        
-        more = ""
-        if len(operations) > max_display:
-            more = f'<div class="ops-more">... 还有 {len(operations) - max_display} 条操作</div>'
-        
-        card_class = "ops-card tool-ops" if is_tool_ops else "ops-card"
-        return f'''<div class="{card_class}">
-<div class="ops-title">{title_icon} {title_text}</div>
-{''.join(items)}
-{more}
-</div>'''
-    
     def _render_user_content_html(self, content: str, attachments: List[Attachment]) -> str:
         replaced = replace_inline_attachment_markers(
             content,
@@ -809,72 +714,6 @@ function onFileClick(path) {
             'app_shutdown': '应用关闭，中断了当前输出',
         }.get(reason, '该回复未完整生成')
     
-    def _render_sources_html(self, results: List[Dict[str, Any]]) -> str:
-        """
-        渲染搜索来源链接（类似 Google AI Studio 风格）
-        
-        Args:
-            results: 搜索结果列表，每项包含 title, url, snippet
-            
-        Returns:
-            HTML 字符串
-        """
-        if not results:
-            return ""
-        
-        import html
-        from urllib.parse import urlparse
-        
-        items = []
-        for i, result in enumerate(results, 1):
-            url = result.get("url", "")
-            title = result.get("title", "")
-            if not isinstance(url, str) or not url.strip():
-                continue
-            
-            # 提取域名
-            try:
-                domain = urlparse(url).netloc
-                if domain.startswith("www."):
-                    domain = domain[4:]
-            except:
-                domain = url[:30] if url else "unknown"
-
-            if domain in {"example.com", "example.org", "example.net", "localhost", "127.0.0.1"}:
-                continue
-            
-            # 转义 HTML
-            safe_url = html.escape(url)
-            safe_domain = html.escape(domain)
-            safe_title = html.escape(title) if title else safe_domain
-            
-            items.append(
-                f'<a class="source-item" href="{safe_url}" target="_blank" title="{safe_title}">'
-                f'<span class="source-num">{i}.</span>'
-                f'<span class="source-domain">{safe_domain}</span>'
-                f'</a>'
-            )
-
-        if not items:
-            return ""
-        
-        return f'''<div class="sources-card">
-<div class="sources-title">{SVG_SEARCH} Sources</div>
-<div class="sources-list">{"".join(items)}</div>
-</div>'''
-    
-    def _linkify_file_paths(self, text: str) -> str:
-        import re
-        import html
-        patterns = [
-            (r'`([^`]+\.(py|cir|json|txt|md|spice))`', r'<a class="file-link" href="file://\1">`\1`</a>'),
-            (r'"([^"]+\.(py|cir|json|txt|md|spice))"', r'<a class="file-link" href="file://\1">"\1"</a>'),
-        ]
-        result = html.escape(text)
-        for pattern, replacement in patterns:
-            result = re.sub(pattern, replacement, result, flags=re.IGNORECASE)
-        return result
-    
     def _md_to_html(self, text: str) -> str:
         if not text:
             return ""
@@ -891,8 +730,6 @@ function onFileClick(path) {
         return html.escape(text) if text else ""
     
     def clear_messages(self):
-        self._messages = []
-        self._runtime_steps = []
         self._pending_runtime_steps = None
         self._runtime_timer.stop()
         self._rendered_message_ids = []

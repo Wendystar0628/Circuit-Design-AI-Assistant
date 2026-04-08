@@ -456,7 +456,7 @@ class ConversationPanel(QWidget):
     @pyqtSlot()
     def _on_runtime_steps_changed(self) -> None:
         """处理运行时步骤更新。"""
-        if self._message_area:
+        if self._message_area and self.view_model is not None:
             self._message_area.render_runtime_steps(self.view_model.active_agent_steps)
 
     @pyqtSlot()

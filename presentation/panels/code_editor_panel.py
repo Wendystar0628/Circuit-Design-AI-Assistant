@@ -82,7 +82,6 @@ class CodeEditorPanel(QWidget):
     """代码编辑器面板"""
     file_saved = pyqtSignal(str)
     open_workspace_requested = pyqtSignal()
-    undo_redo_state_changed = pyqtSignal(bool, bool)
     editable_file_state_changed = pyqtSignal(bool)
     
     def __init__(self, parent=None):
@@ -365,8 +364,6 @@ class CodeEditorPanel(QWidget):
             editor.set_modified(False)
             
             editor.cursorPositionChanged.connect(self._update_cursor_position)
-            editor.document().undoAvailable.connect(self._on_undo_available_changed)
-            editor.document().redoAvailable.connect(self._on_redo_available_changed)
             editor.modification_changed.connect(
                 lambda modified, p=path: self._on_editor_modification_changed(p, modified)
             )
@@ -483,29 +480,27 @@ class CodeEditorPanel(QWidget):
                 tab.is_modified = False
                 self._update_tab_title(path)
 
-    def undo(self) -> None:
-        """编辑器撤销"""
-        current_widget = self._tab_widget.currentWidget()
-        if isinstance(current_widget, CodeEditor):
-            current_widget.undo()
+    def sync_open_tabs_with_workspace(self):
+        removed_paths = []
+        for path in list(self._tabs.keys()):
+            if not os.path.isfile(path):
+                if self._discard_tab_by_path(path):
+                    removed_paths.append(path)
+                continue
 
-    def redo(self) -> None:
-        """编辑器重做"""
-        current_widget = self._tab_widget.currentWidget()
-        if isinstance(current_widget, CodeEditor):
-            current_widget.redo()
+            if not self.reload_file(path) and path in self._tabs:
+                was_current = path == self.get_current_file()
+                if self._discard_tab_by_path(path):
+                    self.load_file(path)
+                    if not was_current:
+                        self.switch_to_file(path)
 
-    def can_undo(self) -> bool:
-        current_widget = self._tab_widget.currentWidget()
-        if isinstance(current_widget, CodeEditor):
-            return current_widget.document().isUndoAvailable()
-        return False
+        if removed_paths and self.logger:
+            self.logger.info(f"Closed {len(removed_paths)} editor tabs for files removed by rollback")
 
-    def can_redo(self) -> bool:
-        current_widget = self._tab_widget.currentWidget()
-        if isinstance(current_widget, CodeEditor):
-            return current_widget.document().isRedoAvailable()
-        return False
+        self._update_empty_state()
+        self._emit_editable_file_state()
+        self._update_scroll_buttons()
 
     def get_content(self) -> Optional[str]:
         current_widget = self._tab_widget.currentWidget()
@@ -654,6 +649,17 @@ class CodeEditorPanel(QWidget):
             return True
         return False
 
+    def _discard_tab_by_path(self, path: str) -> bool:
+        tab = self._tabs.get(path)
+        if tab is None:
+            return False
+
+        index = self._tab_widget.indexOf(tab.widget)
+        if index >= 0:
+            self._tab_widget.removeTab(index)
+        del self._tabs[path]
+        return True
+
     def _close_current_tab(self):
         current_index = self._tab_widget.currentIndex()
         if current_index >= 0:
@@ -664,20 +670,9 @@ class CodeEditorPanel(QWidget):
     # 事件处理
     # ============================================================
 
-    def _emit_undo_redo_state(self):
-        can_undo = self.can_undo()
-        can_redo = self.can_redo()
-        self.undo_redo_state_changed.emit(can_undo, can_redo)
-
     def _emit_editable_file_state(self):
         has_editable = any(not tab.is_readonly for tab in self._tabs.values())
         self.editable_file_state_changed.emit(has_editable)
-
-    def _on_undo_available_changed(self, available: bool):
-        self._emit_undo_redo_state()
-
-    def _on_redo_available_changed(self, available: bool):
-        self._emit_undo_redo_state()
 
     def _on_editor_modification_changed(self, path: str, modified: bool):
         self._update_tab_title(path)
@@ -687,14 +682,15 @@ class CodeEditorPanel(QWidget):
 
     def _on_current_tab_changed(self, index: int):
         if index < 0:
-            self.undo_redo_state_changed.emit(False, False)
+            self._update_scroll_buttons()
             return
+
         widget = self._tab_widget.widget(index)
         for path, tab in self._tabs.items():
             if tab.widget == widget:
                 self._update_status_bar(path)
                 break
-        self._emit_undo_redo_state()
+
         self._update_scroll_buttons()
 
     def _on_scroll_left(self):
@@ -811,11 +807,13 @@ class CodeEditorPanel(QWidget):
             from shared.event_types import (
                 EVENT_LANGUAGE_CHANGED, EVENT_STATE_PROJECT_OPENED,
                 EVENT_STATE_PROJECT_CLOSED, EVENT_AGENT_FILE_MODIFIED,
+                EVENT_SESSION_CHANGED,
             )
             self.event_bus.subscribe(EVENT_LANGUAGE_CHANGED, self._on_language_changed)
             self.event_bus.subscribe(EVENT_STATE_PROJECT_OPENED, self._on_project_opened)
             self.event_bus.subscribe(EVENT_STATE_PROJECT_CLOSED, self._on_project_closed)
             self.event_bus.subscribe(EVENT_AGENT_FILE_MODIFIED, self._on_agent_file_modified)
+            self.event_bus.subscribe(EVENT_SESSION_CHANGED, self._on_session_changed)
 
     def _on_language_changed(self, event_data: Dict[str, Any]):
         self.retranslate_ui()
@@ -834,6 +832,11 @@ class CodeEditorPanel(QWidget):
         file_path = data.get("path", "")
         if file_path:
             self.reload_file(file_path)
+
+    def _on_session_changed(self, event_data: Dict[str, Any]):
+        data = event_data.get("data", event_data)
+        if data.get("action", "") == "rollback":
+            self.sync_open_tabs_with_workspace()
 
 
 

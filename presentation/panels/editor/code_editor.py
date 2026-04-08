@@ -50,6 +50,8 @@ class CodeEditor(QPlainTextEdit):
         
         # 行号区域
         self._line_number_area = LineNumberArea(self)
+
+        self.setUndoRedoEnabled(False)
         
         # 语法高亮器
         self._highlighter: Optional[QSyntaxHighlighter] = None

@@ -164,34 +164,6 @@ class MenuManager:
         """设置编辑菜单"""
         menu = self._menus["edit"]
         
-        # 撤销（编辑器级别，Ctrl+Z）
-        self._actions["edit_undo"] = QAction(self._main_window)
-        self._actions["edit_undo"].setShortcut("Ctrl+Z")
-        self._actions["edit_undo"].setEnabled(False)
-        if "on_editor_undo" in self._callbacks:
-            self._actions["edit_undo"].triggered.connect(self._callbacks["on_editor_undo"])
-        menu.addAction(self._actions["edit_undo"])
-        
-        # 重做（编辑器级别，Ctrl+Y）
-        self._actions["edit_redo"] = QAction(self._main_window)
-        self._actions["edit_redo"].setShortcut("Ctrl+Y")
-        self._actions["edit_redo"].setEnabled(False)
-        if "on_editor_redo" in self._callbacks:
-            self._actions["edit_redo"].triggered.connect(self._callbacks["on_editor_redo"])
-        menu.addAction(self._actions["edit_redo"])
-        
-        menu.addSeparator()
-        
-        # 撤回本次迭代（迭代级别，Ctrl+Shift+Z）
-        self._actions["edit_undo_iteration"] = QAction(self._main_window)
-        self._actions["edit_undo_iteration"].setShortcut("Ctrl+Shift+Z")
-        self._actions["edit_undo_iteration"].setEnabled(False)
-        if "on_undo_iteration" in self._callbacks:
-            self._actions["edit_undo_iteration"].triggered.connect(self._callbacks["on_undo_iteration"])
-        menu.addAction(self._actions["edit_undo_iteration"])
-        
-        menu.addSeparator()
-        
         # 剪切（灰显）
         self._actions["edit_cut"] = QAction(self._main_window)
         self._actions["edit_cut"].setEnabled(False)
@@ -426,11 +398,6 @@ class MenuManager:
         self._menus["recent"].setTitle(self._get_text("menu.file.recent", "Recent Projects"))
         
         # 编辑菜单项
-        self._actions["edit_undo"].setText(self._get_text("menu.edit.undo", "Undo"))
-        self._actions["edit_redo"].setText(self._get_text("menu.edit.redo", "Redo"))
-        self._actions["edit_undo_iteration"].setText(
-            self._get_text("menu.edit.undo_iteration", "Undo Iteration")
-        )
         self._actions["edit_cut"].setText(self._get_text("menu.edit.cut", "Cut"))
         self._actions["edit_copy"].setText(self._get_text("menu.edit.copy", "Copy"))
         self._actions["edit_paste"].setText(self._get_text("menu.edit.paste", "Paste"))

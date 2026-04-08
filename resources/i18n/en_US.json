@@ -14,9 +14,6 @@
   "menu.file.exit": "Exit",
 
   "menu.edit": "Edit",
-  "menu.edit.undo": "Undo",
-  "menu.edit.redo": "Redo",
-  "menu.edit.undo_iteration": "Undo Iteration",
   "menu.edit.cut": "Cut",
   "menu.edit.copy": "Copy",
   "menu.edit.paste": "Paste",

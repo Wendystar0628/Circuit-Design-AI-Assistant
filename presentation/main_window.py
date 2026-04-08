@@ -402,9 +402,6 @@ class MainWindow(QMainWindow):
             editor.open_workspace_requested.connect(
                 self._action_handlers.on_open_workspace
             )
-            editor.undo_redo_state_changed.connect(
-                self._on_undo_redo_state_changed
-            )
             editor.editable_file_state_changed.connect(
                 self._on_editable_file_state_changed
             )
@@ -754,12 +751,6 @@ class MainWindow(QMainWindow):
     # ============================================================
     # 信号处理
     # ============================================================
-
-    def _on_undo_redo_state_changed(self, can_undo: bool, can_redo: bool):
-        """撤销/重做状态变化处理"""
-        if self._menu_manager:
-            self._menu_manager.set_action_enabled("edit_undo", can_undo)
-            self._menu_manager.set_action_enabled("edit_redo", can_redo)
 
     def _on_editable_file_state_changed(self, has_editable_file: bool):
         """可编辑文件状态变化处理（用于启用/禁用保存按钮）"""

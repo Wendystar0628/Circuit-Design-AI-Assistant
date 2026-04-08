@@ -423,7 +423,7 @@ class ConversationPanel(QWidget):
         更新标题栏显示会话名称。
         注意：不在这里刷新消息显示，由 ViewModel 的 messages_changed 信号触发。
         """
-        data = event_data.get("data", {})
+        data = event_data.get("data", event_data)
         session_name = data.get("session_name", "")
         action = data.get("action", "")
         

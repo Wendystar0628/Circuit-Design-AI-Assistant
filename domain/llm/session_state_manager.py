@@ -832,7 +832,6 @@ class SessionStateManager:
     ) -> Dict[str, Any]:
         from domain.services import context_service
         from domain.llm.message_helpers import dicts_to_messages
-        import copy
         from domain.llm.working_context_builder import (
             WORKING_CONTEXT_COMPRESSED_COUNT_KEY,
             WORKING_CONTEXT_KEEP_RECENT_KEY,
@@ -842,7 +841,7 @@ class SessionStateManager:
         messages_data = context_service.load_messages(project_root, session_id)
         messages = dicts_to_messages(messages_data) if messages_data else []
 
-        base_state = copy.deepcopy(state if state is not None else self._get_current_state())
+        base_state = self._build_clean_state_base()
         base_state["messages"] = messages
 
         metadata = context_service.get_session_metadata(project_root, session_id)
@@ -874,14 +873,13 @@ class SessionStateManager:
         self,
         state: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        import copy
         from domain.llm.working_context_builder import (
             WORKING_CONTEXT_COMPRESSED_COUNT_KEY,
             WORKING_CONTEXT_KEEP_RECENT_KEY,
             WORKING_CONTEXT_SUMMARY_KEY,
         )
 
-        base_state = copy.deepcopy(state if state is not None else self._get_current_state())
+        base_state = self._build_clean_state_base()
         base_state["messages"] = []
         base_state[WORKING_CONTEXT_SUMMARY_KEY] = ""
         base_state[WORKING_CONTEXT_COMPRESSED_COUNT_KEY] = 0
@@ -892,6 +890,24 @@ class SessionStateManager:
         base_state["last_metrics"] = {}
         base_state["error_context"] = ""
         return base_state
+
+    def _build_clean_state_base(self) -> Dict[str, Any]:
+        try:
+            from application.graph.state import GraphState
+
+            return GraphState().to_dict()
+        except Exception:
+            return {
+                "messages": [],
+                WORKING_CONTEXT_SUMMARY_KEY: "",
+                WORKING_CONTEXT_COMPRESSED_COUNT_KEY: 0,
+                WORKING_CONTEXT_KEEP_RECENT_KEY: 0,
+                "circuit_file_path": "",
+                "sim_result_path": "",
+                "design_goals_path": ".circuit_ai/design_goals.json",
+                "last_metrics": {},
+                "error_context": "",
+            }
 
     def _activate_session(
         self,

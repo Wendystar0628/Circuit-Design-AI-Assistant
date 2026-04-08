@@ -5,7 +5,17 @@
 包含所有系统级常量定义。
 """
 
-from shared.constants.paths import *
+from shared.constants.paths import (
+    SYSTEM_DIR,
+    SIM_RESULTS_DIR,
+    SIM_CONFIG_FILE,
+    DESIGN_GOALS_FILE,
+    ITERATION_HISTORY_FILE,
+    SNAPSHOTS_DIR,
+    CONVERSATIONS_DIR,
+    TEMP_DIR,
+    CHECKPOINTS_DB,
+)
 
 __all__ = [
     # 从 paths 模块导出
@@ -14,7 +24,6 @@ __all__ = [
     "SIM_CONFIG_FILE",
     "DESIGN_GOALS_FILE",
     "ITERATION_HISTORY_FILE",
-    "UNDO_SNAPSHOTS_DIR",
     "SNAPSHOTS_DIR",
     "CONVERSATIONS_DIR",
     "TEMP_DIR",

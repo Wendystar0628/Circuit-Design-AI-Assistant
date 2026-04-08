@@ -31,14 +31,12 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QLabel,
     QGroupBox,
-    QMessageBox,
     QWidget,
     QHeaderView,
     QAbstractItemView,
 )
 from PyQt6.QtCore import Qt
 
-from domain.design.undo_manager import undo_manager, UndoInfo
 from domain.services import snapshot_service
 
 
@@ -78,7 +76,6 @@ class IterationHistoryDialog(QDialog):
         
         self._history_table: Optional[QTableWidget] = None
         self._detail_text: Optional[QTextEdit] = None
-        self._restore_btn: Optional[QPushButton] = None
         self._close_btn: Optional[QPushButton] = None
         
         self._setup_dialog()
@@ -171,7 +168,6 @@ class IterationHistoryDialog(QDialog):
         self._history_table.setColumnWidth(3, 80)
         
         self._history_table.itemSelectionChanged.connect(self._on_selection_changed)
-        self._history_table.itemDoubleClicked.connect(self._on_item_double_clicked)
         
         layout.addWidget(self._history_table)
         return group
@@ -200,22 +196,6 @@ class IterationHistoryDialog(QDialog):
         widget = QWidget()
         layout = QHBoxLayout(widget)
         layout.setContentsMargins(0, 10, 0, 0)
-        
-        self._restore_btn = QPushButton()
-        self._restore_btn.setEnabled(False)
-        self._restore_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #4a9eff;
-                color: white;
-                border: none;
-                border-radius: 4px;
-                padding: 8px 16px;
-            }
-            QPushButton:hover { background-color: #3a8eef; }
-            QPushButton:disabled { background-color: #cccccc; }
-        """)
-        self._restore_btn.clicked.connect(self._on_restore_clicked)
-        layout.addWidget(self._restore_btn)
         
         layout.addStretch()
         
@@ -284,14 +264,10 @@ class IterationHistoryDialog(QDialog):
         record = next((r for r in self._iterations if r.snapshot_id == snapshot_id), None)
         if not record:
             self._detail_text.clear()
-            self._restore_btn.setEnabled(False)
             return
         
         html = self._format_detail_html(record)
         self._detail_text.setHtml(html)
-        
-        is_latest = self._iterations and self._iterations[0].snapshot_id == snapshot_id
-        self._restore_btn.setEnabled(not is_latest)
 
     def _format_detail_html(self, record: IterationRecord) -> str:
         html_parts = [
@@ -324,79 +300,11 @@ class IterationHistoryDialog(QDialog):
         selected = self._history_table.selectedItems()
         if not selected:
             self._detail_text.clear()
-            self._restore_btn.setEnabled(False)
             return
         
         row = selected[0].row()
         snapshot_id = self._history_table.item(row, 0).data(Qt.ItemDataRole.UserRole)
         self._show_iteration_detail(snapshot_id)
-
-    def _on_item_double_clicked(self, item: QTableWidgetItem):
-        self._on_restore_clicked()
-
-    def _on_restore_clicked(self):
-        if not self._current_snapshot_id or not self._project_root:
-            return
-        
-        record = next((r for r in self._iterations if r.snapshot_id == self._current_snapshot_id), None)
-        if not record:
-            return
-        
-        result = QMessageBox.warning(
-            self,
-            self._get_text("dialog.warning", "警告"),
-            self._get_text(
-                "iteration.restore.confirm",
-                f"确定要恢复到迭代 #{record.iteration_count} 吗？\n\n"
-                "此操作将覆盖当前的所有文件修改。"
-            ),
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No
-        )
-        
-        if result != QMessageBox.StandardButton.Yes:
-            return
-        
-        self._do_restore(self._current_snapshot_id)
-
-    def _do_restore(self, snapshot_id: str):
-        import asyncio
-        
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-        
-        try:
-            result = loop.run_until_complete(
-                undo_manager.undo_to_iteration(self._project_root, snapshot_id)
-            )
-            
-            if result.success:
-                QMessageBox.information(
-                    self,
-                    self._get_text("dialog.info", "信息"),
-                    self._get_text(
-                        "iteration.restore.success",
-                        f"已恢复到迭代 #{result.restored_iteration}"
-                    )
-                )
-                self.load_history(self._project_root)
-            else:
-                QMessageBox.warning(
-                    self,
-                    self._get_text("dialog.error", "错误"),
-                    result.message
-                )
-        except Exception as e:
-            if self.logger:
-                self.logger.error(f"Failed to restore iteration: {e}")
-            QMessageBox.critical(
-                self,
-                self._get_text("dialog.error", "错误"),
-                str(e)
-            )
 
     def retranslate_ui(self):
         self.setWindowTitle(self._get_text("dialog.iteration_history.title", "迭代历史记录"))
@@ -415,9 +323,6 @@ class IterationHistoryDialog(QDialog):
                 self._get_text("iteration.column.score", "评分"),
                 self._get_text("iteration.column.status", "状态"),
             ])
-        
-        if self._restore_btn:
-            self._restore_btn.setText(self._get_text("btn.restore", "恢复到此检查点"))
         if self._close_btn:
             self._close_btn.setText(self._get_text("btn.close", "关闭"))
 
@@ -426,8 +331,17 @@ class IterationHistoryDialog(QDialog):
             from shared.event_types import EVENT_LANGUAGE_CHANGED
             self.event_bus.subscribe(EVENT_LANGUAGE_CHANGED, self._on_language_changed)
 
+    def _unsubscribe_events(self):
+        if self.event_bus:
+            from shared.event_types import EVENT_LANGUAGE_CHANGED
+            self.event_bus.unsubscribe(EVENT_LANGUAGE_CHANGED, self._on_language_changed)
+
     def _on_language_changed(self, event_data: Dict[str, Any]):
         self.retranslate_ui()
+
+    def closeEvent(self, event) -> None:
+        self._unsubscribe_events()
+        super().closeEvent(event)
 
 
 __all__ = ["IterationHistoryDialog", "IterationRecord"]

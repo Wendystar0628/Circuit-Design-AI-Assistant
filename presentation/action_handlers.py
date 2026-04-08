@@ -116,9 +116,6 @@ class ActionHandlers:
             "on_close_workspace": self.on_close_workspace,
             "on_save_file": self.on_save_file,
             "on_save_all_files": self.on_save_all_files,
-            "on_editor_undo": self.on_editor_undo,
-            "on_editor_redo": self.on_editor_redo,
-            "on_undo_iteration": self.on_undo_iteration,
             "on_toggle_panel": self.on_toggle_panel,
             "on_design_goals": self.on_design_goals,
             "on_iteration_history": self.on_iteration_history,
@@ -187,7 +184,7 @@ class ActionHandlers:
         hidden_dir = path / ".circuit_ai"
         try:
             hidden_dir.mkdir(parents=True, exist_ok=True)
-            (hidden_dir / "undo_snapshots").mkdir(parents=True, exist_ok=True)
+            (hidden_dir / "snapshots").mkdir(parents=True, exist_ok=True)
         except Exception as e:
             if self.logger:
                 self.logger.warning(f"创建隐藏目录失败: {e}")
@@ -283,103 +280,6 @@ class ActionHandlers:
     # ============================================================
     # 编辑操作回调
     # ============================================================
-
-    def on_editor_undo(self):
-        """编辑器级别撤销（Ctrl+Z）"""
-        if "code_editor" in self._panels:
-            editor = self._panels["code_editor"]
-            if hasattr(editor, 'undo'):
-                editor.undo()
-
-    def on_editor_redo(self):
-        """编辑器级别重做（Ctrl+Y）"""
-        if "code_editor" in self._panels:
-            editor = self._panels["code_editor"]
-            if hasattr(editor, 'redo'):
-                editor.redo()
-
-    def on_undo_iteration(self):
-        """撤回本次迭代（迭代级别）"""
-        # 检查是否已打开项目
-        project_root = self._get_project_root()
-        if not project_root:
-            QMessageBox.warning(
-                self._main_window,
-                self._get_text("dialog.warning.title", "Warning"),
-                self._get_text("status.open_workspace", "Please open a workspace folder")
-            )
-            return
-        
-        # 检查是否可以撤回
-        from domain.design.undo_manager import undo_manager
-        
-        if not undo_manager.can_undo(project_root):
-            QMessageBox.information(
-                self._main_window,
-                self._get_text("dialog.info.title", "Information"),
-                self._get_text(
-                    "undo.no_snapshots",
-                    "没有可用的检查点进行撤回"
-                )
-            )
-            return
-        
-        # 获取撤回信息
-        undo_info = undo_manager.get_undo_info(project_root)
-        
-        # 确认对话框
-        result = QMessageBox.warning(
-            self._main_window,
-            self._get_text("dialog.warning.title", "Warning"),
-            self._get_text(
-                "undo.confirm",
-                f"确定要撤回到迭代 #{undo_info.target_iteration} 吗？\n\n"
-                "此操作将覆盖当前的所有文件修改。"
-            ),
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No
-        )
-        
-        if result != QMessageBox.StandardButton.Yes:
-            return
-        
-        # 执行撤回
-        import asyncio
-        
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-        
-        try:
-            undo_result = loop.run_until_complete(
-                undo_manager.undo_to_previous(project_root)
-            )
-            
-            if undo_result.success:
-                QMessageBox.information(
-                    self._main_window,
-                    self._get_text("dialog.info.title", "Information"),
-                    self._get_text(
-                        "undo.success",
-                        f"已恢复到迭代 #{undo_result.restored_iteration}"
-                    )
-                )
-            else:
-                QMessageBox.warning(
-                    self._main_window,
-                    self._get_text("dialog.error.title", "Error"),
-                    undo_result.message
-                )
-        except Exception as e:
-            if self.logger:
-                self.logger.error(f"Failed to undo iteration: {e}")
-            QMessageBox.critical(
-                self._main_window,
-                self._get_text("dialog.error.title", "Error"),
-                str(e)
-            )
 
     def _get_project_root(self) -> Optional[str]:
         """获取当前项目根目录"""

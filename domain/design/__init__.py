@@ -24,13 +24,6 @@ from domain.design.termination_checker import (
     check_termination,
     should_continue,
 )
-from domain.design.undo_manager import (
-    UndoManager,
-    UndoResult,
-    UndoInfo,
-    UndoErrorCode,
-    undo_manager,
-)
 
 __all__ = [
     # design_goals
@@ -47,10 +40,4 @@ __all__ = [
     "TerminationResult",
     "check_termination",
     "should_continue",
-    # undo_manager
-    "UndoManager",
-    "UndoResult",
-    "UndoInfo",
-    "UndoErrorCode",
-    "undo_manager",
 ]

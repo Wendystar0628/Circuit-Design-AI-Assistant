@@ -168,22 +168,6 @@ class ToolbarManager:
             self._actions["toolbar_stop"].triggered.connect(callbacks["on_stop_simulation"])
         self._toolbar.addAction(self._actions["toolbar_stop"])
         
-        self._toolbar.addSeparator()
-        
-        # 撤回迭代（连接到迭代级别撤回）
-        self._actions["toolbar_undo"] = QAction(self._main_window)
-        self._actions["toolbar_undo"].setIcon(self._load_icon("undo"))
-        self._actions["toolbar_undo"].setEnabled(True)
-        if "on_undo_iteration" in callbacks:
-            self._actions["toolbar_undo"].triggered.connect(callbacks["on_undo_iteration"])
-        self._toolbar.addAction(self._actions["toolbar_undo"])
-        
-        # 重做（灰显，暂不实现）
-        self._actions["toolbar_redo"] = QAction(self._main_window)
-        self._actions["toolbar_redo"].setIcon(self._load_icon("redo"))
-        self._actions["toolbar_redo"].setEnabled(False)
-        self._toolbar.addAction(self._actions["toolbar_redo"])
-        
         return self._toolbar
 
     def retranslate_ui(self) -> None:
@@ -205,12 +189,6 @@ class ToolbarManager:
         
         self._actions["toolbar_stop"].setText(self._get_text("btn.stop", "Stop"))
         self._actions["toolbar_stop"].setToolTip(self._get_text("menu.simulation.stop", "Stop Simulation"))
-        
-        self._actions["toolbar_undo"].setText(self._get_text("toolbar.undo_iteration", "Undo Iteration"))
-        self._actions["toolbar_undo"].setToolTip(self._get_text("toolbar.undo_iteration_tip", "Undo to previous iteration checkpoint (Ctrl+Shift+Z)"))
-        
-        self._actions["toolbar_redo"].setText(self._get_text("menu.edit.redo", "Redo"))
-        self._actions["toolbar_redo"].setToolTip(self._get_text("menu.edit.redo", "Redo"))
 
     def get_action(self, name: str) -> Optional[QAction]:
         """

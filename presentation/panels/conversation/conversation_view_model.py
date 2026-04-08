@@ -1337,13 +1337,23 @@ class ConversationViewModel(QObject):
         注意：SessionStateManager 在发布此事件前已同步状态到 ContextManager，
         因此 load_messages() 能正确获取新会话的消息。
         """
-        data = event_data.get("data", {})
+        data = event_data.get("data", event_data)
         session_name = data.get("session_name", "")
         action = data.get("action", "")
         session_id = data.get("session_id", "")
         
         if self.logger:
             self.logger.debug(f"Session changed: action={action}, id={session_id}, name={session_name}")
+
+        if action in {"new", "switch", "delete", "rollback"}:
+            self._clear_active_agent_steps(emit_signal=False)
+            self._is_loading = False
+            self._current_task_id = None
+            self._active_suggestion_message_id = None
+            if self.stop_controller:
+                self.stop_controller.reset()
+            self.runtime_steps_finished.emit()
+            self.can_send_changed.emit(True)
         
         # 重新加载消息（ContextManager 状态已由 SessionStateManager 同步）
         self.load_messages()

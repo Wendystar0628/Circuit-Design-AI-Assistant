@@ -43,9 +43,6 @@ ITERATION_HISTORY_FILE = f"{SYSTEM_DIR}/iteration_history.json"
 # 快照相关路径
 # ============================================================
 
-# 撤回快照目录（相对于项目根目录）
-UNDO_SNAPSHOTS_DIR = f"{SYSTEM_DIR}/undo_snapshots"
-
 # 全量快照目录（相对于项目根目录）
 SNAPSHOTS_DIR = f"{SYSTEM_DIR}/snapshots"
 
@@ -80,7 +77,6 @@ __all__ = [
     "SIM_CONFIG_FILE",
     "DESIGN_GOALS_FILE",
     "ITERATION_HISTORY_FILE",
-    "UNDO_SNAPSHOTS_DIR",
     "SNAPSHOTS_DIR",
     "CONVERSATIONS_DIR",
     "TEMP_DIR",

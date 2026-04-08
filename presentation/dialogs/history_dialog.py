@@ -730,12 +730,44 @@ class HistoryDialog(QDialog):
     def _subscribe_events(self) -> None:
         """订阅事件"""
         if self.event_bus:
-            from shared.event_types import EVENT_LANGUAGE_CHANGED
+            from shared.event_types import EVENT_LANGUAGE_CHANGED, EVENT_SESSION_CHANGED
             self.event_bus.subscribe(EVENT_LANGUAGE_CHANGED, self._on_language_changed)
+            self.event_bus.subscribe(EVENT_SESSION_CHANGED, self._on_session_changed)
+
+    def _unsubscribe_events(self) -> None:
+        if self.event_bus:
+            from shared.event_types import EVENT_LANGUAGE_CHANGED, EVENT_SESSION_CHANGED
+            self.event_bus.unsubscribe(EVENT_LANGUAGE_CHANGED, self._on_language_changed)
+            self.event_bus.unsubscribe(EVENT_SESSION_CHANGED, self._on_session_changed)
 
     def _on_language_changed(self, event_data: Dict[str, Any]) -> None:
         """语言变更事件处理"""
         self.retranslate_ui()
+
+    def _on_session_changed(self, event_data: Dict[str, Any]) -> None:
+        data = event_data.get("data", event_data)
+        session_id = data.get("session_id", "") or self._current_session_id
+
+        self.load_sessions()
+
+        if not session_id:
+            return
+
+        for row, session in enumerate(self._sessions):
+            if session.session_id == session_id:
+                self._session_list.setCurrentRow(row)
+                return
+
+        self._current_session_id = None
+        self._current_messages = []
+        self._detail_text.clear()
+        self._open_btn.setEnabled(False)
+        self._export_btn.setEnabled(False)
+        self._delete_btn.setEnabled(False)
+
+    def closeEvent(self, event) -> None:
+        self._unsubscribe_events()
+        super().closeEvent(event)
 
 
 # ============================================================

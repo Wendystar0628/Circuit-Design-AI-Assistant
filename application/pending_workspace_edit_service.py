@@ -20,7 +20,6 @@ class PendingWorkspaceEditService(QObject):
         self._records: Dict[str, Dict[str, Any]] = {}
         self._event_bus = None
         self._file_manager = None
-        self._session_state = None
         self._session_state_manager = None
         self._logger = None
         self._subscribed = False
@@ -51,18 +50,6 @@ class PendingWorkspaceEditService(QObject):
             except Exception:
                 pass
         return self._file_manager
-
-    @property
-    def session_state(self):
-        if self._session_state is None:
-            try:
-                from shared.service_locator import ServiceLocator
-                from shared.service_names import SVC_SESSION_STATE
-
-                self._session_state = ServiceLocator.get_optional(SVC_SESSION_STATE)
-            except Exception:
-                pass
-        return self._session_state
 
     @property
     def session_state_manager(self):
@@ -474,10 +461,6 @@ class PendingWorkspaceEditService(QObject):
                 project_root = str(manager.get_project_root() or "")
             except Exception:
                 project_root = ""
-        if not project_root:
-            session_state = self.session_state
-            if session_state is not None:
-                project_root = str(getattr(session_state, "project_root", "") or "")
         if project_root:
             return self._normalize_path(project_root)
         if path:

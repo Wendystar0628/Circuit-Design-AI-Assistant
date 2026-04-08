@@ -5,12 +5,15 @@ import pytest
 from application.pending_workspace_edit_service import PendingWorkspaceEditService
 from infrastructure.persistence.file_manager import FileManager
 from shared.service_locator import ServiceLocator
-from shared.service_names import SVC_FILE_MANAGER, SVC_SESSION_STATE
+from shared.service_names import SVC_FILE_MANAGER, SVC_SESSION_STATE_MANAGER
 
 
-class _SessionState:
+class _SessionStateManager:
     def __init__(self, project_root: str):
-        self.project_root = project_root
+        self._project_root = project_root
+
+    def get_project_root(self) -> str:
+        return self._project_root
 
 
 @pytest.fixture(autouse=True)
@@ -24,7 +27,10 @@ def _create_service(project_root: Path) -> PendingWorkspaceEditService:
     file_manager = FileManager()
     file_manager.set_work_dir(project_root)
     ServiceLocator.register(SVC_FILE_MANAGER, file_manager)
-    ServiceLocator.register(SVC_SESSION_STATE, _SessionState(str(project_root)))
+    ServiceLocator.register(
+        SVC_SESSION_STATE_MANAGER,
+        _SessionStateManager(str(project_root)),
+    )
     return PendingWorkspaceEditService()
 
 

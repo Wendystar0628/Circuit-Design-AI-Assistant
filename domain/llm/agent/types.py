@@ -73,14 +73,10 @@ class ToolResult:
         details: 供 UI 展示的结构化详情（可选）
             - 不会发送给 LLM，仅供前端渲染
             - 例如：diff 信息、行号、文件统计等
-        effects: 工具执行产生的外部副作用列表（可选）
-            - 不会发送给 LLM，仅供协调层消费
-            - 例如：文件已修改、资源已创建等
     """
     content: str
     is_error: bool = False
     details: Optional[Dict[str, Any]] = None
-    effects: Optional[List[Dict[str, Any]]] = None
 
 
 # ============================================================
@@ -455,7 +451,6 @@ class BaseTool(ABC):
 def create_error_result(
     error_message: str,
     details: Optional[Dict[str, Any]] = None,
-    effects: Optional[List[Dict[str, Any]]] = None,
 ) -> ToolResult:
     """
     创建错误工具结果的工厂函数
@@ -474,30 +469,6 @@ def create_error_result(
         content=error_message,
         is_error=True,
         details=details,
-        effects=effects,
-    )
-
-
-def create_success_result(
-    content: str,
-    details: Optional[Dict[str, Any]] = None,
-    effects: Optional[List[Dict[str, Any]]] = None,
-) -> ToolResult:
-    """
-    创建成功工具结果的工厂函数
-    
-    Args:
-        content: 结果描述（返回给 LLM）
-        details: 额外的结果详情（供 UI 展示）
-        
-    Returns:
-        ToolResult(is_error=False)
-    """
-    return ToolResult(
-        content=content,
-        is_error=False,
-        details=details,
-        effects=effects,
     )
 
 
@@ -514,5 +485,4 @@ __all__ = [
     "BaseTool",
     # 工厂函数
     "create_error_result",
-    "create_success_result",
 ]

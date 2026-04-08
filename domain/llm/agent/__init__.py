@@ -40,7 +40,6 @@ from domain.llm.agent.types import (
     BaseTool,
     # 工厂函数
     create_error_result,
-    create_success_result,
 )
 
 from domain.llm.agent.tool_registry import ToolRegistry
@@ -74,7 +73,6 @@ __all__ = [
     "ToolCallInfo",
     "BaseTool",
     "create_error_result",
-    "create_success_result",
     # 注册表
     "ToolRegistry",
     # 工具工厂

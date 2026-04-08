@@ -473,20 +473,13 @@ class ConversationPanel(QWidget):
     @pyqtSlot(bool)
     def _on_can_send_changed(self, can_send: bool) -> None:
         """处理可发送状态变化"""
-        if self._input_area:
-            if can_send:
-                # 恢复发送模式（停止完成或工作流解锁时）
-                self._input_area.set_button_mode(ButtonMode.SEND)
-                self._input_area.set_send_enabled(True)
-            else:
-                # 禁用发送（工作流锁定时）
-                self._input_area.set_send_enabled(False)
+        self._sync_input_action_state()
     
     @pyqtSlot()
     def _on_stop_requested(self) -> None:
         """处理停止请求信号（来自 ViewModel）"""
-        # InputArea 已在点击时切换到 STOPPING 模式
-        # 这里可以更新状态栏等其他 UI
+        if self._input_area and self._input_area.get_button_mode() != ButtonMode.STOPPING:
+            self._input_area.set_button_mode(ButtonMode.STOPPING)
         if self.logger:
             self.logger.debug("Stop requested, UI updated")
     
@@ -504,6 +497,7 @@ class ConversationPanel(QWidget):
         if self.logger:
             saved = result.get("saved", False)
             self.logger.info(f"Stop completed, partial saved: {saved}")
+        self._sync_input_action_state()
     
     @pyqtSlot()
     def _on_new_conversation_suggested(self) -> None:
@@ -523,7 +517,6 @@ class ConversationPanel(QWidget):
     
     def _on_new_conversation_clicked(self) -> None:
         """处理新开对话按钮点击"""
-        # 直接开始新对话，无需确认（当前会话自动保存）
         self.start_new_conversation()
     
     def _on_history_clicked(self) -> None:
@@ -563,9 +556,7 @@ class ConversationPanel(QWidget):
         if self.view_model:
             success = self.view_model.request_stop()
             if not success:
-                # 停止请求失败，恢复按钮状态
-                if self._input_area:
-                    self._input_area.set_button_mode(ButtonMode.SEND)
+                self._sync_input_action_state()
                 if self.logger:
                     self.logger.warning("Stop request failed")
     
@@ -579,7 +570,6 @@ class ConversationPanel(QWidget):
             file_filter
         )
         
-        # 添加到 InputArea 的附件列表
         if self._input_area:
             for path in paths:
                 self._input_area.add_attachment(path)
@@ -593,7 +583,6 @@ class ConversationPanel(QWidget):
             "All Files (*.*)"
         )
         
-        # 添加到 InputArea 的附件列表
         if self._input_area:
             for path in paths:
                 self._input_area.add_attachment(path)
@@ -605,7 +594,6 @@ class ConversationPanel(QWidget):
             
             dialog = ModelConfigDialog(self)
             if dialog.exec():
-                # 用户保存了配置，更新模型卡片显示
                 if self._input_area:
                     self._input_area.update_model_display()
                 
@@ -699,17 +687,25 @@ class ConversationPanel(QWidget):
         if not text.strip() and not attachments:
             return
 
-        # 检查是否可以发送
         if self.view_model and not self.view_model.can_send:
             return
         
-        # 通过 ViewModel 发送
         if self.view_model:
             success = self.view_model.send_message(text, attachments)
             if success:
                 self._input_area.clear()
-                # 切换按钮为停止模式
+                self._sync_input_action_state()
+
+    def _sync_input_action_state(self) -> None:
+        if self._input_area is None:
+            return
+        if self.view_model and self.view_model.is_loading:
+            if self._input_area.get_button_mode() != ButtonMode.STOPPING:
                 self._input_area.set_button_mode(ButtonMode.STOP)
+            self._input_area.set_send_enabled(False)
+            return
+        self._input_area.set_button_mode(ButtonMode.SEND)
+        self._input_area.set_send_enabled(self.view_model.can_send if self.view_model else True)
 
     def add_attachments(self, paths: list[str]) -> None:
         if self._input_area is None:
@@ -737,7 +733,6 @@ class ConversationPanel(QWidget):
         5. UI 组件订阅事件后自动刷新
         """
         if self.view_model:
-            # 委托给 ViewModel，ViewModel 再委托给 SessionStateManager
             success, new_session_name = self.view_model.request_new_session()
             
             if success:
@@ -750,7 +745,6 @@ class ConversationPanel(QWidget):
                 if self.logger:
                     self.logger.warning(f"Failed to start new conversation: {new_session_name}")
         
-        # 发出信号
         self.new_conversation_requested.emit()
 
     # ============================================================
@@ -764,7 +758,6 @@ class ConversationPanel(QWidget):
         if self._input_area:
             self._input_area.retranslate_ui()
         
-        # 刷新显示
         self.refresh_display()
 
 
@@ -774,6 +767,5 @@ class ConversationPanel(QWidget):
 
 __all__ = [
     "ConversationPanel",
-    # 常量
     "PANEL_BACKGROUND",
 ]

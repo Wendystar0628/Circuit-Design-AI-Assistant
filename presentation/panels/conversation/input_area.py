@@ -24,8 +24,8 @@ import mimetypes
 from enum import Enum
 from typing import Any, List, Optional
 
-from PyQt6.QtCore import Qt, pyqtSignal, QSize
-from PyQt6.QtGui import QDragEnterEvent, QDropEvent, QKeyEvent, QPixmap, QIcon
+from PyQt6.QtCore import Qt, pyqtSignal, QSize, QTimer, QRectF
+from PyQt6.QtGui import QDragEnterEvent, QDropEvent, QKeyEvent, QPixmap, QIcon, QPainter, QColor, QPen
 from PyQt6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -82,6 +82,63 @@ class ButtonMode(Enum):
     STOPPING = "stopping"   # 正在停止（点击停止后）
 
 
+class AnimatedActionButton(QPushButton):
+    def __init__(self, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self._activity_mode = "idle"
+        self._spinner_angle = 0
+        self._dot_phase = 0
+        self._activity_timer = QTimer(self)
+        self._activity_timer.setInterval(120)
+        self._activity_timer.timeout.connect(self._advance_activity)
+
+    def set_activity_mode(self, mode: str) -> None:
+        normalized_mode = mode if mode in {"idle", "stopping"} else "idle"
+        if self._activity_mode == normalized_mode:
+            return
+        self._activity_mode = normalized_mode
+        if self._activity_mode == "idle":
+            self._activity_timer.stop()
+            self._spinner_angle = 0
+            self._dot_phase = 0
+        else:
+            self._activity_timer.start()
+        self.update()
+
+    def _advance_activity(self) -> None:
+        self._spinner_angle = (self._spinner_angle + 36) % 360
+        self._dot_phase = (self._dot_phase + 1) % 3
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        super().paintEvent(event)
+        if self._activity_mode != "stopping":
+            return
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+        ring_rect = QRectF(11.0, (self.height() - 10.0) / 2.0, 10.0, 10.0)
+        ring_pen = QPen(QColor(255, 255, 255, 230), 2)
+        ring_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(ring_pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawArc(ring_rect, int(-self._spinner_angle * 16), int(-280 * 16))
+
+        dot_y = self.height() / 2.0
+        for index, dot_x in enumerate((31.0, 37.0, 43.0)):
+            opacity = 0.35
+            if index == self._dot_phase:
+                opacity = 1.0
+            elif index == (self._dot_phase - 1) % 3:
+                opacity = 0.65
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(255, 255, 255, int(255 * opacity)))
+            painter.drawEllipse(QRectF(dot_x, dot_y - 1.5, 3.0, 3.0))
+
+        painter.end()
+
+
 # ============================================================
 # InputArea 类
 # ============================================================
@@ -110,12 +167,12 @@ class InputArea(QWidget):
         
         # 内部状态
         self._attachments: List[Attachment] = []
-        self._enabled = True
+        self._send_allowed = True
         self._button_mode: ButtonMode = ButtonMode.SEND
         
         # UI 组件引用
         self._input_text: Optional[InlineAttachmentTextEdit] = None
-        self._send_button: Optional[QPushButton] = None
+        self._send_button: Optional[AnimatedActionButton] = None
         self._model_card_btn: Optional[QPushButton] = None
         self._attachments_area: Optional[QWidget] = None
         self._attachments_layout: Optional[QHBoxLayout] = None
@@ -288,10 +345,11 @@ class InputArea(QWidget):
         bottom_btn_layout.addWidget(self._model_card_btn)
         
         # 发送按钮（位于输入框内部右下角，支持发送/停止切换）
-        self._send_button = QPushButton()
+        self._send_button = AnimatedActionButton()
         self._send_button.setText(self._get_text("btn.send", "Send"))
         self._send_button.setFixedSize(56, 24)
         self._update_button_style()
+        self._refresh_action_button_state()
         self._send_button.clicked.connect(self._on_action_button_clicked)
         bottom_btn_layout.addWidget(self._send_button)
         
@@ -456,28 +514,16 @@ class InputArea(QWidget):
         """获取附件列表"""
         return self._attachments.copy()
     
-    def set_enabled(self, enabled: bool) -> None:
-        """设置输入状态"""
-        self._enabled = enabled
-        
-        if self._send_button:
-            self._send_button.setEnabled(enabled)
-            if enabled:
-                self._send_button.setText(self._get_text("btn.send", "Send"))
-            else:
-                self._send_button.setText("...")
-        
-        # 输入框始终可编辑
-        # if self._input_text:
-        #     self._input_text.setEnabled(enabled)
-    
     def set_send_enabled(self, enabled: bool) -> None:
         """设置发送按钮状态（别名方法）"""
-        self.set_enabled(enabled)
-    
-    def is_enabled(self) -> bool:
-        """检查是否启用"""
-        return self._enabled
+        self._send_allowed = enabled
+        self._refresh_action_button_state()
+
+    def has_send_payload(self) -> bool:
+        return bool(self.get_text().strip() or self._attachments)
+
+    def _can_trigger_send(self) -> bool:
+        return self._button_mode == ButtonMode.SEND and self._send_allowed and self.has_send_payload()
     
     def set_button_mode(self, mode: ButtonMode) -> None:
         """
@@ -492,6 +538,7 @@ class InputArea(QWidget):
         self._button_mode = mode
         self._update_button_style()
         self._update_button_text()
+        self._refresh_action_button_state()
     
     def get_button_mode(self) -> ButtonMode:
         """获取当前按钮模式"""
@@ -524,7 +571,6 @@ class InputArea(QWidget):
                     background-color: #cccccc;
                 }}
             """)
-            self._send_button.setEnabled(self._enabled)
         elif self._button_mode == ButtonMode.STOP:
             # 停止模式：红色
             self._send_button.setStyleSheet(f"""
@@ -544,7 +590,6 @@ class InputArea(QWidget):
                     background-color: #c62828;
                 }}
             """)
-            self._send_button.setEnabled(True)
         elif self._button_mode == ButtonMode.STOPPING:
             # 正在停止：橙色，禁用
             self._send_button.setStyleSheet(f"""
@@ -558,7 +603,6 @@ class InputArea(QWidget):
                     padding: 0px 4px;
                 }}
             """)
-            self._send_button.setEnabled(False)
     
     def _update_button_text(self) -> None:
         """根据当前模式更新按钮文本"""
@@ -570,18 +614,31 @@ class InputArea(QWidget):
         elif self._button_mode == ButtonMode.STOP:
             self._send_button.setText(self._get_text("btn.stop", "Stop"))
         elif self._button_mode == ButtonMode.STOPPING:
-            self._send_button.setText(self._get_text("btn.stopping", "..."))
+            self._send_button.setText("")
+
+    def _refresh_action_button_state(self) -> None:
+        if self._send_button is None:
+            return
+        if self._button_mode == ButtonMode.SEND:
+            self._send_button.setEnabled(self._send_allowed and self.has_send_payload())
+            self._send_button.set_activity_mode("idle")
+        elif self._button_mode == ButtonMode.STOP:
+            self._send_button.setEnabled(True)
+            self._send_button.set_activity_mode("idle")
+        elif self._button_mode == ButtonMode.STOPPING:
+            self._send_button.setEnabled(False)
+            self._send_button.set_activity_mode("stopping")
     
     def clear_text(self) -> None:
         """清空输入文本"""
         if self._input_text:
             self._input_text.clear()
-    
+
     def focus_input(self) -> None:
         """聚焦到输入框"""
         if self._input_text:
             self._input_text.setFocus()
-    
+
     def update_usage(
         self,
         ratio: float,
@@ -602,15 +659,12 @@ class InputArea(QWidget):
         ratio = max(0.0, min(1.0, ratio))
         progress_value = int(round(ratio * 1000))
         
-        # 更新进度条值
         if self._progress_bar:
             self._progress_bar.setValue(progress_value)
         
-        # 更新百分比标签
         if self._usage_label:
             self._usage_label.setText(self._format_percentage(ratio))
         
-        # 更新 token 数量标签
         if self._token_label:
             if max_tokens > 0:
                 self._token_label.setText(f"{self._format_tokens(current_tokens)} / {self._format_tokens(max_tokens)}")
@@ -624,14 +678,13 @@ class InputArea(QWidget):
                 self._token_label.setText("")
                 self._token_label.setToolTip("")
         
-        # 根据占用率更新样式
         if state == "critical":
             self._update_progress_style(COLOR_CRITICAL)
         elif state == "warning":
             self._update_progress_style(COLOR_WARNING)
         else:
             self._update_progress_style(COLOR_NORMAL)
-    
+
     def _format_tokens(self, tokens: int) -> str:
         """格式化 token 数量显示"""
         if tokens >= 1000:
@@ -673,13 +726,11 @@ class InputArea(QWidget):
         if self._attachments_area is None or self._attachments_layout is None:
             return
         
-        # 清空现有预览（保留最后的 stretch）
         while self._attachments_layout.count() > 1:
             item = self._attachments_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
         
-        # 添加新预览
         image_attachments = [
             attachment
             for attachment in self._attachments
@@ -690,8 +741,8 @@ class InputArea(QWidget):
             preview = self._create_attachment_preview(att, i)
             self._attachments_layout.insertWidget(i, preview)
         
-        # 显示/隐藏附件区
         self._attachments_area.setVisible(len(image_attachments) > 0)
+        self._refresh_action_button_state()
     
     def _create_attachment_preview(
         self, attachment: Attachment, index: int
@@ -714,7 +765,7 @@ class InputArea(QWidget):
                 border-radius: 10px;
             }
         """)
-        
+
         layout = QVBoxLayout(container)
         layout.setContentsMargins(6, 6, 6, 6)
         layout.setSpacing(4)
@@ -799,7 +850,7 @@ class InputArea(QWidget):
                 button.setIcon(icon)
                 button.setIconSize(QSize(size, size))
         except Exception:
-            pass  # 图标加载失败时静默处理
+            pass
     
     # ============================================================
     # 事件处理
@@ -808,6 +859,7 @@ class InputArea(QWidget):
     def _on_text_changed(self) -> None:
         """处理文本变化"""
         if self._input_text:
+            self._refresh_action_button_state()
             self.text_changed.emit(self._input_text.serialize_content())
 
     def _on_inline_attachment_removed(self, reference_id: str) -> None:
@@ -816,22 +868,18 @@ class InputArea(QWidget):
     def _on_action_button_clicked(self) -> None:
         """处理发送/停止按钮点击（根据当前模式）"""
         if self._button_mode == ButtonMode.SEND:
-            if self._enabled:
+            if self._can_trigger_send():
                 self.send_clicked.emit()
         elif self._button_mode == ButtonMode.STOP:
-            # 切换到正在停止状态，防止重复点击
             self.set_button_mode(ButtonMode.STOPPING)
             self.stop_clicked.emit()
-        # STOPPING 模式下按钮已禁用，不会触发
     
     def _on_upload_image_clicked(self) -> None:
         """处理上传图片按钮点击"""
-        # 只发出信号，由 ConversationPanel 处理文件选择
         self.upload_image_clicked.emit()
     
     def _on_select_file_clicked(self) -> None:
         """处理选择文件按钮点击"""
-        # 只发出信号，由 ConversationPanel 处理文件选择
         self.select_file_clicked.emit()
     
     def _on_model_card_clicked(self) -> None:
@@ -853,7 +901,6 @@ class InputArea(QWidget):
         display_name = "Model"
         
         try:
-            # 1. 从 ConfigManager 获取当前配置的模型和厂商
             from shared.service_locator import ServiceLocator
             from shared.service_names import SVC_LLM_RUNTIME_CONFIG_MANAGER
             
@@ -865,7 +912,6 @@ class InputArea(QWidget):
                 if active_config.display_name:
                     display_name = active_config.display_name
                 
-                # 2. 通过 ModelRegistry 获取 display_name
                 from shared.model_registry import ModelRegistry
                 if provider and model_name:
                     model_id = f"{provider}:{model_name}"
@@ -874,14 +920,12 @@ class InputArea(QWidget):
                     if model_config:
                         display_name = model_config.display_name
                     else:
-                        # 3. ModelRegistry 中不存在，格式化显示
-                        # 将 "glm-4.7" 转换为 "GLM-4.7"
                         display_name = model_name.upper().replace("GLM-", "GLM-")
         except Exception:
             pass
         
         self._model_card_btn.setText(display_name)
-    
+
     def update_model_display(self, model_name: str = None) -> None:
         """
         更新模型卡片显示
@@ -894,7 +938,7 @@ class InputArea(QWidget):
                 self._model_card_btn.setText(model_name)
         else:
             self._update_model_card_display()
-    
+
     # ============================================================
     # 拖放处理
     # ============================================================
@@ -903,14 +947,14 @@ class InputArea(QWidget):
         """处理拖入事件"""
         if event.mimeData().hasUrls():
             event.acceptProposedAction()
-    
+
     def dropEvent(self, event: QDropEvent) -> None:
         """处理放下事件"""
         for url in event.mimeData().urls():
             path = url.toLocalFile()
             if os.path.isfile(path):
                 self.add_attachment(path)
-    
+
     # ============================================================
     # 键盘事件处理
     # ============================================================
@@ -919,20 +963,18 @@ class InputArea(QWidget):
         """事件过滤器，处理输入框的键盘事件"""
         if obj == self._input_text and event.type() == event.Type.KeyPress:
             key_event = event
-            # Enter 发送消息（仅在发送模式下）
             if (key_event.key() == Qt.Key.Key_Return and
                 not key_event.modifiers() & Qt.KeyboardModifier.ShiftModifier):
-                if self._button_mode == ButtonMode.SEND and self._enabled:
+                if self._can_trigger_send():
                     self.send_clicked.emit()
                 return True
-            # Escape 停止生成（仅在停止模式下）
             elif key_event.key() == Qt.Key.Key_Escape:
                 if self._button_mode == ButtonMode.STOP:
                     self.set_button_mode(ButtonMode.STOPPING)
                     self.stop_clicked.emit()
                     return True
         return super().eventFilter(obj, event)
-    
+
     # ============================================================
     # 布局调整
     # ============================================================
@@ -941,17 +983,16 @@ class InputArea(QWidget):
         """处理大小变化，调整底部按钮位置"""
         super().resizeEvent(event)
         self._update_bottom_buttons_position()
-    
+
     def _update_bottom_buttons_position(self) -> None:
         """更新底部按钮位置（输入框内部底部，横跨整个宽度）"""
         if hasattr(self, '_bottom_buttons') and self._input_text:
-            # 将按钮区放在输入框内部底部
             btn_height = 28
             margin = 4
             y_pos = self._input_text.height() - btn_height - margin
             width = self._input_text.width() - margin * 2
             self._bottom_buttons.setGeometry(margin, y_pos, width, btn_height)
-    
+
     def showEvent(self, event) -> None:
         """显示时更新按钮位置"""
         super().showEvent(event)
@@ -963,15 +1004,15 @@ class InputArea(QWidget):
     
     def retranslate_ui(self) -> None:
         """刷新 UI 文本"""
-        if self._send_button and self._enabled:
-            self._send_button.setText(self._get_text("btn.send", "Send"))
+        if self._send_button:
+            self._update_button_text()
+            self._refresh_action_button_state()
         
         if self._input_text:
             self._input_text.setPlaceholderText(
                 self._get_text("hint.enter_message", "Enter your message...")
             )
         
-        # 更新按钮提示
         if hasattr(self, '_upload_image_btn'):
             self._upload_image_btn.setToolTip(
                 self._get_text("btn.upload_image", "Upload image")

@@ -233,7 +233,8 @@ a { color: #4a9eff; text-decoration: none; }
 a:hover { text-decoration: underline; }
 .katex-block,.katex-display { text-align: center; margin: 12px 0; overflow-x: auto; }
 .katex { font-size: 1.1em; }
-@keyframes dots { 0%,20% { content: "."; } 40% { content: ".."; } 60%,100% { content: "..."; } }
+@keyframes detail-spinner { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+@keyframes detail-dot-pulse { 0%, 80%, 100% { opacity: 0.28; transform: translateY(0); } 40% { opacity: 1; transform: translateY(-1px); } }
 .search-item { padding: 4px 0; border-bottom: 1px solid #e0e0e0; font-size: 12px; }
 .search-item:last-child { border-bottom: none; }
 .search-item-title { color: #333; font-weight: 500; }
@@ -274,9 +275,14 @@ a:hover { text-decoration: underline; }
 .detail-toggle.expanded .arrow { transform: rotate(90deg); }
 .detail-title { color: #0f172a; font-weight: 600; }
 .detail-summary { color: #64748b; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.detail-status { font-size: 11px; padding: 1px 6px; border-radius: 999px; white-space: nowrap; }
+.detail-status { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; padding: 1px 6px; border-radius: 999px; white-space: nowrap; }
+.detail-status-indicator { display: inline-flex; align-items: center; gap: 4px; }
+.detail-status-spinner { width: 9px; height: 9px; border-radius: 999px; border: 1.5px solid currentColor; border-right-color: transparent; animation: detail-spinner 0.8s linear infinite; box-sizing: border-box; }
+.detail-status-dots { display: inline-flex; align-items: center; gap: 2px; }
+.detail-status-dots span { width: 3px; height: 3px; border-radius: 999px; background: currentColor; opacity: 0.28; animation: detail-dot-pulse 1.2s ease-in-out infinite; }
+.detail-status-dots span:nth-child(2) { animation-delay: 0.16s; }
+.detail-status-dots span:nth-child(3) { animation-delay: 0.32s; }
 .detail-status.running, .detail-status.thinking { color: #2563eb; background: #dbeafe; }
-.detail-status.running::after, .detail-status.thinking::after { content: "..."; animation: dots 1.5s infinite; }
 .detail-status.done { color: #166534; background: #dcfce7; }
 .detail-status.error { color: #b91c1c; background: #fee2e2; }
 .detail-content { display: none; padding: 0 12px 12px; max-height: 300px; overflow-y: auto; overscroll-behavior: contain; }
@@ -568,7 +574,18 @@ function onFileClick(path) {
         status_class: str = '',
     ) -> str:
         summary_html = f'<span class="detail-summary">{self._esc_html(summary)}</span>' if summary else ''
-        status_html = f'<span class="detail-status {status_class}">{self._esc_html(status_text)}</span>' if status_text else ''
+        status_indicator_html = ''
+        if status_class in {'running', 'thinking'}:
+            status_indicator_html = (
+                '<span class="detail-status-indicator">'
+                '<span class="detail-status-spinner"></span>'
+                '<span class="detail-status-dots"><span></span><span></span><span></span></span>'
+                '</span>'
+            )
+        status_html = (
+            f'<span class="detail-status {status_class}">{status_indicator_html}<span class="detail-status-label">{self._esc_html(status_text)}</span></span>'
+            if status_text else ''
+        )
         detail_key_attr = self._esc_attr(detail_key)
         return (
             f'<div class="detail-card {variant}">'

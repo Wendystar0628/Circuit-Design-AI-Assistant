@@ -118,19 +118,16 @@ class WebMessageView(QWidget):
         super().__init__(parent)
         self._web_view = None
         self._web_channel = None
-        self._is_streaming = False
-        self._stream_content = ""
-        self._stream_reasoning = ""  # 流式思考内容
         self._messages = []
+        self._runtime_steps: List[Any] = []
         self._rendered_message_ids: List[str] = []
         self._page_loaded = False
         self._pending_messages = []
+        self._pending_runtime_steps: Optional[List[Any]] = None
         self._is_rendering = False
-        self._stream_timer = QTimer(self)
-        self._stream_timer.setInterval(50)
-        self._stream_timer.timeout.connect(self._flush_stream)
-        self._pending_update = False
-        self._pending_reasoning_update = False  # 思考内容更新标志
+        self._runtime_timer = QTimer(self)
+        self._runtime_timer.setInterval(50)
+        self._runtime_timer.timeout.connect(self._flush_runtime_steps)
         self._setup_ui()
     
     def _setup_ui(self):
@@ -190,6 +187,8 @@ class WebMessageView(QWidget):
         if ok and self._pending_messages and not self._is_rendering:
             self._render_static_messages(self._pending_messages)
             self._pending_messages = []
+        if ok and self._pending_runtime_steps is not None:
+            self._flush_runtime_steps()
     
     def _load_initial_page(self):
         self._web_view.setHtml(self._build_html(""))
@@ -226,7 +225,11 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial
 .msg.assistant { align-self: flex-start; background: #f8f9fa; }
 .msg.system { align-self: center; background: transparent; color: #6c757d; font-size: 12px; }
 .msg.suggestion { align-self: flex-start; background: #f8fafc; border: 1px solid #dbe3f0; }
+.msg.assistant.step { border: 1px solid #e2e8f0; box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04); }
 .partial-badge { display: inline-flex; align-items: center; gap: 4px; margin-top: 10px; padding: 4px 8px; border-radius: 999px; background: #fff7ed; color: #c2410c; font-size: 11px; border: 1px solid #fed7aa; }
+.step-label { display: inline-flex; align-items: center; gap: 6px; margin-bottom: 10px; padding: 4px 8px; border-radius: 999px; background: #eef2ff; color: #4338ca; font-size: 11px; font-weight: 600; }
+.step-label.running { background: #eff6ff; color: #2563eb; }
+.step-label.partial { background: #fff7ed; color: #c2410c; }
 
 .row { display: flex; gap: 8px; align-items: flex-start; }
 .row.user { flex-direction: row-reverse; }
@@ -394,50 +397,10 @@ function appendStaticMessages(html) {
         document.getElementById('message-list').insertAdjacentHTML('beforeend', html);
     });
 }
-function showStreamMessage(html) {
+function replaceRuntimeSteps(html) {
     withViewportPreserved(function() {
         document.getElementById('stream-root').innerHTML = html;
     });
-}
-function updateStream(html) { 
-    var shouldStick = _viewportState.stickToBottom && isNearBottom();
-    var s = document.querySelector('.msg.streaming .stream-content'); 
-    if(s) { s.innerHTML = html; renderMath(); if (shouldStick) scrollBottom(true); } 
-}
-function updateStreamReasoning(html) {
-    var shouldStick = _viewportState.stickToBottom && isNearBottom();
-    var s = document.querySelector('.msg.streaming .think-content');
-    if(s) { s.innerHTML = html; if (shouldStick) scrollBottom(true); }
-}
-function startSearching() {
-    var search = document.querySelector('.msg.streaming .search-card');
-    if(search) { search.classList.add('show'); }
-    var status = search.querySelector('.search-status');
-    if(status) {
-        status.classList.add('searching');
-        status.textContent = '搜索中';
-    }
-    // 搜索时隐藏思考区域
-    var think = document.querySelector('.msg.streaming .think');
-    if(think) { think.style.display = 'none'; }
-}
-function finishSearching(resultCount) {
-    var search = document.querySelector('.msg.streaming .search-card');
-    if(search) {
-        var status = search.querySelector('.search-status');
-        if(status) {
-            status.classList.remove('searching');
-            status.textContent = '已搜索 ' + resultCount + ' 条结果';
-        }
-    }
-    // 搜索完成后显示思考区域
-    var think = document.querySelector('.msg.streaming .think');
-    if(think) { think.style.display = 'block'; }
-}
-function updateSearchResults(html) {
-    var shouldStick = _viewportState.stickToBottom && isNearBottom();
-    var content = document.querySelector('.msg.streaming .search-content');
-    if(content) { content.innerHTML = html; if (shouldStick) scrollBottom(true); }
 }
 function toggleSearch(id) {
     var c = document.getElementById('search-'+id);
@@ -447,18 +410,15 @@ function toggleSearch(id) {
         if(t && t.classList.contains('search-toggle')) t.classList.toggle('expanded');
     }
 }
-function finishStream(staticHtml) {
-    withViewportPreserved(function() {
-        if (typeof staticHtml === 'string') {
-            document.getElementById('message-list').innerHTML = staticHtml;
-        }
-        document.getElementById('stream-root').innerHTML = '';
-    });
-}
 function clearMsgs() {
     document.getElementById('message-list').innerHTML = '';
     document.getElementById('stream-root').innerHTML = '';
     _viewportState.stickToBottom = true;
+}
+function clearRuntimeSteps() {
+    withViewportPreserved(function() {
+        document.getElementById('stream-root').innerHTML = '';
+    });
 }
 function toggleThink(id) { 
     var c = document.getElementById('think-'+id); 
@@ -472,28 +432,6 @@ function onFileClick(path) {
     var normalized = String(path || '').split(String.fromCharCode(92)).join('/');
     window.location.href = 'file:///' + encodeURI(normalized);
 }
-function addToolCard(html) {
-    var streaming = document.querySelector('.msg.streaming');
-    var shouldStick = _viewportState.stickToBottom && isNearBottom();
-    if (!streaming) { document.getElementById('stream-root').insertAdjacentHTML('beforeend', html); }
-    else { streaming.insertAdjacentHTML('beforeend', html); }
-    if (shouldStick) scrollBottom(true);
-}
-function updateToolCard(id, resultHtml, isError) {
-    var card = document.getElementById('tool-' + id);
-    if (!card) return;
-    var status = card.querySelector('.tool-status');
-    if (status) {
-        status.classList.remove('running');
-        status.classList.add(isError ? 'error' : 'done');
-        status.textContent = isError ? '\u5931\u8d25' : '\u5b8c\u6210';
-    }
-    if (resultHtml) {
-        var result = card.querySelector('.tool-result');
-        if (result) { result.innerHTML = resultHtml; result.classList.add('show'); }
-    }
-    if (_viewportState.stickToBottom && isNearBottom()) scrollBottom(true);
-}
 '''
 
     def render_messages(self, messages: List[Any]) -> None:
@@ -504,6 +442,25 @@ function updateToolCard(id, resultHtml, isError) {
             self._pending_messages = messages
             return
         self._render_static_messages(messages)
+
+    def render_runtime_steps(self, runtime_steps: List[Any]) -> None:
+        self._runtime_steps = list(runtime_steps)
+        self._pending_runtime_steps = list(runtime_steps)
+        self._runtime_timer.start()
+
+    def _flush_runtime_steps(self) -> None:
+        if not self._web_view or not self._page_loaded or self._pending_runtime_steps is None:
+            return
+        html = ''.join(self._render_runtime_step(step) for step in self._pending_runtime_steps)
+        self._pending_runtime_steps = None
+        self._runtime_timer.stop()
+        self._run_js(f"replaceRuntimeSteps(`{self._esc(html)}`)")
+
+    def clear_runtime_steps(self) -> None:
+        self._runtime_steps = []
+        self._pending_runtime_steps = None
+        self._runtime_timer.stop()
+        self._run_js("clearRuntimeSteps()")
     
     def _render_static_messages(self, messages: List[Any]):
         if not self._web_view or self._is_rendering:
@@ -536,6 +493,7 @@ function updateToolCard(id, resultHtml, isError) {
         operations = getattr(msg, 'operations', []) or []
         attachments = normalize_attachments(getattr(msg, 'attachments', []) or [])
         web_search_results = getattr(msg, 'web_search_results', []) or []
+        agent_steps = getattr(msg, 'agent_steps', []) or []
         
         if role == 'user':
             content_html = self._render_user_content_html(content, attachments)
@@ -547,6 +505,8 @@ function updateToolCard(id, resultHtml, isError) {
             content_html = self._md_to_html(content)
             return f'<div class="row"><div class="msg system">{content_html}</div></div>'
         else:
+            if agent_steps:
+                return ''.join(self._render_persisted_agent_step(msg_id, step) for step in agent_steps)
             content_html = self._md_to_html(content)
             think = ""
             if reasoning:
@@ -564,6 +524,146 @@ function updateToolCard(id, resultHtml, isError) {
             ops_html = self._render_operations_html(operations) if operations else ''
             sources_html = self._render_sources_html(web_search_results) if web_search_results else ''
             return f'<div class="row"><div class="avatar">{SVG_ROBOT}</div><div class="msg assistant">{think}{content_html}{partial_badge}{sources_html}{ops_html}</div></div>'
+
+    def _render_persisted_agent_step(self, message_id: str, step: Any) -> str:
+        step_id = getattr(step, 'step_id', '') or f'{message_id}-step-{getattr(step, "step_index", 0)}'
+        return self._render_agent_step_html(step, step_id)
+
+    def _render_runtime_step(self, step: Any) -> str:
+        step_id = getattr(step, 'step_id', '') or f'runtime-step-{getattr(step, "step_index", 0)}'
+        return self._render_agent_step_html(step, step_id)
+
+    def _render_agent_step_html(self, step: Any, step_dom_id: str) -> str:
+        step_index = int(getattr(step, 'step_index', 0) or 0)
+        content_html = self._md_to_html(getattr(step, 'content', '') or '')
+        reasoning_text = getattr(step, 'reasoning_content', '') or ''
+        reasoning_html = self._md_to_html(reasoning_text) if reasoning_text else ''
+        tool_calls = getattr(step, 'tool_calls', []) or []
+        web_search_results = getattr(step, 'web_search_results', []) or []
+        web_search_query = getattr(step, 'web_search_query', '') or ''
+        web_search_message = getattr(step, 'web_search_message', '') or ''
+        web_search_state = getattr(step, 'web_search_state', 'idle') or 'idle'
+        is_complete = bool(getattr(step, 'is_complete', False))
+        is_partial = bool(getattr(step, 'is_partial', False))
+        stop_reason = getattr(step, 'stop_reason', '') or ''
+
+        label_state_class = ''
+        status_text = '已完成' if is_complete else '进行中'
+        if not is_complete:
+            label_state_class = ' running'
+        if is_partial:
+            label_state_class += ' partial'
+            status_text = self._get_stop_reason_label(stop_reason) if stop_reason else '已中断'
+
+        label_html = f'<div class="step-label{label_state_class}">Step {step_index}<span>{self._esc_html(status_text)}</span></div>' if step_index else ''
+        think_html = self._render_reasoning_block(step_dom_id, reasoning_html, is_complete) if reasoning_html else ''
+        search_html = self._render_step_search_html(step_dom_id, web_search_query, web_search_results, web_search_message, web_search_state)
+        tools_html = ''.join(self._render_tool_call_html(tool_call) for tool_call in tool_calls)
+        partial_badge = ''
+        if is_partial:
+            partial_badge = (
+                f'<div class="partial-badge">'
+                f'{SVG_ERROR}<span>{self._esc_html(self._get_stop_reason_label(stop_reason))}</span>'
+                f'</div>'
+            )
+
+        body_html = content_html or ('<div class="tool-result-content">当前步骤暂无文本输出</div>' if (tools_html or search_html) else '')
+        return (
+            '<div class="row">'
+            f'<div class="avatar">{SVG_ROBOT}</div>'
+            '<div class="msg assistant step">'
+            f'{label_html}{search_html}{think_html}{tools_html}{body_html}{partial_badge}'
+            '</div>'
+            '</div>'
+        )
+
+    def _render_reasoning_block(self, block_id: str, reasoning_html: str, is_complete: bool) -> str:
+        status_class = 'done' if is_complete else 'thinking'
+        status_text = '已完成' if is_complete else '思考中'
+        return f'''<div class="think">
+<div class="think-toggle expanded" onclick="toggleThink('{block_id}')">{SVG_THINKING} 思考过程<span class="arrow">▶</span><span class="think-status {status_class}">{status_text}</span></div>
+<div class="think-content show" id="think-{block_id}">{reasoning_html}</div>
+</div>'''
+
+    def _render_step_search_html(
+        self,
+        block_id: str,
+        query: str,
+        results: List[Dict[str, Any]],
+        message: str,
+        state: str,
+    ) -> str:
+        if not query and not results and not message and state == 'idle':
+            return ''
+
+        title = self._esc_html(query or '联网搜索')
+        status_text = {
+            'running': '搜索中',
+            'complete': f'已搜索 {len(results)} 条结果',
+            'error': '搜索失败',
+        }.get(state, '')
+        status_class = 'searching' if state == 'running' else ''
+
+        content_items: List[str] = []
+        display_results = results or []
+        if state == 'error' and not display_results and message:
+            display_results = [{
+                'title': '搜索失败',
+                'url': '',
+                'snippet': message,
+            }]
+
+        for item in display_results:
+            title_html = self._esc_html(item.get('title', '') or '')
+            url = item.get('url', '') or ''
+            snippet = self._esc_html((item.get('snippet', '') or '')[:180])
+            url_html = f'<div class="search-item-url"><a href="{self._esc_attr(url)}" target="_blank">{self._esc_html(url)}</a></div>' if url else ''
+            content_items.append(f'''<div class="search-item">
+<div class="search-item-title">{title_html}</div>
+{url_html}
+<div class="search-item-snippet">{snippet}</div>
+</div>''')
+
+        if not content_items and message and state != 'error':
+            content_items.append(f'<div class="search-item"><div class="search-item-snippet">{self._esc_html(message)}</div></div>')
+
+        expanded_class = ' expanded' if content_items else ''
+        show_class = ' show' if content_items else ''
+        return f'''<div class="search-card">
+<div class="search-toggle{expanded_class}" onclick="toggleSearch('{block_id}')">{SVG_SEARCH} 联网搜索：{title}<span class="arrow">▶</span><span class="search-status {status_class}">{self._esc_html(status_text)}</span></div>
+<div class="search-content{show_class}" id="search-{block_id}">{''.join(content_items)}</div>
+</div>'''
+
+    def _render_tool_call_html(self, tool_call: Any) -> str:
+        tool_call_id = self._esc_attr(getattr(tool_call, 'tool_call_id', '') or '')
+        tool_name = self._esc_html(getattr(tool_call, 'tool_name', '') or '')
+        arguments = getattr(tool_call, 'arguments', {}) or {}
+        result_content = getattr(tool_call, 'result_content', '') or ''
+        is_error = bool(getattr(tool_call, 'is_error', False))
+
+        args_lines = []
+        for key, value in arguments.items():
+            value_str = str(value)
+            if len(value_str) > 80:
+                value_str = value_str[:77] + '...'
+            args_lines.append(f'{self._esc_html(str(key))}: {self._esc_html(value_str)}')
+        args_html = '<br>'.join(args_lines) if args_lines else ''
+
+        status_class = 'error' if is_error else ('done' if result_content else 'running')
+        status_text = '失败' if is_error else ('完成' if result_content else '执行中')
+        result_html = ''
+        if result_content:
+            display = result_content[:300] + ('...' if len(result_content) > 300 else '')
+            result_html = f'<div class="tool-result show"><div class="tool-result-content">{self._esc_html(display)}</div></div>'
+
+        return (
+            f'<div class="tool-card" id="tool-{tool_call_id}">'
+            f'<div class="tool-header">{SVG_TOOL}<span class="tool-name">{tool_name}</span>'
+            f'<span class="tool-status {status_class}">{status_text}</span></div>'
+            f'<div class="tool-args">{args_html}</div>'
+            f'{result_html}'
+            f'</div>'
+        )
 
     def _render_suggestion_message_html(self, msg) -> str:
         title_html = '<div class="suggestion-title">下一步建议</div>'
@@ -785,226 +885,16 @@ function updateToolCard(id, resultHtml, isError) {
             import html
             return html.escape(text).replace('\n', '<br>')
 
-    # 流式输出
-    def start_streaming(self, with_search: bool = False):
-        """
-        开始流式输出
-        
-        创建一个包含搜索区域、思考区域和内容区域的流式消息气泡。
-        
-        Args:
-            with_search: 是否显示搜索区域
-        """
-        if not self._web_view:
-            return
-        self._is_streaming = True
-        self._stream_content = ""
-        self._stream_reasoning = ""
-        
-        # 搜索区域（默认隐藏，启用搜索时显示）
-        search_html = f'''<div class="search-card" style="display: {'block' if with_search else 'none'};">
-<div class="search-toggle" onclick="toggleSearch('stream')">{SVG_SEARCH} 联网搜索<span class="arrow">▶</span><span class="search-status {'searching' if with_search else ''}">{'搜索中' if with_search else ''}</span></div>
-<div class="search-content" id="search-stream"></div>
-</div>'''
-        
-        # 思考区域（启用搜索时初始隐藏，等搜索完成后显示）
-        think_display = 'none' if with_search else 'block'
-        
-        # 创建包含搜索区域和思考区域的流式消息结构
-        html = f'''<div class="row"><div class="avatar">{SVG_ROBOT}</div><div class="msg assistant streaming">
-{search_html}
-<div class="think" style="display: {think_display};">
-<div class="think-toggle expanded" onclick="toggleThink('stream')">{SVG_THINKING} 思考过程<span class="arrow">▶</span><span class="think-status thinking">思考中</span></div>
-<div class="think-content show" id="think-stream"></div>
-</div>
-<div class="stream-content"></div>
-</div></div>'''
-        self._run_js(f"showStreamMessage(`{self._esc(html)}`)")
-        self._stream_timer.start()
-    
-    def append_streaming_chunk(self, chunk: str, chunk_type: str = "content"):
-        """
-        追加流式输出块
-        
-        Args:
-            chunk: 文本内容
-            chunk_type: 内容类型 ("reasoning" | "content")
-        """
-        if chunk_type == "reasoning":
-            self._stream_reasoning += chunk
-            self._pending_reasoning_update = True
-        else:
-            self._stream_content += chunk
-            self._pending_update = True
-    
-    def _flush_stream(self):
-        """刷新流式输出缓冲区"""
-        # 更新思考内容（使用 Markdown 渲染）
-        if self._pending_reasoning_update:
-            self._pending_reasoning_update = False
-            reasoning_html = self._md_to_html(self._stream_reasoning)
-            self._run_js(f"updateStreamReasoning(`{self._esc(reasoning_html)}`)")
-        
-        # 更新主内容
-        if self._pending_update:
-            self._pending_update = False
-            html = self._md_to_html(self._stream_content)
-            self._run_js(f"updateStream(`{self._esc(html)}`)")
-    
-    def start_searching(self):
-        """
-        开始搜索阶段
-        
-        显示搜索区域并更新状态为"搜索中"。
-        """
-        self._run_js("startSearching()")
-    
-    def finish_searching(self, result_count: int = 0):
-        """
-        完成搜索阶段
-        
-        更新搜索状态显示搜索结果数量。
-        
-        Args:
-            result_count: 搜索结果数量
-        """
-        self._run_js(f"finishSearching({result_count})")
-    
-    def update_search_results(self, results: List[Dict[str, Any]]):
-        """
-        更新搜索结果显示
-        
-        Args:
-            results: 搜索结果列表，每项包含 title, snippet, url
-        """
-        if not results:
-            return
-        
-        items_html = []
-        for r in results:
-            title = r.get("title", "")
-            snippet = r.get("snippet", "")
-            url = r.get("url", "")
-            url_html = f'<div class="search-item-url"><a href="{url}" target="_blank">{url}</a></div>' if url else ""
-            items_html.append(f'''<div class="search-item">
-<div class="search-item-title">{self._esc_html(title)}</div>
-{url_html}
-<div class="search-item-snippet">{self._esc_html(snippet[:150])}</div>
-</div>''')
-        
-        html = "".join(items_html)
-        self._run_js(f"updateSearchResults(`{self._esc(html)}`)")
-    
-    def add_tool_card(self, tool_call_id: str, tool_name: str, arguments: dict) -> None:
-        """
-        在流式消息中插入工具调用卡片
-
-        Args:
-            tool_call_id: 工具调用 ID
-            tool_name: 工具名称
-            arguments: 工具参数字典
-        """
-        import html as html_mod
-
-        safe_id = html_mod.escape(tool_call_id)
-        safe_name = html_mod.escape(tool_name)
-
-        args_lines = []
-        for k, v in arguments.items():
-            val_str = str(v)
-            if len(val_str) > 80:
-                val_str = val_str[:77] + "..."
-            args_lines.append(
-                f"{html_mod.escape(str(k))}: {html_mod.escape(val_str)}"
-            )
-        args_html = "<br>".join(args_lines) if args_lines else ""
-
-        card_html = (
-            f'<div class="tool-card" id="tool-{safe_id}">'
-            f'<div class="tool-header">{SVG_TOOL} '
-            f'<span class="tool-name">{safe_name}</span>'
-            f'<span class="tool-status running">\u6267\u884c\u4e2d</span></div>'
-            f'<div class="tool-args">{args_html}</div>'
-            f'<div class="tool-result"></div>'
-            f'</div>'
-        )
-        self._run_js(f"addToolCard(`{self._esc(card_html)}`)")
-
-    def update_tool_card(
-        self, tool_call_id: str, result_content: str, is_error: bool
-    ) -> None:
-        """
-        更新工具调用卡片（显示执行结果）
-
-        Args:
-            tool_call_id: 工具调用 ID
-            result_content: 结果内容（已截断）
-            is_error: 是否出错
-        """
-        import html as html_mod
-
-        display = result_content
-        if len(display) > 300:
-            display = display[:297] + "..."
-
-        safe_content = html_mod.escape(display)
-        result_html = f'<div class="tool-result-content">{safe_content}</div>'
-
-        safe_id = self._esc(tool_call_id)
-        escaped_result = self._esc(result_html)
-        is_error_js = "true" if is_error else "false"
-        self._run_js(
-            f"updateToolCard(`{safe_id}`, `{escaped_result}`, {is_error_js})"
-        )
-
     def _esc_html(self, text: str) -> str:
         """转义 HTML 特殊字符"""
         import html
         return html.escape(text) if text else ""
     
-    def finish_streaming(self, messages: Optional[List[Any]] = None):
-        """
-        完成流式输出
-        
-        停止定时器，最终更新内容，并折叠思考区域。
-        """
-        self._stream_timer.stop()
-        self._is_streaming = False
-        if messages is not None:
-            static_html = self._build_messages_html(messages)
-            self._rendered_message_ids = [str(getattr(message, 'id', '')) for message in messages]
-            self._run_js(f"finishStream(`{self._esc(static_html)}`)")
-        else:
-            # 最终更新内容
-            html = self._md_to_html(self._stream_content)
-            self._run_js(f"updateStream(`{self._esc(html)}`)")
-            
-            # 如果有思考内容，最终更新（使用 Markdown 渲染）
-            if self._stream_reasoning:
-                reasoning_html = self._md_to_html(self._stream_reasoning)
-                self._run_js(f"updateStreamReasoning(`{self._esc(reasoning_html)}`)")
-            
-            self._run_js("finishStream()")
-        
-        self._stream_content = ""
-        self._stream_reasoning = ""
-    
-    def update_streaming(self, content: str, reasoning: str = ""):
-        """
-        更新流式内容
-        
-        Args:
-            content: 主内容
-            reasoning: 思考内容
-        """
-        self._stream_content = content
-        self._stream_reasoning = reasoning
-        self._pending_update = True
-        if reasoning:
-            self._pending_reasoning_update = True
-    
     def clear_messages(self):
         self._messages = []
+        self._runtime_steps = []
+        self._pending_runtime_steps = None
+        self._runtime_timer.stop()
         self._rendered_message_ids = []
         self._run_js("clearMsgs()")
     
@@ -1021,7 +911,7 @@ function updateToolCard(id, resultHtml, isError) {
         return text.replace("'", "\\'").replace('"', '\\"').replace('\\', '\\\\')
     
     def cleanup(self):
-        self._stream_timer.stop()
+        self._runtime_timer.stop()
 
 
 __all__ = ["WebMessageView", "WEBENGINE_AVAILABLE"]

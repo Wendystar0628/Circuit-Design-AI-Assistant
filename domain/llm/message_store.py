@@ -112,6 +112,7 @@ class MessageStore:
         is_partial: bool = False,
         stop_reason: str = "",
         tool_calls_pending: Optional[List[Dict[str, Any]]] = None,
+        agent_steps: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """
         添加消息到状态
@@ -149,6 +150,7 @@ class MessageStore:
                     stop_reason=stop_reason,
                     tool_calls_pending=tool_calls_pending,
                     web_search_results=web_search_results,
+                    agent_steps=agent_steps,
                 )
             elif role == ROLE_SYSTEM:
                 msg = create_system_message(content=content)

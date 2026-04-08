@@ -28,6 +28,7 @@
 """
 
 from datetime import datetime
+import uuid
 from typing import Any, Dict, List, Optional, Union
 
 from langchain_core.messages import (
@@ -79,6 +80,7 @@ def create_human_message(
     content: str,
     attachments: Optional[List[Attachment]] = None,
     timestamp: Optional[str] = None,
+    message_id: Optional[str] = None,
 ) -> HumanMessage:
     """
     创建用户消息
@@ -93,6 +95,9 @@ def create_human_message(
     """
     additional_kwargs = {
         "timestamp": timestamp or datetime.now().isoformat(),
+        "metadata": {
+            "id": message_id or str(uuid.uuid4()),
+        },
     }
     if attachments:
         additional_kwargs["attachments"] = [
@@ -117,6 +122,8 @@ def create_ai_message(
     tool_calls_pending: Optional[List[Dict[str, Any]]] = None,
     web_search_results: Optional[List[Dict[str, Any]]] = None,
     timestamp: Optional[str] = None,
+    agent_steps: Optional[List[Dict[str, Any]]] = None,
+    message_id: Optional[str] = None,
 ) -> AIMessage:
     """
     创建助手消息
@@ -137,6 +144,9 @@ def create_ai_message(
     """
     additional_kwargs = {
         "timestamp": timestamp or datetime.now().isoformat(),
+        "metadata": {
+            "id": message_id or str(uuid.uuid4()),
+        },
         "reasoning_content": reasoning_content,
         "operations": operations or [],
     }
@@ -150,6 +160,8 @@ def create_ai_message(
         additional_kwargs["tool_calls_pending"] = tool_calls_pending
     if web_search_results:
         additional_kwargs["web_search_results"] = web_search_results
+    if agent_steps:
+        additional_kwargs["agent_steps"] = agent_steps
     
     return AIMessage(
         content=content,
@@ -160,6 +172,7 @@ def create_ai_message(
 def create_system_message(
     content: str,
     timestamp: Optional[str] = None,
+    message_id: Optional[str] = None,
 ) -> SystemMessage:
     """
     创建系统消息
@@ -175,6 +188,9 @@ def create_system_message(
         content=content,
         additional_kwargs={
             "timestamp": timestamp or datetime.now().isoformat(),
+            "metadata": {
+                "id": message_id or str(uuid.uuid4()),
+            },
         },
     )
 
@@ -184,6 +200,7 @@ def create_tool_message(
     tool_call_id: str,
     name: str = "",
     timestamp: Optional[str] = None,
+    message_id: Optional[str] = None,
 ) -> ToolMessage:
     """
     创建工具消息
@@ -203,6 +220,9 @@ def create_tool_message(
         name=name,
         additional_kwargs={
             "timestamp": timestamp or datetime.now().isoformat(),
+            "metadata": {
+                "id": message_id or str(uuid.uuid4()),
+            },
         },
     )
 
@@ -266,6 +286,11 @@ def get_tool_calls_pending(msg: BaseMessage) -> List[Dict[str, Any]]:
 def get_web_search_results(msg: BaseMessage) -> List[Dict[str, Any]]:
     """获取联网搜索结果"""
     return _get_additional_kwargs(msg).get("web_search_results", [])
+
+
+def get_agent_steps(msg: BaseMessage) -> List[Dict[str, Any]]:
+    """获取 Agent 逐步反应轨迹。"""
+    return _get_additional_kwargs(msg).get("agent_steps", [])
 
 
 # ============================================================
@@ -413,6 +438,8 @@ def message_to_dict(msg: BaseMessage) -> Dict[str, Any]:
     # 复制 additional_kwargs 中的字段
     if kwargs.get("timestamp"):
         result["additional_kwargs"]["timestamp"] = kwargs["timestamp"]
+    if kwargs.get("metadata"):
+        result["additional_kwargs"]["metadata"] = kwargs["metadata"]
     
     # 用户消息特有字段
     if role == ROLE_USER:
@@ -437,6 +464,8 @@ def message_to_dict(msg: BaseMessage) -> Dict[str, Any]:
             result["additional_kwargs"]["tool_calls_pending"] = kwargs["tool_calls_pending"]
         if kwargs.get("web_search_results"):
             result["additional_kwargs"]["web_search_results"] = kwargs["web_search_results"]
+        if kwargs.get("agent_steps"):
+            result["additional_kwargs"]["agent_steps"] = kwargs["agent_steps"]
     
     # 工具消息特有字段
     elif role == ROLE_TOOL:
@@ -536,6 +565,7 @@ __all__ = [
     "get_stop_reason",
     "get_tool_calls_pending",
     "get_web_search_results",
+    "get_agent_steps",
     # 扩展字段写入
     "set_reasoning_content",
     "set_operations",

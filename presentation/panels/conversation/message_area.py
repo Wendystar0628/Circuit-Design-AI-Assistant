@@ -42,8 +42,6 @@ class MessageArea(QWidget):
         super().__init__(parent)
         
         self._web_view: Optional[WebMessageView] = None
-        self._is_streaming = False
-        self._pending_messages: Optional[List[Any]] = None
         
         self._setup_ui()
     
@@ -67,83 +65,30 @@ class MessageArea(QWidget):
     # 公共方法 - 消息渲染
     # ============================================================
     
-    def render_messages(self, messages: List[Any]) -> None:
-        """渲染消息列表"""
-        if self._is_streaming:
-            self._pending_messages = list(messages)
-            return
+    def render_messages(
+        self,
+        messages: List[Any],
+        runtime_steps: Optional[List[Any]] = None,
+    ) -> None:
+        """渲染历史消息与当前运行时步骤。"""
         if self._web_view:
             self._web_view.render_messages(messages)
+            self._web_view.render_runtime_steps(runtime_steps or [])
+
+    def render_runtime_steps(self, runtime_steps: List[Any]) -> None:
+        """仅更新当前运行时步骤区域。"""
+        if self._web_view:
+            self._web_view.render_runtime_steps(runtime_steps)
+
+    def clear_runtime_steps(self) -> None:
+        """清空当前运行时步骤区域。"""
+        if self._web_view:
+            self._web_view.clear_runtime_steps()
     
     def clear_messages(self) -> None:
         """清空消息显示"""
-        self._pending_messages = None
         if self._web_view:
             self._web_view.clear_messages()
-        if self._is_streaming:
-            self.finish_streaming()
-    
-    # ============================================================
-    # 公共方法 - 流式输出
-    # ============================================================
-    
-    def start_streaming(self, with_search: bool = False) -> None:
-        """
-        开始流式输出显示
-        
-        Args:
-            with_search: 是否显示搜索区域
-        """
-        if self._is_streaming:
-            return
-        self._is_streaming = True
-        self._pending_messages = None
-        if self._web_view:
-            self._web_view.start_streaming(with_search=with_search)
-    
-    def update_streaming(self, content: str, reasoning: str = "") -> None:
-        """更新流式内容"""
-        if not self._is_streaming:
-            self.start_streaming()
-        if self._web_view:
-            self._web_view.update_streaming(content, reasoning)
-    
-    def finish_streaming(self) -> None:
-        """完成流式输出"""
-        self._is_streaming = False
-        if self._web_view:
-            pending_messages = self._pending_messages
-            self._pending_messages = None
-            self._web_view.finish_streaming(pending_messages)
-    
-    def start_searching(self) -> None:
-        """开始搜索阶段"""
-        if self._web_view:
-            self._web_view.start_searching()
-    
-    def finish_searching(self, result_count: int = 0) -> None:
-        """完成搜索阶段"""
-        if self._web_view:
-            self._web_view.finish_searching(result_count)
-    
-    def update_search_results(self, results: list) -> None:
-        """更新搜索结果显示"""
-        if self._web_view:
-            self._web_view.update_search_results(results)
-    
-    def add_tool_card(
-        self, tool_call_id: str, tool_name: str, arguments: dict
-    ) -> None:
-        """在流式消息中插入工具调用卡片"""
-        if self._web_view:
-            self._web_view.add_tool_card(tool_call_id, tool_name, arguments)
-
-    def update_tool_card(
-        self, tool_call_id: str, result_content: str, is_error: bool
-    ) -> None:
-        """更新工具调用卡片的执行结果"""
-        if self._web_view:
-            self._web_view.update_tool_card(tool_call_id, result_content, is_error)
     
     # ============================================================
     # 清理
@@ -151,8 +96,6 @@ class MessageArea(QWidget):
     
     def cleanup(self) -> None:
         """清理资源"""
-        if self._is_streaming:
-            self.finish_streaming()
         if self._web_view:
             self._web_view.cleanup()
 

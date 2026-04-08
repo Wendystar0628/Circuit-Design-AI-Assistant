@@ -70,6 +70,34 @@ class SuggestionItem:
 
 
 @dataclass
+class AgentStepToolCall:
+    """单个 Agent step 内的工具调用记录。"""
+    tool_call_id: str
+    tool_name: str
+    arguments: Dict[str, Any] = field(default_factory=dict)
+    result_content: str = ""
+    is_error: bool = False
+    details: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class AgentStep:
+    """Agent 单次 react step 的可视化状态。"""
+    step_index: int
+    step_id: str = ""
+    content: str = ""
+    reasoning_content: str = ""
+    tool_calls: List[AgentStepToolCall] = field(default_factory=list)
+    web_search_query: str = ""
+    web_search_results: List[Dict[str, Any]] = field(default_factory=list)
+    web_search_message: str = ""
+    web_search_state: str = "idle"
+    is_complete: bool = False
+    is_partial: bool = False
+    stop_reason: str = ""
+
+
+@dataclass
 class DisplayMessage:
     """
     UI 友好的消息格式
@@ -88,6 +116,7 @@ class DisplayMessage:
     is_partial: bool = False                     # 是否为部分响应（已中断）
     stop_reason: str = ""                        # 停止原因（仅 is_partial=True 时有效）
     web_search_results: List[Dict[str, Any]] = field(default_factory=list)  # 联网搜索结果
+    agent_steps: List[AgentStep] = field(default_factory=list)  # Agent 逐步反应轨迹
     
     # 建议选项相关（仅 role=suggestion 时有效）
     suggestions: List[SuggestionItem] = field(default_factory=list)
@@ -113,18 +142,14 @@ class ConversationViewModel(QObject):
     
     # 信号定义
     messages_changed = pyqtSignal()              # 消息列表变化
-    stream_updated = pyqtSignal(str, str)        # 流式内容更新 (content, reasoning)
-    stream_finished = pyqtSignal()               # 流式输出完成
+    runtime_steps_changed = pyqtSignal()         # 运行时 step 列表变化
+    runtime_steps_finished = pyqtSignal()        # 运行时 step 会话完成
     usage_changed = pyqtSignal(float)            # 上下文占用变化 (ratio)
     can_send_changed = pyqtSignal(bool)          # 可发送状态变化
     compress_suggested = pyqtSignal()            # 建议压缩上下文
     new_conversation_suggested = pyqtSignal()    # 建议开启新对话
     stop_requested = pyqtSignal()                # 停止请求已发出
     stop_completed = pyqtSignal(dict)            # 停止完成 (result)
-    tool_call_started = pyqtSignal(str, str, dict)   # 工具调用开始 (tool_call_id, tool_name, arguments)
-    tool_call_ended = pyqtSignal(str, str, str, bool, dict)     # 工具调用结束 (tool_call_id, tool_name, result_preview, is_error, details)
-    web_search_started = pyqtSignal(str)         # 联网搜索开始 (query)
-    web_search_finished = pyqtSignal(list, bool, str)  # 联网搜索结束 (results, is_error, message)
     
     def __init__(self, parent: Optional[QObject] = None):
         """初始化 ViewModel"""
@@ -135,16 +160,12 @@ class ConversationViewModel(QObject):
         self._usage_ratio: float = 0.0
         self._is_loading: bool = False
         self._can_send: bool = True
-        self._current_stream_content: str = ""
-        self._current_reasoning_content: str = ""
+        self._active_agent_steps: List[AgentStep] = []
         self._active_suggestion_message_id: Optional[str] = None
         
         # 停止控制相关
         self._stop_controller = None
         self._current_task_id: Optional[str] = None  # 当前 LLM 任务 ID
-        
-        # Agent 工具调用记录（流式期间累积，完成时写入 ContextManager）
-        self._current_tool_records: List[Dict[str, Any]] = []
         
         # 延迟获取的服务
         self._context_manager = None
@@ -200,6 +221,11 @@ class ConversationViewModel(QObject):
     def can_send(self) -> bool:
         """是否可以发送消息"""
         return self._can_send and not self._is_loading
+
+    @property
+    def active_agent_steps(self) -> List[AgentStep]:
+        """当前运行中的 Agent step 列表。"""
+        return self._active_agent_steps
     
     # ============================================================
     # 延迟获取服务
@@ -437,6 +463,7 @@ class ConversationViewModel(QObject):
             get_reasoning_content,
             get_operations,
             get_attachments,
+            get_agent_steps,
             get_timestamp,
             is_partial_response,
             get_stop_reason,
@@ -484,45 +511,150 @@ class ConversationViewModel(QObject):
             is_partial=is_partial,
             stop_reason=stop_reason,
             web_search_results=web_search_results,
+            agent_steps=self._deserialize_agent_steps(get_agent_steps(lc_msg)),
         )
 
     # ============================================================
-    # 流式输出处理
+    # Agent 运行时步骤
     # ============================================================
-    
-    def append_stream_chunk(
+
+    def _deserialize_agent_steps(
         self,
-        chunk: str,
-        chunk_type: str = "content"
-    ) -> None:
-        """
-        追加流式输出块
-        
-        Args:
-            chunk: 输出块内容
-            chunk_type: 块类型（"content" 或 "reasoning"）
-        """
-        if chunk_type == "reasoning":
-            self._current_reasoning_content += chunk
-        else:
-            self._current_stream_content += chunk
-        
-        # 发出更新信号
-        self.stream_updated.emit(
-            self._current_stream_content,
-            self._current_reasoning_content
+        raw_steps: List[Dict[str, Any]],
+    ) -> List[AgentStep]:
+        steps: List[AgentStep] = []
+        for index, raw_step in enumerate(raw_steps or [], start=1):
+            if not isinstance(raw_step, dict):
+                continue
+
+            tool_calls: List[AgentStepToolCall] = []
+            for raw_tool in raw_step.get("tool_calls", []) or []:
+                if not isinstance(raw_tool, dict):
+                    continue
+                tool_calls.append(
+                    AgentStepToolCall(
+                        tool_call_id=str(raw_tool.get("tool_call_id", "") or ""),
+                        tool_name=str(raw_tool.get("tool_name", "") or ""),
+                        arguments=dict(raw_tool.get("arguments", {}) or {}),
+                        result_content=str(raw_tool.get("result_content", "") or ""),
+                        is_error=bool(raw_tool.get("is_error", False)),
+                        details=dict(raw_tool.get("details", {}) or {}),
+                    )
+                )
+
+            step_index = raw_step.get("step_index", index)
+            try:
+                step_index = max(1, int(step_index))
+            except Exception:
+                step_index = index
+
+            steps.append(
+                AgentStep(
+                    step_index=step_index,
+                    step_id=str(raw_step.get("step_id", "") or f"step_{step_index}"),
+                    content=str(raw_step.get("content", "") or ""),
+                    reasoning_content=str(raw_step.get("reasoning_content", "") or ""),
+                    tool_calls=tool_calls,
+                    web_search_query=str(raw_step.get("web_search_query", "") or ""),
+                    web_search_results=list(raw_step.get("web_search_results", []) or []),
+                    web_search_message=str(raw_step.get("web_search_message", "") or ""),
+                    web_search_state=str(raw_step.get("web_search_state", "idle") or "idle"),
+                    is_complete=bool(raw_step.get("is_complete", False)),
+                    is_partial=bool(raw_step.get("is_partial", False)),
+                    stop_reason=str(raw_step.get("stop_reason", "") or ""),
+                )
+            )
+        return sorted(steps, key=lambda step: step.step_index)
+
+    def _serialize_agent_steps(
+        self,
+        steps: Optional[List[AgentStep]] = None,
+    ) -> List[Dict[str, Any]]:
+        serialized: List[Dict[str, Any]] = []
+        for step in steps or self._active_agent_steps:
+            serialized.append(
+                {
+                    "step_index": step.step_index,
+                    "step_id": step.step_id,
+                    "content": step.content,
+                    "reasoning_content": step.reasoning_content,
+                    "tool_calls": [
+                        {
+                            "tool_call_id": tool_call.tool_call_id,
+                            "tool_name": tool_call.tool_name,
+                            "arguments": dict(tool_call.arguments),
+                            "result_content": tool_call.result_content,
+                            "is_error": tool_call.is_error,
+                            "details": dict(tool_call.details),
+                        }
+                        for tool_call in step.tool_calls
+                    ],
+                    "web_search_query": step.web_search_query,
+                    "web_search_results": list(step.web_search_results),
+                    "web_search_message": step.web_search_message,
+                    "web_search_state": step.web_search_state,
+                    "is_complete": step.is_complete,
+                    "is_partial": step.is_partial,
+                    "stop_reason": step.stop_reason,
+                }
+            )
+        return serialized
+
+    def _emit_runtime_steps_changed(self) -> None:
+        self.runtime_steps_changed.emit()
+
+    def _clear_active_agent_steps(self, emit_signal: bool = True) -> None:
+        self._active_agent_steps = []
+        if emit_signal:
+            self._emit_runtime_steps_changed()
+
+    def _ensure_agent_step(self, step_index: int) -> AgentStep:
+        if step_index <= 0:
+            step_index = len(self._active_agent_steps) + 1
+
+        for step in self._active_agent_steps:
+            if step.step_index == step_index:
+                return step
+
+        for step in self._active_agent_steps:
+            step.is_complete = True
+
+        step = AgentStep(
+            step_index=step_index,
+            step_id=f"{self._current_task_id or 'runtime'}_step_{step_index}",
         )
-    
-    def start_streaming(self) -> None:
-        """
-        开始流式输出
-        
-        设置加载状态，清空流式缓冲区，生成任务 ID 并注册到 StopController。
-        任务 ID 会保存到 _current_task_id，供 _trigger_llm_call() 使用。
-        """
+        self._active_agent_steps.append(step)
+        self._active_agent_steps.sort(key=lambda item: item.step_index)
+        return step
+
+    def _find_tool_call(
+        self,
+        step: AgentStep,
+        tool_call_id: str,
+    ) -> Optional[AgentStepToolCall]:
+        for tool_call in step.tool_calls:
+            if tool_call.tool_call_id == tool_call_id:
+                return tool_call
+        return None
+
+    def _mark_active_steps_complete(
+        self,
+        *,
+        is_partial: bool = False,
+        stop_reason: str = "",
+    ) -> None:
+        for step in self._active_agent_steps:
+            step.is_complete = True
+
+        if self._active_agent_steps and (is_partial or stop_reason):
+            final_step = self._active_agent_steps[-1]
+            final_step.is_partial = is_partial
+            final_step.stop_reason = stop_reason
+
+    def _start_agent_run(self) -> None:
+        """开始一次新的 Agent 运行。"""
         self._is_loading = True
-        self._current_stream_content = ""
-        self._current_reasoning_content = ""
+        self._clear_active_agent_steps(emit_signal=False)
         
         # 生成任务 ID 并保存
         self._current_task_id = f"llm_{uuid.uuid4().hex[:8]}"
@@ -685,8 +817,8 @@ class ConversationViewModel(QObject):
                 # 从 ContextManager 重新加载消息以保持同步
                 self.load_messages()
                 
-                # 开始加载状态（流式输出）
-                self.start_streaming()
+                # 开始新的 Agent 运行
+                self._start_agent_run()
                 
                 # 触发 LLM 调用
                 self._trigger_llm_call()
@@ -748,6 +880,7 @@ class ConversationViewModel(QObject):
             self._current_task_id = task_id
             
             # 连接 LLMExecutor 信号
+            llm_executor.agent_turn_started.connect(self._on_agent_turn_started)
             llm_executor.stream_chunk.connect(self._on_llm_stream_chunk)
             llm_executor.generation_complete.connect(self._on_llm_generation_complete)
             llm_executor.generation_error.connect(self._on_llm_generation_error)
@@ -775,6 +908,7 @@ class ConversationViewModel(QObject):
     def _on_llm_stream_chunk(
         self,
         task_id: str,
+        step_index: int,
         chunk_type: str,
         chunk_data: Dict[str, Any]
     ) -> None:
@@ -791,7 +925,18 @@ class ConversationViewModel(QObject):
 
         text = chunk_data.get("text", "")
         if text:
-            self.append_stream_chunk(text, chunk_type)
+            step = self._ensure_agent_step(step_index)
+            if chunk_type == "reasoning":
+                step.reasoning_content += text
+            else:
+                step.content += text
+            self._emit_runtime_steps_changed()
+
+    def _on_agent_turn_started(self, task_id: str, step_index: int) -> None:
+        if task_id != self._current_task_id:
+            return
+        self._ensure_agent_step(step_index)
+        self._emit_runtime_steps_changed()
 
     def _disconnect_llm_executor_signals(self) -> None:
         try:
@@ -800,6 +945,7 @@ class ConversationViewModel(QObject):
 
             llm_executor = ServiceLocator.get_optional(SVC_LLM_EXECUTOR)
             if llm_executor:
+                llm_executor.agent_turn_started.disconnect(self._on_agent_turn_started)
                 llm_executor.stream_chunk.disconnect(self._on_llm_stream_chunk)
                 llm_executor.generation_complete.disconnect(self._on_llm_generation_complete)
                 llm_executor.generation_error.disconnect(self._on_llm_generation_error)
@@ -831,10 +977,16 @@ class ConversationViewModel(QObject):
         reasoning_content = result.get("reasoning_content", "")
         usage = result.get("usage")
         is_partial = result.get("is_partial", False)
+        self._mark_active_steps_complete(is_partial=is_partial)
+        self._emit_runtime_steps_changed()
         
         # 构建工具操作摘要（在清空前）
         tool_operations = self._build_tool_operations()
         web_search_results = self._collect_web_search_results()
+        agent_steps = self._serialize_agent_steps()
+
+        if not reasoning_content and self._active_agent_steps:
+            reasoning_content = self._active_agent_steps[-1].reasoning_content
 
         if not content and tool_operations:
             if web_search_results:
@@ -850,14 +1002,12 @@ class ConversationViewModel(QObject):
                 usage=usage,
                 operations=tool_operations if tool_operations else None,
                 web_search_results=web_search_results if web_search_results else None,
+                agent_steps=agent_steps,
             )
         
         # 更新状态
         self._is_loading = False
-        self._current_stream_content = ""
-        self._current_reasoning_content = ""
         self._current_task_id = None  # 清除任务 ID
-        self._current_tool_records = []  # 清空工具记录
         
         # 重置 StopController 状态为 IDLE
         if self.stop_controller:
@@ -875,7 +1025,8 @@ class ConversationViewModel(QObject):
             )
         
         # 发出信号
-        self.stream_finished.emit()
+        self.runtime_steps_finished.emit()
+        self._clear_active_agent_steps(emit_signal=False)
         self.can_send_changed.emit(True)
         
         if self.logger:
@@ -911,17 +1062,18 @@ class ConversationViewModel(QObject):
         
         # 更新状态
         self._is_loading = False
-        self._current_stream_content = ""
-        self._current_reasoning_content = ""
         self._current_task_id = None  # 清除任务 ID
-        self._current_tool_records = []  # 清空工具记录
+        self._mark_active_steps_complete(is_partial=bool(self._active_agent_steps), stop_reason="error")
+        if self._active_agent_steps:
+            self._emit_runtime_steps_changed()
         
         # 重置 StopController
         if self.stop_controller:
             self.stop_controller.reset()
         
         # 发出信号
-        self.stream_finished.emit()
+        self.runtime_steps_finished.emit()
+        self._clear_active_agent_steps(emit_signal=False)
         self.can_send_changed.emit(True)
     
     # ============================================================
@@ -931,6 +1083,7 @@ class ConversationViewModel(QObject):
     def _on_tool_execution_started(
         self,
         task_id: str,
+        step_index: int,
         tool_call_id: str,
         tool_name: str,
         arguments: Dict[str, Any],
@@ -941,22 +1094,29 @@ class ConversationViewModel(QObject):
         if task_id != self._current_task_id:
             return
 
-        if tool_call_id and tool_name:
-            self._current_tool_records.append({
-                "tool_call_id": tool_call_id,
-                "tool_name": tool_name,
-                "arguments": arguments,
-                "is_error": False,
-                "result_content": "",
-                "details": {},
-            })
-            if tool_name == "web_search":
-                self.web_search_started.emit(str(arguments.get("query", "") or "").strip())
-            self.tool_call_started.emit(tool_call_id, tool_name, arguments)
+        if not tool_call_id or not tool_name:
+            return
+
+        step = self._ensure_agent_step(step_index)
+        if tool_name == "web_search":
+            step.web_search_query = str(arguments.get("query", "") or "").strip()
+            step.web_search_state = "running"
+        else:
+            tool_call = self._find_tool_call(step, tool_call_id)
+            if tool_call is None:
+                step.tool_calls.append(
+                    AgentStepToolCall(
+                        tool_call_id=tool_call_id,
+                        tool_name=tool_name,
+                        arguments=dict(arguments or {}),
+                    )
+                )
+        self._emit_runtime_steps_changed()
 
     def _on_tool_execution_finished(
         self,
         task_id: str,
+        step_index: int,
         tool_call_id: str,
         tool_name: str,
         result_content: str,
@@ -969,20 +1129,30 @@ class ConversationViewModel(QObject):
         if task_id != self._current_task_id:
             return
 
-        if tool_call_id:
-            for rec in self._current_tool_records:
-                if rec["tool_call_id"] == tool_call_id:
-                    rec["tool_name"] = tool_name or rec.get("tool_name", "")
-                    rec["is_error"] = is_error
-                    rec["result_content"] = result_content
-                    rec["details"] = details or {}
-                    break
-            if tool_name == "web_search":
-                results = details.get("results") if isinstance(details, dict) else []
-                if not isinstance(results, list):
-                    results = []
-                self.web_search_finished.emit(results, is_error, result_content)
-            self.tool_call_ended.emit(tool_call_id, tool_name, result_content, is_error, details or {})
+        if not tool_call_id:
+            return
+
+        step = self._ensure_agent_step(step_index)
+        if tool_name == "web_search":
+            results = details.get("results") if isinstance(details, dict) else []
+            if not isinstance(results, list):
+                results = []
+            step.web_search_results = [item for item in results if isinstance(item, dict)]
+            step.web_search_message = result_content
+            step.web_search_state = "error" if is_error else "complete"
+        else:
+            tool_call = self._find_tool_call(step, tool_call_id)
+            if tool_call is None:
+                tool_call = AgentStepToolCall(
+                    tool_call_id=tool_call_id,
+                    tool_name=tool_name,
+                )
+                step.tool_calls.append(tool_call)
+            tool_call.tool_name = tool_name or tool_call.tool_name
+            tool_call.is_error = is_error
+            tool_call.result_content = result_content
+            tool_call.details = dict(details or {})
+        self._emit_runtime_steps_changed()
 
     def _build_tool_operations(self) -> List[str]:
         """
@@ -991,58 +1161,49 @@ class ConversationViewModel(QObject):
         Returns:
             操作摘要列表，供 ContextManager 持久化和 UI 渲染
         """
-        operations = []
-        for rec in self._current_tool_records:
-            name = rec["tool_name"]
-            args = rec.get("arguments", {})
-            is_error = rec.get("is_error", False)
-            details = rec.get("details", {}) if isinstance(rec.get("details", {}), dict) else {}
+        operations: List[str] = []
+        for step in self._active_agent_steps:
+            if step.web_search_query:
+                provider = ""
+                result_count = len(step.web_search_results)
+                if step.web_search_state == "error":
+                    preview = step.web_search_message[:60]
+                    operations.append(
+                        f"web_search(query={step.web_search_query}{', provider=' + provider if provider else ''}) 失败: {preview}"
+                    )
+                elif step.web_search_state == "complete":
+                    operations.append(
+                        f"web_search(query={step.web_search_query}{', provider=' + provider if provider else ''}) 已检索 {result_count} 条结果"
+                    )
 
-            # 提取关键参数摘要（路径用反引号包裹以支持点击链接）
-            arg_summary = ""
-            if "path" in args:
-                arg_summary = f"(`{args['path']}`)"
-            elif args:
-                first_key = next(iter(args))
-                val = str(args[first_key])
-                if len(val) > 40:
-                    val = val[:37] + "..."
-                arg_summary = f"({first_key}={val})"
+            for tool_call in step.tool_calls:
+                name = tool_call.tool_name
+                args = tool_call.arguments if isinstance(tool_call.arguments, dict) else {}
+                is_error = tool_call.is_error
 
-            if name == "web_search":
-                query = str(args.get("query", "") or "").strip()
-                provider = str(details.get("provider", "") or "").strip()
-                result_count = int(details.get("result_count", 0) or 0)
-                provider_suffix = f", provider={provider}" if provider else ""
+                arg_summary = ""
+                if "path" in args:
+                    arg_summary = f"(`{args['path']}`)"
+                elif args:
+                    first_key = next(iter(args))
+                    val = str(args[first_key])
+                    if len(val) > 40:
+                        val = val[:37] + "..."
+                    arg_summary = f"({first_key}={val})"
+
                 if is_error:
-                    preview = rec.get("result_content", "")[:60]
-                    operations.append(f"web_search(query={query}{provider_suffix}) 失败: {preview}")
+                    preview = tool_call.result_content[:60]
+                    operations.append(f"{name}{arg_summary} 失败: {preview}")
                 else:
-                    operations.append(f"web_search(query={query}{provider_suffix}) 已检索 {result_count} 条结果")
-                continue
-
-            if is_error:
-                preview = rec.get("result_content", "")[:60]
-                operations.append(f"{name}{arg_summary} 失败: {preview}")
-            else:
-                operations.append(f"{name}{arg_summary}")
+                    operations.append(f"{name}{arg_summary}")
         return operations
 
     def _collect_web_search_results(self) -> List[Dict[str, Any]]:
         results: List[Dict[str, Any]] = []
-        for rec in self._current_tool_records:
-            if rec.get("tool_name") != "web_search":
-                continue
-
-            details = rec.get("details", {})
-            if not isinstance(details, dict):
-                continue
-
-            tool_results = details.get("results")
-            if isinstance(tool_results, list):
-                for item in tool_results:
-                    if isinstance(item, dict):
-                        results.append(item)
+        for step in self._active_agent_steps:
+            for item in step.web_search_results:
+                if isinstance(item, dict):
+                    results.append(item)
         return results
     
     # ============================================================
@@ -1084,9 +1245,9 @@ class ConversationViewModel(QObject):
     def clear(self) -> None:
         """清空显示数据"""
         self._messages.clear()
-        self._current_stream_content = ""
-        self._current_reasoning_content = ""
+        self._clear_active_agent_steps(emit_signal=False)
         self._is_loading = False
+        self._current_task_id = None
         self._active_suggestion_message_id = None
         self.messages_changed.emit()
     
@@ -1350,22 +1511,22 @@ class ConversationViewModel(QObject):
  
         self._disconnect_llm_executor_signals()
         
-        # 处理部分响应：保留所有已经输出到界面的可见内容
-        if is_partial and self._current_stream_content:
-            partial_content = self._current_stream_content
+        if is_partial and self._active_agent_steps:
+            self._mark_active_steps_complete(is_partial=True, stop_reason=reason)
+            self._emit_runtime_steps_changed()
+            final_step = self._active_agent_steps[-1]
+            if final_step.content:
+                partial_content = final_step.content
  
         saved = False
-        if partial_content:
+        if partial_content or self._active_agent_steps:
             self._save_partial_response(partial_content, reason)
             self._auto_save_session()
             saved = True
         
         # 清空流式状态
-        self._current_stream_content = ""
-        self._current_reasoning_content = ""
         self._is_loading = False
         self._current_task_id = None  # 清除任务 ID
-        self._current_tool_records = []  # 清空工具记录
         
         # 发出信号
         result = {
@@ -1379,8 +1540,9 @@ class ConversationViewModel(QObject):
         # 发出可发送状态变化信号，恢复发送按钮
         self.can_send_changed.emit(True)
         
-        # 发出流式输出完成信号
-        self.stream_finished.emit()
+        # 发出运行时步骤完成信号
+        self.runtime_steps_finished.emit()
+        self._clear_active_agent_steps(emit_signal=False)
     
     def _save_partial_response(self, content: str, reason: str) -> None:
         """
@@ -1390,11 +1552,20 @@ class ConversationViewModel(QObject):
             content: 部分响应内容
             reason: 停止原因
         """
+        if not content and self._active_agent_steps:
+            last_step = self._active_agent_steps[-1]
+            if last_step.tool_calls or last_step.web_search_query:
+                content = "本轮已中断，已保留当前步骤轨迹。请参考下方步骤中的搜索与工具记录继续处理。"
+
         # 转换为 HTML（不再在内容中添加中断标记，由消息渲染层统一展示）
         content_html = self._markdown_to_html(content)
         reasoning_html = ""
-        if self._current_reasoning_content:
-            reasoning_html = self._markdown_to_html(self._current_reasoning_content)
+        latest_reasoning = ""
+        if self._active_agent_steps:
+            latest_reasoning = self._active_agent_steps[-1].reasoning_content
+        if latest_reasoning:
+            reasoning_html = self._markdown_to_html(latest_reasoning)
+        serialized_steps = self._serialize_agent_steps()
         
         # 创建消息（设置 is_partial 和 stop_reason 供消息渲染层展示中断标记）
         msg = DisplayMessage(
@@ -1407,6 +1578,7 @@ class ConversationViewModel(QObject):
             is_streaming=False,
             is_partial=True,
             stop_reason=reason,
+            agent_steps=self._deserialize_agent_steps(serialized_steps),
         )
         
         # 添加到消息列表
@@ -1417,9 +1589,12 @@ class ConversationViewModel(QObject):
             try:
                 self.context_manager.add_assistant_message(
                     content,
-                    reasoning_content=self._current_reasoning_content,
+                    reasoning_content=latest_reasoning,
                     is_partial=True,
                     stop_reason=reason,
+                    operations=self._build_tool_operations() or None,
+                    web_search_results=self._collect_web_search_results() or None,
+                    agent_steps=serialized_steps,
                 )
             except Exception as e:
                 if self.logger:
@@ -1450,6 +1625,8 @@ __all__ = [
     "COMPRESS_STATE_CRITICAL",
     # 数据结构
     "SuggestionItem",
+    "AgentStepToolCall",
+    "AgentStep",
     "DisplayMessage",
     # 类
     "ConversationViewModel",

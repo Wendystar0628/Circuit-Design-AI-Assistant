@@ -51,6 +51,7 @@ from domain.llm.agent.tool_registry import ToolRegistry
 AgentEventCallback = Callable[[str, Dict[str, Any]], Union[None, Coroutine]]
 
 # Agent 事件类型常量
+EVENT_TURN_START = "turn_start"              # Agent 新步骤开始
 EVENT_STREAM_CHUNK = "stream_chunk"          # LLM 流式文本块
 EVENT_TOOL_START = "tool_execution_start"    # 工具开始执行
 EVENT_TOOL_END = "tool_execution_end"        # 工具执行结束
@@ -152,11 +153,15 @@ class AgentLoop:
         try:
             for turn in range(self._max_turns):
                 self._raise_if_stop_requested()
-                result.total_turns = turn + 1
+                step_index = turn + 1
+                result.total_turns = step_index
+                await self._emit(on_event, EVENT_TURN_START, {
+                    "step_index": step_index,
+                })
 
                 # ---- 1. 流式调用 LLM ----
                 turn_result = await self._stream_llm_response(
-                    messages, schemas, on_event
+                    messages, schemas, on_event, step_index
                 )
 
                 self._raise_if_stop_requested()
@@ -180,7 +185,7 @@ class AgentLoop:
                 # ---- 4. 执行工具调用 ----
                 self._raise_if_stop_requested()
                 tool_results = await self._execute_tool_calls(
-                    turn_result.tool_calls, on_event
+                    turn_result.tool_calls, on_event, step_index
                 )
                 result.tool_calls_count += len(turn_result.tool_calls)
 
@@ -220,6 +225,7 @@ class AgentLoop:
         messages: List[Dict[str, Any]],
         schemas: List[Dict[str, Any]],
         on_event: Optional[AgentEventCallback],
+        step_index: int,
     ) -> TurnResult:
         """
         流式调用 LLM 并累积结果
@@ -262,6 +268,7 @@ class AgentLoop:
                 if chunk.reasoning_content:
                     turn.reasoning_content += chunk.reasoning_content
                     await self._emit(on_event, EVENT_STREAM_CHUNK, {
+                        "step_index": step_index,
                         "chunk_type": "reasoning",
                         "text": chunk.reasoning_content,
                     })
@@ -270,6 +277,7 @@ class AgentLoop:
                 if chunk.content:
                     turn.content += chunk.content
                     await self._emit(on_event, EVENT_STREAM_CHUNK, {
+                        "step_index": step_index,
                         "chunk_type": "content",
                         "text": chunk.content,
                     })
@@ -302,6 +310,7 @@ class AgentLoop:
         self,
         tool_calls: List[Dict[str, Any]],
         on_event: Optional[AgentEventCallback],
+        step_index: int,
     ) -> List[ToolResult]:
         """
         执行工具调用列表
@@ -330,6 +339,7 @@ class AgentLoop:
 
             # 发射 tool_start 事件
             await self._emit(on_event, EVENT_TOOL_START, {
+                "step_index": step_index,
                 "tool_call_id": tc_info.id,
                 "tool_name": tc_info.name,
                 "arguments": tc_info.arguments,
@@ -340,6 +350,7 @@ class AgentLoop:
 
             # 发射 tool_end 事件
             await self._emit(on_event, EVENT_TOOL_END, {
+                "step_index": step_index,
                 "tool_call_id": tc_info.id,
                 "tool_name": tc_info.name,
                 "result_content": result.content[:200],
@@ -499,6 +510,7 @@ __all__ = [
     "AgentResult",
     "TurnResult",
     "AgentEventCallback",
+    "EVENT_TURN_START",
     "EVENT_STREAM_CHUNK",
     "EVENT_TOOL_START",
     "EVENT_TOOL_END",

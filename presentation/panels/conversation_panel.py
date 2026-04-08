@@ -232,8 +232,8 @@ class ConversationPanel(QWidget):
             return
         
         self._view_model.messages_changed.connect(self._on_messages_changed)
-        self._view_model.stream_updated.connect(self._on_stream_updated)
-        self._view_model.stream_finished.connect(self._on_stream_finished)
+        self._view_model.runtime_steps_changed.connect(self._on_runtime_steps_changed)
+        self._view_model.runtime_steps_finished.connect(self._on_runtime_steps_finished)
         self._view_model.usage_changed.connect(self._on_usage_changed)
         self._view_model.can_send_changed.connect(self._on_can_send_changed)
         self._view_model.new_conversation_suggested.connect(
@@ -241,10 +241,6 @@ class ConversationPanel(QWidget):
         )
         self._view_model.stop_requested.connect(self._on_stop_requested)
         self._view_model.stop_completed.connect(self._on_stop_completed)
-        self._view_model.tool_call_started.connect(self._on_tool_call_started)
-        self._view_model.tool_call_ended.connect(self._on_tool_call_ended)
-        self._view_model.web_search_started.connect(self._on_web_search_started)
-        self._view_model.web_search_finished.connect(self._on_web_search_finished)
 
     # ============================================================
     # 初始化和清理
@@ -362,7 +358,10 @@ class ConversationPanel(QWidget):
         
         # 委托给 MessageArea 渲染消息
         if self._message_area:
-            self._message_area.render_messages(self.view_model.messages)
+            self._message_area.render_messages(
+                self.view_model.messages,
+                self.view_model.active_agent_steps,
+            )
         
         # 更新状态栏
         self._update_usage_display()
@@ -454,19 +453,17 @@ class ConversationPanel(QWidget):
         """处理消息列表变化"""
         self.refresh_display()
     
-    @pyqtSlot(str, str)
-    def _on_stream_updated(self, content: str, reasoning: str) -> None:
-        """处理流式内容更新"""
-        if self._message_area:
-            self._message_area.update_streaming(content, reasoning)
-    
     @pyqtSlot()
-    def _on_stream_finished(self) -> None:
-        """处理流式输出完成"""
-        # 只结束流式输出，不刷新显示
-        # 刷新由 messages_changed 信号触发的 _on_messages_changed 处理
+    def _on_runtime_steps_changed(self) -> None:
+        """处理运行时步骤更新。"""
         if self._message_area:
-            self._message_area.finish_streaming()
+            self._message_area.render_runtime_steps(self.view_model.active_agent_steps)
+
+    @pyqtSlot()
+    def _on_runtime_steps_finished(self) -> None:
+        """处理运行时步骤结束。"""
+        if self._message_area:
+            self._message_area.clear_runtime_steps()
     
     @pyqtSlot(float)
     def _on_usage_changed(self, ratio: float) -> None:
@@ -519,52 +516,6 @@ class ConversationPanel(QWidget):
                 "上下文已接近上限，建议开启新对话以获得更好的体验。"
             )
         )
-
-    @pyqtSlot(str, str, dict)
-    def _on_tool_call_started(
-        self, tool_call_id: str, tool_name: str, arguments: dict
-    ) -> None:
-        """处理工具调用开始（插入工具卡片到消息区域）"""
-        if tool_name == "web_search":
-            return
-        if self._message_area:
-            self._message_area.add_tool_card(tool_call_id, tool_name, arguments)
-
-    @pyqtSlot(str, str, str, bool, dict)
-    def _on_tool_call_ended(
-        self, tool_call_id: str, tool_name: str, result_content: str, is_error: bool, details: dict
-    ) -> None:
-        """处理工具调用结束（更新工具卡片显示结果）"""
-        if tool_name == "web_search":
-            return
-        if self._message_area:
-            self._message_area.update_tool_card(
-                tool_call_id, result_content, is_error
-            )
-
-    @pyqtSlot(str)
-    def _on_web_search_started(self, query: str) -> None:
-        """处理联网搜索开始"""
-        if self._message_area:
-            self._message_area.start_searching()
-
-    @pyqtSlot(list, bool, str)
-    def _on_web_search_finished(self, results: list, is_error: bool, message: str) -> None:
-        """处理联网搜索结束"""
-        if not self._message_area:
-            return
-
-        display_results = results
-        if is_error and not display_results:
-            display_results = [{
-                "title": "搜索失败",
-                "url": "",
-                "snippet": message,
-            }]
-
-        if display_results:
-            self._message_area.update_search_results(display_results)
-        self._message_area.finish_searching(len(results))
 
     # ============================================================
     # 事件处理 - 子组件信号

@@ -71,11 +71,12 @@ class LLMExecutor(QObject):
     """
     
     # 信号定义
-    stream_chunk = pyqtSignal(str, str, dict)  # (task_id, chunk_type, chunk_data)
+    agent_turn_started = pyqtSignal(str, int)  # (task_id, step_index)
+    stream_chunk = pyqtSignal(str, int, str, dict)  # (task_id, step_index, chunk_type, chunk_data)
     generation_complete = pyqtSignal(str, dict)  # (task_id, result)
     generation_error = pyqtSignal(str, str)  # (task_id, error_msg)
-    tool_execution_started = pyqtSignal(str, str, str, dict)  # (task_id, tool_call_id, tool_name, arguments)
-    tool_execution_finished = pyqtSignal(str, str, str, str, bool, dict)  # (task_id, tool_call_id, tool_name, result_content, is_error, details)
+    tool_execution_started = pyqtSignal(str, int, str, str, dict)  # (task_id, step_index, tool_call_id, tool_name, arguments)
+    tool_execution_finished = pyqtSignal(str, int, str, str, str, bool, dict)  # (task_id, step_index, tool_call_id, tool_name, result_content, is_error, details)
     
     def __init__(self, parent: Optional[QObject] = None, tool_effect_dispatcher: Optional[ToolEffectDispatcher] = None):
         """初始化 LLM 执行器"""
@@ -289,40 +290,52 @@ class LLMExecutor(QObject):
             event_type: 事件类型
             data: 事件数据
         """
-        if event_type == "stream_chunk":
+        if event_type == "turn_start":
+            step_index = int(data.get("step_index", 0) or 0)
+            if step_index > 0:
+                self.agent_turn_started.emit(task_id, step_index)
+
+        elif event_type == "stream_chunk":
+            step_index = int(data.get("step_index", 0) or 0)
             chunk_type = data.get("chunk_type", "content")
             text = data.get("text", "")
-            if text:
-                self.stream_chunk.emit(task_id, chunk_type, {
+            if text and step_index > 0:
+                self.stream_chunk.emit(task_id, step_index, chunk_type, {
                     "type": chunk_type,
                     "text": text,
                 })
 
         elif event_type == "tool_execution_start":
+            step_index = int(data.get("step_index", 0) or 0)
             tool_call_id = data.get("tool_call_id", "")
             tool_name = data.get("tool_name", "")
             arguments = data.get("arguments", {})
-            self.tool_execution_started.emit(
-                task_id,
-                tool_call_id,
-                tool_name,
-                arguments,
-            )
+            if step_index > 0:
+                self.tool_execution_started.emit(
+                    task_id,
+                    step_index,
+                    tool_call_id,
+                    tool_name,
+                    arguments,
+                )
 
         elif event_type == "tool_execution_end":
+            step_index = int(data.get("step_index", 0) or 0)
             tool_call_id = data.get("tool_call_id", "")
             tool_name = data.get("tool_name", "")
             result_content = data.get("result_content", "")
             is_error = bool(data.get("is_error", False))
             details = data.get("details") if isinstance(data.get("details"), dict) else {}
-            self.tool_execution_finished.emit(
-                task_id,
-                tool_call_id,
-                tool_name,
-                result_content,
-                is_error,
-                details,
-            )
+            if step_index > 0:
+                self.tool_execution_finished.emit(
+                    task_id,
+                    step_index,
+                    tool_call_id,
+                    tool_name,
+                    result_content,
+                    is_error,
+                    details,
+                )
 
             if not is_error and self._tool_effect_dispatcher is not None:
                 self._tool_effect_dispatcher.dispatch(

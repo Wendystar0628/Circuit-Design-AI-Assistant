@@ -120,6 +120,7 @@ class ContextManager:
         web_search_results: Optional[List[Dict[str, Any]]] = None,
         is_partial: bool = False,
         stop_reason: str = "",
+        agent_steps: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """
         添加消息到状态
@@ -150,6 +151,7 @@ class ContextManager:
             web_search_results=web_search_results,
             is_partial=is_partial,
             stop_reason=stop_reason,
+            agent_steps=agent_steps,
         )
     
     def get_messages(
@@ -384,6 +386,7 @@ class ContextManager:
         is_partial: bool = False,
         stop_reason: str = "",
         operations: Optional[List[str]] = None,
+        agent_steps: Optional[List[Dict[str, Any]]] = None,
     ) -> None:
         """
         添加助手消息（有状态版本）
@@ -417,6 +420,7 @@ class ContextManager:
             web_search_results=web_search_results,
             is_partial=is_partial,
             stop_reason=stop_reason,
+            agent_steps=agent_steps,
         )
         self.sync_state(new_state)
         

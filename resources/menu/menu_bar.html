@@ -3,7 +3,107 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Unused Menu Resource</title>
+  <title>Circuit AI Menu Bar</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #f6f8fc;
+      font-family: "Segoe UI", "SF Pro Display", "Microsoft YaHei UI", sans-serif;
+      color: #1f2937;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+
+    body {
+      border-bottom: 1px solid #e2e8f0;
+    }
+
+    #root {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: linear-gradient(180deg, rgba(248, 250, 252, 0.98), rgba(243, 246, 251, 0.98));
+    }
+
+    .menu-host {
+      position: relative;
+      width: 100%;
+      height: 100%;
+    }
+
+    .menu-bar {
+      position: relative;
+      z-index: 2;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      height: 42px;
+      padding: 6px 12px;
+      box-sizing: border-box;
+    }
+
+    .brand-pill {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 28px;
+      padding: 0 10px;
+      border-radius: 999px;
+      background: rgba(37, 99, 235, 0.08);
+      color: #1d4ed8;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      white-space: nowrap;
+      flex: 0 0 auto;
+    }
+
+    .menu-buttons {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      min-width: 0;
+      flex: 1 1 auto;
+      overflow: hidden;
+    }
+
+    .menu-button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 42px;
+      height: 30px;
+      padding: 0 12px;
+      border: none;
+      border-radius: 9px;
+      background: transparent;
+      color: #243244;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 120ms ease, color 120ms ease;
+      white-space: nowrap;
+    }
+
+    .menu-button:hover,
+    .menu-button.active {
+      background: rgba(37, 99, 235, 0.10);
+      color: #1d4ed8;
+    }
+
+    .menu-button:active {
+      background: rgba(37, 99, 235, 0.16);
+    }
+  </style>
 </head>
-<body></body>
+<body>
+  <div id="root"></div>
+  <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+  <script src="menu_bar_app.js"></script>
+</body>
 </html>

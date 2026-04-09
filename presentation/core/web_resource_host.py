@@ -21,6 +21,8 @@ except ImportError:
     QWebEngineUrlSchemeHandler = None
     WEB_RESOURCE_HOST_AVAILABLE = False
 
+_AppWebResourceHandlerBase = QWebEngineUrlSchemeHandler if QWebEngineUrlSchemeHandler is not None else object
+
 from resources.resource_loader import get_resources_dir
 
 APP_WEB_SCHEME = "cai"
@@ -51,7 +53,7 @@ def register_app_web_scheme() -> bool:
     return True
 
 
-class _AppWebResourceHandler(QWebEngineUrlSchemeHandler):
+class _AppWebResourceHandler(_AppWebResourceHandlerBase):
     def requestStarted(self, job) -> None:
         resource_path = _resolve_resource_path(job.requestUrl())
         if resource_path is None or not resource_path.is_file():

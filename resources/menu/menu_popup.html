@@ -3,7 +3,102 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Unused Menu Resource</title>
+  <title>Circuit AI Menu Popup</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: transparent;
+      font-family: "Segoe UI", "SF Pro Display", "Microsoft YaHei UI", sans-serif;
+      color: #1f2937;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+
+    #root {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      background: transparent;
+    }
+
+    .menu-panel {
+      position: absolute;
+      min-width: 280px;
+      max-width: 380px;
+      padding: 6px;
+      border: 1px solid #dbe4ef;
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.98);
+      box-shadow: 0 18px 48px rgba(15, 23, 42, 0.18), 0 2px 10px rgba(15, 23, 42, 0.08);
+      -webkit-backdrop-filter: blur(14px);
+      backdrop-filter: blur(14px);
+      box-sizing: border-box;
+    }
+
+    .menu-item {
+      display: grid;
+      grid-template-columns: 16px minmax(0, 1fr) auto auto;
+      align-items: center;
+      gap: 10px;
+      min-height: 34px;
+      padding: 0 10px;
+      border-radius: 8px;
+      color: #213042;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    .menu-item:hover,
+    .menu-item.open {
+      background: #eff6ff;
+      color: #1d4ed8;
+    }
+
+    .menu-item.disabled {
+      color: rgba(71, 85, 105, 0.48);
+      cursor: default;
+    }
+
+    .menu-item.disabled:hover {
+      background: transparent;
+      color: rgba(71, 85, 105, 0.48);
+    }
+
+    .menu-separator {
+      height: 1px;
+      margin: 6px 8px;
+      background: #e2e8f0;
+    }
+
+    .menu-indicator {
+      text-align: center;
+      color: #2563eb;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .menu-label {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .menu-shortcut,
+    .menu-arrow {
+      color: rgba(51, 65, 85, 0.72);
+      font-size: 12px;
+    }
+  </style>
 </head>
-<body></body>
+<body>
+  <div id="root"></div>
+  <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+  <script src="menu_popup_app.js"></script>
+</body>
 </html>

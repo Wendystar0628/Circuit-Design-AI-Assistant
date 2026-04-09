@@ -1,12 +1,12 @@
 from typing import Any, Callable, Dict, List, Optional
-
+ 
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import QMainWindow
-
+ 
 from presentation.widgets.web_menu_bar import WebMenuBar
-
-
+ 
+ 
 class MenuManager:
     def __init__(self, main_window: QMainWindow):
         self._main_window = main_window
@@ -307,6 +307,7 @@ class MenuManager:
             },
         ]
 
+    def _dispatch_state(self) -> None:
         if self._menu_widget is None:
             return
         self._menu_widget.set_menu_state({

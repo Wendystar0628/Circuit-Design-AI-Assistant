@@ -9,7 +9,12 @@ from PyQt6.QtWebChannel import QWebChannel
 from presentation.core.web_resource_host import app_resource_url, configure_app_web_view
 
 from shared.path_utils import normalize_identity_path
-from shared.workspace_file_types import is_hidden_workspace_entry
+from shared.workspace_file_types import (
+    file_type_label,
+    is_hidden_workspace_entry,
+    workspace_entry_icon_key,
+    workspace_entry_icon_tone,
+)
 
 try:
     from PyQt6.QtWebEngineWidgets import QWebEngineView
@@ -237,6 +242,9 @@ class FileBrowserPanel(QWidget):
                     "isOpen": False,
                     "isDirty": False,
                     "isActive": False,
+                    "iconKey": workspace_entry_icon_key(entry_name, is_directory=True),
+                    "iconTone": workspace_entry_icon_tone(entry_name, is_directory=True),
+                    "typeLabel": "Folder",
                     "defaultExpanded": child_has_active_content,
                     "children": child_nodes,
                 })
@@ -254,6 +262,9 @@ class FileBrowserPanel(QWidget):
                 "isOpen": is_open,
                 "isDirty": is_dirty,
                 "isActive": is_active,
+                "iconKey": workspace_entry_icon_key(entry_name),
+                "iconTone": workspace_entry_icon_tone(entry_name),
+                "typeLabel": file_type_label(entry_name),
                 "defaultExpanded": False,
                 "children": [],
             })

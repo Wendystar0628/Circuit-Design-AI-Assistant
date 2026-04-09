@@ -15,6 +15,16 @@ MARKDOWN_EXTENSIONS = {".md", ".markdown"}
 WORD_EXTENSIONS = {".docx"}
 PDF_EXTENSIONS = {".pdf"}
 TABULAR_EXTENSIONS = {".csv", ".tsv"}
+JSON_EXTENSIONS = {".json"}
+PYTHON_EXTENSIONS = {".py"}
+JAVASCRIPT_EXTENSIONS = {".js", ".jsx"}
+TYPESCRIPT_EXTENSIONS = {".ts", ".tsx"}
+HTML_EXTENSIONS = {".html"}
+CSS_EXTENSIONS = {".css"}
+XML_EXTENSIONS = {".xml"}
+CONFIG_EXTENSIONS = {".yaml", ".yml", ".toml", ".ini", ".cfg"}
+TEXT_EXTENSIONS = {".txt", ".log"}
+DIFF_EXTENSIONS = {".diff", ".patch"}
 IMAGE_EXTENSIONS = {
     ".png",
     ".jpg",
@@ -198,12 +208,100 @@ def file_type_label(path_or_ext: PathLike) -> str:
     return labels.get(extension, "File")
 
 
+def workspace_entry_icon_key(path_or_ext: PathLike, is_directory: bool = False) -> str:
+    if is_directory:
+        return "folder"
+    extension = get_extension(path_or_ext)
+    if extension in SPICE_EXTENSIONS:
+        return "circuit"
+    if extension in PYTHON_EXTENSIONS:
+        return "python"
+    if extension in JSON_EXTENSIONS:
+        return "json"
+    if extension in MARKDOWN_EXTENSIONS:
+        return "markdown"
+    if extension in JAVASCRIPT_EXTENSIONS:
+        return "javascript"
+    if extension in TYPESCRIPT_EXTENSIONS:
+        return "typescript"
+    if extension in HTML_EXTENSIONS:
+        return "html"
+    if extension in CSS_EXTENSIONS:
+        return "css"
+    if extension in XML_EXTENSIONS:
+        return "xml"
+    if extension in CONFIG_EXTENSIONS:
+        return "config"
+    if extension in WORD_EXTENSIONS:
+        return "word"
+    if extension in PDF_EXTENSIONS:
+        return "pdf"
+    if extension in TABULAR_EXTENSIONS:
+        return "table"
+    if extension in IMAGE_EXTENSIONS:
+        return "image"
+    if extension in DIFF_EXTENSIONS:
+        return "diff"
+    if extension in TEXT_EXTENSIONS:
+        return "text"
+    return "file"
+
+
+def workspace_entry_icon_tone(path_or_ext: PathLike, is_directory: bool = False) -> str:
+    if is_directory:
+        return "folder"
+    extension = get_extension(path_or_ext)
+    if extension in SPICE_EXTENSIONS:
+        return "circuit"
+    if extension in PYTHON_EXTENSIONS:
+        return "python"
+    if extension in JSON_EXTENSIONS:
+        return "json"
+    if extension in MARKDOWN_EXTENSIONS:
+        return "markdown"
+    if extension in JAVASCRIPT_EXTENSIONS:
+        return "javascript"
+    if extension in TYPESCRIPT_EXTENSIONS:
+        return "typescript"
+    if extension in HTML_EXTENSIONS:
+        return "html"
+    if extension in CSS_EXTENSIONS:
+        return "css"
+    if extension in XML_EXTENSIONS:
+        return "xml"
+    if extension in CONFIG_EXTENSIONS:
+        return "config"
+    if extension in WORD_EXTENSIONS:
+        return "word"
+    if extension in PDF_EXTENSIONS:
+        return "pdf"
+    if extension in TABULAR_EXTENSIONS:
+        return "table"
+    if extension in IMAGE_EXTENSIONS:
+        return "image"
+    if extension in DIFF_EXTENSIONS:
+        return "diff"
+    if extension in EDITABLE_TEXT_EXTENSIONS:
+        return "code"
+    return "file"
+
+
 __all__ = [
     "SPICE_EXTENSIONS",
     "MARKDOWN_EXTENSIONS",
     "WORD_EXTENSIONS",
     "PDF_EXTENSIONS",
     "TABULAR_EXTENSIONS",
+    "JSON_EXTENSIONS",
+    "PYTHON_EXTENSIONS",
+    "JAVASCRIPT_EXTENSIONS",
+    "TYPESCRIPT_EXTENSIONS",
+    "HTML_EXTENSIONS",
+    "CSS_EXTENSIONS",
+    "XML_EXTENSIONS",
+    "CONFIG_EXTENSIONS",
+    "TEXT_EXTENSIONS",
+    "DIFF_EXTENSIONS",
     "IMAGE_EXTENSIONS",
     "EDITABLE_TEXT_EXTENSIONS",
     "DOCUMENT_PREVIEW_EXTENSIONS",
@@ -220,4 +318,6 @@ __all__ = [
     "is_document_preview_extension",
     "language_for_extension",
     "file_type_label",
+    "workspace_entry_icon_key",
+    "workspace_entry_icon_tone",
 ]

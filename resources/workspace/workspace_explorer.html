@@ -109,9 +109,9 @@
     .tree-row {
       display: flex;
       align-items: center;
-      gap: 6px;
+      gap: 4px;
       min-height: 24px;
-      padding-right: 8px;
+      padding: 0 8px 0 6px;
       color: #334155;
       font-size: 12px;
       cursor: pointer;
@@ -134,16 +134,145 @@
       color: #0f172a;
     }
 
-    .disclosure {
+    .tree-prefix {
+      display: inline-flex;
+      align-self: stretch;
+      flex: 0 0 auto;
+    }
+
+    .guide-slot {
+      position: relative;
       width: 14px;
       flex: 0 0 14px;
+      align-self: stretch;
+    }
+
+    .guide-slot.line::before,
+    .guide-slot.branch::before,
+    .guide-slot.tail::before {
+      content: "";
+      position: absolute;
+      left: 6px;
+      top: -1px;
+      bottom: -1px;
+      width: 1px;
+      background: #dbe4ef;
+    }
+
+    .guide-slot.tail::before {
+      bottom: 50%;
+    }
+
+    .guide-slot.branch::after,
+    .guide-slot.tail::after {
+      content: "";
+      position: absolute;
+      left: 6px;
+      right: 0;
+      top: 50%;
+      height: 1px;
+      background: #dbe4ef;
+      transform: translateY(-0.5px);
+    }
+
+    .disclosure {
+      width: 12px;
+      flex: 0 0 12px;
       color: #64748b;
-      font-size: 12px;
+      font-size: 11px;
       text-align: center;
     }
 
     .disclosure.placeholder {
       color: transparent;
+    }
+
+    .tree-icon {
+      width: 16px;
+      height: 16px;
+      flex: 0 0 16px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .tree-icon svg {
+      width: 16px;
+      height: 16px;
+      overflow: visible;
+    }
+
+    .tree-icon.tone-folder {
+      color: #64748b;
+    }
+
+    .tree-icon.tone-circuit {
+      color: #0d9488;
+    }
+
+    .tree-icon.tone-python {
+      color: #0f766e;
+    }
+
+    .tree-icon.tone-json {
+      color: #0284c7;
+    }
+
+    .tree-icon.tone-markdown {
+      color: #475569;
+    }
+
+    .tree-icon.tone-javascript {
+      color: #d97706;
+    }
+
+    .tree-icon.tone-typescript {
+      color: #2563eb;
+    }
+
+    .tree-icon.tone-html {
+      color: #ea580c;
+    }
+
+    .tree-icon.tone-css {
+      color: #0891b2;
+    }
+
+    .tree-icon.tone-xml {
+      color: #7c3aed;
+    }
+
+    .tree-icon.tone-config {
+      color: #7c3aed;
+    }
+
+    .tree-icon.tone-word {
+      color: #2563eb;
+    }
+
+    .tree-icon.tone-pdf {
+      color: #dc2626;
+    }
+
+    .tree-icon.tone-table {
+      color: #16a34a;
+    }
+
+    .tree-icon.tone-image {
+      color: #db2777;
+    }
+
+    .tree-icon.tone-diff {
+      color: #f59e0b;
+    }
+
+    .tree-icon.tone-code {
+      color: #475569;
+    }
+
+    .tree-icon.tone-text,
+    .tree-icon.tone-file {
+      color: #64748b;
     }
 
     .tree-label {

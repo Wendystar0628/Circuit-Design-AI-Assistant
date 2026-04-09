@@ -148,11 +148,6 @@ def get_status_icon(name: str) -> QIcon:
     return get_icon("status", name)
 
 
-def get_file_icon(name: str) -> QIcon:
-    """获取文件类型图标 (16x16)"""
-    return get_icon("file", name)
-
-
 def get_icon_path(category: str, name: str) -> Optional[str]:
     """
     获取图标文件路径
@@ -194,6 +189,5 @@ __all__ = [
     "get_menu_icon",
     "get_panel_icon",
     "get_status_icon",
-    "get_file_icon",
     "get_icon_path",
 ]

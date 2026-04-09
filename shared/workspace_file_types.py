@@ -5,16 +5,19 @@ SPICE_EXTENSIONS = {
     ".cir",
     ".sp",
     ".spice",
+    ".ckt",
     ".lib",
     ".sub",
     ".inc",
     ".mod",
     ".net",
 }
+SIMULATABLE_CIRCUIT_EXTENSIONS = {".cir", ".sp", ".spice", ".net", ".ckt"}
 MARKDOWN_EXTENSIONS = {".md", ".markdown"}
 WORD_EXTENSIONS = {".docx"}
 PDF_EXTENSIONS = {".pdf"}
 TABULAR_EXTENSIONS = {".csv", ".tsv"}
+NETLIST_EXTENSIONS = {".net"}
 JSON_EXTENSIONS = {".json"}
 PYTHON_EXTENSIONS = {".py"}
 JAVASCRIPT_EXTENSIONS = {".js", ".jsx"}
@@ -22,8 +25,12 @@ TYPESCRIPT_EXTENSIONS = {".ts", ".tsx"}
 HTML_EXTENSIONS = {".html"}
 CSS_EXTENSIONS = {".css"}
 XML_EXTENSIONS = {".xml"}
-CONFIG_EXTENSIONS = {".yaml", ".yml", ".toml", ".ini", ".cfg"}
-TEXT_EXTENSIONS = {".txt", ".log"}
+YAML_EXTENSIONS = {".yaml", ".yml"}
+TOML_EXTENSIONS = {".toml"}
+SETTINGS_EXTENSIONS = {".ini", ".cfg"}
+CONFIG_EXTENSIONS = YAML_EXTENSIONS | TOML_EXTENSIONS | SETTINGS_EXTENSIONS
+TEXT_EXTENSIONS = {".txt"}
+LOG_EXTENSIONS = {".log"}
 DIFF_EXTENSIONS = {".diff", ".patch"}
 IMAGE_EXTENSIONS = {
     ".png",
@@ -38,6 +45,7 @@ IMAGE_EXTENSIONS = {
 EDITABLE_TEXT_EXTENSIONS = SPICE_EXTENSIONS | {
     ".json",
     ".txt",
+    ".log",
     ".py",
     ".md",
     ".markdown",
@@ -108,6 +116,14 @@ def is_markdown_extension(path_or_ext: PathLike) -> bool:
     return get_extension(path_or_ext) in MARKDOWN_EXTENSIONS
 
 
+def is_spice_extension(path_or_ext: PathLike) -> bool:
+    return get_extension(path_or_ext) in SPICE_EXTENSIONS
+
+
+def is_simulatable_circuit_extension(path_or_ext: PathLike) -> bool:
+    return get_extension(path_or_ext) in SIMULATABLE_CIRCUIT_EXTENSIONS
+
+
 def is_word_extension(path_or_ext: PathLike) -> bool:
     return get_extension(path_or_ext) in WORD_EXTENSIONS
 
@@ -149,6 +165,7 @@ def language_for_extension(path_or_ext: PathLike) -> str:
         ".cir": "plaintext",
         ".sp": "plaintext",
         ".spice": "plaintext",
+        ".ckt": "plaintext",
         ".lib": "plaintext",
         ".sub": "plaintext",
         ".inc": "plaintext",
@@ -167,6 +184,7 @@ def file_type_label(path_or_ext: PathLike) -> str:
         ".cir": "SPICE",
         ".sp": "SPICE",
         ".spice": "SPICE",
+        ".ckt": "SPICE",
         ".lib": "SPICE Library",
         ".sub": "SPICE Subcircuit",
         ".inc": "SPICE Include",
@@ -208,10 +226,12 @@ def file_type_label(path_or_ext: PathLike) -> str:
     return labels.get(extension, "File")
 
 
-def workspace_entry_icon_key(path_or_ext: PathLike, is_directory: bool = False) -> str:
+def workspace_entry_icon_name(path_or_ext: PathLike, is_directory: bool = False) -> str:
     if is_directory:
         return "folder"
     extension = get_extension(path_or_ext)
+    if extension in NETLIST_EXTENSIONS:
+        return "netlist"
     if extension in SPICE_EXTENSIONS:
         return "circuit"
     if extension in PYTHON_EXTENSIONS:
@@ -230,8 +250,12 @@ def workspace_entry_icon_key(path_or_ext: PathLike, is_directory: bool = False) 
         return "css"
     if extension in XML_EXTENSIONS:
         return "xml"
-    if extension in CONFIG_EXTENSIONS:
-        return "config"
+    if extension in YAML_EXTENSIONS:
+        return "yaml"
+    if extension in TOML_EXTENSIONS:
+        return "toml"
+    if extension in SETTINGS_EXTENSIONS:
+        return "settings"
     if extension in WORD_EXTENSIONS:
         return "word"
     if extension in PDF_EXTENSIONS:
@@ -242,56 +266,27 @@ def workspace_entry_icon_key(path_or_ext: PathLike, is_directory: bool = False) 
         return "image"
     if extension in DIFF_EXTENSIONS:
         return "diff"
+    if extension in LOG_EXTENSIONS:
+        return "log"
     if extension in TEXT_EXTENSIONS:
         return "text"
     return "file"
 
 
-def workspace_entry_icon_tone(path_or_ext: PathLike, is_directory: bool = False) -> str:
+def workspace_entry_open_icon_name(path_or_ext: PathLike, is_directory: bool = False) -> str:
     if is_directory:
-        return "folder"
-    extension = get_extension(path_or_ext)
-    if extension in SPICE_EXTENSIONS:
-        return "circuit"
-    if extension in PYTHON_EXTENSIONS:
-        return "python"
-    if extension in JSON_EXTENSIONS:
-        return "json"
-    if extension in MARKDOWN_EXTENSIONS:
-        return "markdown"
-    if extension in JAVASCRIPT_EXTENSIONS:
-        return "javascript"
-    if extension in TYPESCRIPT_EXTENSIONS:
-        return "typescript"
-    if extension in HTML_EXTENSIONS:
-        return "html"
-    if extension in CSS_EXTENSIONS:
-        return "css"
-    if extension in XML_EXTENSIONS:
-        return "xml"
-    if extension in CONFIG_EXTENSIONS:
-        return "config"
-    if extension in WORD_EXTENSIONS:
-        return "word"
-    if extension in PDF_EXTENSIONS:
-        return "pdf"
-    if extension in TABULAR_EXTENSIONS:
-        return "table"
-    if extension in IMAGE_EXTENSIONS:
-        return "image"
-    if extension in DIFF_EXTENSIONS:
-        return "diff"
-    if extension in EDITABLE_TEXT_EXTENSIONS:
-        return "code"
-    return "file"
+        return "folder-open"
+    return workspace_entry_icon_name(path_or_ext, is_directory=False)
 
 
 __all__ = [
     "SPICE_EXTENSIONS",
+    "SIMULATABLE_CIRCUIT_EXTENSIONS",
     "MARKDOWN_EXTENSIONS",
     "WORD_EXTENSIONS",
     "PDF_EXTENSIONS",
     "TABULAR_EXTENSIONS",
+    "NETLIST_EXTENSIONS",
     "JSON_EXTENSIONS",
     "PYTHON_EXTENSIONS",
     "JAVASCRIPT_EXTENSIONS",
@@ -299,8 +294,12 @@ __all__ = [
     "HTML_EXTENSIONS",
     "CSS_EXTENSIONS",
     "XML_EXTENSIONS",
+    "YAML_EXTENSIONS",
+    "TOML_EXTENSIONS",
+    "SETTINGS_EXTENSIONS",
     "CONFIG_EXTENSIONS",
     "TEXT_EXTENSIONS",
+    "LOG_EXTENSIONS",
     "DIFF_EXTENSIONS",
     "IMAGE_EXTENSIONS",
     "EDITABLE_TEXT_EXTENSIONS",
@@ -312,12 +311,14 @@ __all__ = [
     "is_editable_text_extension",
     "is_image_extension",
     "is_markdown_extension",
+    "is_spice_extension",
+    "is_simulatable_circuit_extension",
     "is_word_extension",
     "is_pdf_extension",
     "is_tabular_extension",
     "is_document_preview_extension",
     "language_for_extension",
     "file_type_label",
-    "workspace_entry_icon_key",
-    "workspace_entry_icon_tone",
+    "workspace_entry_icon_name",
+    "workspace_entry_open_icon_name",
 ]

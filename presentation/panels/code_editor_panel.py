@@ -62,6 +62,8 @@ class CodeEditorPanel(QWidget):
     open_workspace_requested = pyqtSignal()
     editable_file_state_changed = pyqtSignal(bool)
     workspace_file_state_changed = pyqtSignal(object)
+    run_simulation_requested = pyqtSignal()
+    stop_simulation_requested = pyqtSignal()
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -80,6 +82,15 @@ class CodeEditorPanel(QWidget):
         self._readonly_label: Optional[QLabel] = None
         self._empty_widget: Optional[QWidget] = None
         self._open_workspace_btn: Optional[QPushButton] = None
+        self._simulation_control_state: Dict[str, Any] = {
+            "isRunning": False,
+            "isStopRequested": False,
+            "canRun": False,
+            "canStop": False,
+            "primaryAction": "run",
+            "primaryEnabled": False,
+            "primaryTooltip": "",
+        }
         self._pending_workspace_edit_connected = False
         self._is_readonly_mode = False
         self._setup_ui()
@@ -244,6 +255,8 @@ class CodeEditorPanel(QWidget):
         self._web_tab_bar = WebWorkspaceTabBar(tab_bar_container)
         self._web_tab_bar.activate_file_requested.connect(self.switch_to_file)
         self._web_tab_bar.close_file_requested.connect(self._close_file_by_path)
+        self._web_tab_bar.run_simulation_requested.connect(self.run_simulation_requested.emit)
+        self._web_tab_bar.stop_simulation_requested.connect(self.stop_simulation_requested.emit)
         tab_bar_layout.addWidget(self._web_tab_bar, 1)
 
         self._content_stack = QStackedWidget()
@@ -734,11 +747,23 @@ class CodeEditorPanel(QWidget):
         if self._web_tab_bar is None:
             return
         payload = state if isinstance(state, dict) else self._build_workspace_file_state()
-        if self._check_has_project():
-            empty_message = self._get_text("hint.select_file", "Select a file to view")
-        else:
-            empty_message = self._get_text("hint.open_workspace", "Open a workspace to get started")
+        empty_message = self._get_text("editor.tabs.empty", "No open files")
         self._web_tab_bar.set_workspace_file_state(payload, empty_message)
+        self._web_tab_bar.set_simulation_control_state(self._simulation_control_state)
+
+    def set_simulation_control_state(self, state: Dict[str, Any]) -> None:
+        incoming = state if isinstance(state, dict) else {}
+        self._simulation_control_state = {
+            "isRunning": bool(incoming.get("isRunning", False)),
+            "isStopRequested": bool(incoming.get("isStopRequested", False)),
+            "canRun": bool(incoming.get("canRun", False)),
+            "canStop": bool(incoming.get("canStop", False)),
+            "primaryAction": str(incoming.get("primaryAction", "run") or "run"),
+            "primaryEnabled": bool(incoming.get("primaryEnabled", False)),
+            "primaryTooltip": str(incoming.get("primaryTooltip", "") or ""),
+        }
+        if self._web_tab_bar is not None:
+            self._web_tab_bar.set_simulation_control_state(self._simulation_control_state)
 
     def _on_editor_modification_changed(self, path: str, modified: bool):
         self._emit_workspace_file_state()

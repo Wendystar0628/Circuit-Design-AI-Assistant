@@ -12,8 +12,8 @@ from shared.path_utils import normalize_identity_path
 from shared.workspace_file_types import (
     file_type_label,
     is_hidden_workspace_entry,
-    workspace_entry_icon_key,
-    workspace_entry_icon_tone,
+    workspace_entry_icon_name,
+    workspace_entry_open_icon_name,
 )
 
 try:
@@ -155,6 +155,7 @@ class FileBrowserPanel(QWidget):
             "collapseTooltip": self._get_text("file_browser.collapse_all", "Collapse All"),
             "refreshTooltip": self._get_text("file_browser.refresh", "Refresh"),
             "emptyMessage": empty_message,
+            "iconSpriteUrl": app_resource_url("icons/file/workspace_file_icons.svg").toString(),
             "tree": tree_nodes,
         }
 
@@ -242,8 +243,8 @@ class FileBrowserPanel(QWidget):
                     "isOpen": False,
                     "isDirty": False,
                     "isActive": False,
-                    "iconKey": workspace_entry_icon_key(entry_name, is_directory=True),
-                    "iconTone": workspace_entry_icon_tone(entry_name, is_directory=True),
+                    "iconName": workspace_entry_icon_name(entry_name, is_directory=True),
+                    "openIconName": workspace_entry_open_icon_name(entry_name, is_directory=True),
                     "typeLabel": "Folder",
                     "defaultExpanded": child_has_active_content,
                     "children": child_nodes,
@@ -262,8 +263,8 @@ class FileBrowserPanel(QWidget):
                 "isOpen": is_open,
                 "isDirty": is_dirty,
                 "isActive": is_active,
-                "iconKey": workspace_entry_icon_key(entry_name),
-                "iconTone": workspace_entry_icon_tone(entry_name),
+                "iconName": workspace_entry_icon_name(entry_name),
+                "openIconName": workspace_entry_open_icon_name(entry_name),
                 "typeLabel": file_type_label(entry_name),
                 "defaultExpanded": False,
                 "children": [],

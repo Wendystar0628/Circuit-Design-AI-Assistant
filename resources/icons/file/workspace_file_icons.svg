@@ -1,0 +1,155 @@
+<svg xmlns="http://www.w3.org/2000/svg" aria-hidden="true" style="position:absolute;width:0;height:0;overflow:hidden">
+  <symbol id="folder" viewBox="0 0 24 24">
+    <path d="M3 6.6A2.6 2.6 0 0 1 5.6 4H10l2 2.2h6.4A2.6 2.6 0 0 1 21 8.8v8.6a2.6 2.6 0 0 1-2.6 2.6H5.6A2.6 2.6 0 0 1 3 17.4V6.6Z" fill="#fde68a" stroke="#d97706" stroke-width="1.4" stroke-linejoin="round"/>
+  </symbol>
+
+  <symbol id="folder-open" viewBox="0 0 24 24">
+    <path d="M3 8.3A2.3 2.3 0 0 1 5.3 6h4.2l1.8 1.8H18A2.2 2.2 0 0 1 20.17 9.56L21 14.9A2.7 2.7 0 0 1 18.33 18H6.2a2.6 2.6 0 0 1-2.56-2.12L3 11.4V8.3Z" fill="#fcd34d" stroke="#d97706" stroke-width="1.4" stroke-linejoin="round"/>
+  </symbol>
+
+  <symbol id="file" viewBox="0 0 24 24">
+    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" fill="#ffffff" stroke="#64748b" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M14 2v6h6" fill="#e2e8f0" stroke="#64748b" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+  </symbol>
+
+  <symbol id="text" viewBox="0 0 24 24">
+    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" fill="#ffffff" stroke="#64748b" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M14 2v6h6" fill="#e2e8f0" stroke="#64748b" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="6" y="13.5" width="12" height="5" rx="1.6" fill="#64748b"/>
+    <text x="12" y="17.28" text-anchor="middle" font-size="5.5" font-family="Segoe UI, Arial, sans-serif" font-weight="700" fill="#ffffff">TXT</text>
+  </symbol>
+
+  <symbol id="log" viewBox="0 0 24 24">
+    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" fill="#ffffff" stroke="#64748b" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M14 2v6h6" fill="#e2e8f0" stroke="#64748b" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="6" y="13.5" width="12" height="5" rx="1.6" fill="#b45309"/>
+    <text x="12" y="17.28" text-anchor="middle" font-size="5.6" font-family="Segoe UI, Arial, sans-serif" font-weight="700" fill="#ffffff">LOG</text>
+  </symbol>
+
+  <symbol id="json" viewBox="0 0 24 24">
+    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" fill="#ffffff" stroke="#64748b" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M14 2v6h6" fill="#e0f2fe" stroke="#64748b" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="6" y="13.5" width="12" height="5" rx="1.6" fill="#0ea5e9"/>
+    <text x="12" y="17.28" text-anchor="middle" font-size="5.1" font-family="Segoe UI, Arial, sans-serif" font-weight="700" fill="#ffffff">JSN</text>
+  </symbol>
+
+  <symbol id="python" viewBox="0 0 24 24">
+    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" fill="#ffffff" stroke="#64748b" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M14 2v6h6" fill="#dcfce7" stroke="#64748b" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="6" y="13.5" width="12" height="5" rx="1.6" fill="#0f766e"/>
+    <text x="12" y="17.28" text-anchor="middle" font-size="6.0" font-family="Segoe UI, Arial, sans-serif" font-weight="700" fill="#ffffff">PY</text>
+  </symbol>
+
+  <symbol id="markdown" viewBox="0 0 24 24">
+    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" fill="#ffffff" stroke="#64748b" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M14 2v6h6" fill="#e2e8f0" stroke="#64748b" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="6" y="13.5" width="12" height="5" rx="1.6" fill="#475569"/>
+    <text x="12" y="17.28" text-anchor="middle" font-size="6.0" font-family="Segoe UI, Arial, sans-serif" font-weight="700" fill="#ffffff">MD</text>
+  </symbol>
+
+  <symbol id="javascript" viewBox="0 0 24 24">
+    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" fill="#ffffff" stroke="#64748b" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M14 2v6h6" fill="#fef3c7" stroke="#64748b" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="6" y="13.5" width="12" height="5" rx="1.6" fill="#d97706"/>
+    <text x="12" y="17.28" text-anchor="middle" font-size="6.0" font-family="Segoe UI, Arial, sans-serif" font-weight="700" fill="#ffffff">JS</text>
+  </symbol>
+
+  <symbol id="typescript" viewBox="0 0 24 24">
+    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" fill="#ffffff" stroke="#64748b" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M14 2v6h6" fill="#dbeafe" stroke="#64748b" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="6" y="13.5" width="12" height="5" rx="1.6" fill="#2563eb"/>
+    <text x="12" y="17.28" text-anchor="middle" font-size="6.0" font-family="Segoe UI, Arial, sans-serif" font-weight="700" fill="#ffffff">TS</text>
+  </symbol>
+
+  <symbol id="html" viewBox="0 0 24 24">
+    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" fill="#ffffff" stroke="#64748b" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M14 2v6h6" fill="#ffedd5" stroke="#64748b" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="5.6" y="13.5" width="12.8" height="5" rx="1.6" fill="#ea580c"/>
+    <text x="12" y="17.2" text-anchor="middle" font-size="4.55" font-family="Segoe UI, Arial, sans-serif" font-weight="700" fill="#ffffff">HTML</text>
+  </symbol>
+
+  <symbol id="css" viewBox="0 0 24 24">
+    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" fill="#ffffff" stroke="#64748b" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M14 2v6h6" fill="#cffafe" stroke="#64748b" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="6" y="13.5" width="12" height="5" rx="1.6" fill="#0891b2"/>
+    <text x="12" y="17.28" text-anchor="middle" font-size="5.2" font-family="Segoe UI, Arial, sans-serif" font-weight="700" fill="#ffffff">CSS</text>
+  </symbol>
+
+  <symbol id="xml" viewBox="0 0 24 24">
+    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" fill="#ffffff" stroke="#64748b" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M14 2v6h6" fill="#ede9fe" stroke="#64748b" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="6" y="13.5" width="12" height="5" rx="1.6" fill="#7c3aed"/>
+    <text x="12" y="17.28" text-anchor="middle" font-size="5.0" font-family="Segoe UI, Arial, sans-serif" font-weight="700" fill="#ffffff">XML</text>
+  </symbol>
+
+  <symbol id="yaml" viewBox="0 0 24 24">
+    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" fill="#ffffff" stroke="#64748b" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M14 2v6h6" fill="#e0e7ff" stroke="#64748b" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="6" y="13.5" width="12" height="5" rx="1.6" fill="#4f46e5"/>
+    <text x="12" y="17.28" text-anchor="middle" font-size="5.0" font-family="Segoe UI, Arial, sans-serif" font-weight="700" fill="#ffffff">YML</text>
+  </symbol>
+
+  <symbol id="toml" viewBox="0 0 24 24">
+    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" fill="#ffffff" stroke="#64748b" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M14 2v6h6" fill="#f5d0fe" stroke="#64748b" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="5.7" y="13.5" width="12.6" height="5" rx="1.6" fill="#c026d3"/>
+    <text x="12" y="17.18" text-anchor="middle" font-size="4.7" font-family="Segoe UI, Arial, sans-serif" font-weight="700" fill="#ffffff">TOML</text>
+  </symbol>
+
+  <symbol id="settings" viewBox="0 0 24 24">
+    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" fill="#ffffff" stroke="#64748b" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M14 2v6h6" fill="#e2e8f0" stroke="#64748b" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="5.8" y="13.5" width="12.4" height="5" rx="1.6" fill="#475569"/>
+    <text x="12" y="17.25" text-anchor="middle" font-size="4.95" font-family="Segoe UI, Arial, sans-serif" font-weight="700" fill="#ffffff">INI</text>
+  </symbol>
+
+  <symbol id="word" viewBox="0 0 24 24">
+    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" fill="#ffffff" stroke="#64748b" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M14 2v6h6" fill="#dbeafe" stroke="#64748b" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="5.9" y="13.5" width="12.2" height="5" rx="1.6" fill="#2563eb"/>
+    <text x="12" y="17.22" text-anchor="middle" font-size="4.95" font-family="Segoe UI, Arial, sans-serif" font-weight="700" fill="#ffffff">DOC</text>
+  </symbol>
+
+  <symbol id="pdf" viewBox="0 0 24 24">
+    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" fill="#ffffff" stroke="#64748b" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M14 2v6h6" fill="#fee2e2" stroke="#64748b" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="6" y="13.5" width="12" height="5" rx="1.6" fill="#dc2626"/>
+    <text x="12" y="17.25" text-anchor="middle" font-size="5.2" font-family="Segoe UI, Arial, sans-serif" font-weight="700" fill="#ffffff">PDF</text>
+  </symbol>
+
+  <symbol id="table" viewBox="0 0 24 24">
+    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" fill="#ffffff" stroke="#64748b" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M14 2v6h6" fill="#dcfce7" stroke="#64748b" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="5.9" y="13.5" width="12.2" height="5" rx="1.6" fill="#16a34a"/>
+    <text x="12" y="17.22" text-anchor="middle" font-size="4.95" font-family="Segoe UI, Arial, sans-serif" font-weight="700" fill="#ffffff">CSV</text>
+  </symbol>
+
+  <symbol id="diff" viewBox="0 0 24 24">
+    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" fill="#ffffff" stroke="#64748b" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M14 2v6h6" fill="#fef3c7" stroke="#64748b" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="5.9" y="13.5" width="12.2" height="5" rx="1.6" fill="#f59e0b"/>
+    <text x="12" y="17.22" text-anchor="middle" font-size="4.95" font-family="Segoe UI, Arial, sans-serif" font-weight="700" fill="#ffffff">DIF</text>
+  </symbol>
+
+  <symbol id="netlist" viewBox="0 0 24 24">
+    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" fill="#ffffff" stroke="#64748b" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M14 2v6h6" fill="#ccfbf1" stroke="#64748b" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="5.8" y="13.5" width="12.4" height="5" rx="1.6" fill="#0f766e"/>
+    <text x="12" y="17.22" text-anchor="middle" font-size="4.85" font-family="Segoe UI, Arial, sans-serif" font-weight="700" fill="#ffffff">NET</text>
+  </symbol>
+
+  <symbol id="circuit" viewBox="0 0 24 24">
+    <rect x="4" y="4" width="16" height="16" rx="3" fill="#ccfbf1" stroke="#0f766e" stroke-width="1.6"/>
+    <circle cx="9" cy="9" r="1.15" fill="#0f766e"/>
+    <circle cx="15" cy="9" r="1.15" fill="#0f766e"/>
+    <circle cx="9" cy="15" r="1.15" fill="#0f766e"/>
+    <circle cx="15" cy="15" r="1.15" fill="#0f766e"/>
+    <path d="M9 10.6V13.4M15 10.6V13.4M10.6 9H13.4M10.6 15H13.4" stroke="#0f766e" stroke-width="1.7" stroke-linecap="round"/>
+  </symbol>
+
+  <symbol id="image" viewBox="0 0 24 24">
+    <rect x="3.8" y="4.2" width="16.4" height="15.6" rx="2.5" fill="#fce7f3" stroke="#db2777" stroke-width="1.5"/>
+    <circle cx="8.4" cy="9.2" r="1.5" fill="#db2777"/>
+    <path d="M5.5 17.2 10.2 12.8a1 1 0 0 1 1.35 0l2.55 2.35 2.52-2.3a1 1 0 0 1 1.34.02l1.94 1.95" fill="none" stroke="#db2777" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+  </symbol>
+</svg>

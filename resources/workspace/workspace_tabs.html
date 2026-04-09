@@ -16,17 +16,27 @@
       font-family: "Segoe UI", "SF Pro Display", Arial, sans-serif;
     }
 
-    #tabs-root {
+    #tabs-shell {
       display: flex;
       align-items: stretch;
       gap: 0;
       width: 100%;
       height: 100%;
+      background: #eef2f6;
+      border-bottom: 1px solid #d8e0ea;
+      box-sizing: border-box;
+    }
+
+    #tabs-root {
+      display: flex;
+      align-items: stretch;
+      gap: 0;
+      min-width: 0;
+      flex: 1 1 auto;
+      height: 100%;
       padding: 0 0 3px 0;
       overflow-x: auto;
       overflow-y: hidden;
-      background: #eef2f6;
-      border-bottom: 1px solid #d8e0ea;
       box-sizing: border-box;
     }
 
@@ -41,6 +51,18 @@
     #tabs-root::-webkit-scrollbar-thumb {
       background: #b7c0cb;
       border-radius: 999px;
+    }
+
+    #tabs-actions {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 6px;
+      flex: 0 0 auto;
+      padding: 0 8px 0 10px;
+      border-left: 1px solid #d8e0ea;
+      box-sizing: border-box;
+      background: #eef2f6;
     }
 
     #empty-state {
@@ -138,11 +160,44 @@
       background: #dfe6ee;
       color: #0f172a;
     }
+
+    .simulation-btn {
+      appearance: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 26px;
+      height: 26px;
+      border: none;
+      border-radius: 6px;
+      background: transparent;
+      cursor: pointer;
+      padding: 0;
+      transition: background 0.12s ease, opacity 0.12s ease;
+    }
+
+    .simulation-btn:hover:not(:disabled) {
+      background: #dfe6ee;
+    }
+
+    .simulation-btn:disabled {
+      cursor: default;
+      opacity: 0.45;
+    }
+
+    .simulation-btn img {
+      width: 16px;
+      height: 16px;
+      display: block;
+    }
   </style>
 </head>
 <body>
-  <div id="tabs-root">
-    <div id="empty-state"></div>
+  <div id="tabs-shell">
+    <div id="tabs-root">
+      <div id="empty-state"></div>
+    </div>
+    <div id="tabs-actions"></div>
   </div>
   <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
   <script src="./workspace_tabs_app.js"></script>

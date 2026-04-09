@@ -9,7 +9,6 @@
 - history_dialog.py: 对话历史查看对话框
 - iteration_history_dialog.py: 迭代历史记录对话框
 - design_goals_dialog.py: 设计目标编辑对话框
-- select_simulation_file_dialog.py: 选择仿真文件对话框
 """
 
 from .model_config_dialog import ModelConfigDialog
@@ -18,7 +17,6 @@ from .context_compress_dialog import ContextCompressDialog
 from .history_dialog import HistoryDialog, SessionInfo
 from .iteration_history_dialog import IterationHistoryDialog, IterationRecord
 from .design_goals_dialog import DesignGoalsDialog, GoalEditDialog
-from .select_simulation_file_dialog import SelectSimulationFileDialog
 from .rollback_confirmation_dialog import RollbackConfirmationDialog
 __all__ = [
     # 新版模型配置对话框
@@ -37,7 +35,5 @@ __all__ = [
     # 设计目标编辑对话框
     "DesignGoalsDialog",
     "GoalEditDialog",
-    # 选择仿真文件对话框
-    "SelectSimulationFileDialog",
     "RollbackConfirmationDialog",
 ]

@@ -247,14 +247,18 @@ class MenuManager:
         """设置仿真菜单"""
         menu = self._menus["simulation"]
         
-        # 运行仿真（灰显，阶段四启用）
+        # 运行仿真
         self._actions["sim_run"] = QAction(self._main_window)
         self._actions["sim_run"].setEnabled(False)
+        if "on_run_simulation" in self._callbacks:
+            self._actions["sim_run"].triggered.connect(self._callbacks["on_run_simulation"])
         menu.addAction(self._actions["sim_run"])
         
-        # 停止仿真（灰显，阶段四启用）
+        # 停止仿真
         self._actions["sim_stop"] = QAction(self._main_window)
         self._actions["sim_stop"].setEnabled(False)
+        if "on_stop_simulation" in self._callbacks:
+            self._actions["sim_stop"].triggered.connect(self._callbacks["on_stop_simulation"])
         menu.addAction(self._actions["sim_stop"])
 
     def _setup_knowledge_menu(self) -> None:

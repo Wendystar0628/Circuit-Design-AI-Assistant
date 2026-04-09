@@ -19,6 +19,8 @@ class _WorkspaceTabsBridge(QObject):
     ready = pyqtSignal()
     activate_file_requested = pyqtSignal(str)
     close_file_requested = pyqtSignal(str)
+    run_simulation_requested = pyqtSignal()
+    stop_simulation_requested = pyqtSignal()
 
     @pyqtSlot()
     def markReady(self) -> None:
@@ -32,15 +34,39 @@ class _WorkspaceTabsBridge(QObject):
     def closeFile(self, path: str) -> None:
         self.close_file_requested.emit(str(path or ""))
 
+    @pyqtSlot()
+    def runSimulation(self) -> None:
+        self.run_simulation_requested.emit()
+
+    @pyqtSlot()
+    def stopSimulation(self) -> None:
+        self.stop_simulation_requested.emit()
+
 
 class WebWorkspaceTabBar(QWidget):
     activate_file_requested = pyqtSignal(str)
     close_file_requested = pyqtSignal(str)
+    run_simulation_requested = pyqtSignal()
+    stop_simulation_requested = pyqtSignal()
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self._page_loaded = False
-        self._state: Dict[str, Any] = {"items": [], "emptyMessage": ""}
+        self._state: Dict[str, Any] = {
+            "items": [],
+            "emptyMessage": "",
+            "runIconUrl": app_resource_url("icons/toolbar/play.svg").toString(),
+            "stopIconUrl": app_resource_url("icons/toolbar/stop.svg").toString(),
+            "simulationControl": {
+                "isRunning": False,
+                "isStopRequested": False,
+                "canRun": False,
+                "canStop": False,
+                "primaryAction": "run",
+                "primaryEnabled": False,
+                "primaryTooltip": "",
+            },
+        }
         self._bridge: Optional[_WorkspaceTabsBridge] = None
         self._channel: Optional[QWebChannel] = None
         self._web_view: Optional[QWebEngineView] = None
@@ -61,6 +87,8 @@ class WebWorkspaceTabBar(QWidget):
         self._bridge.ready.connect(self._on_ready)
         self._bridge.activate_file_requested.connect(self.activate_file_requested.emit)
         self._bridge.close_file_requested.connect(self.close_file_requested.emit)
+        self._bridge.run_simulation_requested.connect(self.run_simulation_requested.emit)
+        self._bridge.stop_simulation_requested.connect(self.stop_simulation_requested.emit)
         self._channel = QWebChannel(self)
         self._channel.registerObject("workspaceTabsBridge", self._bridge)
         self._web_view = QWebEngineView(self)
@@ -98,9 +126,20 @@ class WebWorkspaceTabBar(QWidget):
                 "isActive": bool(item.get("is_active", False)),
                 "isDirty": bool(item.get("is_dirty", False)),
             })
-        self._state = {
-            "items": items,
-            "emptyMessage": str(empty_message or ""),
+        self._state["items"] = items
+        self._state["emptyMessage"] = str(empty_message or "")
+        self._dispatch_state()
+
+    def set_simulation_control_state(self, state: Dict[str, Any]) -> None:
+        incoming = state if isinstance(state, dict) else {}
+        self._state["simulationControl"] = {
+            "isRunning": bool(incoming.get("isRunning", False)),
+            "isStopRequested": bool(incoming.get("isStopRequested", False)),
+            "canRun": bool(incoming.get("canRun", False)),
+            "canStop": bool(incoming.get("canStop", False)),
+            "primaryAction": str(incoming.get("primaryAction", "run") or "run"),
+            "primaryEnabled": bool(incoming.get("primaryEnabled", False)),
+            "primaryTooltip": str(incoming.get("primaryTooltip", "") or ""),
         }
         self._dispatch_state()
 

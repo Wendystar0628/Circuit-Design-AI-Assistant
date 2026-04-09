@@ -9,7 +9,7 @@
 
 委托关系：
 - 菜单栏创建委托给 MenuManager
-- 工具栏创建委托给 ToolbarManager
+- 仿真命令状态委托给 SimulationCommandController
 - 窗口状态管理委托给 WindowStateManager
 - 会话管理委托给 SessionManager
 - 动作处理委托给 ActionHandlers
@@ -36,7 +36,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QTimer
 
 from presentation.menu_manager import MenuManager
-from presentation.toolbar_manager import ToolbarManager
+from presentation.simulation_command_controller import SimulationCommandController
 from presentation.window_state_manager import WindowStateManager
 from presentation.session_manager import SessionManager
 from presentation.action_handlers import ActionHandlers
@@ -79,7 +79,7 @@ class MainWindow(QMainWindow):
         
         # 管理器实例（延迟初始化）
         self._menu_manager: Optional[MenuManager] = None
-        self._toolbar_manager: Optional[ToolbarManager] = None
+        self._simulation_command_controller: Optional[SimulationCommandController] = None
         self._window_state_manager: Optional[WindowStateManager] = None
         self._session_manager: Optional[SessionManager] = None
         self._action_handlers: Optional[ActionHandlers] = None
@@ -363,7 +363,10 @@ class MainWindow(QMainWindow):
         """初始化各管理器并创建 UI 组件"""
         # 初始化动作处理器
         self._action_handlers = ActionHandlers(self, self._panels)
+        self._simulation_command_controller = SimulationCommandController(self)
         callbacks = self._action_handlers.get_callbacks()
+        callbacks["on_run_simulation"] = self._simulation_command_controller.run_simulation
+        callbacks["on_stop_simulation"] = self._simulation_command_controller.stop_simulation
         
         # 添加最近项目相关回调
         callbacks["on_recent_click"] = self._action_handlers.on_recent_project_clicked
@@ -378,10 +381,8 @@ class MainWindow(QMainWindow):
         # 菜单栏管理器
         self._menu_manager = MenuManager(self)
         self._menu_manager.setup_menus(callbacks)
-        
-        # 工具栏管理器
-        self._toolbar_manager = ToolbarManager(self)
-        self._toolbar_manager.setup_toolbar(callbacks)
+        if self._simulation_command_controller:
+            self._simulation_command_controller.bind_menu_manager(self._menu_manager)
         
         # 窗口状态管理器
         self._window_state_manager = WindowStateManager(self)
@@ -407,6 +408,8 @@ class MainWindow(QMainWindow):
             editor.editable_file_state_changed.connect(
                 self._on_editable_file_state_changed
             )
+            if self._simulation_command_controller:
+                self._simulation_command_controller.bind_code_editor(editor)
 
         # 连接对话面板信号
         # 注意：不在这里调用 chat_panel.initialize()
@@ -433,9 +436,8 @@ class MainWindow(QMainWindow):
         if self._menu_manager:
             self._menu_manager.retranslate_ui()
             self._update_recent_menu()
-        
-        if self._toolbar_manager:
-            self._toolbar_manager.retranslate_ui()
+        if self._simulation_command_controller:
+            self._simulation_command_controller.retranslate_ui()
 
         # 刷新右栏标签页标题
         if self._tab_controller:
@@ -542,11 +544,8 @@ class MainWindow(QMainWindow):
             self._menu_manager.set_action_enabled("file_close", True)
             self._menu_manager.set_action_enabled("file_save", True)
             self._menu_manager.set_action_enabled("file_save_all", True)
-        
-        # 启用相关功能 - 工具栏
-        if self._toolbar_manager:
-            self._toolbar_manager.set_action_enabled("toolbar_save", True)
-            self._toolbar_manager.set_action_enabled("toolbar_save_all", True)
+        if self._simulation_command_controller:
+            self._simulation_command_controller.refresh_ui_state()
         
         # 更新最近打开菜单
         self._update_recent_menu()
@@ -570,14 +569,11 @@ class MainWindow(QMainWindow):
             self._menu_manager.set_action_enabled("file_save", False)
             self._menu_manager.set_action_enabled("file_save_all", False)
         
-        # 禁用相关功能 - 工具栏
-        if self._toolbar_manager:
-            self._toolbar_manager.set_action_enabled("toolbar_save", False)
-            self._toolbar_manager.set_action_enabled("toolbar_save_all", False)
-        
         # 关闭代码编辑器中的所有文件
         if "code_editor" in self._panels:
             self._panels["code_editor"].close_all_tabs()
+        if self._simulation_command_controller:
+            self._simulation_command_controller.refresh_ui_state()
         
         if self.logger:
             self.logger.info("Project closed event received")
@@ -760,11 +756,6 @@ class MainWindow(QMainWindow):
         if self._menu_manager:
             self._menu_manager.set_action_enabled("file_save", has_editable_file)
             self._menu_manager.set_action_enabled("file_save_all", has_editable_file)
-        
-        # 启用/禁用工具栏保存按钮
-        if self._toolbar_manager:
-            self._toolbar_manager.set_action_enabled("toolbar_save", has_editable_file)
-            self._toolbar_manager.set_action_enabled("toolbar_save_all", has_editable_file)
 
     # ============================================================
     # 对话面板信号处理

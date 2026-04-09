@@ -56,7 +56,6 @@ from .resource_loader import (
     get_menu_icon,
     get_panel_icon,
     get_status_icon,
-    get_file_icon,
     get_icon_path,
 )
 
@@ -94,6 +93,5 @@ __all__ = [
     "get_menu_icon",
     "get_panel_icon",
     "get_status_icon",
-    "get_file_icon",
     "get_icon_path",
 ]

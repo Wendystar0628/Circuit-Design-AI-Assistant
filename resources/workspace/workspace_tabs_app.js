@@ -1,10 +1,22 @@
 (function () {
   const rootEl = document.getElementById('tabs-root');
   const emptyStateEl = document.getElementById('empty-state');
+  const actionsEl = document.getElementById('tabs-actions');
 
   const state = {
     items: [],
     emptyMessage: '',
+    runIconUrl: '',
+    stopIconUrl: '',
+    simulationControl: {
+      isRunning: false,
+      isStopRequested: false,
+      canRun: false,
+      canStop: false,
+      primaryAction: 'run',
+      primaryEnabled: false,
+      primaryTooltip: '',
+    },
   };
 
   let bridge = null;
@@ -26,14 +38,15 @@
 
   function render() {
     rootEl.querySelectorAll('.tab-chip').forEach((item) => item.remove());
+    actionsEl.replaceChildren();
     const items = Array.isArray(state.items) ? state.items : [];
     if (!items.length) {
       emptyStateEl.style.display = 'flex';
       emptyStateEl.textContent = state.emptyMessage || '';
-      return;
+    } else {
+      emptyStateEl.style.display = 'none';
     }
 
-    emptyStateEl.style.display = 'none';
     for (const item of items) {
       const chip = document.createElement('div');
       chip.className = `tab-chip${item && item.isActive ? ' active' : ''}`;
@@ -75,6 +88,29 @@
       rootEl.appendChild(chip);
     }
 
+    const simulationControl = state.simulationControl && typeof state.simulationControl === 'object'
+      ? state.simulationControl
+      : {};
+    const primaryAction = simulationControl.primaryAction === 'stop' ? 'stop' : 'run';
+    const primaryBtn = document.createElement('button');
+    primaryBtn.className = 'simulation-btn';
+    primaryBtn.type = 'button';
+    primaryBtn.disabled = !simulationControl.primaryEnabled;
+    primaryBtn.title = simulationControl.primaryTooltip || '';
+    primaryBtn.setAttribute('aria-label', simulationControl.primaryTooltip || primaryAction);
+    primaryBtn.addEventListener('click', () => {
+      if (primaryBtn.disabled) {
+        return;
+      }
+      invokeBridge(primaryAction === 'stop' ? 'stopSimulation' : 'runSimulation');
+    });
+
+    const iconEl = document.createElement('img');
+    iconEl.alt = '';
+    iconEl.src = primaryAction === 'stop' ? state.stopIconUrl : state.runIconUrl;
+    primaryBtn.appendChild(iconEl);
+    actionsEl.appendChild(primaryBtn);
+
     requestAnimationFrame(scrollActiveTabIntoView);
   }
 
@@ -92,6 +128,19 @@
       const incoming = nextState && typeof nextState === 'object' ? nextState : {};
       state.items = Array.isArray(incoming.items) ? incoming.items : [];
       state.emptyMessage = incoming.emptyMessage || '';
+      state.runIconUrl = incoming.runIconUrl || '';
+      state.stopIconUrl = incoming.stopIconUrl || '';
+      state.simulationControl = incoming.simulationControl && typeof incoming.simulationControl === 'object'
+        ? incoming.simulationControl
+        : {
+            isRunning: false,
+            isStopRequested: false,
+            canRun: false,
+            canStop: false,
+            primaryAction: 'run',
+            primaryEnabled: false,
+            primaryTooltip: '',
+          };
       render();
     },
   };

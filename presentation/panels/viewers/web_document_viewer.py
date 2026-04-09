@@ -213,24 +213,11 @@ class WebDocumentViewer(QWidget):
         settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, True)
         settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessFileUrls, True)
         settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, False)
-        if hasattr(QWebEngineSettings.WebAttribute, "PdfViewerEnabled"):
-            settings.setAttribute(QWebEngineSettings.WebAttribute.PdfViewerEnabled, True)
         layout.addWidget(self._web_view)
 
     @property
     def web_view(self) -> Optional[QWebEngineView]:
         return self._web_view
-
-    def load_local_file(self, path: str) -> bool:
-        if self._web_view is None:
-            self.show_error("PyQt6-WebEngine is unavailable")
-            return False
-        abs_path = os.path.abspath(path)
-        if not os.path.isfile(abs_path):
-            self.show_error(f"File not found: {abs_path}")
-            return False
-        self._web_view.setUrl(QUrl.fromLocalFile(abs_path))
-        return True
 
     def load_full_html(self, html_text: str, base_path: str = "") -> bool:
         if self._web_view is None:

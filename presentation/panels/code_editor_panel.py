@@ -451,20 +451,20 @@ class CodeEditorPanel(QWidget):
         """创建文档预览器"""
         if is_markdown_extension(ext):
             viewer = MarkdownViewer()
-            if viewer.load_markdown(path):
-                return viewer
+            viewer.load_markdown(path)
+            return viewer
         elif is_word_extension(ext):
             viewer = DocxViewer()
-            if viewer.load_docx(path):
-                return viewer
+            viewer.load_docx(path)
+            return viewer
         elif is_pdf_extension(ext):
             viewer = PdfViewer()
-            if viewer.load_pdf(path):
-                return viewer
+            viewer.load_pdf(path)
+            return viewer
         elif is_tabular_extension(ext):
             viewer = TabularViewer()
-            if viewer.load_file(path):
-                return viewer
+            viewer.load_file(path)
+            return viewer
         return None
 
     def _apply_editor_content(self, tab: EditorTab, content: str) -> None:

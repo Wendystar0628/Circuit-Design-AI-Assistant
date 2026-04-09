@@ -27,9 +27,8 @@ from PyQt6.QtGui import QAction, QKeySequence, QShortcut
 from shared.path_utils import normalize_absolute_path, normalize_identity_path
 
 # 从子模块导入组件
-from .editor import CodeEditor, PendingWorkspaceFileReviewWidget
+from .editor import CodeEditor
 from .viewers import ImageViewer, DocumentViewer
-from .highlighters import SpiceHighlighter, JsonHighlighter, PythonHighlighter
 
 # 文件类型常量
 EDITABLE_EXTENSIONS = {'.cir', '.sp', '.spice', '.json', '.txt', '.py'}  # 可编辑文件
@@ -45,13 +44,11 @@ class EditorTab:
         widget: QWidget,
         is_readonly: bool = False,
         editor: Optional[CodeEditor] = None,
-        review_widget: Optional[PendingWorkspaceFileReviewWidget] = None,
     ):
         self.path = normalize_absolute_path(path)
         self.identity_path = normalize_identity_path(path)
         self.widget = widget
         self.editor = editor
-        self.review_widget = review_widget
         self.is_readonly = is_readonly
 
 
@@ -124,47 +121,31 @@ class CodeEditorPanel(QWidget):
     @property
     def i18n_manager(self):
         if self._i18n_manager is None:
-            try:
-                from shared.service_locator import ServiceLocator
-                from shared.service_names import SVC_I18N_MANAGER
-                self._i18n_manager = ServiceLocator.get_optional(SVC_I18N_MANAGER)
-            except Exception:
-                pass
+            from shared.service_names import SVC_I18N_MANAGER
+            self._i18n_manager = self._get_optional_service(SVC_I18N_MANAGER)
         return self._i18n_manager
 
     @property
     def event_bus(self):
         if self._event_bus is None:
-            try:
-                from shared.service_locator import ServiceLocator
-                from shared.service_names import SVC_EVENT_BUS
-                self._event_bus = ServiceLocator.get_optional(SVC_EVENT_BUS)
-            except Exception:
-                pass
+            from shared.service_names import SVC_EVENT_BUS
+            self._event_bus = self._get_optional_service(SVC_EVENT_BUS)
         return self._event_bus
 
     @property
     def file_manager(self):
         if self._file_manager is None:
-            try:
-                from shared.service_locator import ServiceLocator
-                from shared.service_names import SVC_FILE_MANAGER
-                self._file_manager = ServiceLocator.get_optional(SVC_FILE_MANAGER)
-            except Exception:
-                pass
+            from shared.service_names import SVC_FILE_MANAGER
+            self._file_manager = self._get_optional_service(SVC_FILE_MANAGER)
         return self._file_manager
 
     @property
     def pending_workspace_edit_service(self):
         if self._pending_workspace_edit_service is None:
-            try:
-                from shared.service_locator import ServiceLocator
-                from shared.service_names import SVC_PENDING_WORKSPACE_EDIT_SERVICE
-                self._pending_workspace_edit_service = ServiceLocator.get_optional(
-                    SVC_PENDING_WORKSPACE_EDIT_SERVICE
-                )
-            except Exception:
-                pass
+            from shared.service_names import SVC_PENDING_WORKSPACE_EDIT_SERVICE
+            self._pending_workspace_edit_service = self._get_optional_service(
+                SVC_PENDING_WORKSPACE_EDIT_SERVICE
+            )
         if (
             self._pending_workspace_edit_service is not None
             and not self._pending_workspace_edit_connected
@@ -174,8 +155,11 @@ class CodeEditorPanel(QWidget):
                     self._on_pending_workspace_edit_state_changed
                 )
                 self._pending_workspace_edit_connected = True
-            except Exception:
-                pass
+            except Exception as exc:
+                if self.logger:
+                    self.logger.warning(
+                        f"Failed to connect pending workspace edit service: {exc}"
+                    )
         return self._pending_workspace_edit_service
 
     @property
@@ -187,6 +171,17 @@ class CodeEditorPanel(QWidget):
             except Exception:
                 pass
         return self._logger
+
+    def _get_optional_service(self, service_name: str):
+        try:
+            from shared.service_locator import ServiceLocator
+            return ServiceLocator.get_optional(service_name)
+        except Exception as exc:
+            if self.logger:
+                self.logger.warning(
+                    f"Failed to resolve optional service '{service_name}': {exc}"
+                )
+            return None
 
     def _normalize_display_path(self, path: str) -> str:
         return normalize_absolute_path(path)
@@ -238,8 +233,6 @@ class CodeEditorPanel(QWidget):
     ) -> None:
         if tab.editor is not None:
             tab.editor.set_pending_file_state(file_state)
-        if tab.review_widget is not None:
-            tab.review_widget.set_file_state(file_state)
 
     def _refresh_pending_workspace_edit_views(
         self,
@@ -259,13 +252,7 @@ class CodeEditorPanel(QWidget):
         index = self._tab_widget.indexOf(tab.widget)
         if index >= 0:
             self._tab_widget.setCurrentIndex(index)
-        block = tab.editor.document().findBlockByNumber(max(0, int(line_number or 1) - 1))
-        if not block.isValid():
-            return
-        cursor = tab.editor.textCursor()
-        cursor.setPosition(block.position())
-        tab.editor.setTextCursor(cursor)
-        tab.editor.centerCursor()
+        tab.editor.go_to_line(line_number)
         tab.editor.setFocus()
 
     def _get_text(self, key: str, default: Optional[str] = None) -> str:
@@ -400,15 +387,11 @@ class CodeEditorPanel(QWidget):
                         child.setText(self._get_text("hint.open_workspace", "Open a workspace to get started"))
     
     def _check_has_project(self) -> bool:
-        try:
-            from shared.service_locator import ServiceLocator
-            from shared.service_names import SVC_SESSION_STATE_MANAGER
-            session_state_manager = ServiceLocator.get_optional(SVC_SESSION_STATE_MANAGER)
-            if session_state_manager:
-                project_path = session_state_manager.get_project_root()
-                return project_path is not None and project_path != ""
-        except Exception:
-            pass
+        from shared.service_names import SVC_SESSION_STATE_MANAGER
+        session_state_manager = self._get_optional_service(SVC_SESSION_STATE_MANAGER)
+        if session_state_manager:
+            project_path = session_state_manager.get_project_root()
+            return project_path is not None and project_path != ""
         return False
     
     def _on_open_workspace_clicked(self):
@@ -436,17 +419,16 @@ class CodeEditorPanel(QWidget):
 
         ext = os.path.splitext(display_path)[1].lower()
         editor: Optional[CodeEditor] = None
-        review_widget: Optional[PendingWorkspaceFileReviewWidget] = None
         
         try:
             if ext in EDITABLE_EXTENSIONS:
-                widget, editor, review_widget = self._create_code_editor_host(display_path, ext)
+                widget, editor = self._create_code_editor_host(display_path, ext)
             elif ext in IMAGE_EXTENSIONS:
                 widget = self._create_image_viewer(display_path)
             elif ext in DOCUMENT_EXTENSIONS:
                 widget = self._create_document_viewer(display_path, ext)
             else:
-                widget, editor, review_widget = self._create_code_editor_host(display_path, ext)
+                widget, editor = self._create_code_editor_host(display_path, ext)
             
             if widget is None:
                 return False
@@ -457,7 +439,6 @@ class CodeEditorPanel(QWidget):
                 widget,
                 is_readonly,
                 editor=editor,
-                review_widget=review_widget,
             )
             self._refresh_pending_workspace_edit_views()
             
@@ -473,55 +454,38 @@ class CodeEditorPanel(QWidget):
         self,
         path: str,
         ext: str,
-    ) -> tuple[QWidget, CodeEditor, PendingWorkspaceFileReviewWidget]:
-        container = QWidget()
-        layout = QVBoxLayout(container)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(6)
-
-        review_widget = PendingWorkspaceFileReviewWidget(container)
-        review_widget.accept_file_requested.connect(self._on_pending_edit_accept_file_requested)
-        review_widget.reject_file_requested.connect(self._on_pending_edit_reject_file_requested)
-        review_widget.accept_hunk_requested.connect(self._on_pending_edit_accept_hunk_requested)
-        review_widget.reject_hunk_requested.connect(self._on_pending_edit_reject_hunk_requested)
-        review_widget.navigate_to_line_requested.connect(
-            lambda line, target=path: self._move_editor_cursor_to_line(target, line)
-        )
-        review_widget.hide()
-        layout.addWidget(review_widget)
-
-        editor = CodeEditor(container)
+    ) -> tuple[QWidget, CodeEditor]:
+        editor = CodeEditor(self)
         editor.set_file_path(path)
         
         try:
-            if self.file_manager:
-                content = self.file_manager.read_file(path)
-            else:
-                with open(path, 'r', encoding='utf-8') as f:
-                    content = f.read()
-            
-            editor.blockSignals(True)
-            editor.document().blockSignals(True)
-            editor.setPlainText(content)
+            content = self._read_file_text(path)
             editor.set_highlighter(ext)
-            editor.document().blockSignals(False)
-            editor.blockSignals(False)
-            editor.document().setModified(False)
-            editor.set_modified(False)
-            
-            editor.cursorPositionChanged.connect(self._update_cursor_position)
+            editor.load_content(content)
+            editor.cursor_position_changed.connect(
+                lambda _line, _col: self._update_cursor_position()
+            )
             editor.modification_changed.connect(
                 lambda modified, p=path: self._on_editor_modification_changed(p, modified)
             )
+            editor.accept_file_requested.connect(self._on_pending_edit_accept_file_requested)
+            editor.reject_file_requested.connect(self._on_pending_edit_reject_file_requested)
+            editor.accept_hunk_requested.connect(self._on_pending_edit_accept_hunk_requested)
+            editor.reject_hunk_requested.connect(self._on_pending_edit_reject_hunk_requested)
             
             if self._is_readonly_mode:
                 editor.setReadOnly(True)
-            layout.addWidget(editor, 1)
-            return container, editor, review_widget
+            return editor, editor
         except Exception as e:
             if self.logger:
                 self.logger.error(f"Failed to read file: {path}, error: {e}")
             raise
+
+    def _read_file_text(self, path: str) -> str:
+        if self.file_manager:
+            return str(self.file_manager.read_file(path) or "")
+        with open(path, 'r', encoding='utf-8') as f:
+            return f.read()
 
     def _create_image_viewer(self, path: str) -> Optional[ImageViewer]:
         """创建图片预览器"""
@@ -545,24 +509,9 @@ class CodeEditorPanel(QWidget):
     def _apply_editor_content(self, tab: EditorTab, content: str) -> None:
         if tab.editor is None:
             return
-        editor = tab.editor
-        cursor = editor.textCursor()
-        block_number = cursor.blockNumber()
-        column_number = cursor.columnNumber()
-        editor.blockSignals(True)
-        editor.document().blockSignals(True)
-        editor.setPlainText(content)
-        editor.document().blockSignals(False)
-        editor.blockSignals(False)
-        block = editor.document().findBlockByNumber(block_number)
-        if block.isValid():
-            restore_cursor = editor.textCursor()
-            restore_cursor.setPosition(
-                block.position() + min(column_number, max(0, block.length() - 1))
-            )
-            editor.setTextCursor(restore_cursor)
-        editor.document().setModified(False)
-        editor.set_modified(False)
+        line_number, column_number = tab.editor.get_cursor_position()
+        tab.editor.load_content(content)
+        tab.editor.go_to_line(line_number, column_number)
 
     def _save_tab(self, tab: Optional[EditorTab]) -> bool:
         if tab is None or tab.is_readonly or tab.editor is None:
@@ -571,7 +520,6 @@ class CodeEditorPanel(QWidget):
         content = tab.editor.toPlainText()
         try:
             state = self._save_content_via_pending_service(tab.path, content)
-            tab.editor.document().setModified(False)
             tab.editor.set_modified(False)
             self._update_tab_title(tab.path)
             self._refresh_pending_workspace_edit_views(state)
@@ -590,7 +538,6 @@ class CodeEditorPanel(QWidget):
         widget: QWidget,
         is_readonly: bool,
         editor: Optional[CodeEditor] = None,
-        review_widget: Optional[PendingWorkspaceFileReviewWidget] = None,
     ):
         """添加标签页"""
         file_name = os.path.basename(path)
@@ -602,7 +549,6 @@ class CodeEditorPanel(QWidget):
             widget,
             is_readonly,
             editor=editor,
-            review_widget=review_widget,
         )
         self._tabs[tab.identity_path] = tab
         self._update_empty_state()
@@ -638,7 +584,6 @@ class CodeEditorPanel(QWidget):
             if tab.is_readonly:
                 continue
             if tab.editor is not None:
-                tab.editor.document().setModified(False)
                 tab.editor.set_modified(False)
                 self._update_tab_title(tab.path)
 
@@ -717,11 +662,7 @@ class CodeEditorPanel(QWidget):
         
         try:
             # 读取磁盘最新内容
-            if self.file_manager:
-                content = self.file_manager.read_file(display_path)
-            else:
-                with open(display_path, 'r', encoding='utf-8') as f:
-                    content = f.read()
+            content = self._read_file_text(display_path)
 
             editor = tab.editor
             if editor.is_modified() and editor.toPlainText() != content:
@@ -993,6 +934,9 @@ class CodeEditorPanel(QWidget):
         if service is None or not file_path:
             return
         state = service.accept_file_edits(file_path)
+        if self._find_tab(file_path) is not None and not self.reload_file(file_path):
+            self.sync_open_tabs_with_workspace()
+            return
         self._refresh_pending_workspace_edit_views(state)
 
     def _on_pending_edit_reject_file_requested(self, file_path: str):
@@ -1000,6 +944,9 @@ class CodeEditorPanel(QWidget):
         if service is None or not file_path:
             return
         state = service.reject_file_edits(file_path)
+        if self._find_tab(file_path) is not None and not self.reload_file(file_path):
+            self.sync_open_tabs_with_workspace()
+            return
         self._refresh_pending_workspace_edit_views(state)
 
     def _on_pending_edit_accept_hunk_requested(self, file_path: str, hunk_id: str):
@@ -1007,6 +954,9 @@ class CodeEditorPanel(QWidget):
         if service is None or not file_path or not hunk_id:
             return
         state = service.accept_hunk(file_path, hunk_id)
+        if self._find_tab(file_path) is not None and not self.reload_file(file_path):
+            self.sync_open_tabs_with_workspace()
+            return
         self._refresh_pending_workspace_edit_views(state)
 
     def _on_pending_edit_reject_hunk_requested(self, file_path: str, hunk_id: str):
@@ -1014,6 +964,9 @@ class CodeEditorPanel(QWidget):
         if service is None or not file_path or not hunk_id:
             return
         state = service.reject_hunk(file_path, hunk_id)
+        if self._find_tab(file_path) is not None and not self.reload_file(file_path):
+            self.sync_open_tabs_with_workspace()
+            return
         self._refresh_pending_workspace_edit_views(state)
 
     def _on_session_changed(self, event_data: Dict[str, Any]):
@@ -1030,9 +983,6 @@ class CodeEditorPanel(QWidget):
 __all__ = [
     "CodeEditorPanel",
     "CodeEditor",
-    "SpiceHighlighter",
-    "JsonHighlighter",
-    "PythonHighlighter",
     "ImageViewer",
     "DocumentViewer",
     "EDITABLE_EXTENSIONS",

@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Code Editor</title>
+  <style>
+    html, body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background: #ffffff;
+      font-family: "Segoe UI", Arial, sans-serif;
+    }
+
+    #app-root {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #ffffff;
+    }
+
+    #editor-root {
+      position: absolute;
+      inset: 0;
+    }
+
+    #file-actions {
+      position: absolute;
+      top: 12px;
+      right: 12px;
+      z-index: 30;
+      display: none;
+      align-items: center;
+      gap: 8px;
+      padding: 8px;
+      border-radius: 12px;
+      border: 1px solid rgba(148, 163, 184, 0.24);
+      background: rgba(255, 255, 255, 0.94);
+      box-shadow: 0 10px 30px rgba(15, 23, 42, 0.10);
+      -webkit-backdrop-filter: blur(8px);
+      backdrop-filter: blur(8px);
+    }
+
+    #file-actions.visible {
+      display: inline-flex;
+    }
+
+    .editor-action-btn {
+      appearance: none;
+      border: 1px solid transparent;
+      border-radius: 999px;
+      padding: 6px 12px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, opacity 0.15s ease;
+    }
+
+    .editor-action-btn.accept {
+      color: #166534;
+      background: #dcfce7;
+      border-color: #86efac;
+    }
+
+    .editor-action-btn.accept:hover:not(:disabled) {
+      background: #bbf7d0;
+    }
+
+    .editor-action-btn.reject {
+      color: #991b1b;
+      background: #fee2e2;
+      border-color: #fca5a5;
+    }
+
+    .editor-action-btn.reject:hover:not(:disabled) {
+      background: #fecaca;
+    }
+
+    .editor-action-btn:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+
+    .hunk-action-widget {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 8px;
+      border-radius: 10px;
+      border: 1px solid rgba(148, 163, 184, 0.24);
+      background: rgba(255, 255, 255, 0.96);
+      box-shadow: 0 8px 20px rgba(15, 23, 42, 0.10);
+      -webkit-backdrop-filter: blur(8px);
+      backdrop-filter: blur(8px);
+    }
+
+    .hunk-action-label {
+      color: #64748b;
+      font-size: 11px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    #startup-error {
+      position: absolute;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      color: #991b1b;
+      background: #fff1f2;
+      font-size: 13px;
+      text-align: center;
+      z-index: 40;
+    }
+
+    #startup-error.visible {
+      display: flex;
+    }
+  </style>
+</head>
+<body>
+  <div id="app-root">
+    <div id="editor-root"></div>
+    <div id="file-actions"></div>
+    <div id="startup-error"></div>
+  </div>
+  <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+  <script src="./monaco/vs/loader.js"></script>
+  <script src="./code_editor_app.js"></script>
+</body>
+</html>

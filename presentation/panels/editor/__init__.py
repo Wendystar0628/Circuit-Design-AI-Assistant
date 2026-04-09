@@ -7,12 +7,8 @@
 - LineNumberArea: 行号区域组件
 """
 
-from .code_editor import CodeEditor
-from .line_number_area import LineNumberArea
-from .pending_workspace_file_review_widget import PendingWorkspaceFileReviewWidget
+from .web_code_editor import CodeEditor
 
 __all__ = [
     "CodeEditor",
-    "LineNumberArea",
-    "PendingWorkspaceFileReviewWidget",
 ]

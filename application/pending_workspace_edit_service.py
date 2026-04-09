@@ -413,6 +413,7 @@ class PendingWorkspaceEditService(QObject):
             "deleted_lines": sum(int(item["deleted_lines"]) for item in hunks),
             "hunks": hunks,
             "sources": list(record.get("sources", [])),
+            "baseline_content": baseline_content,
             "baseline_exists": baseline_exists,
             "current_exists": current_exists,
         }

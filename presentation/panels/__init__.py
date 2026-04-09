@@ -21,8 +21,7 @@ from presentation.panels.file_browser_panel import (
 )
 
 # 从子模块直接导入
-from presentation.panels.editor import CodeEditor, LineNumberArea
-from presentation.panels.highlighters import SpiceHighlighter, JsonHighlighter, PythonHighlighter
+from presentation.panels.editor import CodeEditor
 from presentation.panels.viewers import ImageViewer, DocumentViewer
 
 # 从主面板模块导入
@@ -61,10 +60,6 @@ __all__ = [
     # Code Editor
     "CodeEditorPanel",
     "CodeEditor",
-    "LineNumberArea",
-    "SpiceHighlighter",
-    "JsonHighlighter",
-    "PythonHighlighter",
     "ImageViewer",
     "DocumentViewer",
     "EDITABLE_EXTENSIONS",

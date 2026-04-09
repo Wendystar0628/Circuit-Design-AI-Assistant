@@ -47,6 +47,7 @@ def test_reject_hunk_restores_original_file_and_clears_pending_state(tmp_path: P
     )
 
     assert state["file_count"] == 1
+    assert state["files"][0]["baseline_content"] == "a\nb\nc\n"
     hunk_id = state["files"][0]["hunks"][0]["id"]
 
     updated_state = service.reject_hunk(str(file_path), hunk_id)

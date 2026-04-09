@@ -19,10 +19,10 @@
 
 from typing import Optional, Dict, List, Any
 from enum import Enum
+from importlib import import_module
 from pathlib import Path
-import json
 
-from PyQt6.QtWidgets import QWidget
+from PyQt6.QtWidgets import QWidget, QTabWidget
 
 
 class PanelRegion(Enum):
@@ -164,7 +164,8 @@ class PanelManager:
         self._region_panels[region].append(panel_id)
         
         # 设置初始可见性
-        panel_instance.setVisible(visible)
+        if not self._is_tab_page_widget(panel_instance):
+            panel_instance.setVisible(visible)
         
         if self.logger:
             self.logger.debug(f"Panel '{panel_id}' registered in region {region.value}")
@@ -337,7 +338,8 @@ class PanelManager:
             return
         
         panel_info.visible = visible
-        panel_info.instance.setVisible(visible)
+        if not self._is_tab_page_widget(panel_info.instance):
+            panel_info.instance.setVisible(visible)
         
         # 发布可见性变更事件
         self._publish_visibility_changed(panel_id, visible, panel_info.region)
@@ -345,6 +347,14 @@ class PanelManager:
         if self.logger:
             action = "shown" if visible else "hidden"
             self.logger.debug(f"Panel '{panel_id}' {action}")
+    
+    def _is_tab_page_widget(self, widget: Optional[QWidget]) -> bool:
+        current = widget.parentWidget() if widget is not None else None
+        while current is not None:
+            if isinstance(current, QTabWidget):
+                return True
+            current = current.parentWidget()
+        return False
     
     def _publish_visibility_changed(
         self,

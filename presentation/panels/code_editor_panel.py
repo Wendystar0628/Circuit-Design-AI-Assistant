@@ -37,7 +37,13 @@ from shared.workspace_file_types import (
 # 从子模块导入组件
 from .editor import CodeEditor
 from .web_workspace_tab_bar import WebWorkspaceTabBar
-from .viewers import ImageViewer, DocumentViewer
+from .viewers import (
+    DocxViewer,
+    ImageViewer,
+    MarkdownViewer,
+    PdfViewer,
+    TabularViewer,
+)
 
 
 class EditorTab:
@@ -441,18 +447,25 @@ class CodeEditorPanel(QWidget):
             return viewer
         return None
 
-    def _create_document_viewer(self, path: str, ext: str) -> Optional[DocumentViewer]:
+    def _create_document_viewer(self, path: str, ext: str) -> Optional[QWidget]:
         """创建文档预览器"""
-        viewer = DocumentViewer()
         if is_markdown_extension(ext):
-            viewer.load_markdown(path)
+            viewer = MarkdownViewer()
+            if viewer.load_markdown(path):
+                return viewer
         elif is_word_extension(ext):
-            viewer.load_word(path)
+            viewer = DocxViewer()
+            if viewer.load_docx(path):
+                return viewer
         elif is_pdf_extension(ext):
-            viewer.load_pdf(path)
+            viewer = PdfViewer()
+            if viewer.load_pdf(path):
+                return viewer
         elif is_tabular_extension(ext):
-            viewer.load_csv(path)
-        return viewer
+            viewer = TabularViewer()
+            if viewer.load_file(path):
+                return viewer
+        return None
 
     def _apply_editor_content(self, tab: EditorTab, content: str) -> None:
         if tab.editor is None:
@@ -898,6 +911,9 @@ class CodeEditorPanel(QWidget):
 __all__ = [
     "CodeEditorPanel",
     "CodeEditor",
+    "DocxViewer",
     "ImageViewer",
-    "DocumentViewer",
+    "MarkdownViewer",
+    "PdfViewer",
+    "TabularViewer",
 ]

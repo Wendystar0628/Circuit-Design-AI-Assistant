@@ -107,6 +107,12 @@ ATTACHMENT_IMAGE_EXTENSIONS: Set[str] = {
     ".webp",
 }
 
+INDEX_EXCLUDED_DIR_NAMES: Set[str] = {
+    "simulation_results",
+}
+
+SIMULATION_RESULTS_EXCLUDE_REASON = "simulation_results 目录已排除索引"
+
 EXCLUDED_INDEX_RULES: Dict[str, FileIndexRule] = {
     ".csv": FileIndexRule(
         extension=".csv",
@@ -243,8 +249,36 @@ def _extract_by_extension(abs_path: str, extension: str, max_size: int) -> str:
     return extractor(abs_path, max_size)
 
 
+def _is_excluded_index_path(abs_path: str) -> bool:
+    normalized_parts = [
+        part.strip().lower()
+        for part in str(abs_path or "").replace("\\", "/").split("/")
+        if part.strip()
+    ]
+    return any(part in INDEX_EXCLUDED_DIR_NAMES for part in normalized_parts)
+
+
 def get_file_index_rule(abs_path: str) -> Optional[FileIndexRule]:
     ext = Path(abs_path).suffix.lower()
+    excluded_rule = EXCLUDED_INDEX_RULES.get(ext)
+
+    if _is_excluded_index_path(abs_path):
+        if ext in INDEXABLE_EXTENSIONS:
+            return FileIndexRule(
+                extension=ext,
+                should_index=False,
+                max_size=INDEXABLE_EXTENSIONS[ext],
+                exclude_reason=SIMULATION_RESULTS_EXCLUDE_REASON,
+            )
+        if excluded_rule is not None:
+            return FileIndexRule(
+                extension=excluded_rule.extension,
+                should_index=False,
+                max_size=excluded_rule.max_size,
+                exclude_reason=SIMULATION_RESULTS_EXCLUDE_REASON,
+            )
+        return None
+
     if ext in INDEXABLE_EXTENSIONS:
         return FileIndexRule(
             extension=ext,
@@ -252,13 +286,14 @@ def get_file_index_rule(abs_path: str) -> Optional[FileIndexRule]:
             max_size=INDEXABLE_EXTENSIONS[ext],
         )
 
-    return EXCLUDED_INDEX_RULES.get(ext)
+    return excluded_rule
 
 
 __all__ = [
     "ATTACHMENT_IMAGE_EXTENSIONS",
     "ATTACHMENT_TEXT_EXTENSIONS",
     "FileIndexRule",
+    "INDEX_EXCLUDED_DIR_NAMES",
     "extract_attachment_text",
     "extract_indexable_content",
     "get_file_index_rule",

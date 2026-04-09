@@ -23,6 +23,7 @@ transformers>=4.48.0  # Required for ModernBERT architecture
 # Document Processing
 PyMuPDF>=1.23.0  # PDF document processing (text extraction, page rendering)
 python-docx>=1.1.0  # Word document reading (.docx format)
+mammoth>=1.8.0  # Word document HTML rendering for viewer
 
 # Visualization
 matplotlib>=3.7.0

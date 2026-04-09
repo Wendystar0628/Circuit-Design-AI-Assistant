@@ -17,7 +17,13 @@ from presentation.panels.web_file_browser_panel import FileBrowserPanel
 
 # 从子模块直接导入
 from presentation.panels.editor import CodeEditor
-from presentation.panels.viewers import ImageViewer, DocumentViewer
+from presentation.panels.viewers import (
+    DocxViewer,
+    ImageViewer,
+    MarkdownViewer,
+    PdfViewer,
+    TabularViewer,
+)
 
 # 从主面板模块导入
 from presentation.panels.code_editor_panel import CodeEditorPanel
@@ -47,8 +53,11 @@ __all__ = [
     # Code Editor
     "CodeEditorPanel",
     "CodeEditor",
+    "DocxViewer",
     "ImageViewer",
-    "DocumentViewer",
+    "MarkdownViewer",
+    "PdfViewer",
+    "TabularViewer",
     # Conversation Panel
     "ConversationPanel",
     "PANEL_BACKGROUND",

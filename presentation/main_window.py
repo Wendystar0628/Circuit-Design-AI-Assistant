@@ -326,6 +326,7 @@ class MainWindow(QMainWindow):
         # 添加到分割器
         self._splitters["main_horizontal"].addWidget(right_tab_widget)
         self._panels["right_tabs"] = right_tab_widget
+        self._tab_controller.switch_to_tab(TAB_CONVERSATION)
 
     def _should_show_devtools(self) -> bool:
         """检查是否应显示调试面板"""

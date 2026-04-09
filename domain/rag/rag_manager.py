@@ -36,7 +36,12 @@ from typing import Any, Dict, List, Optional, Set
 
 from domain.rag.chunker import chunk_file
 from domain.rag.embedder import Embedder
-from domain.rag.file_extractor import FileIndexRule, extract_indexable_content, get_file_index_rule
+from domain.rag.file_extractor import (
+    FileIndexRule,
+    INDEX_EXCLUDED_DIR_NAMES,
+    extract_indexable_content,
+    get_file_index_rule,
+)
 from domain.rag.rag_worker import RAGWorkerThread
 from domain.rag.vector_store import RAGQueryResult, VectorStore
 from infrastructure.config.settings import (
@@ -67,6 +72,7 @@ logger = logging.getLogger(__name__)
 EXCLUDED_DIRS: Set[str] = {
     ".circuit_ai", "__pycache__", ".git", ".venv",
     "node_modules", ".idea", ".vscode",
+    *INDEX_EXCLUDED_DIR_NAMES,
 }
 
 INDEX_META_FILE = "index_meta.json"

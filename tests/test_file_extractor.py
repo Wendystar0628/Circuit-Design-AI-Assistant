@@ -18,6 +18,29 @@ def test_csv_is_readable_for_attachments_but_excluded_from_indexing(tmp_path):
     assert extract_attachment_text(str(csv_path)) == "time,value\n0,1\n"
 
 
+def test_simulation_results_directory_is_excluded_from_indexing(tmp_path):
+    result_json_path = tmp_path / "simulation_results" / "amp" / "result.json"
+    result_json_path.parent.mkdir(parents=True)
+    result_json_path.write_text('{"ok": true}', encoding="utf-8")
+
+    rule = get_file_index_rule(str(result_json_path))
+
+    assert rule is not None
+    assert rule.should_index is False
+    assert "simulation_results" in rule.exclude_reason
+
+
+def test_regular_json_outside_simulation_results_stays_indexable(tmp_path):
+    doc_path = tmp_path / "docs" / "design.json"
+    doc_path.parent.mkdir(parents=True)
+    doc_path.write_text('{"title": "design"}', encoding="utf-8")
+
+    rule = get_file_index_rule(str(doc_path))
+
+    assert rule is not None
+    assert rule.should_index is True
+
+
 def test_attachment_text_registry_contains_required_text_extensions():
     assert ".txt" in ATTACHMENT_TEXT_EXTENSIONS
     assert ".json" in ATTACHMENT_TEXT_EXTENSIONS

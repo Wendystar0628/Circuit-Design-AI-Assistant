@@ -211,6 +211,10 @@ class ConversationRollbackService:
                 project_root=project_root,
                 action="rollback",
             )
+            self._publish_workspace_sync_required(
+                project_root=project_root,
+                reason="rollback",
+            )
             self._cleanup_hidden_snapshots(project_root, session_id)
 
             if self.logger:
@@ -240,6 +244,24 @@ class ConversationRollbackService:
                 except Exception as exc:
                     if self.logger:
                         self.logger.warning(f"Failed to restart file watcher after rollback: {exc}")
+
+    def _publish_workspace_sync_required(self, *, project_root: str, reason: str) -> None:
+        if self.event_bus is None:
+            return
+        try:
+            from shared.event_types import EVENT_WORKSPACE_SYNC_REQUIRED
+
+            self.event_bus.publish(
+                EVENT_WORKSPACE_SYNC_REQUIRED,
+                {
+                    "project_root": str(project_root or ""),
+                    "reason": str(reason or ""),
+                },
+                source="conversation_rollback_service",
+            )
+        except Exception as exc:
+            if self.logger:
+                self.logger.warning(f"Failed to publish workspace sync event: {exc}")
 
     def _require_active_session(self) -> tuple[Any, str, str]:
         with self._lock:

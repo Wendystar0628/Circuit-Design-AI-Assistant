@@ -19,6 +19,7 @@
     pendingFileState: null,
   };
   let hunkWidgets = [];
+  const monacoRootUrl = new URL('./monaco/', window.location.href).href;
   const monacoVsUrl = new URL('./monaco/vs', window.location.href).href;
   const monacoBaseUrl = `${monacoVsUrl}/`;
   let monacoWorkerUrl = null;
@@ -39,7 +40,7 @@
     }
     const workerMainUrl = `${monacoBaseUrl}base/worker/workerMain.js`;
     const workerBootstrap = [
-      `self.MonacoEnvironment = { baseUrl: ${JSON.stringify(monacoBaseUrl)} };`,
+      `self.MonacoEnvironment = { baseUrl: ${JSON.stringify(monacoRootUrl)} };`,
       `importScripts(${JSON.stringify(workerMainUrl)});`,
     ].join('\n');
     monacoWorkerUrl = URL.createObjectURL(
@@ -355,7 +356,7 @@
         return;
       }
       window.MonacoEnvironment = {
-        baseUrl: monacoBaseUrl,
+        baseUrl: monacoRootUrl,
         getWorkerUrl() {
           return ensureMonacoWorkerUrl();
         },

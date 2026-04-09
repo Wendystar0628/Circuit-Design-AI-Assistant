@@ -452,6 +452,7 @@ EVENT_CONTEXT_COMPRESS_COMPLETE = "context_compress_complete"
 #   - action: str - 触发动作（"new", "switch", "delete", "rename"）
 #   - previous_session_id: str - 之前的会话 ID（可选）
 EVENT_SESSION_CHANGED = "session_changed"
+EVENT_WORKSPACE_SYNC_REQUIRED = "workspace_sync_required"
 
 # ============================================================
 # 错误处理事件
@@ -808,6 +809,7 @@ __all__ = [
     "EVENT_RAG_INDEX_COMPLETE",
     # 上下文压缩事件
     "EVENT_CONTEXT_COMPRESS_COMPLETE",
+    "EVENT_WORKSPACE_SYNC_REQUIRED",
     # 错误处理事件
     "EVENT_ERROR_OCCURRED",
     "EVENT_ERROR_RECOVERED",

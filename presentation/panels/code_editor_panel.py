@@ -788,13 +788,13 @@ class CodeEditorPanel(QWidget):
             from shared.event_types import (
                 EVENT_LANGUAGE_CHANGED, EVENT_STATE_PROJECT_OPENED,
                 EVENT_STATE_PROJECT_CLOSED, EVENT_FILE_CHANGED,
-                EVENT_SESSION_CHANGED,
+                EVENT_WORKSPACE_SYNC_REQUIRED,
             )
             self.event_bus.subscribe(EVENT_LANGUAGE_CHANGED, self._on_language_changed)
             self.event_bus.subscribe(EVENT_STATE_PROJECT_OPENED, self._on_project_opened)
             self.event_bus.subscribe(EVENT_STATE_PROJECT_CLOSED, self._on_project_closed)
             self.event_bus.subscribe(EVENT_FILE_CHANGED, self._on_file_changed)
-            self.event_bus.subscribe(EVENT_SESSION_CHANGED, self._on_session_changed)
+            self.event_bus.subscribe(EVENT_WORKSPACE_SYNC_REQUIRED, self._on_workspace_sync_required)
 
     def _on_language_changed(self, event_data: Dict[str, Any]):
         self.retranslate_ui()
@@ -866,14 +866,11 @@ class CodeEditorPanel(QWidget):
             return
         self._refresh_pending_workspace_edit_views(state)
 
-    def _on_session_changed(self, event_data: Dict[str, Any]):
+    def _on_workspace_sync_required(self, event_data: Dict[str, Any]):
         data = event_data.get("data", event_data)
-        if data.get("action", "") == "rollback":
-            self.sync_open_tabs_with_workspace()
+        if not isinstance(data, dict):
             return
-        self.close_all_tabs()
-        self._update_empty_state()
-        self._emit_workspace_file_state()
+        self.sync_open_tabs_with_workspace()
 
 
 

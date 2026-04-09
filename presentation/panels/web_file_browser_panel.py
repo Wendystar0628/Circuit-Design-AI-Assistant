@@ -292,11 +292,13 @@ class FileBrowserPanel(QWidget):
                 EVENT_FILE_CHANGED,
                 EVENT_STATE_PROJECT_OPENED,
                 EVENT_STATE_PROJECT_CLOSED,
+                EVENT_WORKSPACE_SYNC_REQUIRED,
             )
             self.event_bus.subscribe(EVENT_LANGUAGE_CHANGED, self._on_language_changed)
             self.event_bus.subscribe(EVENT_FILE_CHANGED, self._on_file_changed)
             self.event_bus.subscribe(EVENT_STATE_PROJECT_OPENED, self._on_project_opened)
             self.event_bus.subscribe(EVENT_STATE_PROJECT_CLOSED, self._on_project_closed)
+            self.event_bus.subscribe(EVENT_WORKSPACE_SYNC_REQUIRED, self._on_workspace_sync_required)
 
     def _on_language_changed(self, event_data: Dict[str, Any]) -> None:
         self.retranslate_ui()
@@ -309,6 +311,20 @@ class FileBrowserPanel(QWidget):
 
     def _on_project_closed(self, event_data: Dict[str, Any]) -> None:
         self.clear()
+
+    def _on_workspace_sync_required(self, event_data: Dict[str, Any]) -> None:
+        if not self._root_path:
+            return
+        data = event_data.get("data", event_data)
+        if not isinstance(data, dict):
+            return
+        project_root = str(data.get("project_root", "") or "")
+        if project_root:
+            current_root = os.path.normcase(os.path.abspath(self._root_path))
+            incoming_root = os.path.normcase(os.path.abspath(project_root))
+            if current_root != incoming_root:
+                return
+        self._dispatch_state()
 
     def _on_file_changed(self, event_data: Dict[str, Any]) -> None:
         if not self._root_path:

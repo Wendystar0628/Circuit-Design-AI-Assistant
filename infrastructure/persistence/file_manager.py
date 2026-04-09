@@ -451,7 +451,8 @@ class FileManager:
                 temp_path = resolved.with_suffix(resolved.suffix + '.tmp')
                 
                 if isinstance(content, str):
-                    temp_path.write_text(content, encoding=encoding)
+                    with open(temp_path, 'w', encoding=encoding, newline='') as f:
+                        f.write(content)
                 else:
                     temp_path.write_bytes(content)
                 
@@ -663,7 +664,8 @@ class FileManager:
                 
                 # 原子性写入
                 temp_path = resolved.with_suffix(resolved.suffix + '.tmp')
-                temp_path.write_text(new_content, encoding=encoding)
+                with open(temp_path, 'w', encoding=encoding, newline='') as f:
+                    f.write(new_content)
                 os.replace(str(temp_path), str(resolved))
                 
                 # 记录日志
@@ -794,7 +796,8 @@ class FileManager:
         
         # 原子性写入
         temp_path = resolved.with_suffix(resolved.suffix + '.tmp')
-        temp_path.write_text(new_content, encoding=encoding)
+        with open(temp_path, 'w', encoding=encoding, newline='') as f:
+            f.write(new_content)
         os.replace(str(temp_path), str(resolved))
         
         # 记录日志
@@ -881,7 +884,8 @@ class FileManager:
                 
                 # 原子性写入
                 temp_path = resolved.with_suffix(resolved.suffix + '.tmp')
-                temp_path.write_text(new_file_content, encoding=encoding)
+                with open(temp_path, 'w', encoding=encoding, newline='') as f:
+                    f.write(new_file_content)
                 os.replace(str(temp_path), str(resolved))
                 
                 # 记录日志
@@ -966,26 +970,27 @@ class FileManager:
                     if self.logger:
                         self.logger.debug(f"文件内容未变化，跳过更新: {resolved}")
                     return True
-                
+
                 # 原子性写入
                 temp_path = resolved.with_suffix(resolved.suffix + '.tmp')
-                
+
                 if isinstance(content, str):
-                    temp_path.write_text(content, encoding=encoding)
+                    with open(temp_path, 'w', encoding=encoding, newline='') as f:
+                        f.write(content)
                 else:
                     temp_path.write_bytes(content)
-                
+
                 os.replace(str(temp_path), str(resolved))
-                
+
                 # 记录日志
                 if self.logger:
                     from infrastructure.utils.logger import log_file_operation
                     char_count = len(content) if isinstance(content, str) else len(content)
                     log_file_operation("update", str(resolved), char_count, success=True)
-                
+
                 # 发布事件
                 self._publish_file_changed(resolved, "update", len(content))
-                
+
                 return True
                 
         except FileLockTimeoutError:
@@ -1343,7 +1348,8 @@ class FileManager:
         
         # 写入内容
         if isinstance(content, str):
-            temp_path.write_text(content, encoding=encoding)
+            with open(temp_path, 'w', encoding=encoding, newline='') as f:
+                f.write(content)
         else:
             temp_path.write_bytes(content)
         

@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Workspace Explorer</title>
+  <style>
+    html, body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background: #f8fafc;
+      color: #0f172a;
+      font-family: "Segoe UI", "SF Pro Display", Arial, sans-serif;
+    }
+
+    #app-root {
+      display: flex;
+      flex-direction: column;
+      width: 100%;
+      height: 100%;
+      background: #f8fafc;
+    }
+
+    #header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      min-height: 34px;
+      padding: 0 8px;
+      border-bottom: 1px solid #e2e8f0;
+      background: #f8fafc;
+    }
+
+    #title {
+      color: #64748b;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    #header-actions {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .header-btn {
+      appearance: none;
+      width: 22px;
+      height: 22px;
+      border: none;
+      border-radius: 6px;
+      background: transparent;
+      color: #64748b;
+      font-size: 14px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.15s ease, color 0.15s ease;
+    }
+
+    .header-btn:hover {
+      background: #e2e8f0;
+      color: #0f172a;
+    }
+
+    #open-files-section {
+      display: none;
+      flex-direction: column;
+      border-bottom: 1px solid #e2e8f0;
+      background: #f8fafc;
+    }
+
+    #open-files-title {
+      padding: 8px 8px 4px 8px;
+      color: #64748b;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+
+    #open-files-list {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      padding: 0 0 8px 0;
+    }
+
+    .open-file-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 24px;
+      padding: 0 8px;
+      color: #334155;
+      font-size: 12px;
+      cursor: pointer;
+      -webkit-user-select: none;
+      user-select: none;
+      transition: background 0.12s ease, color 0.12s ease;
+    }
+
+    .open-file-item:hover {
+      background: #eef2ff;
+    }
+
+    .open-file-item.active {
+      background: #dbeafe;
+      color: #0f172a;
+      font-weight: 600;
+    }
+
+    .open-file-name {
+      min-width: 0;
+      flex: 1 1 auto;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .state-badges {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      flex: 0 0 auto;
+    }
+
+    .state-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 999px;
+      background: #94a3b8;
+    }
+
+    .state-dot.active {
+      background: #2563eb;
+    }
+
+    .state-dot.dirty {
+      background: #f59e0b;
+    }
+
+    #tree-scroll {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow: auto;
+      padding: 8px 0 12px 0;
+    }
+
+    #tree-root {
+      display: flex;
+      flex-direction: column;
+      gap: 1px;
+    }
+
+    .tree-node {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .tree-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-height: 24px;
+      padding-right: 8px;
+      color: #334155;
+      font-size: 12px;
+      cursor: pointer;
+      -webkit-user-select: none;
+      user-select: none;
+      transition: background 0.12s ease, color 0.12s ease;
+    }
+
+    .tree-row:hover {
+      background: #f1f5f9;
+    }
+
+    .tree-row.active {
+      background: #dbeafe;
+      color: #0f172a;
+      font-weight: 600;
+    }
+
+    .tree-row.directory {
+      color: #0f172a;
+    }
+
+    .disclosure {
+      width: 14px;
+      flex: 0 0 14px;
+      color: #64748b;
+      font-size: 12px;
+      text-align: center;
+    }
+
+    .disclosure.placeholder {
+      color: transparent;
+    }
+
+    .tree-label {
+      min-width: 0;
+      flex: 1 1 auto;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .tree-children {
+      display: flex;
+      flex-direction: column;
+      gap: 1px;
+    }
+
+    .tree-indicators {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      flex: 0 0 auto;
+      margin-left: auto;
+    }
+
+    #empty-state {
+      display: none;
+      align-items: center;
+      justify-content: center;
+      flex: 1 1 auto;
+      padding: 24px;
+      color: #94a3b8;
+      font-size: 12px;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <div id="app-root">
+    <div id="header">
+      <div id="title">EXPLORER</div>
+      <div id="header-actions">
+        <button id="collapse-all" class="header-btn" type="button" title="Collapse All">−</button>
+        <button id="refresh-tree" class="header-btn" type="button" title="Refresh">↻</button>
+      </div>
+    </div>
+    <div id="open-files-section">
+      <div id="open-files-title">OPEN FILES</div>
+      <div id="open-files-list"></div>
+    </div>
+    <div id="tree-scroll">
+      <div id="tree-root"></div>
+      <div id="empty-state"></div>
+    </div>
+  </div>
+  <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+  <script src="./workspace_explorer_app.js"></script>
+</body>
+</html>

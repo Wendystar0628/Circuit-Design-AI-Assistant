@@ -91,21 +91,6 @@ IGNORED_PATTERNS = {
     "desktop.ini",
 }
 
-# 关注的文件扩展名
-WATCHED_EXTENSIONS = {
-    ".cir",      # SPICE 电路文件
-    ".sp",       # SPICE 文件
-    ".spice",    # SPICE 文件
-    ".json",     # 配置文件
-    ".png",      # 图片
-    ".jpg",      # 图片
-    ".jpeg",     # 图片
-    ".lib",      # 库文件
-    ".sub",      # 子电路文件
-    ".inc",      # 包含文件
-    ".mod",      # 模型文件
-}
-
 
 # ============================================================
 # 事件接收器（主线程）
@@ -297,12 +282,6 @@ class CircuitFileEventHandler(FileSystemEventHandler):
             suffix = path_obj.suffix.lower()
             if suffix in IGNORED_EXTENSIONS:
                 return True
-            
-            # 如果是文件，检查是否在关注的扩展名列表中
-            if path_obj.is_file() or not path_obj.exists():
-                # 对于已删除的文件，通过扩展名判断
-                if suffix and suffix not in WATCHED_EXTENSIONS:
-                    return True
             
             return False
             
@@ -565,8 +544,8 @@ __all__ = [
     "FileWatchTask",
     "FileWatchReceiver",
     "CircuitFileEventHandler",
-    "WATCHED_EXTENSIONS",
     "IGNORED_DIRS",
     "IGNORED_EXTENSIONS",
+    "IGNORED_PATTERNS",
     "DEBOUNCE_INTERVAL_MS",
 ]

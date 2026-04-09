@@ -3,7 +3,7 @@
 UI面板模块
 
 包含：
-- file_browser_panel.py: 文件浏览器面板
+- web_file_browser_panel.py: 基于 WebEngine 的工作区文件浏览器面板
 - code_editor_panel.py: 代码编辑器面板（已拆分为子模块）
   - editor/: 代码编辑器核心组件
   - highlighters/: 语法高亮器
@@ -13,24 +13,14 @@ UI面板模块
   - conversation_view_model.py: ViewModel 层
 """
 
-from presentation.panels.file_browser_panel import (
-    FileBrowserPanel,
-    FileFilterProxyModel,
-    ALLOWED_EXTENSIONS,
-    HIDDEN_DIRECTORIES,
-)
+from presentation.panels.web_file_browser_panel import FileBrowserPanel
 
 # 从子模块直接导入
 from presentation.panels.editor import CodeEditor
 from presentation.panels.viewers import ImageViewer, DocumentViewer
 
 # 从主面板模块导入
-from presentation.panels.code_editor_panel import (
-    CodeEditorPanel,
-    EDITABLE_EXTENSIONS,
-    IMAGE_EXTENSIONS,
-    DOCUMENT_EXTENSIONS,
-)
+from presentation.panels.code_editor_panel import CodeEditorPanel
 
 # 从对话面板主类导入
 from presentation.panels.conversation_panel import (
@@ -54,17 +44,11 @@ from presentation.panels.devtools_panel import DevToolsPanel
 __all__ = [
     # File Browser
     "FileBrowserPanel",
-    "FileFilterProxyModel",
-    "ALLOWED_EXTENSIONS",
-    "HIDDEN_DIRECTORIES",
     # Code Editor
     "CodeEditorPanel",
     "CodeEditor",
     "ImageViewer",
     "DocumentViewer",
-    "EDITABLE_EXTENSIONS",
-    "IMAGE_EXTENSIONS",
-    "DOCUMENT_EXTENSIONS",
     # Conversation Panel
     "ConversationPanel",
     "PANEL_BACKGROUND",

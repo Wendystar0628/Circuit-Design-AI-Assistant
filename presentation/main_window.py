@@ -220,7 +220,7 @@ class MainWindow(QMainWindow):
     def _create_panels(self):
         """创建面板部件并注册到 PanelManager"""
         # 左栏 - 文件浏览器
-        from presentation.panels.file_browser_panel import FileBrowserPanel
+        from presentation.panels.web_file_browser_panel import FileBrowserPanel
         file_browser = FileBrowserPanel()
         file_browser.setMinimumWidth(150)
         self._splitters["workspace_horizontal"].addWidget(file_browser)
@@ -243,6 +243,8 @@ class MainWindow(QMainWindow):
         
         # 连接文件浏览器和代码编辑器
         file_browser.file_selected.connect(code_editor.load_file)
+        code_editor.workspace_file_state_changed.connect(file_browser.set_workspace_file_state)
+        file_browser.set_workspace_file_state(code_editor.get_workspace_file_state())
         
         # 右栏 - 使用 QTabWidget 承载多个面板
         self._create_right_panel_tabs()

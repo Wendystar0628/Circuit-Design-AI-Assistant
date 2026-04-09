@@ -1,18 +1,17 @@
 import json
-import os
 from typing import Any, Dict, Optional, Tuple
 
-from PyQt6.QtCore import QObject, QUrl, Qt, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QObject, Qt, pyqtSignal, pyqtSlot
 from PyQt6.QtWidgets import QLabel, QSizePolicy, QVBoxLayout, QWidget
 from PyQt6.QtWebChannel import QWebChannel
+from presentation.core.web_resource_host import app_resource_url, configure_app_web_view
+from shared.workspace_file_types import language_for_extension
 
 try:
-    from PyQt6.QtWebEngineCore import QWebEngineSettings
     from PyQt6.QtWebEngineWidgets import QWebEngineView
     WEBENGINE_AVAILABLE = True
 except ImportError:
     QWebEngineView = None
-    QWebEngineSettings = None
     WEBENGINE_AVAILABLE = False
 
 
@@ -101,23 +100,11 @@ class CodeEditor(QWidget):
         self._channel.registerObject("editorBridge", self._bridge)
         self._web_view = QWebEngineView(self)
         self._web_view.page().setWebChannel(self._channel)
-        if QWebEngineSettings is not None:
-            settings = self._web_view.settings()
-            settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, True)
-            settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessFileUrls, True)
-            settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, False)
+        configure_app_web_view(self._web_view)
         self.setFocusProxy(self._web_view)
-        html_path = self._editor_html_path()
         self._web_view.loadFinished.connect(self._on_load_finished)
-        self._web_view.setUrl(QUrl.fromLocalFile(html_path))
+        self._web_view.setUrl(app_resource_url("editor/code_editor.html"))
         layout.addWidget(self._web_view)
-
-    def _editor_html_path(self) -> str:
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        panels_dir = os.path.dirname(current_dir)
-        presentation_dir = os.path.dirname(panels_dir)
-        project_root = os.path.dirname(presentation_dir)
-        return os.path.join(project_root, "resources", "editor", "code_editor.html")
 
     def _on_load_finished(self, ok: bool) -> None:
         self._page_loaded = bool(ok)
@@ -179,18 +166,7 @@ class CodeEditor(QWidget):
         self._file_path = str(path or "")
 
     def set_highlighter(self, ext: str) -> None:
-        extension = str(ext or "").lower()
-        language_map = {
-            ".py": "python",
-            ".json": "json",
-            ".md": "markdown",
-            ".markdown": "markdown",
-            ".txt": "plaintext",
-            ".cir": "plaintext",
-            ".sp": "plaintext",
-            ".spice": "plaintext",
-        }
-        self._language = language_map.get(extension, "plaintext")
+        self._language = language_for_extension(ext)
         self._dispatch_state()
 
     def load_content(self, content: str) -> None:

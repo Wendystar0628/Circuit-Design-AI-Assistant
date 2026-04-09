@@ -286,10 +286,6 @@
       }
       const domNode = document.createElement('div');
       domNode.className = 'hunk-action-widget';
-      const label = document.createElement('span');
-      label.className = 'hunk-action-label';
-      label.textContent = hunk.header || 'Pending Hunk';
-      domNode.appendChild(label);
       domNode.appendChild(
         createActionButton('Accept', 'accept', disabled, () => invokeBridge('acceptHunk', String(hunk.id)))
       );
@@ -307,9 +303,9 @@
           return {
             position: {
               lineNumber: anchorLineForHunk(hunk),
-              column: 1,
+              column: Number.MAX_SAFE_INTEGER,
             },
-            preference: [monacoInstance.editor.ContentWidgetPositionPreference.ABOVE],
+            preference: [monacoInstance.editor.ContentWidgetPositionPreference.EXACT],
           };
         },
       };

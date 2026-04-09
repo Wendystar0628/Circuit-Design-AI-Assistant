@@ -18,22 +18,26 @@ import os
 from typing import Optional, Dict, Any
 
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QTabWidget, QTabBar,
-    QLabel, QMenu, QApplication, QFrame, QMessageBox, QPushButton,
-    QToolButton
+    QWidget, QVBoxLayout, QHBoxLayout, QStackedWidget,
+    QLabel, QFrame, QMessageBox, QPushButton
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QPoint
-from PyQt6.QtGui import QAction, QKeySequence, QShortcut
+from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QKeySequence, QShortcut
 from shared.path_utils import normalize_absolute_path, normalize_identity_path
+from shared.workspace_file_types import (
+    file_type_label,
+    is_document_preview_extension,
+    is_image_extension,
+    is_markdown_extension,
+    is_pdf_extension,
+    is_tabular_extension,
+    is_word_extension,
+)
 
 # 从子模块导入组件
 from .editor import CodeEditor
+from .web_workspace_tab_bar import WebWorkspaceTabBar
 from .viewers import ImageViewer, DocumentViewer
-
-# 文件类型常量
-EDITABLE_EXTENSIONS = {'.cir', '.sp', '.spice', '.json', '.txt', '.py'}  # 可编辑文件
-IMAGE_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.gif', '.bmp'}
-DOCUMENT_EXTENSIONS = {'.md', '.markdown', '.docx', '.pdf'}
 
 
 class EditorTab:
@@ -52,44 +56,12 @@ class EditorTab:
         self.is_readonly = is_readonly
 
 
-class EditorTabBar(QTabBar):
-    """自定义标签栏"""
-    tab_close_requested = pyqtSignal(int)
-    
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setTabsClosable(True)
-        self.setMovable(True)
-        self.setExpanding(False)
-        self.tabCloseRequested.connect(self.tab_close_requested.emit)
-        close_icon_path = self._get_close_icon_path()
-        self.setStyleSheet(f"""
-            QTabBar {{ background-color: #f8f9fa; border-bottom: 1px solid #e0e0e0; }}
-            QTabBar::tab {{ background-color: #f8f9fa; border: none; border-right: 1px solid #e0e0e0;
-                padding: 6px 24px 6px 12px; min-width: 80px; max-width: 200px; }}
-            QTabBar::tab:selected {{ background-color: #ffffff; border-bottom: 2px solid #4CAF50; }}
-            QTabBar::tab:hover:!selected {{ background-color: #f0f7ff; }}
-            QTabBar::close-button {{ image: url({close_icon_path}); subcontrol-position: right;
-                width: 16px; height: 16px; margin-right: 4px; border-radius: 2px; }}
-            QTabBar::close-button:hover {{ background-color: #e0e0e0; }}
-        """)
-    
-    def _get_close_icon_path(self) -> str:
-        try:
-            from resources.resource_loader import get_icon_path
-            path = get_icon_path("panel", "close")
-            if path:
-                return path.replace("\\", "/")
-        except Exception:
-            pass
-        return ""
-
-
 class CodeEditorPanel(QWidget):
     """代码编辑器面板"""
     file_saved = pyqtSignal(str)
     open_workspace_requested = pyqtSignal()
     editable_file_state_changed = pyqtSignal(bool)
+    workspace_file_state_changed = pyqtSignal(object)
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -99,15 +71,13 @@ class CodeEditorPanel(QWidget):
         self._pending_workspace_edit_service = None
         self._logger = None
         self._tabs: Dict[str, EditorTab] = {}
-        self._tab_widget: Optional[QTabWidget] = None
-        self._tab_bar: Optional[EditorTabBar] = None
+        self._content_stack: Optional[QStackedWidget] = None
+        self._web_tab_bar: Optional[WebWorkspaceTabBar] = None
         self._status_bar: Optional[QWidget] = None
         self._line_col_label: Optional[QLabel] = None
         self._encoding_label: Optional[QLabel] = None
         self._file_type_label: Optional[QLabel] = None
         self._readonly_label: Optional[QLabel] = None
-        self._scroll_left_btn: Optional[QToolButton] = None
-        self._scroll_right_btn: Optional[QToolButton] = None
         self._empty_widget: Optional[QWidget] = None
         self._open_workspace_btn: Optional[QPushButton] = None
         self._pending_workspace_edit_connected = False
@@ -203,7 +173,7 @@ class CodeEditorPanel(QWidget):
         return None
 
     def _get_current_tab(self) -> Optional[EditorTab]:
-        return self._find_tab_by_widget(self._tab_widget.currentWidget())
+        return self._find_tab_by_widget(self._content_stack.currentWidget())
 
     def _get_pending_file_state_map(
         self,
@@ -249,9 +219,9 @@ class CodeEditorPanel(QWidget):
         tab = self._find_tab(path)
         if tab is None or tab.editor is None:
             return
-        index = self._tab_widget.indexOf(tab.widget)
+        index = self._content_stack.indexOf(tab.widget)
         if index >= 0:
-            self._tab_widget.setCurrentIndex(index)
+            self._content_stack.setCurrentIndex(index)
         tab.editor.go_to_line(line_number)
         tab.editor.setFocus()
 
@@ -270,52 +240,22 @@ class CodeEditorPanel(QWidget):
         tab_bar_layout = QHBoxLayout(tab_bar_container)
         tab_bar_layout.setContentsMargins(0, 0, 0, 0)
         tab_bar_layout.setSpacing(0)
-        
-        self._scroll_left_btn = QToolButton(tab_bar_container)
-        self._scroll_left_btn.setArrowType(Qt.ArrowType.LeftArrow)
-        self._scroll_left_btn.setFixedSize(24, 28)
-        self._scroll_left_btn.setAutoRepeat(True)
-        self._scroll_left_btn.clicked.connect(self._on_scroll_left)
-        self._scroll_left_btn.setStyleSheet("""
-            QToolButton { background-color: #f0f0f0; border: 1px solid #d0d0d0; border-radius: 3px; }
-            QToolButton:hover { background-color: #e0e0e0; }
-            QToolButton:disabled { background-color: #f8f8f8; }
-        """)
-        tab_bar_layout.addWidget(self._scroll_left_btn)
-        
-        self._tab_widget = QTabWidget()
-        self._tab_bar = EditorTabBar()
-        self._tab_widget.setTabBar(self._tab_bar)
-        self._tab_widget.setUsesScrollButtons(False)
-        self._tab_widget.setElideMode(Qt.TextElideMode.ElideNone)
-        self._tab_widget.setDocumentMode(True)
-        self._tab_widget.tabCloseRequested.connect(self._on_tab_close_requested)
-        self._tab_widget.currentChanged.connect(self._on_current_tab_changed)
-        self._tab_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self._tab_widget.customContextMenuRequested.connect(self._on_tab_context_menu)
-        tab_bar_layout.addWidget(self._tab_bar, 1)
-        
-        self._scroll_right_btn = QToolButton(tab_bar_container)
-        self._scroll_right_btn.setArrowType(Qt.ArrowType.RightArrow)
-        self._scroll_right_btn.setFixedSize(24, 28)
-        self._scroll_right_btn.setAutoRepeat(True)
-        self._scroll_right_btn.clicked.connect(self._on_scroll_right)
-        self._scroll_right_btn.setStyleSheet("""
-            QToolButton { background-color: #f0f0f0; border: 1px solid #d0d0d0; border-radius: 3px; }
-            QToolButton:hover { background-color: #e0e0e0; }
-            QToolButton:disabled { background-color: #f8f8f8; }
-        """)
-        tab_bar_layout.addWidget(self._scroll_right_btn)
-        
-        self._scroll_left_btn.hide()
-        self._scroll_right_btn.hide()
+
+        self._web_tab_bar = WebWorkspaceTabBar(tab_bar_container)
+        self._web_tab_bar.activate_file_requested.connect(self.switch_to_file)
+        self._web_tab_bar.close_file_requested.connect(self._close_file_by_path)
+        tab_bar_layout.addWidget(self._web_tab_bar, 1)
+
+        self._content_stack = QStackedWidget()
+        self._content_stack.currentChanged.connect(self._on_current_tab_changed)
         layout.addWidget(tab_bar_container)
-        layout.addWidget(self._tab_widget, 1)
+        layout.addWidget(self._content_stack, 1)
         self._empty_widget = self._create_empty_widget()
         layout.addWidget(self._empty_widget)
         self._status_bar = self._create_status_bar()
         layout.addWidget(self._status_bar)
         self._update_empty_state()
+        self._sync_workspace_tab_bar()
 
     def _create_empty_widget(self) -> QWidget:
         widget = QWidget()
@@ -372,8 +312,8 @@ class CodeEditorPanel(QWidget):
         close_shortcut.activated.connect(self._close_current_tab)
 
     def _update_empty_state(self):
-        has_tabs = self._tab_widget.count() > 0
-        self._tab_widget.setVisible(has_tabs)
+        has_tabs = self._content_stack.count() > 0
+        self._content_stack.setVisible(has_tabs)
         self._empty_widget.setVisible(not has_tabs)
         self._status_bar.setVisible(has_tabs)
         if self._open_workspace_btn:
@@ -412,20 +352,18 @@ class CodeEditorPanel(QWidget):
 
         tab = self._find_tab(display_path)
         if tab is not None:
-            index = self._tab_widget.indexOf(tab.widget)
+            index = self._content_stack.indexOf(tab.widget)
             if index >= 0:
-                self._tab_widget.setCurrentIndex(index)
+                self._content_stack.setCurrentIndex(index)
             return True
 
         ext = os.path.splitext(display_path)[1].lower()
         editor: Optional[CodeEditor] = None
         
         try:
-            if ext in EDITABLE_EXTENSIONS:
-                widget, editor = self._create_code_editor_host(display_path, ext)
-            elif ext in IMAGE_EXTENSIONS:
+            if is_image_extension(ext):
                 widget = self._create_image_viewer(display_path)
-            elif ext in DOCUMENT_EXTENSIONS:
+            elif is_document_preview_extension(ext) or is_markdown_extension(ext):
                 widget = self._create_document_viewer(display_path, ext)
             else:
                 widget, editor = self._create_code_editor_host(display_path, ext)
@@ -433,7 +371,7 @@ class CodeEditorPanel(QWidget):
             if widget is None:
                 return False
             
-            is_readonly = ext in IMAGE_EXTENSIONS or ext in DOCUMENT_EXTENSIONS
+            is_readonly = is_image_extension(ext) or is_document_preview_extension(ext) or is_markdown_extension(ext)
             self._add_tab(
                 display_path,
                 widget,
@@ -498,12 +436,14 @@ class CodeEditorPanel(QWidget):
     def _create_document_viewer(self, path: str, ext: str) -> Optional[DocumentViewer]:
         """创建文档预览器"""
         viewer = DocumentViewer()
-        if ext in {'.md', '.markdown'}:
+        if is_markdown_extension(ext):
             viewer.load_markdown(path)
-        elif ext == '.docx':
+        elif is_word_extension(ext):
             viewer.load_word(path)
-        elif ext == '.pdf':
+        elif is_pdf_extension(ext):
             viewer.load_pdf(path)
+        elif is_tabular_extension(ext):
+            viewer.load_csv(path)
         return viewer
 
     def _apply_editor_content(self, tab: EditorTab, content: str) -> None:
@@ -521,8 +461,8 @@ class CodeEditorPanel(QWidget):
         try:
             state = self._save_content_via_pending_service(tab.path, content)
             tab.editor.set_modified(False)
-            self._update_tab_title(tab.path)
             self._refresh_pending_workspace_edit_views(state)
+            self._emit_workspace_file_state()
             self.file_saved.emit(tab.path)
             if self.logger:
                 self.logger.info(f"File saved: {tab.path}")
@@ -540,10 +480,8 @@ class CodeEditorPanel(QWidget):
         editor: Optional[CodeEditor] = None,
     ):
         """添加标签页"""
-        file_name = os.path.basename(path)
-        index = self._tab_widget.addTab(widget, file_name)
-        self._tab_widget.setCurrentIndex(index)
-        self._tab_widget.setTabToolTip(index, path)
+        index = self._content_stack.addWidget(widget)
+        self._content_stack.setCurrentIndex(index)
         tab = EditorTab(
             path,
             widget,
@@ -553,8 +491,8 @@ class CodeEditorPanel(QWidget):
         self._tabs[tab.identity_path] = tab
         self._update_empty_state()
         self._update_status_bar(tab.path)
-        self._update_tab_title(tab.path)
         self._emit_editable_file_state()
+        self._emit_workspace_file_state()
 
     def _save_content_via_pending_service(self, path: str, content: str) -> Dict[str, Any]:
         service = self.pending_workspace_edit_service
@@ -585,7 +523,7 @@ class CodeEditorPanel(QWidget):
                 continue
             if tab.editor is not None:
                 tab.editor.set_modified(False)
-                self._update_tab_title(tab.path)
+        self._emit_workspace_file_state()
 
     def sync_open_tabs_with_workspace(self):
         removed_paths = []
@@ -614,7 +552,7 @@ class CodeEditorPanel(QWidget):
         self._refresh_pending_workspace_edit_views()
         self._update_empty_state()
         self._emit_editable_file_state()
-        self._update_scroll_buttons()
+        self._emit_workspace_file_state()
 
     def get_content(self) -> Optional[str]:
         current_tab = self._get_current_tab()
@@ -633,6 +571,7 @@ class CodeEditorPanel(QWidget):
             self._readonly_label.show()
         else:
             self._readonly_label.hide()
+        self._emit_workspace_file_state()
 
     def open_tab(self, path: str) -> bool:
         return self.load_file(path)
@@ -670,13 +609,8 @@ class CodeEditorPanel(QWidget):
 
             self._apply_editor_content(tab, content)
 
-            # 更新标签页标题（移除修改标记）
-            index = self._tab_widget.indexOf(tab.widget)
-            if index >= 0:
-                file_name = os.path.basename(tab.path)
-                self._tab_widget.setTabText(index, file_name)
-
             self._refresh_pending_workspace_edit_views()
+            self._emit_workspace_file_state()
 
             if self.logger:
                 self.logger.info(f"File reloaded from disk: {display_path}")
@@ -690,10 +624,10 @@ class CodeEditorPanel(QWidget):
 
     def close_tab(self, index: int) -> bool:
         """关闭指定标签页"""
-        if index < 0 or index >= self._tab_widget.count():
+        if index < 0 or index >= self._content_stack.count():
             return False
         
-        widget = self._tab_widget.widget(index)
+        widget = self._content_stack.widget(index)
         tab = self._find_tab_by_widget(widget)
         if tab is not None:
             if tab.editor is not None and tab.editor.is_modified():
@@ -708,15 +642,17 @@ class CodeEditorPanel(QWidget):
                 elif reply == QMessageBox.StandardButton.Cancel:
                     return False
             
-            self._tab_widget.removeTab(index)
+            self._content_stack.removeWidget(widget)
+            widget.deleteLater()
             del self._tabs[tab.identity_path]
             self._update_empty_state()
             self._emit_editable_file_state()
+            self._emit_workspace_file_state()
             return True
         return False
 
     def close_all_tabs(self):
-        while self._tab_widget.count() > 0:
+        while self._content_stack.count() > 0:
             self.close_tab(0)
 
     def get_open_files(self) -> list:
@@ -730,9 +666,9 @@ class CodeEditorPanel(QWidget):
         tab = self._find_tab(path)
         if tab is None:
             return False
-        index = self._tab_widget.indexOf(tab.widget)
+        index = self._content_stack.indexOf(tab.widget)
         if index >= 0:
-            self._tab_widget.setCurrentIndex(index)
+            self._content_stack.setCurrentIndex(index)
             return True
         return False
 
@@ -741,16 +677,25 @@ class CodeEditorPanel(QWidget):
         if tab is None:
             return False
 
-        index = self._tab_widget.indexOf(tab.widget)
-        if index >= 0:
-            self._tab_widget.removeTab(index)
+        if self._content_stack.indexOf(tab.widget) >= 0:
+            self._content_stack.removeWidget(tab.widget)
+        tab.widget.deleteLater()
         del self._tabs[tab.identity_path]
+        self._emit_workspace_file_state()
         return True
 
     def _close_current_tab(self):
-        current_index = self._tab_widget.currentIndex()
+        current_index = self._content_stack.currentIndex()
         if current_index >= 0:
             self.close_tab(current_index)
+
+    def _close_file_by_path(self, path: str) -> None:
+        tab = self._find_tab(path)
+        if tab is None:
+            return
+        index = self._content_stack.indexOf(tab.widget)
+        if index >= 0:
+            self.close_tab(index)
 
 
     # ============================================================
@@ -761,83 +706,60 @@ class CodeEditorPanel(QWidget):
         has_editable = any(not tab.is_readonly for tab in self._tabs.values())
         self.editable_file_state_changed.emit(has_editable)
 
-    def _on_editor_modification_changed(self, path: str, modified: bool):
-        self._update_tab_title(path)
+    def _build_workspace_file_state(self) -> Dict[str, Any]:
+        current_tab = self._get_current_tab()
+        current_identity_path = current_tab.identity_path if current_tab is not None else ""
+        items = []
+        for tab in self._tabs.values():
+            is_dirty = bool(tab.editor is not None and tab.editor.is_modified())
+            items.append({
+                "path": tab.path,
+                "identity_path": tab.identity_path,
+                "name": os.path.basename(tab.path),
+                "is_dirty": is_dirty,
+                "is_readonly": tab.is_readonly,
+                "is_active": tab.identity_path == current_identity_path,
+            })
+        return {
+            "active_file": current_tab.path if current_tab is not None else None,
+            "active_identity_path": current_identity_path or None,
+            "open_files": [item["path"] for item in items],
+            "dirty_files": [item["path"] for item in items if item["is_dirty"]],
+            "items": items,
+        }
 
-    def _on_tab_close_requested(self, index: int):
-        self.close_tab(index)
+    def get_workspace_file_state(self) -> Dict[str, Any]:
+        return self._build_workspace_file_state()
+
+    def _emit_workspace_file_state(self):
+        state = self._build_workspace_file_state()
+        self._sync_workspace_tab_bar(state)
+        self.workspace_file_state_changed.emit(state)
+
+    def _sync_workspace_tab_bar(self, state: Optional[Dict[str, Any]] = None):
+        if self._web_tab_bar is None:
+            return
+        payload = state if isinstance(state, dict) else self._build_workspace_file_state()
+        if self._check_has_project():
+            empty_message = self._get_text("hint.select_file", "Select a file to view")
+        else:
+            empty_message = self._get_text("hint.open_workspace", "Open a workspace to get started")
+        self._web_tab_bar.set_workspace_file_state(payload, empty_message)
+
+    def _on_editor_modification_changed(self, path: str, modified: bool):
+        self._emit_workspace_file_state()
 
     def _on_current_tab_changed(self, index: int):
         if index < 0:
-            self._update_scroll_buttons()
+            self._emit_workspace_file_state()
             return
 
-        widget = self._tab_widget.widget(index)
+        widget = self._content_stack.widget(index)
         tab = self._find_tab_by_widget(widget)
         if tab is not None:
             self._update_status_bar(tab.path)
 
-        self._update_scroll_buttons()
-
-    def _on_scroll_left(self):
-        current = self._tab_widget.currentIndex()
-        if current > 0:
-            self._tab_widget.setCurrentIndex(current - 1)
-
-    def _on_scroll_right(self):
-        current = self._tab_widget.currentIndex()
-        count = self._tab_widget.count()
-        if current < count - 1:
-            self._tab_widget.setCurrentIndex(current + 1)
-
-    def _update_scroll_buttons(self):
-        tab_count = self._tab_widget.count()
-        current_index = self._tab_widget.currentIndex()
-        show_buttons = tab_count > 1
-        self._scroll_left_btn.setVisible(show_buttons)
-        self._scroll_right_btn.setVisible(show_buttons)
-        if show_buttons:
-            self._scroll_left_btn.setEnabled(current_index > 0)
-            self._scroll_right_btn.setEnabled(current_index < tab_count - 1)
-
-    def _on_tab_context_menu(self, position: QPoint):
-        tab_bar = self._tab_widget.tabBar()
-        index = tab_bar.tabAt(position)
-        if index < 0:
-            return
-        
-        menu = QMenu(self)
-        close_action = QAction(self._get_text("btn.close", "Close"), self)
-        close_action.triggered.connect(lambda: self.close_tab(index))
-        menu.addAction(close_action)
-        
-        close_others_action = QAction("Close Others", self)
-        close_others_action.triggered.connect(lambda: self._close_other_tabs(index))
-        menu.addAction(close_others_action)
-        
-        close_all_action = QAction("Close All", self)
-        close_all_action.triggered.connect(self.close_all_tabs)
-        menu.addAction(close_all_action)
-        
-        menu.addSeparator()
-        copy_path_action = QAction(self._get_text("file_browser.copy_path", "Copy Path"), self)
-        copy_path_action.triggered.connect(lambda: self._copy_tab_path(index))
-        menu.addAction(copy_path_action)
-        
-        menu.exec(tab_bar.mapToGlobal(position))
-
-    def _close_other_tabs(self, keep_index: int):
-        for i in range(self._tab_widget.count() - 1, -1, -1):
-            if i != keep_index:
-                self.close_tab(i)
-
-    def _copy_tab_path(self, index: int):
-        widget = self._tab_widget.widget(index)
-        for tab in self._tabs.values():
-            if tab.widget == widget:
-                clipboard = QApplication.clipboard()
-                clipboard.setText(tab.path)
-                break
+        self._emit_workspace_file_state()
 
     def _update_cursor_position(self):
         current_tab = self._get_current_tab()
@@ -845,30 +767,9 @@ class CodeEditorPanel(QWidget):
             line, col = current_tab.editor.get_cursor_position()
             self._line_col_label.setText(f"Ln {line}, Col {col}")
 
-    def _update_tab_title(self, path: str):
-        tab = self._find_tab(path)
-        if tab is None:
-            return
-        index = self._tab_widget.indexOf(tab.widget)
-        if index < 0:
-            return
-        file_name = os.path.basename(tab.path)
-        if tab.editor is not None and tab.editor.is_modified():
-            self._tab_widget.setTabText(index, f"{file_name} ●")
-        else:
-            self._tab_widget.setTabText(index, file_name)
-
     def _update_status_bar(self, path: str):
         ext = os.path.splitext(path)[1].lower()
-        file_type_map = {
-            '.cir': 'SPICE', '.sp': 'SPICE', '.spice': 'SPICE',
-            '.json': 'JSON', '.txt': 'Plain Text', '.py': 'Python',
-            '.md': 'Markdown', '.markdown': 'Markdown',
-            '.docx': 'Word Document', '.pdf': 'PDF Document',
-            '.png': 'PNG Image', '.jpg': 'JPEG Image', '.jpeg': 'JPEG Image',
-        }
-        file_type = file_type_map.get(ext, 'Plain Text')
-        self._file_type_label.setText(file_type)
+        self._file_type_label.setText(file_type_label(ext))
         self._update_cursor_position()
 
     # ============================================================
@@ -907,10 +808,12 @@ class CodeEditorPanel(QWidget):
     def _on_project_opened(self, event_data: Dict[str, Any]):
         self.close_all_tabs()
         self._update_empty_state()
+        self._emit_workspace_file_state()
 
     def _on_project_closed(self, event_data: Dict[str, Any]):
         self.close_all_tabs()
         self._update_empty_state()
+        self._emit_workspace_file_state()
 
     def _on_pending_workspace_edit_state_changed(self, state: Dict[str, Any]):
         self._refresh_pending_workspace_edit_views(state)
@@ -973,6 +876,10 @@ class CodeEditorPanel(QWidget):
         data = event_data.get("data", event_data)
         if data.get("action", "") == "rollback":
             self.sync_open_tabs_with_workspace()
+            return
+        self.close_all_tabs()
+        self._update_empty_state()
+        self._emit_workspace_file_state()
 
 
 
@@ -985,7 +892,4 @@ __all__ = [
     "CodeEditor",
     "ImageViewer",
     "DocumentViewer",
-    "EDITABLE_EXTENSIONS",
-    "IMAGE_EXTENSIONS",
-    "DOCUMENT_EXTENSIONS",
 ]

@@ -88,7 +88,7 @@ class PanelDefinition:
 PANEL_DEFINITIONS: Dict[str, Dict[str, Any]] = {
     "file_browser": {
         "class": "FileBrowserPanel",
-        "module": "presentation.panels.file_browser_panel",
+        "module": "presentation.panels.web_file_browser_panel",
         "region": "LEFT",
         "default_visible": True,
         "title_key": "panel.file_browser",

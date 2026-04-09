@@ -1168,6 +1168,8 @@ def run() -> int:
     # PyQt6-WebEngine 要求在 QCoreApplication 实例化之前导入
     try:
         from PyQt6.QtWebEngineWidgets import QWebEngineView
+        from presentation.core.web_resource_host import register_app_web_scheme
+        register_app_web_scheme()
         if _logger:
             _logger.info("Phase 2.0.1 WebEngine 预导入成功")
         else:
@@ -1182,6 +1184,19 @@ def run() -> int:
     from PyQt6.QtWidgets import QApplication
     from PyQt6.QtGui import QFont
     app = QApplication(sys.argv)
+
+    try:
+        from presentation.core.web_resource_host import install_app_web_resource_handler
+        install_app_web_resource_handler()
+        if _logger:
+            _logger.info("Phase 2.1 WebEngine 资源宿主安装成功")
+        else:
+            print("[Phase 2.1] WebEngine 资源宿主安装成功")
+    except Exception as e:
+        if _logger:
+            _logger.warning(f"Phase 2.1 WebEngine 资源宿主安装失败: {e}")
+        else:
+            print(f"[Phase 2.1] WebEngine 资源宿主安装失败: {e}")
 
     # 设置应用程序信息
     app.setApplicationName("Circuit Design AI")

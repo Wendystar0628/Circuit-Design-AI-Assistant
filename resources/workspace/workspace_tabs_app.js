@@ -16,6 +16,14 @@
     bridge[methodName](...args);
   }
 
+  function scrollActiveTabIntoView() {
+    const activeChip = rootEl.querySelector('.tab-chip.active');
+    if (!activeChip) {
+      return;
+    }
+    activeChip.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }
+
   function render() {
     rootEl.querySelectorAll('.tab-chip').forEach((item) => item.remove());
     const items = Array.isArray(state.items) ? state.items : [];
@@ -41,17 +49,13 @@
       nameEl.textContent = item && item.name ? String(item.name) : '';
       chip.appendChild(nameEl);
 
-      const indicatorsEl = document.createElement('div');
-      indicatorsEl.className = 'tab-indicators';
-
-      const openDot = document.createElement('span');
-      openDot.className = `state-dot${item && item.isActive ? ' active' : ''}`;
-      indicatorsEl.appendChild(openDot);
+      const metaEl = document.createElement('div');
+      metaEl.className = 'tab-meta';
 
       if (item && item.isDirty) {
         const dirtyDot = document.createElement('span');
-        dirtyDot.className = 'state-dot dirty';
-        indicatorsEl.appendChild(dirtyDot);
+        dirtyDot.className = 'dirty-dot';
+        metaEl.appendChild(dirtyDot);
       }
 
       const closeBtn = document.createElement('button');
@@ -65,12 +69,23 @@
           invokeBridge('closeFile', String(item.path));
         }
       });
-      indicatorsEl.appendChild(closeBtn);
+      metaEl.appendChild(closeBtn);
 
-      chip.appendChild(indicatorsEl);
+      chip.appendChild(metaEl);
       rootEl.appendChild(chip);
     }
+
+    requestAnimationFrame(scrollActiveTabIntoView);
   }
+
+  rootEl.addEventListener('wheel', (event) => {
+    const delta = Math.abs(event.deltaY) >= Math.abs(event.deltaX) ? event.deltaY : event.deltaX;
+    if (!delta || rootEl.scrollWidth <= rootEl.clientWidth) {
+      return;
+    }
+    event.preventDefault();
+    rootEl.scrollLeft += delta;
+  }, { passive: false });
 
   window.workspaceTabsApp = {
     setState(nextState) {

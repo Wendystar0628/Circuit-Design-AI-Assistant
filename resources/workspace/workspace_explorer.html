@@ -73,68 +73,6 @@
       color: #0f172a;
     }
 
-    #open-files-section {
-      display: none;
-      flex-direction: column;
-      border-bottom: 1px solid #e2e8f0;
-      background: #f8fafc;
-    }
-
-    #open-files-title {
-      padding: 8px 8px 4px 8px;
-      color: #64748b;
-      font-size: 11px;
-      font-weight: 700;
-      letter-spacing: 0.05em;
-      text-transform: uppercase;
-    }
-
-    #open-files-list {
-      display: flex;
-      flex-direction: column;
-      gap: 2px;
-      padding: 0 0 8px 0;
-    }
-
-    .open-file-item {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      min-height: 24px;
-      padding: 0 8px;
-      color: #334155;
-      font-size: 12px;
-      cursor: pointer;
-      -webkit-user-select: none;
-      user-select: none;
-      transition: background 0.12s ease, color 0.12s ease;
-    }
-
-    .open-file-item:hover {
-      background: #eef2ff;
-    }
-
-    .open-file-item.active {
-      background: #dbeafe;
-      color: #0f172a;
-      font-weight: 600;
-    }
-
-    .open-file-name {
-      min-width: 0;
-      flex: 1 1 auto;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    .state-badges {
-      display: inline-flex;
-      align-items: center;
-      gap: 5px;
-      flex: 0 0 auto;
-    }
-
     .state-dot {
       width: 7px;
       height: 7px;
@@ -250,10 +188,6 @@
         <button id="collapse-all" class="header-btn" type="button" title="Collapse All">−</button>
         <button id="refresh-tree" class="header-btn" type="button" title="Refresh">↻</button>
       </div>
-    </div>
-    <div id="open-files-section">
-      <div id="open-files-title">OPEN FILES</div>
-      <div id="open-files-list"></div>
     </div>
     <div id="tree-scroll">
       <div id="tree-root"></div>

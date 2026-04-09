@@ -28,7 +28,6 @@ from presentation.ui_state import (
     UI_WINDOW_GEOMETRY,
     UI_PANEL_VISIBILITY,
     UI_CURRENT_TAB,
-    UI_EDITOR_ACTIVE_FILE,
     UI_IS_GENERATING,
 )
 from presentation.menu_manager import MenuManager
@@ -45,7 +44,6 @@ __all__ = [
     "UI_WINDOW_GEOMETRY",
     "UI_PANEL_VISIBILITY",
     "UI_CURRENT_TAB",
-    "UI_EDITOR_ACTIVE_FILE",
     "UI_IS_GENERATING",
     # 管理器
     "MenuManager",

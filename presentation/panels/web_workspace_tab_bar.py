@@ -1,4 +1,5 @@
 import json
+from pathlib import PurePath
 from typing import Any, Dict, Optional
 
 from PyQt6.QtCore import QObject, Qt, pyqtSignal, pyqtSlot
@@ -87,9 +88,13 @@ class WebWorkspaceTabBar(QWidget):
             path = str(item.get("path", "") or "")
             if not path:
                 continue
+            name = str(item.get("name", "") or "")
+            if not name:
+                normalized_path = path.replace("\\", "/")
+                name = PurePath(normalized_path).name or path
             items.append({
                 "path": path,
-                "name": str(item.get("name", "") or os.path.basename(path) or path),
+                "name": name,
                 "isActive": bool(item.get("is_active", False)),
                 "isDirty": bool(item.get("is_dirty", False)),
             })

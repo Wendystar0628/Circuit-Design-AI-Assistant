@@ -236,7 +236,7 @@ class CodeEditorPanel(QWidget):
         layout.setSpacing(0)
         
         tab_bar_container = QWidget()
-        tab_bar_container.setFixedHeight(32)
+        tab_bar_container.setFixedHeight(36)
         tab_bar_layout = QHBoxLayout(tab_bar_container)
         tab_bar_layout.setContentsMargins(0, 0, 0, 0)
         tab_bar_layout.setSpacing(0)
@@ -720,13 +720,7 @@ class CodeEditorPanel(QWidget):
                 "is_readonly": tab.is_readonly,
                 "is_active": tab.identity_path == current_identity_path,
             })
-        return {
-            "active_file": current_tab.path if current_tab is not None else None,
-            "active_identity_path": current_identity_path or None,
-            "open_files": [item["path"] for item in items],
-            "dirty_files": [item["path"] for item in items if item["is_dirty"]],
-            "items": items,
-        }
+        return {"items": items}
 
     def get_workspace_file_state(self) -> Dict[str, Any]:
         return self._build_workspace_file_state()

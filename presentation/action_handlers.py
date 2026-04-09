@@ -539,7 +539,7 @@ class ActionHandlers:
     def _get_active_editor_file(self) -> Optional[str]:
         """获取当前编辑器活动文件路径"""
         editor_panel = self._panels.get("code_editor")
-        if editor_panel and hasattr(editor_panel, 'get_current_file'):
+        if editor_panel:
             return editor_panel.get_current_file()
         return None
 

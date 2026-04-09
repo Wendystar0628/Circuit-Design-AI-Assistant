@@ -36,7 +36,7 @@
 """
 
 import threading
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List
 
 from shared.event_types import (
     EVENT_PANEL_VISIBILITY_CHANGED,
@@ -62,15 +62,10 @@ UI_PREVIOUS_TAB = "previous_tab"
 # 编辑器状态
 UI_EDITOR_CURSOR_POSITIONS = "editor_cursor_positions"
 UI_EDITOR_SCROLL_POSITIONS = "editor_scroll_positions"
-UI_EDITOR_OPEN_FILES = "editor_open_files"
-UI_EDITOR_ACTIVE_FILE = "editor_active_file"
 
 # 对话面板状态
 UI_INPUT_DRAFT = "input_draft"
 UI_IS_GENERATING = "is_generating"
-
-# 文件浏览器状态
-UI_FILE_BROWSER_EXPANDED = "file_browser_expanded"
 
 # 调试面板状态
 UI_DEVTOOLS_VISIBLE = "devtools_visible"
@@ -136,13 +131,9 @@ class UIState:
             # 编辑器状态
             UI_EDITOR_CURSOR_POSITIONS: {},  # {file_path: cursor_position}
             UI_EDITOR_SCROLL_POSITIONS: {},  # {file_path: scroll_position}
-            UI_EDITOR_OPEN_FILES: [],  # [file_path, ...]
-            UI_EDITOR_ACTIVE_FILE: None,
             # 对话面板状态
             UI_INPUT_DRAFT: "",
             UI_IS_GENERATING: False,
-            # 文件浏览器状态
-            UI_FILE_BROWSER_EXPANDED: {},  # {folder_path: is_expanded}
             # 调试面板状态
             UI_DEVTOOLS_VISIBLE: False,
         }
@@ -389,16 +380,6 @@ class UIState:
         """设置生成状态"""
         self.set(UI_IS_GENERATING, value)
 
-    @property
-    def active_editor_file(self) -> Optional[str]:
-        """当前编辑器打开的文件"""
-        return self.get(UI_EDITOR_ACTIVE_FILE)
-
-    @active_editor_file.setter
-    def active_editor_file(self, value: Optional[str]) -> None:
-        """设置当前编辑器打开的文件"""
-        self.set(UI_EDITOR_ACTIVE_FILE, value)
-
     # ============================================================
     # 编辑器状态管理
     # ============================================================
@@ -456,10 +437,7 @@ __all__ = [
     "UI_PREVIOUS_TAB",
     "UI_EDITOR_CURSOR_POSITIONS",
     "UI_EDITOR_SCROLL_POSITIONS",
-    "UI_EDITOR_OPEN_FILES",
-    "UI_EDITOR_ACTIVE_FILE",
     "UI_INPUT_DRAFT",
     "UI_IS_GENERATING",
-    "UI_FILE_BROWSER_EXPANDED",
     "UI_DEVTOOLS_VISIBLE",
 ]

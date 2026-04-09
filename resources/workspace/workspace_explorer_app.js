@@ -2,19 +2,14 @@
   const titleEl = document.getElementById('title');
   const collapseAllBtn = document.getElementById('collapse-all');
   const refreshBtn = document.getElementById('refresh-tree');
-  const openFilesSection = document.getElementById('open-files-section');
-  const openFilesTitleEl = document.getElementById('open-files-title');
-  const openFilesListEl = document.getElementById('open-files-list');
   const treeRootEl = document.getElementById('tree-root');
   const emptyStateEl = document.getElementById('empty-state');
 
   const state = {
     title: 'EXPLORER',
     emptyMessage: '',
-    openFilesTitle: 'OPEN FILES',
     collapseTooltip: 'Collapse All',
     refreshTooltip: 'Refresh',
-    openFiles: [],
     tree: [],
   };
 
@@ -66,50 +61,6 @@
     }
 
     return indicatorsEl;
-  }
-
-  function renderOpenFiles() {
-    openFilesTitleEl.textContent = state.openFilesTitle || 'OPEN FILES';
-    openFilesListEl.innerHTML = '';
-
-    const items = asArray(state.openFiles);
-    if (!items.length) {
-      openFilesSection.style.display = 'none';
-      return;
-    }
-
-    openFilesSection.style.display = 'flex';
-    for (const item of items) {
-      const row = document.createElement('div');
-      row.className = `open-file-item${item && item.isActive ? ' active' : ''}`;
-      row.title = item && item.path ? String(item.path) : '';
-      row.addEventListener('click', () => {
-        if (item && item.path) {
-          invokeBridge('openFile', String(item.path));
-        }
-      });
-
-      const nameEl = document.createElement('div');
-      nameEl.className = 'open-file-name';
-      nameEl.textContent = item && item.name ? String(item.name) : '';
-      row.appendChild(nameEl);
-
-      const badgesEl = document.createElement('div');
-      badgesEl.className = 'state-badges';
-      if (item && item.isOpen) {
-        const openDot = document.createElement('span');
-        openDot.className = `state-dot${item.isActive ? ' active' : ''}`;
-        badgesEl.appendChild(openDot);
-      }
-      if (item && item.isDirty) {
-        const dirtyDot = document.createElement('span');
-        dirtyDot.className = 'state-dot dirty';
-        badgesEl.appendChild(dirtyDot);
-      }
-      row.appendChild(badgesEl);
-
-      openFilesListEl.appendChild(row);
-    }
   }
 
   function buildTreeNode(node, depth) {
@@ -186,7 +137,6 @@
     titleEl.textContent = state.title || 'EXPLORER';
     collapseAllBtn.title = state.collapseTooltip || 'Collapse All';
     refreshBtn.title = state.refreshTooltip || 'Refresh';
-    renderOpenFiles();
     renderTree();
   }
 
@@ -204,10 +154,8 @@
       const incoming = nextState && typeof nextState === 'object' ? nextState : {};
       state.title = incoming.title || 'EXPLORER';
       state.emptyMessage = incoming.emptyMessage || '';
-      state.openFilesTitle = incoming.openFilesTitle || 'OPEN FILES';
       state.collapseTooltip = incoming.collapseTooltip || 'Collapse All';
       state.refreshTooltip = incoming.refreshTooltip || 'Refresh';
-      state.openFiles = asArray(incoming.openFiles);
       state.tree = asArray(incoming.tree);
       syncExpandedPaths(state.tree);
       render();

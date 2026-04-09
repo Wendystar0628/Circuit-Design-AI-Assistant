@@ -47,7 +47,6 @@ class FileBrowserPanel(QWidget):
         self._logger = None
         self._root_path: Optional[str] = None
         self._workspace_file_state: Dict[str, Any] = {"items": []}
-        self._selected_file: str = ""
         self._page_loaded = False
         self._bridge: Optional[_ExplorerBridge] = None
         self._channel: Optional[QWebChannel] = None
@@ -130,7 +129,6 @@ class FileBrowserPanel(QWidget):
         display_path = str(path or "")
         if not display_path or not os.path.isfile(display_path):
             return
-        self._selected_file = display_path
         self.file_selected.emit(display_path)
 
     def _state_payload(self) -> Dict[str, Any]:
@@ -138,7 +136,6 @@ class FileBrowserPanel(QWidget):
         folder_name = os.path.basename(root_path) if root_path else ""
         has_project = bool(root_path)
         tree_nodes = self._build_tree_nodes()
-        open_files = self._build_open_file_items()
         empty_message = self._get_text(
             "hint.select_file",
             "Select a file to view",
@@ -150,11 +147,9 @@ class FileBrowserPanel(QWidget):
             empty_message = self._get_text("file_browser.empty", "No files to display")
         return {
             "title": folder_name.upper() if folder_name else self._get_text("panel.file_browser", "EXPLORER"),
-            "openFilesTitle": self._get_text("panel.open_files", "OPEN FILES"),
             "collapseTooltip": self._get_text("file_browser.collapse_all", "Collapse All"),
             "refreshTooltip": self._get_text("file_browser.refresh", "Refresh"),
             "emptyMessage": empty_message,
-            "openFiles": open_files,
             "tree": tree_nodes,
         }
 
@@ -167,34 +162,12 @@ class FileBrowserPanel(QWidget):
         script = "window.workspaceExplorerApp && window.workspaceExplorerApp.setState(%s);" % json.dumps(payload, ensure_ascii=False)
         self._web_view.page().runJavaScript(script)
 
-    def _build_open_file_items(self) -> list[Dict[str, Any]]:
-        state = self._workspace_file_state if isinstance(self._workspace_file_state, dict) else {}
-        items = state.get("items", []) if isinstance(state, dict) else []
-        result = []
-        for item in items if isinstance(items, list) else []:
-            if not isinstance(item, dict):
-                continue
-            path = str(item.get("path", "") or "")
-            if not path:
-                continue
-            result.append({
-                "path": path,
-                "name": str(item.get("name", "") or os.path.basename(path) or path),
-                "isOpen": True,
-                "isDirty": bool(item.get("is_dirty", False)),
-                "isActive": bool(item.get("is_active", False)),
-            })
-        return result
-
     def _workspace_sets(self) -> Tuple[set[str], set[str], str]:
         state = self._workspace_file_state if isinstance(self._workspace_file_state, dict) else {}
         items = state.get("items", []) if isinstance(state, dict) else []
         open_identity_paths = set()
         dirty_identity_paths = set()
-        active_identity_path = str(state.get("active_identity_path", "") or "")
-        active_file = str(state.get("active_file", "") or "")
-        if not active_identity_path and active_file:
-            active_identity_path = normalize_identity_path(active_file)
+        active_identity_path = ""
         for item in items if isinstance(items, list) else []:
             if not isinstance(item, dict):
                 continue
@@ -207,6 +180,8 @@ class FileBrowserPanel(QWidget):
             open_identity_paths.add(identity_path)
             if bool(item.get("is_dirty", False)):
                 dirty_identity_paths.add(identity_path)
+            if bool(item.get("is_active", False)):
+                active_identity_path = identity_path
         return open_identity_paths, dirty_identity_paths, active_identity_path
 
     def _build_tree_nodes(self) -> list[Dict[str, Any]]:
@@ -300,24 +275,11 @@ class FileBrowserPanel(QWidget):
 
     def clear(self) -> None:
         self._root_path = None
-        self._selected_file = ""
         self._workspace_file_state = {"items": []}
         self._dispatch_state()
 
-    def get_selected_file(self) -> Optional[str]:
-        if self._selected_file and os.path.isfile(self._selected_file):
-            return self._selected_file
-        state = self._workspace_file_state if isinstance(self._workspace_file_state, dict) else {}
-        active_file = str(state.get("active_file", "") or "")
-        if active_file and os.path.isfile(active_file):
-            return active_file
-        return None
-
     def set_workspace_file_state(self, state: Dict[str, Any]) -> None:
         self._workspace_file_state = dict(state) if isinstance(state, dict) else {"items": []}
-        active_file = str(self._workspace_file_state.get("active_file", "") or "")
-        if active_file:
-            self._selected_file = active_file
         self._dispatch_state()
 
     def retranslate_ui(self) -> None:

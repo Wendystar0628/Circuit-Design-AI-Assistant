@@ -29,21 +29,12 @@ from shared.workspace_file_types import (
     is_document_preview_extension,
     is_image_extension,
     is_markdown_extension,
-    is_pdf_extension,
-    is_tabular_extension,
-    is_word_extension,
 )
 
 # 从子模块导入组件
 from .editor import CodeEditor
 from .web_workspace_tab_bar import WebWorkspaceTabBar
-from .viewers import (
-    DocxViewer,
-    ImageViewer,
-    MarkdownViewer,
-    PdfViewer,
-    TabularViewer,
-)
+from .viewers import ImageViewer, create_document_viewer
 
 
 class EditorTab:
@@ -449,23 +440,7 @@ class CodeEditorPanel(QWidget):
 
     def _create_document_viewer(self, path: str, ext: str) -> Optional[QWidget]:
         """创建文档预览器"""
-        if is_markdown_extension(ext):
-            viewer = MarkdownViewer()
-            viewer.load_markdown(path)
-            return viewer
-        elif is_word_extension(ext):
-            viewer = DocxViewer()
-            viewer.load_docx(path)
-            return viewer
-        elif is_pdf_extension(ext):
-            viewer = PdfViewer()
-            viewer.load_pdf(path)
-            return viewer
-        elif is_tabular_extension(ext):
-            viewer = TabularViewer()
-            viewer.load_file(path)
-            return viewer
-        return None
+        return create_document_viewer(path, ext)
 
     def _apply_editor_content(self, tab: EditorTab, content: str) -> None:
         if tab.editor is None:
@@ -536,6 +511,49 @@ class CodeEditorPanel(QWidget):
                 if self._save_tab(tab):
                     saved_count += 1
         return saved_count
+
+    def _get_current_editor(self):
+        tab = self._get_current_tab()
+        if tab is None:
+            return None
+        return tab.editor
+
+    def has_active_editor(self) -> bool:
+        return self._get_current_editor() is not None
+
+    def has_active_editable_editor(self) -> bool:
+        tab = self._get_current_tab()
+        return bool(tab is not None and tab.editor is not None and not tab.is_readonly)
+
+    def undo(self) -> None:
+        editor = self._get_current_editor()
+        if editor is not None:
+            editor.undo()
+
+    def redo(self) -> None:
+        editor = self._get_current_editor()
+        if editor is not None:
+            editor.redo()
+
+    def cut(self) -> None:
+        editor = self._get_current_editor()
+        if editor is not None:
+            editor.cut()
+
+    def copy(self) -> None:
+        editor = self._get_current_editor()
+        if editor is not None:
+            editor.copy()
+
+    def paste(self) -> None:
+        editor = self._get_current_editor()
+        if editor is not None:
+            editor.paste()
+
+    def select_all(self) -> None:
+        editor = self._get_current_editor()
+        if editor is not None:
+            editor.select_all()
 
     def reset_all_modification_states(self):
         """重置所有打开文件的修改状态"""
@@ -731,8 +749,12 @@ class CodeEditorPanel(QWidget):
         current_tab = self._get_current_tab()
         current_identity_path = current_tab.identity_path if current_tab is not None else ""
         items = []
+        has_any_dirty = False
+        has_any_editable = False
         for tab in self._tabs.values():
             is_dirty = bool(tab.editor is not None and tab.editor.is_modified())
+            has_any_dirty = has_any_dirty or is_dirty
+            has_any_editable = has_any_editable or (not tab.is_readonly)
             items.append({
                 "path": tab.path,
                 "identity_path": tab.identity_path,
@@ -741,7 +763,14 @@ class CodeEditorPanel(QWidget):
                 "is_readonly": tab.is_readonly,
                 "is_active": tab.identity_path == current_identity_path,
             })
-        return {"items": items}
+        return {
+            "items": items,
+            "active_identity_path": current_identity_path,
+            "has_active_editor": bool(current_tab is not None and current_tab.editor is not None),
+            "has_active_editable": bool(current_tab is not None and current_tab.editor is not None and not current_tab.is_readonly),
+            "has_any_dirty": has_any_dirty,
+            "has_any_editable": has_any_editable,
+        }
 
     def get_workspace_file_state(self) -> Dict[str, Any]:
         return self._build_workspace_file_state()
@@ -911,9 +940,4 @@ class CodeEditorPanel(QWidget):
 __all__ = [
     "CodeEditorPanel",
     "CodeEditor",
-    "DocxViewer",
-    "ImageViewer",
-    "MarkdownViewer",
-    "PdfViewer",
-    "TabularViewer",
 ]

@@ -10,16 +10,10 @@
 - TabularViewer: CSV/TSV 表格预览组件
 """
 
-from .docx_viewer import DocxViewer
+from .factory import create_document_viewer
 from .image_viewer import ImageViewer
-from .markdown_viewer import MarkdownViewer
-from .pdf_viewer import PdfViewer
-from .tabular_viewer import TabularViewer
 
 __all__ = [
-    "DocxViewer",
     "ImageViewer",
-    "MarkdownViewer",
-    "PdfViewer",
-    "TabularViewer",
+    "create_document_viewer",
 ]

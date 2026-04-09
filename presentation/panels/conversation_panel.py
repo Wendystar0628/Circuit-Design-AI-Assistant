@@ -609,7 +609,16 @@ class ConversationPanel(QWidget):
         
         if reply == QMessageBox.StandardButton.Yes:
             self.clear_display()
-    
+
+    def request_history(self) -> None:
+        self.history_requested.emit()
+
+    def request_clear_display(self) -> None:
+        self._on_clear_clicked()
+
+    def request_compress_context(self) -> None:
+        self.compress_requested.emit()
+
     def _on_session_name_changed(self, name: str) -> None:
         """处理会话名称变更"""
         self.session_name_changed.emit(name)

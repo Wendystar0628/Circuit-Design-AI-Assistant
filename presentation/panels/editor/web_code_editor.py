@@ -107,8 +107,8 @@ class CodeEditor(QWidget):
         layout.addWidget(self._web_view)
 
     def _on_load_finished(self, ok: bool) -> None:
-        self._page_loaded = bool(ok)
-        if self._page_loaded:
+        if ok:
+            self._page_loaded = True
             self._dispatch_state()
 
     def _on_ready(self) -> None:
@@ -215,6 +215,31 @@ class CodeEditor(QWidget):
         self._cursor_position = (line, column)
         script = "window.codeEditorApp && window.codeEditorApp.goToLine(%d, %d);" % (line, column)
         self._run_script(script)
+
+    def _execute_command(self, command_name: str) -> None:
+        script = "window.codeEditorApp && window.codeEditorApp.executeCommand(%s);" % json.dumps(str(command_name or ""), ensure_ascii=False)
+        self._run_script(script)
+
+    def supports_edit_commands(self) -> bool:
+        return bool(self._web_view is not None and self._page_loaded)
+
+    def undo(self) -> None:
+        self._execute_command("undo")
+
+    def redo(self) -> None:
+        self._execute_command("redo")
+
+    def cut(self) -> None:
+        self._execute_command("cut")
+
+    def copy(self) -> None:
+        self._execute_command("copy")
+
+    def paste(self) -> None:
+        self._execute_command("paste")
+
+    def select_all(self) -> None:
+        self._execute_command("selectAll")
 
     def focusInEvent(self, event) -> None:
         super().focusInEvent(event)

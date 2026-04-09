@@ -17,6 +17,7 @@
 - menu_manager.py（视图菜单）
 """
 
+import json
 from typing import Optional, Dict, List, Any
 from enum import Enum
 from importlib import import_module

@@ -94,6 +94,9 @@ def configure_app_web_view(web_view) -> None:
         return
     settings = web_view.settings()
     settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, True)
+    scroll_animator_attr = getattr(QWebEngineSettings.WebAttribute, "ScrollAnimatorEnabled", None)
+    if scroll_animator_attr is not None:
+        settings.setAttribute(scroll_animator_attr, True)
 
 
 def _normalize_relative_resource_path(relative_path: str) -> str:

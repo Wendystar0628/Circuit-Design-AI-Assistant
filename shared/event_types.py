@@ -33,9 +33,6 @@ EVENT_INIT_COMPLETE = "init_complete"
 # UI 交互事件
 # ============================================================
 
-# 用户选择文件
-EVENT_UI_FILE_SELECTED = "ui_file_selected"
-
 # 用户发送消息
 EVENT_UI_SEND_MESSAGE = "ui_send_message"
 
@@ -740,7 +737,6 @@ __all__ = [
     "EVENT_INIT_PHASE_COMPLETE",
     "EVENT_INIT_COMPLETE",
     # UI 交互事件
-    "EVENT_UI_FILE_SELECTED",
     "EVENT_UI_SEND_MESSAGE",
     "EVENT_UI_REQUEST_SIMULATION",
     "EVENT_UI_ATTACH_FILES_TO_CONVERSATION",

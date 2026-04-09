@@ -341,6 +341,54 @@
     }
   }
 
+  function runAction(editor, actionId) {
+    if (!editor || !actionId) {
+      return false;
+    }
+    const action = typeof editor.getAction === 'function' ? editor.getAction(actionId) : null;
+    if (!action || typeof action.run !== 'function') {
+      return false;
+    }
+    action.run();
+    return true;
+  }
+
+  function executeCommand(commandName) {
+    const editor = activeEditor();
+    if (!editor) {
+      return;
+    }
+    editor.focus();
+    switch (String(commandName || '')) {
+      case 'undo':
+        editor.trigger('menu-bar', 'undo', null);
+        return;
+      case 'redo':
+        editor.trigger('menu-bar', 'redo', null);
+        return;
+      case 'cut':
+        if (!runAction(editor, 'editor.action.clipboardCutAction')) {
+          editor.trigger('menu-bar', 'editor.action.clipboardCutAction', null);
+        }
+        return;
+      case 'copy':
+        if (!runAction(editor, 'editor.action.clipboardCopyAction')) {
+          editor.trigger('menu-bar', 'editor.action.clipboardCopyAction', null);
+        }
+        return;
+      case 'paste':
+        if (!runAction(editor, 'editor.action.clipboardPasteAction')) {
+          editor.trigger('menu-bar', 'editor.action.clipboardPasteAction', null);
+        }
+        return;
+      case 'selectAll':
+        editor.trigger('menu-bar', 'editor.action.selectAll', null);
+        return;
+      default:
+        return;
+    }
+  }
+
   function applyState(nextState) {
     currentState = normalizeState(nextState);
     syncModels();
@@ -401,6 +449,9 @@
     },
     focus() {
       focusEditor();
+    },
+    executeCommand(commandName) {
+      executeCommand(commandName);
     },
   };
 

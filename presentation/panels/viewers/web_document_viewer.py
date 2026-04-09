@@ -2,7 +2,8 @@ import html
 import os
 from typing import Optional
 
-from PyQt6.QtCore import Qt, QUrl
+from PyQt6.QtCore import QEvent, Qt, QUrl
+from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import QLabel, QSizePolicy, QVBoxLayout, QWidget
 
 try:
@@ -35,11 +36,14 @@ _COMMON_STYLES = """
         font-family: "Segoe UI", "SF Pro Display", "Microsoft YaHei UI", sans-serif;
         color: #0f172a;
         background: #eef2f7;
+        -webkit-text-size-adjust: 100%;
+        -webkit-user-select: text;
+        user-select: text;
     }
 
     .viewer-shell {
-        min-height: 100vh;
-        padding: 24px;
+        min-height: 100%;
+        padding: 12px 16px 24px;
     }
 
     .viewer-page {
@@ -50,6 +54,13 @@ _COMMON_STYLES = """
         border-radius: 16px;
         box-shadow: 0 18px 40px rgba(15, 23, 42, 0.08);
         padding: 40px 48px;
+        -webkit-user-select: text;
+        user-select: text;
+    }
+
+    .viewer-page * {
+        -webkit-user-select: text;
+        user-select: text;
     }
 
     .viewer-page h1,
@@ -94,6 +105,7 @@ _COMMON_STYLES = """
     .viewer-page img {
         max-width: 100%;
         height: auto;
+        -webkit-user-drag: none;
     }
 
     .viewer-page table {
@@ -143,11 +155,11 @@ _COMMON_STYLES = """
     }
 
     .error-shell {
-        min-height: 100vh;
+        min-height: 100%;
         display: flex;
         align-items: center;
         justify-content: center;
-        padding: 24px;
+        padding: 16px;
     }
 
     .error-card {
@@ -178,7 +190,7 @@ _COMMON_STYLES = """
 
     @media (max-width: 960px) {
         .viewer-shell {
-            padding: 16px;
+            padding: 8px 8px 16px;
         }
 
         .viewer-page {
@@ -190,10 +202,16 @@ _COMMON_STYLES = """
 
 
 class WebDocumentViewer(QWidget):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, *, enable_host_zoom: bool = True):
         super().__init__(parent)
         self._web_view = None
         self._fallback_label = None
+        self._host_zoom_enabled = bool(enable_host_zoom)
+        self._zoom_factor = 1.0
+        self._min_zoom_factor = 0.5
+        self._max_zoom_factor = 4.0
+        self._zoom_step = 1.12
+        self._shortcuts: list[QShortcut] = []
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -213,11 +231,44 @@ class WebDocumentViewer(QWidget):
         settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, True)
         settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessFileUrls, True)
         settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, False)
+        if self._host_zoom_enabled:
+            self._web_view.installEventFilter(self)
         layout.addWidget(self._web_view)
+
+        if self._host_zoom_enabled:
+            self._install_shortcuts()
 
     @property
     def web_view(self) -> Optional[QWebEngineView]:
         return self._web_view
+
+    def _install_shortcuts(self) -> None:
+        shortcut_specs = (
+            ("Ctrl+=", self.zoom_in),
+            ("Ctrl++", self.zoom_in),
+            ("Ctrl+-", self.zoom_out),
+            ("Ctrl+0", self.reset_zoom),
+        )
+        for sequence, handler in shortcut_specs:
+            shortcut = QShortcut(QKeySequence(sequence), self)
+            shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+            shortcut.activated.connect(handler)
+            self._shortcuts.append(shortcut)
+
+    def set_zoom_factor(self, factor: float) -> None:
+        clamped = min(max(float(factor or 1.0), self._min_zoom_factor), self._max_zoom_factor)
+        self._zoom_factor = clamped
+        if self._web_view is not None:
+            self._web_view.setZoomFactor(clamped)
+
+    def reset_zoom(self) -> None:
+        self.set_zoom_factor(1.0)
+
+    def zoom_in(self) -> None:
+        self.set_zoom_factor(self._zoom_factor * self._zoom_step)
+
+    def zoom_out(self) -> None:
+        self.set_zoom_factor(self._zoom_factor / self._zoom_step)
 
     def load_full_html(self, html_text: str, base_path: str = "") -> bool:
         if self._web_view is None:
@@ -225,6 +276,10 @@ class WebDocumentViewer(QWidget):
                 self._fallback_label.setText(str(html_text or ""))
             return False
         base_url = QUrl.fromLocalFile(os.path.abspath(base_path) + os.sep) if base_path else QUrl()
+        if self._host_zoom_enabled:
+            self.reset_zoom()
+        else:
+            self._web_view.setZoomFactor(1.0)
         self._web_view.setHtml(html_text, base_url)
         return True
 
@@ -259,6 +314,22 @@ class WebDocumentViewer(QWidget):
             "</div>"
         )
         self.load_html_document(title=title, body_html=error_html)
+
+    def eventFilter(self, watched, event) -> bool:
+        if watched is self._web_view and event.type() == QEvent.Type.Wheel:
+            if self._host_zoom_enabled and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+                delta_y = event.angleDelta().y()
+                if delta_y == 0:
+                    delta_y = event.pixelDelta().y()
+                if delta_y > 0:
+                    self.zoom_in()
+                    event.accept()
+                    return True
+                if delta_y < 0:
+                    self.zoom_out()
+                    event.accept()
+                    return True
+        return super().eventFilter(watched, event)
 
     def _build_html_document(
         self,

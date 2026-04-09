@@ -35,7 +35,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QTimer
 
-from presentation.menu_manager import MenuManager
+from presentation.web_menu_manager import MenuManager
 from presentation.simulation_command_controller import SimulationCommandController
 from presentation.window_state_manager import WindowStateManager
 from presentation.session_manager import SessionManager
@@ -277,13 +277,13 @@ class MainWindow(QMainWindow):
         self._tab_controller.register_tab(
             TAB_CONVERSATION,
             chat_panel,
-            self._get_text("panel.chat", "Chat"),
+            self._get_text("panel.conversation", "对话"),
             "resources/icons/panel/chat.svg"
         )
         self._panels["chat"] = chat_panel
         self._panel_manager.register_panel(
             "conversation", chat_panel, PanelRegion.RIGHT,
-            title_key="panel.chat"
+            title_key="panel.conversation"
         )
         
         # 注册知识库面板（RAG Tab）
@@ -405,11 +405,15 @@ class MainWindow(QMainWindow):
             editor.open_workspace_requested.connect(
                 self._action_handlers.on_open_workspace
             )
+            editor.workspace_file_state_changed.connect(
+                self._on_workspace_file_state_changed
+            )
             editor.editable_file_state_changed.connect(
                 self._on_editable_file_state_changed
             )
             if self._simulation_command_controller:
                 self._simulation_command_controller.bind_code_editor(editor)
+            self._on_workspace_file_state_changed(editor.get_workspace_file_state())
 
         # 连接对话面板信号
         # 注意：不在这里调用 chat_panel.initialize()
@@ -493,6 +497,20 @@ class MainWindow(QMainWindow):
         if self._tab_controller:
             self._tab_controller.switch_to_tab(TAB_CONVERSATION)
 
+    def activate_right_tab(self, tab_id: str) -> None:
+        if self._tab_controller:
+            self._tab_controller.switch_to_tab(tab_id)
+
+    def activate_right_panel(self, panel_id: str) -> None:
+        panel_tab_map = {
+            "conversation": TAB_CONVERSATION,
+            "rag": TAB_RAG,
+            "devtools": TAB_DEVTOOLS,
+        }
+        tab_id = panel_tab_map.get(panel_id)
+        if tab_id:
+            self.activate_right_tab(tab_id)
+
     def _on_init_complete(self, event_data: Dict[str, Any]):
         """
         初始化完成事件处理
@@ -508,6 +526,7 @@ class MainWindow(QMainWindow):
                 event_bus=ServiceLocator.get_optional(SVC_EVENT_BUS),
                 rag_manager=ServiceLocator.get_optional(SVC_RAG_MANAGER),
             )
+            self._refresh_rag_menu_actions()
 
         # 初始化对话面板（此时 ContextManager 已可用）
         if "chat" in self._panels:
@@ -542,10 +561,10 @@ class MainWindow(QMainWindow):
         # 启用相关功能 - 菜单
         if self._menu_manager:
             self._menu_manager.set_action_enabled("file_close", True)
-            self._menu_manager.set_action_enabled("file_save", True)
-            self._menu_manager.set_action_enabled("file_save_all", True)
+            self._refresh_editor_menu_state()
         if self._simulation_command_controller:
             self._simulation_command_controller.refresh_ui_state()
+        self._refresh_rag_menu_actions()
         
         # 更新最近打开菜单
         self._update_recent_menu()
@@ -566,8 +585,8 @@ class MainWindow(QMainWindow):
         # 禁用相关功能 - 菜单
         if self._menu_manager:
             self._menu_manager.set_action_enabled("file_close", False)
-            self._menu_manager.set_action_enabled("file_save", False)
-            self._menu_manager.set_action_enabled("file_save_all", False)
+            self._refresh_editor_menu_state({})
+            self._refresh_rag_menu_actions()
         
         # 关闭代码编辑器中的所有文件
         if "code_editor" in self._panels:
@@ -679,6 +698,11 @@ class MainWindow(QMainWindow):
             panel_id: 面板 ID
             visible: 指定可见性，None 表示切换
         """
+        if panel_id in {"conversation", "rag", "devtools"}:
+            if visible is False:
+                return
+            self.activate_right_panel(panel_id)
+            return
         if not self._panel_manager:
             return
         
@@ -746,16 +770,51 @@ class MainWindow(QMainWindow):
         }
         self._menu_manager.update_recent_menu(recent_projects, callbacks)
 
+    def _refresh_editor_menu_state(self, state: Optional[Dict[str, Any]] = None) -> None:
+        if not self._menu_manager:
+            return
+        payload = state if isinstance(state, dict) else None
+        if payload is None and "code_editor" in self._panels:
+            payload = self._panels["code_editor"].get_workspace_file_state()
+        if not isinstance(payload, dict):
+            payload = {}
+        has_active_editor = bool(payload.get("has_active_editor", False))
+        has_active_editable = bool(payload.get("has_active_editable", False))
+        has_any_dirty = bool(payload.get("has_any_dirty", False))
+        has_any_editable = bool(payload.get("has_any_editable", False))
+        self._menu_manager.set_action_enabled("file_save", has_active_editable)
+        self._menu_manager.set_action_enabled("file_save_all", has_any_dirty and has_any_editable)
+        self._menu_manager.set_action_enabled("edit_undo", has_active_editable)
+        self._menu_manager.set_action_enabled("edit_redo", has_active_editable)
+        self._menu_manager.set_action_enabled("edit_cut", has_active_editable)
+        self._menu_manager.set_action_enabled("edit_paste", has_active_editable)
+        self._menu_manager.set_action_enabled("edit_copy", has_active_editor)
+        self._menu_manager.set_action_enabled("edit_select_all", has_active_editor)
+
+    def _refresh_rag_menu_actions(self) -> None:
+        if not self._menu_manager:
+            return
+        self._menu_manager.set_action_enabled("knowledge_open", "rag" in self._panels)
+        rag_panel = self._panels.get("rag")
+        can_manage = False
+        if rag_panel is not None and hasattr(rag_panel, "can_manage_index"):
+            try:
+                can_manage = bool(rag_panel.can_manage_index())
+            except Exception:
+                can_manage = False
+        self._menu_manager.set_action_enabled("knowledge_rebuild", can_manage)
+        self._menu_manager.set_action_enabled("knowledge_clear", can_manage)
+
     # ============================================================
     # 信号处理
     # ============================================================
 
     def _on_editable_file_state_changed(self, has_editable_file: bool):
         """可编辑文件状态变化处理（用于启用/禁用保存按钮）"""
-        # 启用/禁用菜单保存按钮
-        if self._menu_manager:
-            self._menu_manager.set_action_enabled("file_save", has_editable_file)
-            self._menu_manager.set_action_enabled("file_save_all", has_editable_file)
+        self._refresh_editor_menu_state()
+
+    def _on_workspace_file_state_changed(self, state: Dict[str, Any]):
+        self._refresh_editor_menu_state(state)
 
     # ============================================================
     # 对话面板信号处理
@@ -763,16 +822,19 @@ class MainWindow(QMainWindow):
 
     def _on_file_clicked(self, file_path: str):
         """处理文件点击（跳转到代码编辑器）"""
+        self._on_toggle_panel("code_editor", True)
         if "code_editor" in self._panels:
             self._panels["code_editor"].load_file(file_path)
 
     def _on_new_conversation(self):
         """处理新开对话请求"""
+        self.activate_right_panel("conversation")
         if self.logger:
             self.logger.info("New conversation requested")
 
     def _on_show_history_dialog(self):
         """显示对话历史对话框"""
+        self.activate_right_panel("conversation")
         try:
             from presentation.dialogs.history_dialog import HistoryDialog
             from PyQt6.QtWidgets import QMessageBox
@@ -819,6 +881,7 @@ class MainWindow(QMainWindow):
 
     def _on_compress_requested(self):
         """处理压缩上下文请求，显示压缩对话框"""
+        self.activate_right_panel("conversation")
         try:
             from presentation.dialogs.context_compress_dialog import ContextCompressDialog
             

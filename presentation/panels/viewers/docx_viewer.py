@@ -52,6 +52,9 @@ _DRAWINGML_NS = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
 
 
 class DocxViewer(WebDocumentViewer):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
     def load_docx(self, path: str) -> bool:
         try:
             from docx import Document

@@ -2,19 +2,34 @@
   const titleEl = document.getElementById('title');
   const collapseAllBtn = document.getElementById('collapse-all');
   const refreshBtn = document.getElementById('refresh-tree');
+  const treeScrollEl = document.getElementById('tree-scroll');
   const treeRootEl = document.getElementById('tree-root');
   const emptyStateEl = document.getElementById('empty-state');
+  const contextMenuEl = document.getElementById('context-menu');
+  const contextMenuItemEls = Array.from(document.querySelectorAll('.context-menu-item'));
 
   const state = {
     title: 'EXPLORER',
     emptyMessage: '',
     collapseTooltip: 'Collapse All',
     refreshTooltip: 'Refresh',
+    contextMenu: {
+      addToConversation: 'Add to Conversation',
+      copyPath: 'Copy Path',
+      rename: 'Rename',
+      delete: 'Delete',
+    },
     iconSpriteUrl: '',
     tree: [],
   };
 
   const expandedPaths = new Set();
+  const contextMenuState = {
+    visible: false,
+    path: '',
+    x: 0,
+    y: 0,
+  };
   let bridge = null;
 
   function asArray(value) {
@@ -26,6 +41,62 @@
       return;
     }
     bridge[methodName](...args);
+  }
+
+  function hideContextMenu() {
+    contextMenuState.visible = false;
+    contextMenuState.path = '';
+    if (!contextMenuEl) {
+      return;
+    }
+    contextMenuEl.classList.remove('open');
+    contextMenuEl.style.left = '0px';
+    contextMenuEl.style.top = '0px';
+  }
+
+  function updateContextMenuLabels() {
+    if (!contextMenuItemEls.length) {
+      return;
+    }
+    const labels = state.contextMenu || {};
+    for (const itemEl of contextMenuItemEls) {
+      const action = String(itemEl.dataset.action || '');
+      if (action === 'add_to_conversation') {
+        itemEl.textContent = labels.addToConversation || 'Add to Conversation';
+      } else if (action === 'copy_path') {
+        itemEl.textContent = labels.copyPath || 'Copy Path';
+      } else if (action === 'rename') {
+        itemEl.textContent = labels.rename || 'Rename';
+      } else if (action === 'delete_file') {
+        itemEl.textContent = labels.delete || 'Delete';
+      }
+    }
+  }
+
+  function positionContextMenu() {
+    if (!contextMenuEl || !contextMenuState.visible) {
+      return;
+    }
+    const menuWidth = contextMenuEl.offsetWidth || 180;
+    const menuHeight = contextMenuEl.offsetHeight || 140;
+    const left = Math.min(contextMenuState.x, Math.max(8, window.innerWidth - menuWidth - 8));
+    const top = Math.min(contextMenuState.y, Math.max(8, window.innerHeight - menuHeight - 8));
+    contextMenuEl.style.left = `${Math.max(8, left)}px`;
+    contextMenuEl.style.top = `${Math.max(8, top)}px`;
+  }
+
+  function showContextMenu(node, x, y) {
+    if (!contextMenuEl || !node || node.isDirectory || !node.path) {
+      hideContextMenu();
+      return;
+    }
+    contextMenuState.visible = true;
+    contextMenuState.path = String(node.path || '');
+    contextMenuState.x = Number(x || 0);
+    contextMenuState.y = Number(y || 0);
+    updateContextMenuLabels();
+    contextMenuEl.classList.add('open');
+    requestAnimationFrame(positionContextMenu);
   }
 
   function syncExpandedPaths(nodes) {
@@ -135,6 +206,7 @@
     row.appendChild(createStateIndicators(node));
 
     row.addEventListener('click', () => {
+      hideContextMenu();
       if (node.isDirectory) {
         const path = String(node.path || '');
         if (!path) {
@@ -151,6 +223,16 @@
       if (node.path) {
         invokeBridge('openFile', String(node.path));
       }
+    });
+
+    row.addEventListener('contextmenu', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!node.isDirectory && node.path) {
+        showContextMenu(node, event.clientX, event.clientY);
+        return;
+      }
+      hideContextMenu();
     });
 
     wrapper.appendChild(row);
@@ -177,6 +259,7 @@
   }
 
   function renderTree() {
+    hideContextMenu();
     treeRootEl.innerHTML = '';
     const nodes = asArray(state.tree);
     if (!nodes.length) {
@@ -195,6 +278,7 @@
     titleEl.textContent = state.title || 'EXPLORER';
     collapseAllBtn.title = state.collapseTooltip || 'Collapse All';
     refreshBtn.title = state.refreshTooltip || 'Refresh';
+    updateContextMenuLabels();
     renderTree();
   }
 
@@ -204,8 +288,51 @@
   });
 
   refreshBtn.addEventListener('click', () => {
+    hideContextMenu();
     invokeBridge('requestRefresh');
   });
+
+  if (treeScrollEl) {
+    treeScrollEl.addEventListener('scroll', hideContextMenu, { passive: true });
+  }
+
+  if (contextMenuEl) {
+    contextMenuEl.addEventListener('contextmenu', (event) => {
+      event.preventDefault();
+    });
+  }
+
+  for (const itemEl of contextMenuItemEls) {
+    itemEl.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const action = String(itemEl.dataset.action || '');
+      const path = contextMenuState.path;
+      hideContextMenu();
+      if (action && path) {
+        invokeBridge('triggerContextAction', action, path);
+      }
+    });
+  }
+
+  document.addEventListener('pointerdown', (event) => {
+    if (!contextMenuState.visible) {
+      return;
+    }
+    if (contextMenuEl && contextMenuEl.contains(event.target)) {
+      return;
+    }
+    hideContextMenu();
+  });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      hideContextMenu();
+    }
+  });
+
+  window.addEventListener('blur', hideContextMenu);
+  window.addEventListener('resize', hideContextMenu);
 
   window.workspaceExplorerApp = {
     setState(nextState) {
@@ -214,6 +341,19 @@
       state.emptyMessage = incoming.emptyMessage || '';
       state.collapseTooltip = incoming.collapseTooltip || 'Collapse All';
       state.refreshTooltip = incoming.refreshTooltip || 'Refresh';
+      state.contextMenu = incoming.contextMenu && typeof incoming.contextMenu === 'object'
+        ? {
+            addToConversation: incoming.contextMenu.addToConversation || 'Add to Conversation',
+            copyPath: incoming.contextMenu.copyPath || 'Copy Path',
+            rename: incoming.contextMenu.rename || 'Rename',
+            delete: incoming.contextMenu.delete || 'Delete',
+          }
+        : {
+            addToConversation: 'Add to Conversation',
+            copyPath: 'Copy Path',
+            rename: 'Rename',
+            delete: 'Delete',
+          };
       state.iconSpriteUrl = incoming.iconSpriteUrl || '';
       state.tree = asArray(incoming.tree);
       syncExpandedPaths(state.tree);

@@ -3,12 +3,14 @@ import os
 from dataclasses import dataclass
 
 from PyQt6.QtCore import QAbstractTableModel, QModelIndex, Qt
+from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QFrame,
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QPushButton,
     QTableView,
     QVBoxLayout,
     QWidget,
@@ -59,24 +61,62 @@ class _TabularTableModel(QAbstractTableModel):
         return str(section + 1)
 
 
+class _ZoomableTableView(QTableView):
+    def __init__(self, zoom_in_handler, zoom_out_handler, parent=None):
+        super().__init__(parent)
+        self._zoom_in_handler = zoom_in_handler
+        self._zoom_out_handler = zoom_out_handler
+
+    def wheelEvent(self, event) -> None:
+        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            delta_y = event.angleDelta().y()
+            if delta_y == 0:
+                delta_y = event.pixelDelta().y()
+            if delta_y > 0:
+                self._zoom_in_handler()
+                event.accept()
+                return
+            if delta_y < 0:
+                self._zoom_out_handler()
+                event.accept()
+                return
+        super().wheelEvent(event)
+
+
 class TabularViewer(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._zoom_factor = 1.0
+        self._min_zoom_factor = 0.6
+        self._max_zoom_factor = 3.0
+        self._zoom_step = 1.12
+        self._base_table_font_size = 13.0
+        self._base_header_font_size = 12.0
+        self._base_row_height = 24
+        self._shortcuts: list[QShortcut] = []
         self._summary_label = QLabel(self)
         self._summary_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self._zoom_label = QLabel("100%", self)
+        self._zoom_out_button = QPushButton("-", self)
+        self._zoom_reset_button = QPushButton("100%", self)
+        self._zoom_in_button = QPushButton("+", self)
 
         self._message_label = QLabel(self)
         self._message_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._message_label.setWordWrap(True)
         self._message_label.hide()
 
-        self._table = QTableView(self)
+        self._table = _ZoomableTableView(self.zoom_in, self.zoom_out, self)
         self._table.setAlternatingRowColors(True)
         self._table.setWordWrap(False)
         self._table.setSortingEnabled(False)
         self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
         self._table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self._table.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self._table.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self._table.setAutoScroll(True)
+        self._table.setAutoScrollMargin(32)
         self._table.setShowGrid(True)
         self._table.setCornerButtonEnabled(True)
         self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
@@ -93,8 +133,13 @@ class TabularViewer(QWidget):
         header.setStyleSheet("background: #f8fafc; border-bottom: 1px solid #dbe3ef;")
         header_layout = QHBoxLayout(header)
         header_layout.setContentsMargins(12, 8, 12, 8)
+        header_layout.setSpacing(8)
         header_layout.addWidget(self._summary_label)
         header_layout.addStretch(1)
+        header_layout.addWidget(self._zoom_out_button)
+        header_layout.addWidget(self._zoom_reset_button)
+        header_layout.addWidget(self._zoom_in_button)
+        header_layout.addWidget(self._zoom_label)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -102,6 +147,66 @@ class TabularViewer(QWidget):
         layout.addWidget(header)
         layout.addWidget(self._message_label)
         layout.addWidget(self._table, 1)
+
+        table_font_size = self._table.font().pointSizeF()
+        if table_font_size > 0:
+            self._base_table_font_size = table_font_size
+        header_font_size = self._table.horizontalHeader().font().pointSizeF()
+        if header_font_size > 0:
+            self._base_header_font_size = header_font_size
+
+        self._zoom_out_button.clicked.connect(self.zoom_out)
+        self._zoom_reset_button.clicked.connect(self.reset_zoom)
+        self._zoom_in_button.clicked.connect(self.zoom_in)
+        self._install_shortcuts()
+        self._apply_zoom(resize_columns=False)
+
+    def _install_shortcuts(self) -> None:
+        shortcut_specs = (
+            ("Ctrl+=", self.zoom_in),
+            ("Ctrl++", self.zoom_in),
+            ("Ctrl+-", self.zoom_out),
+            ("Ctrl+0", self.reset_zoom),
+        )
+        for sequence, handler in shortcut_specs:
+            shortcut = QShortcut(QKeySequence(sequence), self)
+            shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+            shortcut.activated.connect(handler)
+            self._shortcuts.append(shortcut)
+
+    def _set_zoom_factor(self, factor: float, *, resize_columns: bool) -> None:
+        self._zoom_factor = min(max(float(factor or 1.0), self._min_zoom_factor), self._max_zoom_factor)
+        self._apply_zoom(resize_columns=resize_columns)
+
+    def _apply_zoom(self, *, resize_columns: bool) -> None:
+        table_font = self._table.font()
+        table_font.setPointSizeF(self._base_table_font_size * self._zoom_factor)
+        self._table.setFont(table_font)
+
+        header_font = self._table.horizontalHeader().font()
+        header_font.setPointSizeF(self._base_header_font_size * self._zoom_factor)
+        self._table.horizontalHeader().setFont(header_font)
+        self._table.verticalHeader().setFont(header_font)
+
+        self._table.verticalHeader().setDefaultSectionSize(max(24, int(self._base_row_height * self._zoom_factor)))
+        self._table.setAutoScrollMargin(max(24, int(32 * self._zoom_factor)))
+        self._zoom_label.setText(f"{self._zoom_factor * 100:.0f}%")
+
+        model = self._table.model()
+        if resize_columns and model is not None:
+            self._table.resizeColumnsToContents()
+            for column in range(model.columnCount()):
+                width = min(max(self._table.columnWidth(column), int(96 * self._zoom_factor)), int(360 * self._zoom_factor))
+                self._table.setColumnWidth(column, width)
+
+    def zoom_in(self) -> None:
+        self._set_zoom_factor(self._zoom_factor * self._zoom_step, resize_columns=True)
+
+    def zoom_out(self) -> None:
+        self._set_zoom_factor(self._zoom_factor / self._zoom_step, resize_columns=True)
+
+    def reset_zoom(self) -> None:
+        self._set_zoom_factor(1.0, resize_columns=True)
 
     def load_file(self, path: str) -> bool:
         try:
@@ -117,10 +222,7 @@ class TabularViewer(QWidget):
         self._summary_label.setText(
             f"{os.path.basename(path)}    {len(data.rows)} rows    {len(data.headers)} columns    encoding: {data.encoding}    delimiter: {_delimiter_label(data.delimiter)}"
         )
-        self._table.resizeColumnsToContents()
-        for column in range(model.columnCount()):
-            width = min(max(self._table.columnWidth(column), 96), 360)
-            self._table.setColumnWidth(column, width)
+        self._apply_zoom(resize_columns=True)
         return True
 
     def _set_error(self, message: str) -> None:

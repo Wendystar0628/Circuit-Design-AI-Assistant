@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 from PyQt6.QtCore import QObject, Qt, pyqtSignal, pyqtSlot
-from PyQt6.QtWidgets import QLabel, QSizePolicy, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QApplication, QInputDialog, QLabel, QMessageBox, QSizePolicy, QVBoxLayout, QWidget
 from PyQt6.QtWebChannel import QWebChannel
 from presentation.core.web_resource_host import app_resource_url, configure_app_web_view
 
@@ -28,6 +28,7 @@ class _ExplorerBridge(QObject):
     ready = pyqtSignal()
     open_file_requested = pyqtSignal(str)
     refresh_requested = pyqtSignal()
+    context_action_requested = pyqtSignal(str, str)
 
     @pyqtSlot()
     def markReady(self) -> None:
@@ -41,6 +42,10 @@ class _ExplorerBridge(QObject):
     def requestRefresh(self) -> None:
         self.refresh_requested.emit()
 
+    @pyqtSlot(str, str)
+    def triggerContextAction(self, action_id: str, path: str) -> None:
+        self.context_action_requested.emit(str(action_id or ""), str(path or ""))
+
 
 class FileBrowserPanel(QWidget):
     file_selected = pyqtSignal(str)
@@ -49,6 +54,7 @@ class FileBrowserPanel(QWidget):
         super().__init__(parent)
         self._i18n_manager = None
         self._event_bus = None
+        self._file_manager = None
         self._logger = None
         self._root_path: Optional[str] = None
         self._workspace_file_state: Dict[str, Any] = {"items": []}
@@ -83,6 +89,17 @@ class FileBrowserPanel(QWidget):
         return self._event_bus
 
     @property
+    def file_manager(self):
+        if self._file_manager is None:
+            try:
+                from shared.service_locator import ServiceLocator
+                from shared.service_names import SVC_FILE_MANAGER
+                self._file_manager = ServiceLocator.get_optional(SVC_FILE_MANAGER)
+            except Exception:
+                pass
+        return self._file_manager
+
+    @property
     def logger(self):
         if self._logger is None:
             try:
@@ -111,11 +128,13 @@ class FileBrowserPanel(QWidget):
         self._bridge.ready.connect(self._on_ready)
         self._bridge.open_file_requested.connect(self._on_open_file_requested)
         self._bridge.refresh_requested.connect(self.refresh)
+        self._bridge.context_action_requested.connect(self._on_context_action_requested)
         self._channel = QWebChannel(self)
         self._channel.registerObject("workspaceExplorerBridge", self._bridge)
         self._web_view = QWebEngineView(self)
         self._web_view.page().setWebChannel(self._channel)
         configure_app_web_view(self._web_view)
+        self._web_view.setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
         self.setFocusProxy(self._web_view)
         self._web_view.loadFinished.connect(self._on_load_finished)
         self._web_view.setUrl(app_resource_url("workspace/workspace_explorer.html"))
@@ -136,6 +155,216 @@ class FileBrowserPanel(QWidget):
             return
         self.file_selected.emit(display_path)
 
+    def _on_context_action_requested(self, action_id: str, path: str) -> None:
+        action = str(action_id or "").strip()
+        display_path = str(path or "").strip()
+        if not action or not display_path:
+            return
+        if action == "add_to_conversation":
+            self._add_file_to_conversation(display_path)
+            return
+        if action == "copy_path":
+            self._copy_path(display_path)
+            return
+        if action == "delete_file":
+            self._delete_file(display_path)
+            return
+        if action == "rename":
+            self._rename_file(display_path)
+            return
+        if self.logger:
+            self.logger.warning(f"Unsupported file browser context action: {action}")
+
+    def _workspace_item_state_for_path(self, path: str) -> Optional[Dict[str, Any]]:
+        identity_path = normalize_identity_path(path)
+        state = self._workspace_file_state if isinstance(self._workspace_file_state, dict) else {}
+        items = state.get("items", []) if isinstance(state, dict) else []
+        for item in items if isinstance(items, list) else []:
+            if not isinstance(item, dict):
+                continue
+            item_identity = str(item.get("identity_path", "") or "")
+            item_path = str(item.get("path", "") or "")
+            if item_identity and item_identity == identity_path:
+                return item
+            if item_path and normalize_identity_path(item_path) == identity_path:
+                return item
+        return None
+
+    def _show_warning_message(self, message: str) -> None:
+        QMessageBox.warning(
+            self,
+            self._get_text("dialog.warning.title", "Warning"),
+            str(message or ""),
+        )
+
+    def _show_error_message(self, message: str) -> None:
+        QMessageBox.critical(
+            self,
+            self._get_text("dialog.error.title", "Error"),
+            str(message or ""),
+        )
+
+    def _validate_existing_file(self, path: str) -> Optional[str]:
+        display_path = os.path.abspath(str(path or ""))
+        if not display_path or not os.path.isfile(display_path):
+            self._show_warning_message(
+                self._get_text(
+                    "file_browser.file_not_found",
+                    "The selected file does not exist anymore.",
+                )
+            )
+            return None
+        return display_path
+
+    def _ensure_file_not_dirty(self, path: str) -> bool:
+        item_state = self._workspace_item_state_for_path(path)
+        if item_state and bool(item_state.get("is_dirty", False)):
+            self._show_warning_message(
+                self._get_text(
+                    "file_browser.blocked_dirty",
+                    "This file has unsaved changes. Please save or close it before renaming or deleting.",
+                )
+            )
+            return False
+        return True
+
+    def _add_file_to_conversation(self, path: str) -> None:
+        display_path = self._validate_existing_file(path)
+        if not display_path:
+            return
+        if not self.event_bus:
+            self._show_error_message(
+                self._get_text(
+                    "file_browser.event_bus_unavailable",
+                    "Event bus is unavailable.",
+                )
+            )
+            return
+        try:
+            from shared.event_types import (
+                EVENT_UI_ACTIVATE_CONVERSATION_TAB,
+                EVENT_UI_ATTACH_FILES_TO_CONVERSATION,
+            )
+
+            self.event_bus.publish(EVENT_UI_ATTACH_FILES_TO_CONVERSATION, {"paths": [display_path]})
+            self.event_bus.publish(EVENT_UI_ACTIVATE_CONVERSATION_TAB, {})
+        except Exception as exc:
+            if self.logger:
+                self.logger.error(f"Failed to attach file to conversation: {exc}")
+            self._show_error_message(
+                self._get_text(
+                    "file_browser.attach_failed",
+                    "Failed to add the file to the conversation.",
+                )
+            )
+
+    def _copy_path(self, path: str) -> None:
+        display_path = os.path.abspath(str(path or ""))
+        if not display_path:
+            return
+        clipboard = QApplication.clipboard()
+        if clipboard is not None:
+            clipboard.setText(display_path)
+
+    def _delete_file(self, path: str) -> None:
+        display_path = self._validate_existing_file(path)
+        if not display_path:
+            return
+        if not self._ensure_file_not_dirty(display_path):
+            return
+        if self.file_manager is None:
+            self._show_error_message(
+                self._get_text(
+                    "file_browser.file_manager_unavailable",
+                    "File manager is unavailable.",
+                )
+            )
+            return
+        reply = QMessageBox.question(
+            self,
+            self._get_text("dialog.confirm.title", "Confirm"),
+            self._get_text(
+                "file_browser.delete_confirm",
+                "Delete file '{name}'?",
+            ).format(name=os.path.basename(display_path)),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            self.file_manager.delete_file(display_path)
+            self.refresh()
+        except Exception as exc:
+            if self.logger:
+                self.logger.error(f"Failed to delete file '{display_path}': {exc}")
+            self._show_error_message(
+                self._get_text(
+                    "file_browser.delete_failed",
+                    "Failed to delete the file: {error}",
+                ).format(error=exc)
+            )
+
+    def _rename_file(self, path: str) -> None:
+        display_path = self._validate_existing_file(path)
+        if not display_path:
+            return
+        if not self._ensure_file_not_dirty(display_path):
+            return
+        if self.file_manager is None:
+            self._show_error_message(
+                self._get_text(
+                    "file_browser.file_manager_unavailable",
+                    "File manager is unavailable.",
+                )
+            )
+            return
+        current_name = os.path.basename(display_path)
+        new_name, accepted = QInputDialog.getText(
+            self,
+            self._get_text("file_browser.rename_dialog.title", "Rename File"),
+            self._get_text("file_browser.rename_dialog.label", "New file name:"),
+            text=current_name,
+        )
+        if not accepted:
+            return
+        new_name = str(new_name or "").strip()
+        if not new_name or new_name == current_name:
+            return
+        if new_name in {".", ".."} or Path(new_name).name != new_name:
+            self._show_warning_message(
+                self._get_text(
+                    "file_browser.rename_invalid_name",
+                    "Please enter a valid file name.",
+                )
+            )
+            return
+        new_path = str(Path(display_path).with_name(new_name))
+        if os.path.exists(new_path):
+            self._show_warning_message(
+                self._get_text(
+                    "file_browser.rename_target_exists",
+                    "A file with the same name already exists.",
+                )
+            )
+            return
+        item_state = self._workspace_item_state_for_path(display_path)
+        was_active = bool(item_state and item_state.get("is_active", False))
+        try:
+            self.file_manager.move_file(display_path, new_path)
+            self.refresh()
+            if was_active and os.path.isfile(new_path):
+                self.file_selected.emit(new_path)
+        except Exception as exc:
+            if self.logger:
+                self.logger.error(f"Failed to rename file '{display_path}' -> '{new_path}': {exc}")
+            self._show_error_message(
+                self._get_text(
+                    "file_browser.rename_failed",
+                    "Failed to rename the file: {error}",
+                ).format(error=exc)
+            )
+
     def _state_payload(self) -> Dict[str, Any]:
         root_path = self._root_path or ""
         folder_name = os.path.basename(root_path) if root_path else ""
@@ -154,6 +383,12 @@ class FileBrowserPanel(QWidget):
             "title": folder_name.upper() if folder_name else self._get_text("panel.file_browser", "EXPLORER"),
             "collapseTooltip": self._get_text("file_browser.collapse_all", "Collapse All"),
             "refreshTooltip": self._get_text("file_browser.refresh", "Refresh"),
+            "contextMenu": {
+                "addToConversation": self._get_text("file_browser.add_to_conversation", "Add to Conversation"),
+                "copyPath": self._get_text("file_browser.copy_path", "Copy Path"),
+                "rename": self._get_text("file_browser.rename", "Rename"),
+                "delete": self._get_text("file_browser.delete", "Delete"),
+            },
             "emptyMessage": empty_message,
             "iconSpriteUrl": app_resource_url("icons/file/workspace_file_icons.svg").toString(),
             "tree": tree_nodes,

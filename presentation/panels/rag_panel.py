@@ -455,6 +455,16 @@ class RAGPanel(QWidget):
         except RuntimeError:
             logger.warning("No event loop for clear")
 
+    def can_manage_index(self) -> bool:
+        manager = self.rag_manager
+        return bool(manager and manager.project_root and manager.is_available and not self._is_indexing)
+
+    def trigger_reindex(self) -> None:
+        self._on_index_clicked()
+
+    def request_clear_index(self) -> None:
+        self._on_clear_clicked()
+
     async def _async_clear(self):
         """异步清空知识库（清空操作在工作线程执行）"""
         manager = self.rag_manager

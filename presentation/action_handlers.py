@@ -100,6 +100,13 @@ class ActionHandlers:
             return self.i18n_manager.get_text(key, default)
         return default if default else key
 
+    def _get_panel(self, panel_id: str):
+        return self._panels.get(panel_id)
+
+    def _activate_right_panel(self, panel_id: str) -> None:
+        if hasattr(self._main_window, "activate_right_panel"):
+            self._main_window.activate_right_panel(panel_id)
+
     # ============================================================
     # 回调字典
     # ============================================================
@@ -116,7 +123,22 @@ class ActionHandlers:
             "on_close_workspace": self.on_close_workspace,
             "on_save_file": self.on_save_file,
             "on_save_all_files": self.on_save_all_files,
+            "on_edit_undo": self.on_edit_undo,
+            "on_edit_redo": self.on_edit_redo,
+            "on_edit_cut": self.on_edit_cut,
+            "on_edit_copy": self.on_edit_copy,
+            "on_edit_paste": self.on_edit_paste,
+            "on_edit_select_all": self.on_edit_select_all,
             "on_toggle_panel": self.on_toggle_panel,
+            "on_show_conversation": self.on_show_conversation,
+            "on_show_rag": self.on_show_rag,
+            "on_show_devtools": self.on_show_devtools,
+            "on_new_conversation": self.on_new_conversation,
+            "on_conversation_history": self.on_conversation_history,
+            "on_conversation_compress": self.on_conversation_compress,
+            "on_conversation_clear": self.on_conversation_clear,
+            "on_reindex_knowledge": self.on_reindex_knowledge,
+            "on_clear_knowledge": self.on_clear_knowledge,
             "on_design_goals": self.on_design_goals,
             "on_iteration_history": self.on_iteration_history,
             "on_api_config": self.on_api_config,
@@ -289,6 +311,81 @@ class ActionHandlers:
         except Exception:
             pass
         return None
+
+    def on_edit_undo(self):
+        panel = self._get_panel("code_editor")
+        if panel is not None and hasattr(panel, "undo"):
+            panel.undo()
+
+    def on_edit_redo(self):
+        panel = self._get_panel("code_editor")
+        if panel is not None and hasattr(panel, "redo"):
+            panel.redo()
+
+    def on_edit_cut(self):
+        panel = self._get_panel("code_editor")
+        if panel is not None and hasattr(panel, "cut"):
+            panel.cut()
+
+    def on_edit_copy(self):
+        panel = self._get_panel("code_editor")
+        if panel is not None and hasattr(panel, "copy"):
+            panel.copy()
+
+    def on_edit_paste(self):
+        panel = self._get_panel("code_editor")
+        if panel is not None and hasattr(panel, "paste"):
+            panel.paste()
+
+    def on_edit_select_all(self):
+        panel = self._get_panel("code_editor")
+        if panel is not None and hasattr(panel, "select_all"):
+            panel.select_all()
+
+    def on_show_conversation(self):
+        self._activate_right_panel("conversation")
+
+    def on_show_rag(self):
+        self._activate_right_panel("rag")
+
+    def on_show_devtools(self):
+        self._activate_right_panel("devtools")
+
+    def on_new_conversation(self):
+        self.on_show_conversation()
+        panel = self._get_panel("chat")
+        if panel is not None and hasattr(panel, "start_new_conversation"):
+            panel.start_new_conversation()
+
+    def on_conversation_history(self):
+        self.on_show_conversation()
+        panel = self._get_panel("chat")
+        if panel is not None and hasattr(panel, "request_history"):
+            panel.request_history()
+
+    def on_conversation_compress(self):
+        self.on_show_conversation()
+        panel = self._get_panel("chat")
+        if panel is not None and hasattr(panel, "request_compress_context"):
+            panel.request_compress_context()
+
+    def on_conversation_clear(self):
+        self.on_show_conversation()
+        panel = self._get_panel("chat")
+        if panel is not None and hasattr(panel, "request_clear_display"):
+            panel.request_clear_display()
+
+    def on_reindex_knowledge(self):
+        self.on_show_rag()
+        panel = self._get_panel("rag")
+        if panel is not None and hasattr(panel, "trigger_reindex"):
+            panel.trigger_reindex()
+
+    def on_clear_knowledge(self):
+        self.on_show_rag()
+        panel = self._get_panel("rag")
+        if panel is not None and hasattr(panel, "request_clear_index"):
+            panel.request_clear_index()
 
     # ============================================================
     # 视图操作回调

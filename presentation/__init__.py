@@ -31,7 +31,7 @@ from presentation.ui_state import (
     UI_CURRENT_TAB,
     UI_IS_GENERATING,
 )
-from presentation.menu_manager import MenuManager
+from presentation.web_menu_manager import MenuManager
 from presentation.window_state_manager import WindowStateManager
 from presentation.session_manager import SessionManager
 from presentation.action_handlers import ActionHandlers

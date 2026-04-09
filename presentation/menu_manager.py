@@ -253,13 +253,6 @@ class MenuManager:
         if "on_run_simulation" in self._callbacks:
             self._actions["sim_run"].triggered.connect(self._callbacks["on_run_simulation"])
         menu.addAction(self._actions["sim_run"])
-        
-        # 停止仿真
-        self._actions["sim_stop"] = QAction(self._main_window)
-        self._actions["sim_stop"].setEnabled(False)
-        if "on_stop_simulation" in self._callbacks:
-            self._actions["sim_stop"].triggered.connect(self._callbacks["on_stop_simulation"])
-        menu.addAction(self._actions["sim_stop"])
 
     def _setup_knowledge_menu(self) -> None:
         """设置知识库菜单"""
@@ -430,7 +423,6 @@ class MenuManager:
         
         # 仿真菜单项
         self._actions["sim_run"].setText(self._get_text("menu.simulation.run", "Run Simulation"))
-        self._actions["sim_stop"].setText(self._get_text("menu.simulation.stop", "Stop Simulation"))
         
         # 知识库菜单项
         self._actions["knowledge_import"].setText(

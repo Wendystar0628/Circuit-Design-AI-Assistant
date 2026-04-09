@@ -7,13 +7,9 @@
     items: [],
     emptyMessage: '',
     runIconUrl: '',
-    stopIconUrl: '',
     simulationControl: {
       isRunning: false,
-      isStopRequested: false,
       canRun: false,
-      canStop: false,
-      primaryAction: 'run',
       primaryEnabled: false,
       primaryTooltip: '',
     },
@@ -91,23 +87,22 @@
     const simulationControl = state.simulationControl && typeof state.simulationControl === 'object'
       ? state.simulationControl
       : {};
-    const primaryAction = simulationControl.primaryAction === 'stop' ? 'stop' : 'run';
     const primaryBtn = document.createElement('button');
     primaryBtn.className = 'simulation-btn';
     primaryBtn.type = 'button';
     primaryBtn.disabled = !simulationControl.primaryEnabled;
     primaryBtn.title = simulationControl.primaryTooltip || '';
-    primaryBtn.setAttribute('aria-label', simulationControl.primaryTooltip || primaryAction);
+    primaryBtn.setAttribute('aria-label', simulationControl.primaryTooltip || 'run');
     primaryBtn.addEventListener('click', () => {
       if (primaryBtn.disabled) {
         return;
       }
-      invokeBridge(primaryAction === 'stop' ? 'stopSimulation' : 'runSimulation');
+      invokeBridge('runSimulation');
     });
 
     const iconEl = document.createElement('img');
     iconEl.alt = '';
-    iconEl.src = primaryAction === 'stop' ? state.stopIconUrl : state.runIconUrl;
+    iconEl.src = state.runIconUrl;
     primaryBtn.appendChild(iconEl);
     actionsEl.appendChild(primaryBtn);
 
@@ -129,15 +124,11 @@
       state.items = Array.isArray(incoming.items) ? incoming.items : [];
       state.emptyMessage = incoming.emptyMessage || '';
       state.runIconUrl = incoming.runIconUrl || '';
-      state.stopIconUrl = incoming.stopIconUrl || '';
       state.simulationControl = incoming.simulationControl && typeof incoming.simulationControl === 'object'
         ? incoming.simulationControl
         : {
             isRunning: false,
-            isStopRequested: false,
             canRun: false,
-            canStop: false,
-            primaryAction: 'run',
             primaryEnabled: false,
             primaryTooltip: '',
           };

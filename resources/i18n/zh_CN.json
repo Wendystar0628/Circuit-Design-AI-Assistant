@@ -29,7 +29,6 @@
 
   "menu.simulation": "仿真",
   "menu.simulation.run": "运行仿真",
-  "menu.simulation.stop": "停止仿真",
 
   "menu.knowledge": "索引库",
   "menu.knowledge.import": "导入文档",

@@ -29,7 +29,6 @@
 
   "menu.simulation": "Simulation",
   "menu.simulation.run": "Run Simulation",
-  "menu.simulation.stop": "Stop Simulation",
 
   "menu.knowledge": "Index Library",
   "menu.knowledge.import": "Import Documents",

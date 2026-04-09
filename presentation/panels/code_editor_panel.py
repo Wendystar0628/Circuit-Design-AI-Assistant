@@ -63,7 +63,6 @@ class CodeEditorPanel(QWidget):
     editable_file_state_changed = pyqtSignal(bool)
     workspace_file_state_changed = pyqtSignal(object)
     run_simulation_requested = pyqtSignal()
-    stop_simulation_requested = pyqtSignal()
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -84,10 +83,7 @@ class CodeEditorPanel(QWidget):
         self._open_workspace_btn: Optional[QPushButton] = None
         self._simulation_control_state: Dict[str, Any] = {
             "isRunning": False,
-            "isStopRequested": False,
             "canRun": False,
-            "canStop": False,
-            "primaryAction": "run",
             "primaryEnabled": False,
             "primaryTooltip": "",
         }
@@ -256,7 +252,6 @@ class CodeEditorPanel(QWidget):
         self._web_tab_bar.activate_file_requested.connect(self.switch_to_file)
         self._web_tab_bar.close_file_requested.connect(self._close_file_by_path)
         self._web_tab_bar.run_simulation_requested.connect(self.run_simulation_requested.emit)
-        self._web_tab_bar.stop_simulation_requested.connect(self.stop_simulation_requested.emit)
         tab_bar_layout.addWidget(self._web_tab_bar, 1)
 
         self._content_stack = QStackedWidget()
@@ -755,10 +750,7 @@ class CodeEditorPanel(QWidget):
         incoming = state if isinstance(state, dict) else {}
         self._simulation_control_state = {
             "isRunning": bool(incoming.get("isRunning", False)),
-            "isStopRequested": bool(incoming.get("isStopRequested", False)),
             "canRun": bool(incoming.get("canRun", False)),
-            "canStop": bool(incoming.get("canStop", False)),
-            "primaryAction": str(incoming.get("primaryAction", "run") or "run"),
             "primaryEnabled": bool(incoming.get("primaryEnabled", False)),
             "primaryTooltip": str(incoming.get("primaryTooltip", "") or ""),
         }

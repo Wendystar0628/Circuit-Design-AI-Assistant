@@ -20,7 +20,6 @@ class _WorkspaceTabsBridge(QObject):
     activate_file_requested = pyqtSignal(str)
     close_file_requested = pyqtSignal(str)
     run_simulation_requested = pyqtSignal()
-    stop_simulation_requested = pyqtSignal()
 
     @pyqtSlot()
     def markReady(self) -> None:
@@ -38,16 +37,11 @@ class _WorkspaceTabsBridge(QObject):
     def runSimulation(self) -> None:
         self.run_simulation_requested.emit()
 
-    @pyqtSlot()
-    def stopSimulation(self) -> None:
-        self.stop_simulation_requested.emit()
-
 
 class WebWorkspaceTabBar(QWidget):
     activate_file_requested = pyqtSignal(str)
     close_file_requested = pyqtSignal(str)
     run_simulation_requested = pyqtSignal()
-    stop_simulation_requested = pyqtSignal()
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -56,13 +50,9 @@ class WebWorkspaceTabBar(QWidget):
             "items": [],
             "emptyMessage": "",
             "runIconUrl": app_resource_url("icons/toolbar/play.svg").toString(),
-            "stopIconUrl": app_resource_url("icons/toolbar/stop.svg").toString(),
             "simulationControl": {
                 "isRunning": False,
-                "isStopRequested": False,
                 "canRun": False,
-                "canStop": False,
-                "primaryAction": "run",
                 "primaryEnabled": False,
                 "primaryTooltip": "",
             },
@@ -88,7 +78,6 @@ class WebWorkspaceTabBar(QWidget):
         self._bridge.activate_file_requested.connect(self.activate_file_requested.emit)
         self._bridge.close_file_requested.connect(self.close_file_requested.emit)
         self._bridge.run_simulation_requested.connect(self.run_simulation_requested.emit)
-        self._bridge.stop_simulation_requested.connect(self.stop_simulation_requested.emit)
         self._channel = QWebChannel(self)
         self._channel.registerObject("workspaceTabsBridge", self._bridge)
         self._web_view = QWebEngineView(self)
@@ -134,10 +123,7 @@ class WebWorkspaceTabBar(QWidget):
         incoming = state if isinstance(state, dict) else {}
         self._state["simulationControl"] = {
             "isRunning": bool(incoming.get("isRunning", False)),
-            "isStopRequested": bool(incoming.get("isStopRequested", False)),
             "canRun": bool(incoming.get("canRun", False)),
-            "canStop": bool(incoming.get("canStop", False)),
-            "primaryAction": str(incoming.get("primaryAction", "run") or "run"),
             "primaryEnabled": bool(incoming.get("primaryEnabled", False)),
             "primaryTooltip": str(incoming.get("primaryTooltip", "") or ""),
         }

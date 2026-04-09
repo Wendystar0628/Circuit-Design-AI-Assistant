@@ -238,12 +238,6 @@ EVENT_SIM_COMPLETE = "sim_complete"
 #   - recoverable: bool - 是否可恢复
 EVENT_SIM_ERROR = "sim_error"
 
-# 仿真取消
-# 携带数据：
-#   - reason: str - 取消原因（"user_requested", "timeout", "error"）
-#   - partial_result_path: str - 部分结果文件路径（若有）
-EVENT_SIM_CANCELLED = "sim_cancelled"
-
 # 仿真暂停
 # 携带数据：
 #   - progress: float - 暂停时的进度
@@ -783,7 +777,6 @@ __all__ = [
     "EVENT_SIM_PROGRESS",
     "EVENT_SIM_COMPLETE",
     "EVENT_SIM_ERROR",
-    "EVENT_SIM_CANCELLED",
     "EVENT_SIM_PAUSED",
     "EVENT_SIM_RESUMED",
     "EVENT_SIM_CONFIG_CHANGED",

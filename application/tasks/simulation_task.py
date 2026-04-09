@@ -5,7 +5,6 @@
 职责：
 - 在后台线程执行仿真，避免阻塞 UI
 - 通过信号通知仿真进度和完成状态
-- 支持取消操作
 
 设计原则：
 - 使用 QThread 实现后台执行
@@ -47,7 +46,6 @@ class SimulationWorker(QObject):
     def __init__(self, parent: Optional[QObject] = None):
         super().__init__(parent)
         self._logger = logging.getLogger(__name__)
-        self._cancelled = False
         self._file_path: Optional[str] = None
         self._project_root: Optional[str] = None
         self._analysis_config: Optional[Dict[str, Any]] = None
@@ -63,14 +61,8 @@ class SimulationWorker(QObject):
         self._project_root = project_root
         self._analysis_config = analysis_config
     
-    def cancel(self) -> None:
-        """请求取消仿真"""
-        self._cancelled = True
-    
     def run(self) -> None:
         """执行仿真（在工作线程中调用）"""
-        self._cancelled = False
-        
         try:
             from domain.services.simulation_service import SimulationService
             
@@ -94,10 +86,7 @@ class SimulationWorker(QObject):
         # 发送开始信号
         self.started.emit(self._file_path)
         self.progress.emit(0.1, f"正在仿真: {Path(self._file_path).name}")
-        
-        if self._cancelled:
-            return
-        
+
         # 执行仿真
         result = service.run_simulation(
             file_path=self._file_path,
@@ -105,10 +94,7 @@ class SimulationWorker(QObject):
             project_root=self._project_root,
             on_progress=self._on_progress,
         )
-        
-        if self._cancelled:
-            return
-        
+
         # 发送完成信号 - 无论成功与否都发送 completed，让 UI 层处理
         self.completed.emit(result)
         
@@ -119,10 +105,9 @@ class SimulationWorker(QObject):
     
     def _on_progress(self, progress: float, message: str) -> None:
         """进度回调"""
-        if not self._cancelled:
-            # 映射进度到 0.1-0.9 范围（0.1 是开始，1.0 是完成）
-            mapped_progress = 0.1 + progress * 0.8
-            self.progress.emit(mapped_progress, message)
+        # 映射进度到 0.1-0.9 范围（0.1 是开始，1.0 是完成）
+        mapped_progress = 0.1 + progress * 0.8
+        self.progress.emit(mapped_progress, message)
 
 
 class SimulationTask(QObject):
@@ -173,20 +158,6 @@ class SimulationTask(QObject):
         self._setup_worker()
         self._worker.setup(file_path, project_root, analysis_config)
         self._start_thread()
-        return True
-    
-    def cancel(self) -> bool:
-        """
-        取消当前仿真
-        
-        Returns:
-            bool: 是否成功发送取消请求
-        """
-        if not self.is_running:
-            return False
-        
-        if self._worker:
-            self._worker.cancel()
         return True
     
     def _setup_worker(self) -> None:

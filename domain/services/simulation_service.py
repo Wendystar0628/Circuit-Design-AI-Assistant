@@ -243,25 +243,7 @@ class SimulationService:
     # ============================================================
     # 仿真控制方法
     # ============================================================
-    
-    def cancel_simulation(self) -> bool:
-        """
-        取消当前仿真
-        
-        注意：由于使用 ngspice 共享库模式，无法真正中断正在执行的仿真。
-        此方法仅设置标志位，仿真会在下一个检查点停止。
-        
-        Returns:
-            bool: 是否成功发送取消请求
-        """
-        if not self._is_running:
-            self._logger.warning("没有正在运行的仿真")
-            return False
-        
-        self._logger.info("请求取消仿真")
-        # 实际取消逻辑需要在执行器中实现超时机制
-        return True
-    
+
     def is_running(self) -> bool:
         """
         检查是否有仿真正在运行

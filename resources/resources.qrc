@@ -5,10 +5,7 @@
         <file>styles/main.qss</file>
         
         <!-- 工具栏图标 (24x24) -->
-        <file>icons/toolbar/folder_open.svg</file>
-        <file>icons/toolbar/save.svg</file>
         <file>icons/toolbar/play.svg</file>
-        <file>icons/toolbar/stop.svg</file>
         <file>icons/toolbar/undo.svg</file>
         <file>icons/toolbar/redo.svg</file>
         
@@ -25,10 +22,7 @@
         <file>icons/status/loading.svg</file>
         
         <!-- 文件类型图标 (16x16) -->
-        <file>icons/file/circuit.svg</file>
-        <file>icons/file/folder.svg</file>
         <file>icons/file/file.svg</file>
-        <file>icons/file/image.svg</file>
         
         <!-- 菜单图标 (16x16) -->
         <file>icons/menu/settings.svg</file>

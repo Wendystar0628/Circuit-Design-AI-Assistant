@@ -46,7 +46,6 @@ from shared.event_types import (
     EVENT_SIM_PROGRESS,
     EVENT_SIM_COMPLETE,
     EVENT_SIM_ERROR,
-    EVENT_SIM_CANCELLED,
 )
 
 
@@ -64,9 +63,6 @@ class SimulationStatus(Enum):
     
     ERROR = "error"
     """仿真出错"""
-    
-    CANCELLED = "cancelled"
-    """仿真已取消"""
 
 
 @dataclass
@@ -200,7 +196,6 @@ class SimulationViewModel(BaseViewModel):
         self.subscribe(EVENT_SIM_PROGRESS, self._on_simulation_progress)
         self.subscribe(EVENT_SIM_COMPLETE, self._on_simulation_complete)
         self.subscribe(EVENT_SIM_ERROR, self._on_simulation_error)
-        self.subscribe(EVENT_SIM_CANCELLED, self._on_simulation_cancelled)
         
         self._logger.info("SimulationViewModel initialized")
 
@@ -248,14 +243,6 @@ class SimulationViewModel(BaseViewModel):
         self.notify_property_changed("error_message", self._error_message)
         
         self._logger.error(f"Simulation error: {self._error_message}")
-    
-    def _on_simulation_cancelled(self, event_data: Dict[str, Any]):
-        """处理仿真取消事件"""
-        self._set_status(SimulationStatus.CANCELLED)
-        
-        self.notify_property_changed("simulation_status", self._simulation_status)
-        
-        self._logger.info("Simulation cancelled")
     
     def _set_status(self, status: SimulationStatus):
         """设置仿真状态"""
@@ -530,16 +517,6 @@ class SimulationViewModel(BaseViewModel):
                 "simulation_status": self._simulation_status,
                 "error_message": self._error_message,
             })
-    
-    def cancel_simulation(self):
-        """取消当前仿真"""
-        if self.simulation_service is None:
-            return
-        
-        if self._simulation_status == SimulationStatus.RUNNING:
-            self.simulation_service.cancel_simulation()
-            self._set_status(SimulationStatus.CANCELLED)
-            self.notify_property_changed("simulation_status", self._simulation_status)
 
     # ============================================================
     # 辅助方法

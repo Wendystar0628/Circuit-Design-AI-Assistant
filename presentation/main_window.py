@@ -366,7 +366,6 @@ class MainWindow(QMainWindow):
         self._simulation_command_controller = SimulationCommandController(self)
         callbacks = self._action_handlers.get_callbacks()
         callbacks["on_run_simulation"] = self._simulation_command_controller.run_simulation
-        callbacks["on_stop_simulation"] = self._simulation_command_controller.stop_simulation
         
         # 添加最近项目相关回调
         callbacks["on_recent_click"] = self._action_handlers.on_recent_project_clicked

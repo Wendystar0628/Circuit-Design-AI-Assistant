@@ -642,8 +642,6 @@ class SimulationTab(QWidget):
             self._status_indicator.hide_status()
         elif status == SimulationStatus.ERROR:
             self._status_indicator.hide_status()
-        elif status == SimulationStatus.CANCELLED:
-            self._status_indicator.hide_status()
     
     def _show_error(self, message: str):
         """显示错误信息"""

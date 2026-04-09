@@ -18,7 +18,6 @@ class SimulationCommandController(QObject):
         self._current_file_path = ""
         self._current_file_name = ""
         self._current_file_dirty = False
-        self._stop_requested = False
         self._task = SimulationTask(self)
         self._task.simulation_started.connect(self._on_simulation_started)
         self._task.simulation_completed.connect(self._on_simulation_completed)
@@ -50,15 +49,10 @@ class SimulationCommandController(QObject):
                 self._code_editor.run_simulation_requested.disconnect(self.run_simulation)
             except Exception:
                 pass
-            try:
-                self._code_editor.stop_simulation_requested.disconnect(self.stop_simulation)
-            except Exception:
-                pass
         self._code_editor = code_editor
         if self._code_editor is not None:
             self._code_editor.workspace_file_state_changed.connect(self._on_workspace_file_state_changed)
             self._code_editor.run_simulation_requested.connect(self.run_simulation)
-            self._code_editor.stop_simulation_requested.connect(self.stop_simulation)
             self._on_workspace_file_state_changed(self._code_editor.get_workspace_file_state())
         else:
             self._current_file_path = ""
@@ -73,7 +67,6 @@ class SimulationCommandController(QObject):
         state = self._build_ui_state()
         if self._menu_manager is not None:
             self._menu_manager.set_action_enabled("sim_run", bool(state.get("canRun", False)))
-            self._menu_manager.set_action_enabled("sim_stop", bool(state.get("canStop", False)))
         if self._code_editor is not None:
             self._code_editor.set_simulation_control_state(state)
 
@@ -120,12 +113,11 @@ class SimulationCommandController(QObject):
                     self._get_text("dialog.warning.title", "Warning"),
                     self._get_text(
                         "simulation.save_before_run_failed",
-                        "当前电路文件保存失败，已取消仿真。"
+                        "当前电路文件保存失败，未启动仿真。"
                     )
                 )
                 return
 
-        self._stop_requested = False
         if not self._task.run_file(file_path, project_root):
             QMessageBox.warning(
                 self._main_window,
@@ -139,21 +131,6 @@ class SimulationCommandController(QObject):
             self.logger.info(f"Started simulation for active editor file: {file_path}")
         self.refresh_ui_state()
 
-    def stop_simulation(self) -> None:
-        if not self._task.is_running or self._stop_requested:
-            return
-        if not self._task.cancel():
-            QMessageBox.warning(
-                self._main_window,
-                self._get_text("dialog.warning.title", "Warning"),
-                self._get_text("simulation.cancel_failed", "无法取消仿真")
-            )
-            return
-        self._stop_requested = True
-        if self.logger:
-            self.logger.info("Simulation stop requested")
-        self.refresh_ui_state()
-
     def _build_ui_state(self) -> Dict[str, Any]:
         project_root = self._get_project_root()
         is_running = self._task.is_running
@@ -161,46 +138,36 @@ class SimulationCommandController(QObject):
             self._current_file_path and is_simulatable_circuit_extension(self._current_file_path)
         )
         can_run = bool(project_root and has_active_circuit_file and not is_running)
-        can_stop = bool(is_running and not self._stop_requested)
-
         if is_running:
-            primary_action = "stop"
-            primary_enabled = can_stop
             primary_tooltip = self._get_text(
-                "simulation.stop_requested_tip",
-                "正在请求停止仿真"
-            ) if self._stop_requested else self._get_text(
-                "menu.simulation.stop",
-                "Stop Simulation"
+                "simulation.running_current_file",
+                "仿真运行中"
+            )
+        elif not project_root:
+            primary_tooltip = self._get_text(
+                "status.open_workspace",
+                "Please open a workspace folder"
+            )
+        elif not self._current_file_path:
+            primary_tooltip = self._get_text(
+                "simulation.require_active_circuit_file",
+                "请先在编辑器中打开一个可仿真的电路文件（.cir / .sp / .spice / .net / .ckt）"
+            )
+        elif not has_active_circuit_file:
+            primary_tooltip = self._get_text(
+                "simulation.invalid_active_file",
+                "当前活动文件不是可仿真的电路文件：{name}"
+            ).format(name=self._current_file_name or Path(self._current_file_path).name)
+        elif self._current_file_dirty:
+            primary_tooltip = self._get_text(
+                "simulation.save_and_run_current_file",
+                "保存并运行当前电路文件"
             )
         else:
-            primary_action = "run"
-            primary_enabled = can_run
-            if not project_root:
-                primary_tooltip = self._get_text(
-                    "status.open_workspace",
-                    "Please open a workspace folder"
-                )
-            elif not self._current_file_path:
-                primary_tooltip = self._get_text(
-                    "simulation.require_active_circuit_file",
-                    "请先在编辑器中打开一个可仿真的电路文件（.cir / .sp / .spice / .net / .ckt）"
-                )
-            elif not has_active_circuit_file:
-                primary_tooltip = self._get_text(
-                    "simulation.invalid_active_file",
-                    "当前活动文件不是可仿真的电路文件：{name}"
-                ).format(name=self._current_file_name or Path(self._current_file_path).name)
-            elif self._current_file_dirty:
-                primary_tooltip = self._get_text(
-                    "simulation.save_and_run_current_file",
-                    "保存并运行当前电路文件"
-                )
-            else:
-                primary_tooltip = self._get_text(
-                    "simulation.run_current_file",
-                    "运行当前电路文件"
-                )
+            primary_tooltip = self._get_text(
+                "simulation.run_current_file",
+                "运行当前电路文件"
+            )
 
         return {
             "currentFilePath": self._current_file_path,
@@ -208,11 +175,8 @@ class SimulationCommandController(QObject):
             "isCurrentFileDirty": self._current_file_dirty,
             "hasActiveCircuitFile": has_active_circuit_file,
             "isRunning": is_running,
-            "isStopRequested": self._stop_requested,
             "canRun": can_run,
-            "canStop": can_stop,
-            "primaryAction": primary_action,
-            "primaryEnabled": primary_enabled,
+            "primaryEnabled": can_run,
             "primaryTooltip": primary_tooltip,
         }
 
@@ -234,19 +198,16 @@ class SimulationCommandController(QObject):
         self.refresh_ui_state()
 
     def _on_simulation_started(self, file_path: str) -> None:
-        self._stop_requested = False
         if self.logger:
             self.logger.info(f"Simulation started: {file_path}")
         self.refresh_ui_state()
 
     def _on_simulation_completed(self, result: object) -> None:
-        self._stop_requested = False
         if self.logger:
             self.logger.info(f"Simulation completed: success={getattr(result, 'success', False)}")
         self.refresh_ui_state()
 
     def _on_simulation_error(self, error_type: str, error_message: str) -> None:
-        self._stop_requested = False
         if self.logger:
             self.logger.error(f"Simulation error: {error_type} - {error_message}")
         QMessageBox.critical(

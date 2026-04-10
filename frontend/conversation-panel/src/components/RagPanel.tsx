@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ConversationBridge } from '../bridge'
 import type { ConversationMainState, RagFileState } from '../types'
 
@@ -62,7 +62,23 @@ function fileRowStatusClass(file: RagFileState): string {
 
 export function RagPanel({ state, bridge, bridgeConnected }: RagPanelProps) {
   const [query, setQuery] = useState('')
+  const [isSearchViewActive, setIsSearchViewActive] = useState(Boolean(state.rag.search.result_text))
   const rag = state.rag
+  const previousResultTextRef = useRef(state.rag.search.result_text)
+
+  useEffect(() => {
+    const nextResultText = rag.search.result_text
+    const previousResultText = previousResultTextRef.current
+
+    if (!nextResultText) {
+      setIsSearchViewActive(false)
+    } else if (nextResultText !== previousResultText) {
+      setIsSearchViewActive(true)
+    }
+
+    previousResultTextRef.current = nextResultText
+  }, [rag.search.result_text])
+
   const progressRatio = useMemo(() => {
     if (!rag.progress.total) {
       return 0
@@ -153,18 +169,38 @@ export function RagPanel({ state, bridge, bridgeConnected }: RagPanelProps) {
             onChange={(event) => setQuery(event.target.value)}
             placeholder="输入检索内容..."
           />
-          <button
-            type="button"
-            className="primary-button rag-search-button"
-            onClick={() => bridge?.requestRagSearch?.(query.trim())}
-            disabled={!canSearch}
-          >
-            {rag.search.is_running ? '检索中...' : '检索'}
-          </button>
+          {isSearchViewActive ? (
+            <div className="rag-search-actions">
+              <button
+                type="button"
+                className="primary-button rag-search-button rag-search-button--stacked"
+                onClick={() => bridge?.requestRagSearch?.(query.trim())}
+                disabled={!canSearch}
+              >
+                {rag.search.is_running ? '检索中...' : '检索'}
+              </button>
+              <button
+                type="button"
+                className="secondary-button rag-search-button rag-search-button--stacked"
+                onClick={() => setIsSearchViewActive(false)}
+              >
+                返回
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              className="primary-button rag-search-button"
+              onClick={() => bridge?.requestRagSearch?.(query.trim())}
+              disabled={!canSearch}
+            >
+              {rag.search.is_running ? '检索中...' : '检索'}
+            </button>
+          )}
         </div>
-        <div className="rag-search-result">
-          {rag.search.result_text || '检索结果将显示在此处'}
-        </div>
+        {isSearchViewActive ? (
+          <div className="rag-search-result">{rag.search.result_text || '检索结果将显示在此处'}</div>
+        ) : null}
       </div>
 
       <div className="rag-files-card">

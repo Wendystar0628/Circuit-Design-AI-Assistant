@@ -321,10 +321,13 @@ const AgentStepCard = memo(function AgentStepCard({
 
   return (
     <div className={`message-bubble message-bubble--assistant ${runtime ? 'message-bubble--runtime' : ''}`}>
-      <div className="message-bubble__meta">
-        <span>{runtime ? '运行中 Step' : `Step ${step.step_index}`}</span>
-        <span>{step.is_complete ? '完成' : '进行中'}</span>
-      </div>
+      {step.reasoning_content_html ? (
+        <div className="detail-card-list">
+          <DetailCard title="思考过程" subtitle={step.is_complete ? '已完成' : '进行中'}>
+            <RichHtml html={step.reasoning_content_html} bridge={bridge} />
+          </DetailCard>
+        </div>
+      ) : null}
       {step.content_html ? (
         <RichHtml html={step.content_html} bridge={bridge} className="message-bubble__content" />
       ) : (
@@ -332,11 +335,6 @@ const AgentStepCard = memo(function AgentStepCard({
       )}
       {step.is_partial ? <div className="partial-badge">{stopReasonLabel(step.stop_reason)}</div> : null}
       <div className="detail-card-list">
-        {step.reasoning_content_html ? (
-          <DetailCard title="思考过程" subtitle={step.is_complete ? '已完成' : '进行中'}>
-            <RichHtml html={step.reasoning_content_html} bridge={bridge} />
-          </DetailCard>
-        ) : null}
         {hasSearchDetails ? (
           <DetailCard title="搜索过程" subtitle={searchStateLabel(step.web_search_state)}>
             {step.web_search_query ? (

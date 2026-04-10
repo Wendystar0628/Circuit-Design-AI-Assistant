@@ -486,7 +486,7 @@ return (
     ) : null}
 
     <div
-      className="composer-editor-shell"
+      className="composer-body"
       onDragOver={(event) => {
         event.preventDefault()
       }}
@@ -498,133 +498,137 @@ return (
         }
       }}
     >
-      <div
-        ref={editorRef}
-        className="composer-editor"
-        contentEditable={bridgeReady}
-        suppressContentEditableWarning
-        role="textbox"
-        aria-label="消息输入框"
-        aria-multiline="true"
-        data-empty="true"
-        data-placeholder="输入消息。Shift+Enter 换行，Enter 发送。"
-        onFocus={() => {
-          if (editorRef.current && editorRef.current.textContent === '') {
-            editorRef.current.dataset.empty = draftAttachments.length ? 'false' : 'true'
-          }
-        }}
-        onInput={() => {
-          refreshComposerState()
-        }}
-        onPaste={(event) => {
-          event.preventDefault()
-          insertPlainTextAtCursor(editorRef.current as HTMLDivElement, event.clipboardData.getData('text/plain'))
-          refreshComposerState()
-        }}
-        onMouseDown={(event) => {
-          const target = event.target as HTMLElement | null
-          const removeTarget = target?.closest<HTMLElement>('[data-remove-inline-attachment]')
-          if (removeTarget?.dataset.removeInlineAttachment) {
+      <div className="composer-editor-frame">
+        <div
+          ref={editorRef}
+          className="composer-editor"
+          contentEditable={bridgeReady}
+          suppressContentEditableWarning
+          role="textbox"
+          aria-label="消息输入框"
+          aria-multiline="true"
+          data-empty="true"
+          data-placeholder="输入消息。Shift+Enter 换行，Enter 发送。"
+          onFocus={() => {
+            if (editorRef.current && editorRef.current.textContent === '') {
+              editorRef.current.dataset.empty = draftAttachments.length ? 'false' : 'true'
+            }
+          }}
+          onInput={() => {
+            refreshComposerState()
+          }}
+          onPaste={(event) => {
             event.preventDefault()
-            removeAttachment(removeTarget.dataset.removeInlineAttachment)
-          }
-        }}
-        onKeyDown={(event) => {
-          if (event.key === 'Enter' && !event.shiftKey) {
-            event.preventDefault()
-            if (!primaryActionDisabled && actionMode === 'send') {
-              bridge?.sendMessage?.(serializedDraft, { attachments: draftAttachments })
-              return
-            }
-            if (!primaryActionDisabled && actionMode === 'stop') {
-              bridge?.requestStop?.()
-            }
-            return
-          }
-          if (event.key === 'Enter' && event.shiftKey) {
-            event.preventDefault()
-            if (editorRef.current) {
-              insertLineBreakAtCursor(editorRef.current)
-              refreshComposerState()
-            }
-            return
-          }
-          if (event.key === 'Escape' && actionMode === 'stop') {
-            event.preventDefault()
-            bridge?.requestStop?.()
-            return
-          }
-          if ((event.key === 'Backspace' || event.key === 'Delete') && editorRef.current) {
-            const selection = window.getSelection()
-            if (!selection || !selection.isCollapsed) {
-              return
-            }
-            const anchorNode = selection.anchorNode
-            const anchorOffset = selection.anchorOffset
-            const editor = editorRef.current
-            let candidate: Node | null = null
-
-            if (anchorNode?.nodeType === Node.TEXT_NODE) {
-              const textNode = anchorNode as Text
-              if (event.key === 'Backspace' && anchorOffset === 0) {
-                candidate = textNode.previousSibling
-              } else if (event.key === 'Delete' && anchorOffset === textNode.textContent?.length) {
-                candidate = textNode.nextSibling
-              }
-            } else if (anchorNode?.nodeType === Node.ELEMENT_NODE) {
-              const element = anchorNode as Element
-              candidate = event.key === 'Backspace'
-                ? element.childNodes[anchorOffset - 1] ?? null
-                : element.childNodes[anchorOffset] ?? null
-            }
-
-            const candidateElement = candidate?.nodeType === Node.TEXT_NODE && candidate.textContent === '\u200b'
-              ? (event.key === 'Backspace' ? candidate.previousSibling : candidate.nextSibling)
-              : candidate
-            const inlineKey = candidateElement instanceof HTMLElement ? candidateElement.dataset.attachmentKey : undefined
-            if (inlineKey) {
+            insertPlainTextAtCursor(editorRef.current as HTMLDivElement, event.clipboardData.getData('text/plain'))
+            refreshComposerState()
+          }}
+          onMouseDown={(event) => {
+            const target = event.target as HTMLElement | null
+            const removeTarget = target?.closest<HTMLElement>('[data-remove-inline-attachment]')
+            if (removeTarget?.dataset.removeInlineAttachment) {
               event.preventDefault()
-              removeAttachment(inlineKey)
-              if (editor) {
-                editor.focus()
+              removeAttachment(removeTarget.dataset.removeInlineAttachment)
+            }
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' && !event.shiftKey) {
+              event.preventDefault()
+              if (!primaryActionDisabled && actionMode === 'send') {
+                bridge?.sendMessage?.(serializedDraft, { attachments: draftAttachments })
+                return
+              }
+              if (!primaryActionDisabled && actionMode === 'stop') {
+                bridge?.requestStop?.()
+              }
+              return
+            }
+            if (event.key === 'Enter' && event.shiftKey) {
+              event.preventDefault()
+              if (editorRef.current) {
+                insertLineBreakAtCursor(editorRef.current)
+                refreshComposerState()
+              }
+              return
+            }
+            if (event.key === 'Escape' && actionMode === 'stop') {
+              event.preventDefault()
+              bridge?.requestStop?.()
+              return
+            }
+            if ((event.key === 'Backspace' || event.key === 'Delete') && editorRef.current) {
+              const selection = window.getSelection()
+              if (!selection || !selection.isCollapsed) {
+                return
+              }
+              const anchorNode = selection.anchorNode
+              const anchorOffset = selection.anchorOffset
+              const editor = editorRef.current
+              let candidate: Node | null = null
+
+              if (anchorNode?.nodeType === Node.TEXT_NODE) {
+                const textNode = anchorNode as Text
+                if (event.key === 'Backspace' && anchorOffset === 0) {
+                  candidate = textNode.previousSibling
+                } else if (event.key === 'Delete' && anchorOffset === textNode.textContent?.length) {
+                  candidate = textNode.nextSibling
+                }
+              } else if (anchorNode?.nodeType === Node.ELEMENT_NODE) {
+                const element = anchorNode as Element
+                candidate = event.key === 'Backspace'
+                  ? element.childNodes[anchorOffset - 1] ?? null
+                  : element.childNodes[anchorOffset] ?? null
+              }
+
+              const candidateElement = candidate?.nodeType === Node.TEXT_NODE && candidate.textContent === '\u200b'
+                ? (event.key === 'Backspace' ? candidate.previousSibling : candidate.nextSibling)
+                : candidate
+              const inlineKey = candidateElement instanceof HTMLElement ? candidateElement.dataset.attachmentKey : undefined
+              if (inlineKey) {
+                event.preventDefault()
+                removeAttachment(inlineKey)
+                if (editor) {
+                  editor.focus()
+                }
               }
             }
-          }
-        }}
-      />
+          }}
+        />
+      </div>
 
-      <div className="composer-controls">
-        <button
-          type="button"
-          className="icon-button composer-control-button"
-          onClick={() => bridge?.requestUploadImage?.()}
-          disabled={!bridgeReady}
-          title="上传图片"
-        >
-          图片
-        </button>
-        <button
-          type="button"
-          className="icon-button composer-control-button"
-          onClick={() => bridge?.requestSelectFile?.()}
-          disabled={!bridgeReady}
-          title="选择文件"
-        >
-          文件
-        </button>
-        <div className={`usage-card composer-usage-pill usage-card--${usageTone(state.composer.compress_button_state)}`}>
-          <span className="usage-card__tokens">
-            {formatCompactTokenCount(state.composer.usage.current_tokens)} / {formatCompactTokenCount(state.composer.usage.max_tokens)}
-          </span>
+      <div className="composer-footer">
+        <div className="composer-controls">
+          <button
+            type="button"
+            className="icon-button composer-control-button"
+            onClick={() => bridge?.requestUploadImage?.()}
+            disabled={!bridgeReady}
+            title="上传图片"
+          >
+            图片
+          </button>
+          <button
+            type="button"
+            className="icon-button composer-control-button"
+            onClick={() => bridge?.requestSelectFile?.()}
+            disabled={!bridgeReady}
+            title="选择文件"
+          >
+            文件
+          </button>
+          <div className={`usage-card composer-usage-pill usage-card--${usageTone(state.composer.compress_button_state)}`}>
+            <span className="usage-card__tokens">
+              {formatCompactTokenCount(state.composer.usage.current_tokens)} / {formatCompactTokenCount(state.composer.usage.max_tokens)}
+            </span>
+          </div>
+          <button
+            type="button"
+            className="model-card composer-model-button"
+            onClick={() => bridge?.requestModelConfig?.()}
+            disabled={!bridgeReady}
+          >
+            {state.composer.model_display_name || '模型'}
+          </button>
         </div>
-        <button
-          type="button"
-          className="model-card composer-model-button"
-          onClick={() => bridge?.requestModelConfig?.()}
-          disabled={!bridgeReady}
-        >
-          {state.composer.model_display_name || '模型'}
-        </button>
         <button
           type="button"
           className={`primary-button primary-button--${actionMode} composer-send-button`}

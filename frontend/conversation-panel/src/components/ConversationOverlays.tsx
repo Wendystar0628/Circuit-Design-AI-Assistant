@@ -88,6 +88,143 @@ function renderFileChangeList(fileChanges: ConversationRollbackFileChangeState[]
   )
 }
 
+function HistorySessionRow({
+  session,
+  history,
+  bridge,
+}: {
+  session: ConversationSessionInfoState
+  history: ConversationHistoryOverlayState
+  bridge: ConversationBridge | null
+}) {
+  return (
+    <button
+      type="button"
+      className={[
+        'conversation-session-row',
+        session.session_id === history.selected_session_id ? 'conversation-session-row--active' : '',
+      ]
+        .filter(Boolean)
+        .join(' ')}
+      onClick={() => bridge?.selectHistorySession?.(session.session_id)}
+    >
+      <div className="conversation-session-row__header">
+        <span className="conversation-session-row__title">{session.name || session.session_id}</span>
+        {session.session_id === history.current_session_id ? (
+          <span className="conversation-status-badge">当前</span>
+        ) : null}
+      </div>
+      <div className="conversation-session-row__meta">
+        <span>{session.message_count} 条消息</span>
+        <span>{session.updated_at || session.created_at || ''}</span>
+      </div>
+      <div className="conversation-session-row__preview">{session.preview || '无摘要'}</div>
+    </button>
+  )
+}
+
+function HistoryDetailPanel({
+  history,
+  selectedSession,
+  bridge,
+}: {
+  history: ConversationHistoryOverlayState
+  selectedSession: ConversationSessionInfoState | null
+  bridge: ConversationBridge | null
+}) {
+  if (!selectedSession) {
+    return (
+      <div className="conversation-history-detail">
+        <div className="conversation-overlay-empty">请选择一个会话查看详情。</div>
+        {history.error_message ? (
+          <div className="conversation-overlay-alert conversation-overlay-alert--error">
+            {history.error_message}
+          </div>
+        ) : null}
+      </div>
+    )
+  }
+
+  return (
+    <div className="conversation-history-detail">
+      <section className="conversation-history-summary">
+        <div className="conversation-history-summary__identity">
+          <div className="conversation-history-summary__title">{selectedSession.name || selectedSession.session_id}</div>
+          <div className="conversation-history-summary__meta">
+            <span>{selectedSession.message_count} 条消息</span>
+            <span>{selectedSession.updated_at || selectedSession.created_at || ''}</span>
+          </div>
+        </div>
+        <div className="conversation-history-summary__actions">
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={() => bridge?.openHistorySession?.(selectedSession.session_id)}
+          >
+            打开
+          </button>
+          <button
+            type="button"
+            className="secondary-button secondary-button--danger"
+            onClick={() => bridge?.requestDeleteHistorySession?.(selectedSession.session_id)}
+          >
+            删除
+          </button>
+        </div>
+      </section>
+
+      <section className="conversation-history-export">
+        <div className="conversation-history-section__header">
+          <div className="conversation-history-section__title">导出</div>
+          <div className="conversation-history-section__subtitle">选择导出格式</div>
+        </div>
+        <div className="conversation-overlay-chip-list">
+          {EXPORT_FORMATS.map((item) => (
+            <button
+              key={item.value}
+              type="button"
+              className="secondary-button"
+              onClick={() => bridge?.requestExportHistorySession?.(selectedSession.session_id, item.value)}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section className="conversation-history-preview">
+        <div className="conversation-history-section__header">
+          <div className="conversation-history-section__title">预览</div>
+          <div className="conversation-history-section__subtitle">
+            {history.is_loading
+              ? '正在加载当前选中会话'
+              : history.preview_messages.length > 0
+                ? '当前选中会话的消息片段'
+                : '当前会话暂无可预览内容'}
+          </div>
+        </div>
+        <div className="conversation-history-preview__body">
+          {history.is_loading ? (
+            <div className="conversation-overlay-empty">正在加载会话预览。</div>
+          ) : history.preview_messages.length > 0 ? (
+            <div className="conversation-history-preview__list">
+              {history.preview_messages.map((message) => renderSessionPreviewMessage(message))}
+            </div>
+          ) : (
+            <div className="conversation-overlay-empty">暂无消息预览。</div>
+          )}
+        </div>
+      </section>
+
+      {history.error_message ? (
+        <div className="conversation-overlay-alert conversation-overlay-alert--error">
+          {history.error_message}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 function HistoryOverlay({
   history,
   bridge,
@@ -121,105 +258,18 @@ function HistoryOverlay({
           <div className="conversation-drawer__list">
             {history.sessions.length > 0 ? (
               history.sessions.map((session) => (
-                <button
+                <HistorySessionRow
                   key={session.session_id}
-                  type="button"
-                  className={[
-                    'conversation-session-row',
-                    session.session_id === history.selected_session_id ? 'conversation-session-row--active' : '',
-                  ]
-                    .filter(Boolean)
-                    .join(' ')}
-                  onClick={() => bridge?.selectHistorySession?.(session.session_id)}
-                >
-                  <div className="conversation-session-row__header">
-                    <span className="conversation-session-row__title">{session.name || session.session_id}</span>
-                    {session.session_id === history.current_session_id ? (
-                      <span className="conversation-status-badge">当前</span>
-                    ) : null}
-                  </div>
-                  <div className="conversation-session-row__meta">
-                    <span>{session.message_count} 条消息</span>
-                    <span>{session.updated_at || session.created_at || ''}</span>
-                  </div>
-                  <div className="conversation-session-row__preview">{session.preview || '无摘要'}</div>
-                </button>
+                  session={session}
+                  history={history}
+                  bridge={bridge}
+                />
               ))
             ) : (
               <div className="conversation-overlay-empty">暂无历史会话。</div>
             )}
           </div>
-          <div className="conversation-drawer__detail">
-            {selectedSession ? (
-              <>
-                <div className="conversation-detail-hero">
-                  <div>
-                    <div className="conversation-detail-hero__title">{selectedSession.name || selectedSession.session_id}</div>
-                    <div className="conversation-detail-hero__meta">
-                      <span>{selectedSession.message_count} 条消息</span>
-                      <span>{selectedSession.updated_at || selectedSession.created_at || ''}</span>
-                    </div>
-                  </div>
-                  <div className="conversation-detail-hero__actions">
-                    <button
-                      type="button"
-                      className="secondary-button"
-                      onClick={() => bridge?.openHistorySession?.(selectedSession.session_id)}
-                    >
-                      打开
-                    </button>
-                    <button
-                      type="button"
-                      className="secondary-button secondary-button--danger"
-                      onClick={() => bridge?.requestDeleteHistorySession?.(selectedSession.session_id)}
-                    >
-                      删除
-                    </button>
-                  </div>
-                </div>
-                <div className="conversation-section">
-                  <div className="conversation-section__header">
-                    <div className="conversation-section__title">导出</div>
-                    <div className="conversation-section__subtitle">选择导出格式</div>
-                  </div>
-                  <div className="conversation-overlay-chip-list">
-                    {EXPORT_FORMATS.map((item) => (
-                      <button
-                        key={item.value}
-                        type="button"
-                        className="secondary-button"
-                        onClick={() =>
-                          bridge?.requestExportHistorySession?.(selectedSession.session_id, item.value)
-                        }
-                      >
-                        {item.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div className="conversation-section">
-                  <div className="conversation-section__header">
-                    <div className="conversation-section__title">预览</div>
-                    <div className="conversation-section__subtitle">
-                      {history.preview_messages.length > 0 ? '当前选中会话的消息片段' : '当前会话暂无可预览内容'}
-                    </div>
-                  </div>
-                  <div className="conversation-overlay-card-list">
-                    {history.preview_messages.length > 0
-                      ? history.preview_messages.map((message) => renderSessionPreviewMessage(message))
-                      : <div className="conversation-overlay-empty">暂无消息预览。</div>}
-                  </div>
-                </div>
-              </>
-            ) : (
-              <div className="conversation-overlay-empty">请选择一个会话查看详情。</div>
-            )}
-            {history.error_message ? (
-              <div className="conversation-overlay-alert conversation-overlay-alert--error">
-                {history.error_message}
-              </div>
-            ) : null}
-          </div>
+          <HistoryDetailPanel history={history} selectedSession={selectedSession} bridge={bridge} />
         </div>
       </div>
     </div>

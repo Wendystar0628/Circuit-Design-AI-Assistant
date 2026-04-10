@@ -1,3 +1,4 @@
+import { resolve } from 'node:path'
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
@@ -7,5 +8,11 @@ export default defineConfig({
   build: {
     outDir: '../../resources/conversation/react-dist',
     emptyOutDir: true,
+    rollupOptions: {
+      input: {
+        main: resolve(__dirname, 'index.html'),
+        modelConfig: resolve(__dirname, 'model-config.html'),
+      },
+    },
   },
 })

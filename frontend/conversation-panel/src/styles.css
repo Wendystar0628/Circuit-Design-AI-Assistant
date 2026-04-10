@@ -1153,8 +1153,8 @@
 
  .composer-controls {
    display: flex;
-   align-items: center;
-   flex-wrap: wrap;
+   align-items: stretch;
+   flex-wrap: nowrap;
    gap: 6px;
    flex: 1 1 auto;
    min-width: 0;
@@ -1162,7 +1162,8 @@
 
  .composer-footer {
    display: flex;
-   align-items: center;
+   flex-wrap: nowrap;
+   align-items: stretch;
    gap: 8px;
    width: 100%;
    min-width: 0;
@@ -1174,7 +1175,7 @@
    align-items: center;
    justify-content: center;
    min-width: 0;
-   min-height: 30px;
+   min-height: 32px;
    padding: 0 8px;
    border: 1px solid var(--surface-border);
    border-radius: 9px;
@@ -1218,9 +1219,16 @@
  }
 
  .composer-usage-pill {
-   padding: 0 1px;
-   border: none;
-   background: transparent;
+   display: inline-flex;
+   align-items: center;
+   justify-content: center;
+   flex: 0 0 auto;
+   min-height: 32px;
+   padding: 0 10px;
+   border: 1px solid var(--surface-border);
+   border-radius: 9px;
+   background: #f8fafc;
+   box-shadow: none;
  }
 
  .usage-card__tokens {
@@ -1246,7 +1254,7 @@
 
  .composer-send-button {
    flex: 0 0 auto;
-   min-width: 0;
+   min-width: 96px;
    min-height: 32px;
    margin-left: auto;
    border-radius: 9px;
@@ -1752,11 +1760,16 @@
    }
 
    .composer-footer {
-     flex-wrap: wrap;
+     flex-wrap: nowrap;
+     align-items: center;
+   }
+
+   .composer-controls {
+     flex-wrap: nowrap;
    }
 
    .composer-send-button {
-     margin-left: 0;
+     min-width: 96px;
    }
 
    .conversation-drawer {

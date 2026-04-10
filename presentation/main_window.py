@@ -90,6 +90,7 @@ class MainWindow(QMainWindow):
         self._setup_central_widget()
         self._setup_managers()
         self._connect_panel_signals()
+        self._initialize_panels()
         
         # 应用国际化文本
         self.retranslate_ui()
@@ -101,6 +102,7 @@ class MainWindow(QMainWindow):
         self._window_state_manager.restore_window_state(
             self._splitters, self._panels
         )
+        self._sync_restored_panel_visibility()
         
         # 注意：会话状态恢复（项目路径、打开的文件）移到 _on_init_complete 中
         # 确保在 Phase 3 延迟初始化完成后执行，此时 ProjectService 等服务已可用
@@ -375,12 +377,10 @@ class MainWindow(QMainWindow):
         # 添加对话历史回调
         callbacks["on_show_history"] = self._on_show_history_dialog
         
-        # 添加面板切换回调
-        callbacks["on_toggle_panel"] = self._on_toggle_panel
-        
         # 菜单栏管理器
         self._menu_manager = MenuManager(self)
         self._menu_manager.setup_menus(callbacks)
+        self._refresh_recent_menu()
         if self._simulation_command_controller:
             self._simulation_command_controller.bind_menu_manager(self._menu_manager)
         
@@ -419,13 +419,24 @@ class MainWindow(QMainWindow):
             chat_panel.file_clicked.connect(self._on_file_clicked)
             chat_panel.compress_requested.connect(self._on_compress_requested)
 
+    def _initialize_panels(self) -> None:
+        initialized = set()
+        for panel in self._panels.values():
+            panel_identity = id(panel)
+            if panel_identity in initialized:
+                continue
+            initialized.add(panel_identity)
+            initialize = getattr(panel, "initialize", None)
+            if callable(initialize):
+                initialize()
+
     # ============================================================
     # 对话面板信号处理
     # ============================================================
 
     def _on_file_clicked(self, file_path: str):
         """处理文件点击（跳转到代码编辑器）"""
-        self._on_toggle_panel("code_editor", True)
+        self.toggle_panel("code_editor", True)
         if "code_editor" in self._panels:
             self._panels["code_editor"].load_file(file_path)
 
@@ -485,6 +496,216 @@ class MainWindow(QMainWindow):
             if self.logger:
                 self.logger.error(f"Failed to open context compress dialog: {e}")
 
+    def _refresh_recent_menu(self) -> None:
+        if self._menu_manager is None or self._action_handlers is None:
+            return
+
+        recent_projects = []
+        project_service = self._action_handlers.project_service
+        if project_service is not None:
+            try:
+                recent_projects = project_service.get_recent_projects(filter_invalid=False)
+            except Exception as exc:
+                if self.logger:
+                    self.logger.warning(f"Failed to load recent projects: {exc}")
+
+        self._menu_manager.update_recent_menu(
+            recent_projects,
+            {
+                "on_recent_click": self._action_handlers.on_recent_project_clicked,
+                "on_clear_recent": self._action_handlers.on_clear_recent_projects,
+            },
+        )
+
+    def _sync_restored_panel_visibility(self) -> None:
+        if self._panel_manager is None:
+            return
+
+        for panel_id in ("file_browser", "code_editor", "simulation"):
+            panel_info = self._panel_manager.get_panel_info(panel_id)
+            panel = self._panels.get(panel_id)
+            if panel_info is None or panel is None:
+                continue
+            actual_visible = not panel.isHidden()
+            if actual_visible == panel_info.visible:
+                continue
+            if actual_visible:
+                self._panel_manager.show_panel(panel_id)
+            else:
+                self._panel_manager.hide_panel(panel_id)
+
+    def toggle_panel(self, panel_id: str, visible: Optional[bool] = None) -> bool:
+        if self._panel_manager is None:
+            return False
+
+        panel_info = self._panel_manager.get_panel_info(panel_id)
+        if panel_info is None:
+            if self.logger:
+                self.logger.warning(f"Unknown panel id: {panel_id}")
+            return False
+
+        if panel_info.region == PanelRegion.RIGHT:
+            if visible is False:
+                if self.logger:
+                    self.logger.warning(
+                        f"Right-side tab panel '{panel_id}' cannot be hidden individually"
+                    )
+                return False
+            return self.activate_right_panel(panel_id)
+
+        if visible is None:
+            return self._panel_manager.toggle_panel(panel_id)
+        if visible:
+            self._panel_manager.show_panel(panel_id)
+        else:
+            self._panel_manager.hide_panel(panel_id)
+        return self._panel_manager.is_panel_visible(panel_id)
+
+    def activate_right_panel(self, panel_id: str) -> bool:
+        if self._tab_controller is None:
+            return False
+
+        tab_id_map = {
+            "conversation": TAB_CONVERSATION,
+            "rag": TAB_RAG,
+            "devtools": TAB_DEVTOOLS,
+        }
+        target_tab_id = tab_id_map.get(panel_id)
+        if target_tab_id is None:
+            if self.logger:
+                self.logger.warning(f"Unknown right panel id: {panel_id}")
+            return False
+        return self._tab_controller.switch_to_tab(target_tab_id)
+
+    def retranslate_ui(self) -> None:
+        self.setWindowTitle(self._get_text("app.title", "Circuit Design AI"))
+
+        if self._tab_controller is not None:
+            self._tab_controller.update_tab_title(
+                TAB_CONVERSATION,
+                self._get_text("panel.conversation", "对话"),
+            )
+            self._tab_controller.update_tab_title(
+                TAB_RAG,
+                self._get_text("panel.rag", "索引库"),
+            )
+            if "devtools" in self._panels:
+                self._tab_controller.update_tab_title(
+                    TAB_DEVTOOLS,
+                    self._get_text("panel.devtools", "DevTools"),
+                )
+
+        if self._menu_manager is not None:
+            self._menu_manager.retranslate_ui()
+        if self._simulation_command_controller is not None:
+            self._simulation_command_controller.retranslate_ui()
+
+        translated = set()
+        for panel in self._panels.values():
+            panel_identity = id(panel)
+            if panel_identity in translated:
+                continue
+            translated.add(panel_identity)
+            retranslate = getattr(panel, "retranslate_ui", None)
+            if callable(retranslate):
+                retranslate()
+
+    def _subscribe_events(self) -> None:
+        if self.event_bus is None:
+            return
+
+        try:
+            from shared.event_types import (
+                EVENT_INIT_COMPLETE,
+                EVENT_LANGUAGE_CHANGED,
+                EVENT_STATE_PROJECT_OPENED,
+                EVENT_STATE_PROJECT_CLOSED,
+            )
+
+            self.event_bus.subscribe(EVENT_INIT_COMPLETE, self._on_init_complete)
+            self.event_bus.subscribe(EVENT_LANGUAGE_CHANGED, self._on_language_changed)
+            self.event_bus.subscribe(EVENT_STATE_PROJECT_OPENED, self._on_project_opened)
+            self.event_bus.subscribe(EVENT_STATE_PROJECT_CLOSED, self._on_project_closed)
+        except Exception as exc:
+            if self.logger:
+                self.logger.warning(f"Failed to subscribe main window events: {exc}")
+
+    def _unsubscribe_events(self) -> None:
+        if self.event_bus is None:
+            return
+
+        try:
+            from shared.event_types import (
+                EVENT_INIT_COMPLETE,
+                EVENT_LANGUAGE_CHANGED,
+                EVENT_STATE_PROJECT_OPENED,
+                EVENT_STATE_PROJECT_CLOSED,
+            )
+
+            self.event_bus.unsubscribe(EVENT_INIT_COMPLETE, self._on_init_complete)
+            self.event_bus.unsubscribe(EVENT_LANGUAGE_CHANGED, self._on_language_changed)
+            self.event_bus.unsubscribe(EVENT_STATE_PROJECT_OPENED, self._on_project_opened)
+            self.event_bus.unsubscribe(EVENT_STATE_PROJECT_CLOSED, self._on_project_closed)
+        except Exception:
+            pass
+
+    def _on_init_complete(self, event_data: Dict[str, Any]) -> None:
+        del event_data
+        self._refresh_recent_menu()
+        if self._session_manager is None or self._action_handlers is None:
+            return
+
+        try:
+            self._session_manager.restore_session_state(
+                self._action_handlers.on_recent_project_clicked
+            )
+        except Exception as exc:
+            if self.logger:
+                self.logger.error(f"Failed to restore session state: {exc}")
+
+    def _on_language_changed(self, event_data: Dict[str, Any]) -> None:
+        del event_data
+        self.retranslate_ui()
+
+    def _on_project_opened(self, event_data: Dict[str, Any]) -> None:
+        del event_data
+        if self._menu_manager is not None:
+            self._menu_manager.set_action_enabled("file_close", True)
+        self._refresh_recent_menu()
+
+    def _on_project_closed(self, event_data: Dict[str, Any]) -> None:
+        del event_data
+        if self._menu_manager is not None:
+            self._menu_manager.set_action_enabled("file_close", False)
+        self._on_workspace_file_state_changed({})
+        self._refresh_recent_menu()
+
+    def _on_workspace_file_state_changed(self, state: Dict[str, Any]) -> None:
+        if self._menu_manager is None:
+            return
+
+        payload = state if isinstance(state, dict) else {}
+        has_active_editor = bool(payload.get("has_active_editor", False))
+        has_active_editable = bool(payload.get("has_active_editable", False))
+        has_any_dirty = bool(payload.get("has_any_dirty", False))
+
+        self._menu_manager.set_action_enabled("file_save", has_active_editable)
+        self._menu_manager.set_action_enabled("file_save_all", has_any_dirty)
+        self._menu_manager.set_action_enabled("edit_undo", has_active_editable)
+        self._menu_manager.set_action_enabled("edit_redo", has_active_editable)
+        self._menu_manager.set_action_enabled("edit_cut", has_active_editable)
+        self._menu_manager.set_action_enabled("edit_copy", has_active_editor)
+        self._menu_manager.set_action_enabled("edit_paste", has_active_editable)
+        self._menu_manager.set_action_enabled("edit_select_all", has_active_editor)
+
+    def _on_editable_file_state_changed(self, has_editable: bool) -> None:
+        del has_editable
+        editor = self._panels.get("code_editor")
+        if editor is None or not hasattr(editor, "get_workspace_file_state"):
+            self._on_workspace_file_state_changed({})
+            return
+        self._on_workspace_file_state_changed(editor.get_workspace_file_state())
+
     # ============================================================
     # 公共接口
     # ============================================================
@@ -502,6 +723,29 @@ class MainWindow(QMainWindow):
         if self._panel_manager:
             return self._panel_manager.get_panel(panel_id)
         return None
+
+    def closeEvent(self, event) -> None:
+        if self._window_state_manager is not None:
+            self._window_state_manager.save_window_state(self._splitters, self._panels)
+        if self._session_manager is not None:
+            self._session_manager.save_session_state()
+
+        self._unsubscribe_events()
+
+        cleaned = set()
+        for panel in self._panels.values():
+            panel_identity = id(panel)
+            if panel_identity in cleaned:
+                continue
+            cleaned.add(panel_identity)
+            cleanup = getattr(panel, "cleanup", None)
+            if callable(cleanup):
+                cleanup()
+
+        if self._session_manager is not None:
+            self._session_manager.dispose()
+
+        super().closeEvent(event)
 
 
 # ============================================================

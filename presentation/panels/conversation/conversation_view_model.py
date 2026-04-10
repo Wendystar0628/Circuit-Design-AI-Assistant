@@ -1361,7 +1361,7 @@ class ConversationViewModel(QObject):
         if self.logger:
             self.logger.debug(f"Session changed: action={action}, id={session_id}, name={session_name}")
 
-        if action in {"new", "switch", "delete", "rollback"}:
+        if action in {"new", "switch", "delete", "rollback", "project_closed"}:
             self._clear_active_agent_steps(emit_signal=False)
             self._is_loading = False
             self._current_task_id = None

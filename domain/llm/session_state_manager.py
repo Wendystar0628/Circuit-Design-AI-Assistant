@@ -92,12 +92,14 @@ class SessionStateManager:
         self._current_session_id: str = ""
         self._project_root: str = ""
         self._is_dirty: bool = False
+        self._events_subscribed: bool = False
         
         # 延迟获取的服务
         self._message_store = None
         self._context_manager = None
         self._event_bus = None
         self._logger = None
+        self._subscribe_events()
     
     # ============================================================
     # 延迟获取服务
@@ -151,30 +153,154 @@ class SessionStateManager:
         return self._context_manager
     
     # ============================================================
-    # 会话生命周期方法
+    # 事件订阅
     # ============================================================
     
+    def _subscribe_events(self) -> None:
+        if self._events_subscribed or self.event_bus is None:
+            return
+        try:
+            from shared.event_types import EVENT_STATE_PROJECT_OPENED, EVENT_STATE_PROJECT_CLOSED
+
+            self.event_bus.subscribe(EVENT_STATE_PROJECT_OPENED, self._on_project_opened)
+            self.event_bus.subscribe(EVENT_STATE_PROJECT_CLOSED, self._on_project_closed)
+            self._events_subscribed = True
+        except Exception as e:
+            if self.logger:
+                self.logger.warning(f"订阅项目事件失败: {e}")
+
+    def _unsubscribe_events(self) -> None:
+        if not self._events_subscribed or self.event_bus is None:
+            return
+        try:
+            from shared.event_types import EVENT_STATE_PROJECT_OPENED, EVENT_STATE_PROJECT_CLOSED
+
+            self.event_bus.unsubscribe(EVENT_STATE_PROJECT_OPENED, self._on_project_opened)
+            self.event_bus.unsubscribe(EVENT_STATE_PROJECT_CLOSED, self._on_project_closed)
+        except Exception:
+            pass
+        self._events_subscribed = False
+
+    def _on_project_opened(self, event_data: Dict[str, Any]) -> None:
+        data = event_data.get("data", event_data) if isinstance(event_data, dict) else {}
+        project_root = str(data.get("path", "") or "") if isinstance(data, dict) else ""
+        if not project_root:
+            return
+        try:
+            self.ensure_active_session(project_root=project_root)
+        except Exception as e:
+            if self.logger:
+                self.logger.error(f"项目打开后激活会话失败: {e}")
+
+    def _on_project_closed(self, event_data: Dict[str, Any]) -> None:
+        del event_data
+        with self._lock:
+            previous_session_id = self._current_session_id
+            previous_project_root = self._project_root
+            should_persist = bool(previous_session_id and previous_project_root and self._is_dirty)
+
+        if should_persist:
+            try:
+                self.save_current_session(project_root=previous_project_root)
+            except Exception as e:
+                if self.logger:
+                    self.logger.warning(f"项目关闭时保存当前会话失败: {e}")
+
+        with self._lock:
+            self._current_session_id = ""
+            self._project_root = ""
+            self._is_dirty = False
+
+        self._sync_state_to_context_manager(self._build_empty_conversation_state())
+        self._publish_session_changed_event(
+            action="project_closed",
+            previous_session_id=previous_session_id,
+        )
+
+    # ============================================================
+    # 会话生命周期方法
+    # ============================================================
+
+    def ensure_active_session(
+        self,
+        project_root: Optional[str] = None,
+        state: Optional[Dict[str, Any]] = None,
+        sync_to_context_manager: bool = True,
+    ) -> Dict[str, Any]:
+        from domain.services import context_service
+
+        with self._lock:
+            resolved_project_root = self._resolve_project_root(project_root)
+            if not resolved_project_root:
+                raise ValueError("No project root available")
+
+            current_state = state if state is not None else self._get_current_state()
+            normalized_runtime_project_root = self._normalize_project_root(
+                current_state.get("project_root", "") if isinstance(current_state, dict) else ""
+            )
+            runtime_session_id = str(
+                current_state.get("session_id", "") if isinstance(current_state, dict) else ""
+            )
+
+            if (
+                self._current_session_id
+                and self._normalize_project_root(self._project_root) == resolved_project_root
+                and context_service.session_exists(resolved_project_root, self._current_session_id)
+            ):
+                context_service.set_current_session_id(
+                    resolved_project_root,
+                    self._current_session_id,
+                )
+                self._project_root = resolved_project_root
+                if (
+                    sync_to_context_manager
+                    and (
+                        runtime_session_id != self._current_session_id
+                        or normalized_runtime_project_root != resolved_project_root
+                    )
+                ):
+                    if isinstance(current_state, dict) and current_state:
+                        current_state = self._attach_session_identity(
+                            current_state,
+                            resolved_project_root,
+                            self._current_session_id,
+                        )
+                    else:
+                        current_state = self._build_session_state(
+                            resolved_project_root,
+                            self._current_session_id,
+                            current_state,
+                        )
+                    self._activate_session(
+                        resolved_project_root,
+                        self._current_session_id,
+                        current_state,
+                        sync_to_context_manager=True,
+                    )
+                elif sync_to_context_manager:
+                    self._sync_state_to_context_manager(current_state)
+                return current_state
+
+            last_session_id = context_service.get_current_session_id(resolved_project_root)
+
+        if last_session_id and context_service.session_exists(resolved_project_root, last_session_id):
+            return self.switch_session(
+                project_root=resolved_project_root,
+                session_id=last_session_id,
+                state=state,
+                sync_to_context_manager=sync_to_context_manager,
+            )
+
+        if last_session_id:
+            context_service.remove_from_session_index(resolved_project_root, last_session_id)
+
+        session_id = self.create_session(resolved_project_root)
+        return self._build_empty_session_state(resolved_project_root, session_id)
+
     def create_session(
         self,
         project_root: Optional[str] = None,
     ) -> str:
-        """
-        创建新会话
-        
-        执行步骤：
-        1. 生成新会话 ID（时间戳格式）
-        2. 在 context_service 中创建会话文件
-        3. 更新会话索引
-        4. 更新内部状态
-        5. 重置 ContextManager 状态（清空消息）
-        6. 发布 EVENT_SESSION_CHANGED 事件
-        
-        Args:
-            project_root: 项目根目录路径
-            
-        Returns:
-            str: 新会话 ID
-        """
         with self._lock:
             resolved_project_root = self._resolve_project_root(project_root)
             if not resolved_project_root:
@@ -192,7 +318,9 @@ class SessionStateManager:
             if self.logger:
                 self.logger.info(f"新会话已创建: {session_id}, 名称: {session_name}")
             
-            self._sync_state_to_context_manager(self._build_empty_conversation_state())
+            self._sync_state_to_context_manager(
+                self._build_empty_session_state(resolved_project_root, session_id)
+            )
             
             # 发布事件
             self._publish_session_changed_event(
@@ -209,27 +337,6 @@ class SessionStateManager:
         state: Optional[Dict[str, Any]] = None,
         sync_to_context_manager: bool = True
     ) -> Dict[str, Any]:
-        """
-        切换到指定会话
-        
-        执行步骤：
-        1. 保存当前会话（若有未保存的更改）
-        2. 从 context_service 加载目标会话消息
-        3. 通过 MessageStore 更新 GraphState.messages
-        4. 更新会话索引中的当前会话
-        5. 更新内部状态
-        6. 同步状态到 ContextManager（确保 UI 能正确加载消息）
-        7. 发布 EVENT_SESSION_CHANGED 事件
-        
-        Args:
-            project_root: 项目根目录路径
-            session_id: 目标会话 ID
-            state: 当前 GraphState（字典形式）
-            sync_to_context_manager: 是否同步状态到 ContextManager（默认 True）
-            
-        Returns:
-            Dict: 更新后的 GraphState（字典形式）
-        """
         from domain.services import context_service
         
         with self._lock:
@@ -451,11 +558,15 @@ class SessionStateManager:
                                 sync_to_context_manager=True,
                             )
                         else:
-                            self._create_empty_session(resolved_project_root)
-                            self._sync_state_to_context_manager(self._build_empty_conversation_state())
+                            new_session_id, _ = self._create_empty_session(resolved_project_root)
+                            self._sync_state_to_context_manager(
+                                self._build_empty_session_state(resolved_project_root, new_session_id)
+                            )
                     else:
-                        self._create_empty_session(resolved_project_root)
-                        self._sync_state_to_context_manager(self._build_empty_conversation_state())
+                        new_session_id, _ = self._create_empty_session(resolved_project_root)
+                        self._sync_state_to_context_manager(
+                            self._build_empty_session_state(resolved_project_root, new_session_id)
+                        )
                 else:
                     self._project_root = resolved_project_root
                 
@@ -708,58 +819,11 @@ class SessionStateManager:
         Returns:
             Dict: 更新后的 GraphState（字典形式）
         """
-        from domain.services import context_service
-        
-        with self._lock:
-            previous_project_root = self._project_root
-            if (
-                previous_project_root
-                and previous_project_root != project_root
-                and self._current_session_id
-                and self._is_dirty
-            ):
-                self.save_current_session(
-                    project_root=previous_project_root,
-                )
-
-            resolved_project_root = self._resolve_project_root(project_root)
-            if not resolved_project_root:
-                raise ValueError("No project root available")
-
-            if previous_project_root and previous_project_root != resolved_project_root:
-                self._current_session_id = ""
-                self._is_dirty = False
-
-            self._project_root = resolved_project_root
-            
-            # 获取上次使用的会话 ID
-            last_session_id = context_service.get_current_session_id(resolved_project_root)
-            
-            if last_session_id and context_service.session_exists(resolved_project_root, last_session_id):
-                new_state = self.switch_session(
-                    project_root=resolved_project_root,
-                    session_id=last_session_id,
-                    state=state,
-                    sync_to_context_manager=True,
-                )
-                
-                if self.logger:
-                    self.logger.info(
-                        f"会话已恢复: {last_session_id}, 消息数: {len(new_state.get('messages', []))}"
-                    )
-                
-                return new_state
-
-            if last_session_id:
-                context_service.remove_from_session_index(resolved_project_root, last_session_id)
-            
-            # 无可恢复的会话，创建新会话
-            session_id = self.create_session(resolved_project_root)
-            
-            if self.logger:
-                self.logger.info(f"创建新会话: {session_id}")
-            
-            return self._get_current_state()
+        return self.ensure_active_session(
+            project_root=project_root,
+            state=state,
+            sync_to_context_manager=True,
+        )
     
     def mark_dirty(self) -> None:
         """
@@ -951,6 +1015,23 @@ class SessionStateManager:
         base_state["last_metrics"] = {}
         base_state["error_context"] = ""
         return base_state
+
+    def _build_empty_session_state(self, project_root: str, session_id: str) -> Dict[str, Any]:
+        base_state = self._build_empty_conversation_state()
+        base_state["session_id"] = session_id
+        base_state["project_root"] = project_root
+        return base_state
+
+    def _attach_session_identity(
+        self,
+        state: Dict[str, Any],
+        project_root: str,
+        session_id: str,
+    ) -> Dict[str, Any]:
+        updated_state = dict(state)
+        updated_state["session_id"] = session_id
+        updated_state["project_root"] = project_root
+        return updated_state
 
     def _build_clean_state_base(self) -> Dict[str, Any]:
         try:

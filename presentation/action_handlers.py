@@ -399,9 +399,8 @@ class ActionHandlers:
             panel_id: 面板 ID
             visible: 指定可见性，None 表示切换当前状态
         """
-        # 委托给 MainWindow 的面板管理方法
-        if hasattr(self._main_window, '_on_toggle_panel'):
-            self._main_window._on_toggle_panel(panel_id, visible)
+        if hasattr(self._main_window, "toggle_panel"):
+            self._main_window.toggle_panel(panel_id, visible)
 
     # ============================================================
     # 设计操作回调

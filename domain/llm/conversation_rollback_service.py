@@ -137,15 +137,7 @@ class ConversationRollbackService:
         anchor_message_id: str,
         anchor_timestamp: str,
     ) -> Dict[str, Any]:
-        with self._lock:
-            session_state_manager = self.session_state_manager
-            if session_state_manager is None:
-                raise RuntimeError("SessionStateManager not available")
-
-            session_id = session_state_manager.get_current_session_id()
-            project_root = session_state_manager.get_project_root()
-            if not session_id or not project_root:
-                raise RuntimeError("Active session is not ready for rollback checkpoint capture")
+        session_state_manager, session_id, project_root = self._require_active_session()
 
         session_state_manager.save_current_session(project_root=project_root)
 
@@ -269,6 +261,12 @@ class ConversationRollbackService:
             if session_state_manager is None:
                 raise RuntimeError("SessionStateManager not available")
 
+        try:
+            session_state_manager.ensure_active_session()
+        except Exception as exc:
+            raise RuntimeError(f"Active session is not ready: {exc}") from exc
+
+        with self._lock:
             session_id = session_state_manager.get_current_session_id()
             project_root = session_state_manager.get_project_root()
             if not session_id or not project_root:

@@ -9,9 +9,12 @@ from domain.llm.conversation_rollback_service import ConversationRollbackService
 from domain.llm.session_state_manager import SessionStateManager
 from domain.services import context_service
 from presentation.panels.conversation.conversation_view_model import ConversationViewModel
+from shared.event_bus import EventBus
+from shared.event_types import EVENT_STATE_PROJECT_OPENED
 from shared.service_locator import ServiceLocator
 from shared.service_names import (
     SVC_CONTEXT_MANAGER,
+    SVC_EVENT_BUS,
     SVC_FILE_WATCHER,
     SVC_SESSION_STATE_MANAGER,
 )
@@ -197,3 +200,70 @@ def test_view_model_rollback_emits_single_display_refresh_signal(tmp_path: Path)
     assert success is True, error_message
     assert refresh_events == ["refresh"]
     assert [message.id for message in view_model.messages] == ["base-user", "base-assistant"]
+
+
+def test_project_open_event_ensures_active_session_and_syncs_context(tmp_path: Path):
+    event_bus = EventBus()
+    context_manager = ContextManager()
+
+    ServiceLocator.register(SVC_EVENT_BUS, event_bus)
+    ServiceLocator.register(SVC_CONTEXT_MANAGER, context_manager)
+
+    manager = SessionStateManager()
+    manager._generate_session_id = lambda: "session-opened"
+    ServiceLocator.register(SVC_SESSION_STATE_MANAGER, manager)
+
+    event_bus.publish(
+        EVENT_STATE_PROJECT_OPENED,
+        {"path": str(tmp_path)},
+        source="test",
+    )
+
+    assert manager.get_current_session_id() == "session-opened"
+    assert os.path.normcase(manager.get_project_root()) == os.path.normcase(str(tmp_path.resolve()))
+
+    current_state = context_manager.get_current_state()
+    assert current_state.get("session_id", "") == "session-opened"
+    assert os.path.normcase(current_state.get("project_root", "")) == os.path.normcase(
+        str(tmp_path.resolve())
+    )
+    assert current_state.get("messages", []) == []
+
+
+def test_capture_user_turn_checkpoint_uses_project_opened_active_session(tmp_path: Path):
+    event_bus = EventBus()
+    context_manager = ContextManager()
+    file_watcher = _FakeFileWatcher()
+
+    ServiceLocator.register(SVC_EVENT_BUS, event_bus)
+    ServiceLocator.register(SVC_CONTEXT_MANAGER, context_manager)
+    ServiceLocator.register(SVC_FILE_WATCHER, file_watcher)
+
+    manager = SessionStateManager()
+    manager._generate_session_id = lambda: "session-capture"
+    ServiceLocator.register(SVC_SESSION_STATE_MANAGER, manager)
+
+    rollback_service = ConversationRollbackService()
+
+    event_bus.publish(
+        EVENT_STATE_PROJECT_OPENED,
+        {"path": str(tmp_path)},
+        source="test",
+    )
+
+    checkpoint = asyncio.run(
+        rollback_service.capture_user_turn_checkpoint(
+            anchor_message_id="anchor-user",
+            anchor_timestamp="2026-04-10T16:51:49",
+        )
+    )
+
+    checkpoints = context_service.load_rollback_checkpoints(
+        str(tmp_path),
+        manager.get_current_session_id(),
+    )
+
+    assert checkpoint["session_id"] == "session-capture"
+    assert checkpoint["anchor_message_id"] == "anchor-user"
+    assert len(checkpoints) == 1
+    assert checkpoints[0]["anchor_message_id"] == "anchor-user"

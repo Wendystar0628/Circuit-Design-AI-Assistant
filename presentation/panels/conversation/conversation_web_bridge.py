@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
-from PyQt6.QtCore import QObject, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QObject, QJsonValue, pyqtSignal, pyqtSlot
 
 
 class ConversationWebBridge(QObject):
@@ -40,9 +40,16 @@ class ConversationWebBridge(QObject):
     def markReady(self) -> None:
         self.ready.emit()
 
+    def _normalize_json_payload(self, payload: Any) -> Any:
+        if isinstance(payload, QJsonValue):
+            payload = payload.toVariant()
+        return payload
+
+    @pyqtSlot(str, QJsonValue)
     @pyqtSlot(str, dict)
-    def sendMessage(self, text: str, composer_state: Dict[str, Any]) -> None:
-        payload = composer_state if isinstance(composer_state, dict) else {}
+    def sendMessage(self, text: str, composer_state: Any) -> None:
+        normalized_state = self._normalize_json_payload(composer_state)
+        payload = normalized_state if isinstance(normalized_state, dict) else {}
         self.send_requested.emit(str(text or ""), payload)
 
     @pyqtSlot()
@@ -152,10 +159,12 @@ class ConversationWebBridge(QObject):
     def requestModelConfig(self) -> None:
         self.model_config_requested.emit()
 
+    @pyqtSlot(QJsonValue)
     @pyqtSlot(list)
     def attachFiles(self, paths: List[Any]) -> None:
+        normalized_input = self._normalize_json_payload(paths)
         normalized_paths = []
-        for path in paths or []:
+        for path in normalized_input or []:
             normalized = str(path or "")
             if normalized:
                 normalized_paths.append(normalized)

@@ -108,18 +108,89 @@ function HistorySessionRow({
         .join(' ')}
       onClick={() => bridge?.selectHistorySession?.(session.session_id)}
     >
-      <div className="conversation-session-row__header">
+      <div className="conversation-session-row__top">
         <span className="conversation-session-row__title">{session.name || session.session_id}</span>
+        <div className="conversation-session-row__meta">
+          <span>{session.message_count} 条消息</span>
+          <span>{session.updated_at || session.created_at || ''}</span>
+        </div>
+      </div>
+      <div className="conversation-session-row__preview">{session.preview || '无摘要'}</div>
+      <div className="conversation-session-row__footer">
         {session.session_id === history.current_session_id ? (
           <span className="conversation-status-badge">当前</span>
         ) : null}
       </div>
-      <div className="conversation-session-row__meta">
-        <span>{session.message_count} 条消息</span>
-        <span>{session.updated_at || session.created_at || ''}</span>
-      </div>
-      <div className="conversation-session-row__preview">{session.preview || '无摘要'}</div>
     </button>
+  )
+}
+
+function HistoryExportDialog({
+  history,
+  selectedSession,
+  bridge,
+}: {
+  history: ConversationHistoryOverlayState
+  selectedSession: ConversationSessionInfoState
+  bridge: ConversationBridge | null
+}) {
+  const exportDialog = history.export_dialog
+  if (!exportDialog.is_open || exportDialog.session_id !== selectedSession.session_id) {
+    return null
+  }
+
+  return (
+    <div className="conversation-history-export-dialog" role="dialog" aria-label="导出会话">
+      <div className="conversation-history-export-dialog__title">导出当前会话</div>
+      <div className="conversation-history-export-dialog__section">
+        <div className="conversation-history-export-dialog__label">导出格式</div>
+        <div className="conversation-overlay-chip-list">
+          {EXPORT_FORMATS.map((item) => (
+            <button
+              key={item.value}
+              type="button"
+              className={[
+                'secondary-button',
+                exportDialog.export_format === item.value ? 'conversation-history-export-dialog__format-button--active' : '',
+              ]
+                .filter(Boolean)
+                .join(' ')}
+              onClick={() => bridge?.setHistoryExportFormat?.(item.value)}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="conversation-history-export-dialog__section">
+        <div className="conversation-history-export-dialog__label">导出路径</div>
+        <div className="conversation-history-export-dialog__path" title={exportDialog.file_path || '未选择导出路径'}>
+          {exportDialog.file_path || '请选择导出路径'}
+        </div>
+      </div>
+      <div className="conversation-history-export-dialog__actions">
+        <button type="button" className="secondary-button" onClick={() => bridge?.chooseHistoryExportPath?.()}>
+          选择路径
+        </button>
+        <button type="button" className="secondary-button" onClick={() => bridge?.closeHistoryExportDialog?.()}>
+          取消
+        </button>
+        <button
+          type="button"
+          className="primary-button"
+          disabled={!exportDialog.file_path}
+          onClick={() =>
+            bridge?.requestExportHistorySession?.(
+              selectedSession.session_id,
+              exportDialog.export_format,
+              exportDialog.file_path,
+            )
+          }
+        >
+          确认导出
+        </button>
+      </div>
+    </div>
   )
 }
 
@@ -147,15 +218,8 @@ function HistoryDetailPanel({
 
   return (
     <div className="conversation-history-detail">
-      <section className="conversation-history-summary">
-        <div className="conversation-history-summary__identity">
-          <div className="conversation-history-summary__title">{selectedSession.name || selectedSession.session_id}</div>
-          <div className="conversation-history-summary__meta">
-            <span>{selectedSession.message_count} 条消息</span>
-            <span>{selectedSession.updated_at || selectedSession.created_at || ''}</span>
-          </div>
-        </div>
-        <div className="conversation-history-summary__actions">
+      <section className="conversation-history-toolbar">
+        <div className="conversation-history-toolbar__actions">
           <button
             type="button"
             className="secondary-button"
@@ -170,26 +234,15 @@ function HistoryDetailPanel({
           >
             删除
           </button>
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={() => bridge?.openHistoryExportDialog?.(selectedSession.session_id)}
+          >
+            导出
+          </button>
         </div>
-      </section>
-
-      <section className="conversation-history-export">
-        <div className="conversation-history-section__header">
-          <div className="conversation-history-section__title">导出</div>
-          <div className="conversation-history-section__subtitle">选择导出格式</div>
-        </div>
-        <div className="conversation-overlay-chip-list">
-          {EXPORT_FORMATS.map((item) => (
-            <button
-              key={item.value}
-              type="button"
-              className="secondary-button"
-              onClick={() => bridge?.requestExportHistorySession?.(selectedSession.session_id, item.value)}
-            >
-              {item.label}
-            </button>
-          ))}
-        </div>
+        <HistoryExportDialog history={history} selectedSession={selectedSession} bridge={bridge} />
       </section>
 
       <section className="conversation-history-preview">

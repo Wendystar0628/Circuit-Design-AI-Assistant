@@ -15,7 +15,11 @@ class ConversationWebBridge(QObject):
     history_close_requested = pyqtSignal()
     history_session_selected = pyqtSignal(str)
     history_session_open_requested = pyqtSignal(str)
-    history_session_export_requested = pyqtSignal(str, str)
+    history_export_dialog_open_requested = pyqtSignal(str)
+    history_export_dialog_close_requested = pyqtSignal()
+    history_export_format_changed = pyqtSignal(str)
+    history_export_path_pick_requested = pyqtSignal()
+    history_session_export_requested = pyqtSignal(str, str, str)
     history_session_delete_requested = pyqtSignal(str)
     confirm_dialog_resolved = pyqtSignal(bool)
     notice_dialog_close_requested = pyqtSignal()
@@ -86,11 +90,28 @@ class ConversationWebBridge(QObject):
     def openHistorySession(self, session_id: str) -> None:
         self.history_session_open_requested.emit(str(session_id or ""))
 
-    @pyqtSlot(str, str)
-    def requestExportHistorySession(self, session_id: str, export_format: str) -> None:
+    @pyqtSlot(str)
+    def openHistoryExportDialog(self, session_id: str) -> None:
+        self.history_export_dialog_open_requested.emit(str(session_id or ""))
+
+    @pyqtSlot()
+    def closeHistoryExportDialog(self) -> None:
+        self.history_export_dialog_close_requested.emit()
+
+    @pyqtSlot(str)
+    def setHistoryExportFormat(self, export_format: str) -> None:
+        self.history_export_format_changed.emit(str(export_format or ""))
+
+    @pyqtSlot()
+    def chooseHistoryExportPath(self) -> None:
+        self.history_export_path_pick_requested.emit()
+
+    @pyqtSlot(str, str, str)
+    def requestExportHistorySession(self, session_id: str, export_format: str, file_path: str) -> None:
         self.history_session_export_requested.emit(
             str(session_id or ""),
             str(export_format or ""),
+            str(file_path or ""),
         )
 
     @pyqtSlot(str)

@@ -8,7 +8,11 @@ export interface ConversationBridge {
   closeHistory?: () => void
   selectHistorySession?: (sessionId: string) => void
   openHistorySession?: (sessionId: string) => void
-  requestExportHistorySession?: (sessionId: string, exportFormat: string) => void
+  openHistoryExportDialog?: (sessionId: string) => void
+  closeHistoryExportDialog?: () => void
+  setHistoryExportFormat?: (exportFormat: string) => void
+  chooseHistoryExportPath?: () => void
+  requestExportHistorySession?: (sessionId: string, exportFormat: string, filePath: string) => void
   requestDeleteHistorySession?: (sessionId: string) => void
   resolveConfirmDialog?: (accepted: boolean) => void
   closeNoticeDialog?: () => void

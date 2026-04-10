@@ -200,6 +200,33 @@ class ConversationPanel(QWidget):
             return self.i18n.get_text(key, default)
         return default
 
+    def _create_history_export_dialog_state(
+        self,
+        session_id: str = "",
+        export_format: str = "md",
+        file_path: str = "",
+        *,
+        is_open: bool = False,
+    ) -> Dict[str, Any]:
+        normalized_session_id = str(session_id or "")
+        normalized_format = self._session_support.normalize_export_format(export_format) or "md"
+        normalized_path = ""
+        if normalized_session_id:
+            normalized_path = self._session_support.normalize_export_file_path(
+                file_path
+                or self._session_support.build_default_export_path(
+                    normalized_session_id,
+                    normalized_format,
+                ),
+                normalized_format,
+            )
+        return {
+            "is_open": bool(is_open and normalized_session_id),
+            "session_id": normalized_session_id,
+            "export_format": normalized_format,
+            "file_path": normalized_path,
+        }
+
     def _create_history_overlay_state(self) -> Dict[str, Any]:
         return {
             "is_open": False,
@@ -209,6 +236,7 @@ class ConversationPanel(QWidget):
             "selected_session_id": "",
             "sessions": [],
             "preview_messages": [],
+            "export_dialog": self._create_history_export_dialog_state(),
         }
 
     def _create_rollback_overlay_state(self) -> Dict[str, Any]:
@@ -357,6 +385,7 @@ class ConversationPanel(QWidget):
             "selected_session_id": selected_session_id,
             "sessions": sessions,
             "preview_messages": preview_messages,
+            "export_dialog": self._create_history_export_dialog_state(),
         }
         self._update_authoritative_frontend_state()
 
@@ -393,6 +422,18 @@ class ConversationPanel(QWidget):
             bridge.history_session_selected.connect(self._on_history_session_selected)
             bridge.history_session_open_requested.connect(
                 self._on_history_session_open_requested
+            )
+            bridge.history_export_dialog_open_requested.connect(
+                self._on_history_export_dialog_open_requested
+            )
+            bridge.history_export_dialog_close_requested.connect(
+                self._on_history_export_dialog_close_requested
+            )
+            bridge.history_export_format_changed.connect(
+                self._on_history_export_format_changed
+            )
+            bridge.history_export_path_pick_requested.connect(
+                self._on_history_export_path_pick_requested
             )
             bridge.history_session_export_requested.connect(
                 self._on_history_session_export_requested
@@ -1020,26 +1061,92 @@ class ConversationPanel(QWidget):
             tone="error",
         )
 
+    def _on_history_export_dialog_open_requested(self, session_id: str) -> None:
+        normalized_session_id = str(
+            session_id
+            or self._history_overlay_state.get("selected_session_id", "")
+            or self._history_overlay_state.get("current_session_id", "")
+            or ""
+        )
+        if not normalized_session_id:
+            return
+        self._history_overlay_state["export_dialog"] = self._create_history_export_dialog_state(
+            normalized_session_id,
+            is_open=True,
+        )
+        self._update_authoritative_frontend_state()
+
+    def _on_history_export_dialog_close_requested(self) -> None:
+        if not self._history_overlay_state.get("is_open", False):
+            return
+        self._history_overlay_state["export_dialog"] = self._create_history_export_dialog_state()
+        self._update_authoritative_frontend_state()
+
+    def _on_history_export_format_changed(self, export_format: str) -> None:
+        dialog_state = self._history_overlay_state.get("export_dialog", {})
+        session_id = str(dialog_state.get("session_id", "") or "")
+        normalized_format = self._session_support.normalize_export_format(export_format)
+        if not session_id or not normalized_format:
+            return
+        self._history_overlay_state["export_dialog"] = self._create_history_export_dialog_state(
+            session_id,
+            normalized_format,
+            str(dialog_state.get("file_path", "") or ""),
+            is_open=bool(dialog_state.get("is_open", False)),
+        )
+        self._update_authoritative_frontend_state()
+
+    def _on_history_export_path_pick_requested(self) -> None:
+        dialog_state = self._history_overlay_state.get("export_dialog", {})
+        session_id = str(dialog_state.get("session_id", "") or "")
+        export_format = self._session_support.normalize_export_format(
+            str(dialog_state.get("export_format", "") or "")
+        )
+        if not session_id or not export_format:
+            return
+        selected_path = self._session_support.choose_export_file_path(
+            session_id,
+            export_format,
+            parent=self,
+            dialog_title=self._get_text("dialog.export.title", "选择导出路径"),
+            initial_path=str(dialog_state.get("file_path", "") or ""),
+        )
+        if not selected_path:
+            return
+        self._history_overlay_state["export_dialog"] = self._create_history_export_dialog_state(
+            session_id,
+            export_format,
+            selected_path,
+            is_open=True,
+        )
+        self._update_authoritative_frontend_state()
+
     def _on_history_session_export_requested(
         self,
         session_id: str,
         export_format: str,
+        file_path: str,
     ) -> None:
         normalized_format = self._session_support.normalize_export_format(export_format)
-        if not session_id or not normalized_format:
+        normalized_path = self._session_support.normalize_export_file_path(
+            file_path,
+            normalized_format,
+        )
+        if not session_id or not normalized_format or not normalized_path:
             self._open_notice_dialog(
                 self._get_text("dialog.export.failed", "导出会话失败"),
                 title=self._get_text("dialog.error.title", "错误"),
                 tone="error",
             )
             return
-        success, export_path = self._session_support.export_session(
+        success, export_path = self._session_support.export_session_to_path(
             session_id,
             normalized_format,
-            parent=self,
-            dialog_title=self._get_text("dialog.export.title", "导出会话"),
+            normalized_path,
         )
         if success:
+            self._history_overlay_state["export_dialog"] = self._create_history_export_dialog_state()
+            self._update_authoritative_frontend_state()
             self._open_notice_dialog(
                 self._get_text("dialog.export.success", "会话导出成功"),
                 title=self._get_text("dialog.info.title", "提示"),

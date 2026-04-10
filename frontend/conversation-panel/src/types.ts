@@ -99,6 +99,13 @@ export interface ConversationSessionMessageState {
   attachments: ConversationAttachmentState[]
 }
 
+export interface ConversationHistoryExportDialogState {
+  is_open: boolean
+  session_id: string
+  export_format: string
+  file_path: string
+}
+
 export interface ConversationHistoryOverlayState {
   is_open: boolean
   is_loading: boolean
@@ -107,6 +114,7 @@ export interface ConversationHistoryOverlayState {
   selected_session_id: string
   sessions: ConversationSessionInfoState[]
   preview_messages: ConversationSessionMessageState[]
+  export_dialog: ConversationHistoryExportDialogState
 }
 
 export interface ConversationRollbackRemovedMessageState {
@@ -426,6 +434,7 @@ function normalizeSessionMessageState(value: unknown): ConversationSessionMessag
 
 function normalizeHistoryOverlayState(value: unknown): ConversationHistoryOverlayState {
   const overlay = asRecord(value)
+  const exportDialog = asRecord(overlay.export_dialog)
   return {
     is_open: Boolean(overlay.is_open),
     is_loading: Boolean(overlay.is_loading),
@@ -438,6 +447,12 @@ function normalizeHistoryOverlayState(value: unknown): ConversationHistoryOverla
     preview_messages: Array.isArray(overlay.preview_messages)
       ? overlay.preview_messages.map((message) => normalizeSessionMessageState(message))
       : [],
+    export_dialog: {
+      is_open: Boolean(exportDialog.is_open),
+      session_id: asString(exportDialog.session_id),
+      export_format: asString(exportDialog.export_format, 'md'),
+      file_path: asString(exportDialog.file_path),
+    },
   }
 }
 
@@ -583,6 +598,12 @@ export const emptyConversationState: ConversationMainState = {
       selected_session_id: '',
       sessions: [],
       preview_messages: [],
+      export_dialog: {
+        is_open: false,
+        session_id: '',
+        export_format: 'md',
+        file_path: '',
+      },
     },
     rollback: {
       is_open: false,

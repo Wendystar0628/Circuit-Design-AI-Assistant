@@ -352,6 +352,11 @@ class ConversationStateSerializer:
         history_state: Optional[Dict[str, Any]],
     ) -> Dict[str, Any]:
         data = history_state if isinstance(history_state, dict) else {}
+        export_dialog = (
+            data.get("export_dialog", {})
+            if isinstance(data.get("export_dialog", {}), dict)
+            else {}
+        )
         overlay_state = self.serialize_history_state(
             sessions=data.get("sessions", []),
             current_session_id=str(data.get("current_session_id", "") or ""),
@@ -363,6 +368,12 @@ class ConversationStateSerializer:
                 "is_open": bool(data.get("is_open", False)),
                 "is_loading": bool(data.get("is_loading", False)),
                 "error_message": str(data.get("error_message", "") or ""),
+                "export_dialog": {
+                    "is_open": bool(export_dialog.get("is_open", False)),
+                    "session_id": str(export_dialog.get("session_id", "") or ""),
+                    "export_format": str(export_dialog.get("export_format", "md") or "md"),
+                    "file_path": str(export_dialog.get("file_path", "") or ""),
+                },
             }
         )
         return overlay_state

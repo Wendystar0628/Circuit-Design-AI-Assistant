@@ -124,6 +124,12 @@ def test_conversation_state_serializer_builds_authoritative_main_payload():
             "selected_session_id": "session-1",
             "sessions": [],
             "preview_messages": [],
+            "export_dialog": {
+                "is_open": True,
+                "session_id": "session-1",
+                "export_format": "md",
+                "file_path": "E:/demo/conversation_session-1.md",
+            },
         },
         rollback_overlay={
             "is_open": False,
@@ -322,6 +328,12 @@ def test_conversation_state_serializer_serializes_history_and_rollback_payloads(
                     },
                 }
             ],
+            "export_dialog": {
+                "is_open": True,
+                "session_id": "session-rollback",
+                "export_format": "json",
+                "file_path": "E:/demo/conversation_session-rollback.json",
+            },
         }
     )
     rollback_overlay = serializer.serialize_rollback_overlay_state(
@@ -360,6 +372,7 @@ def test_conversation_state_serializer_serializes_history_and_rollback_payloads(
     assert rollback_state["workspace_changed_files"][0]["relative_path"] == "src/app.py"
     assert rollback_state["workspace_total_added_lines"] == 7
     assert history_overlay["is_open"] is True
+    assert history_overlay["export_dialog"]["export_format"] == "json"
     assert rollback_overlay["target_message_id"] == "user-2"
     assert confirm_state["payload"]["session_id"] == "session-rollback"
     assert notice_state["tone"] == "success"
@@ -396,6 +409,10 @@ def test_conversation_web_bridge_emits_structured_user_intent_actions():
     attachment_events = []
     history_select_events = []
     history_open_events = []
+    history_export_open_events = []
+    history_export_close_events = []
+    history_export_format_events = []
+    history_export_path_events = []
     history_export_events = []
     history_delete_events = []
     confirm_events = []
@@ -415,8 +432,12 @@ def test_conversation_web_bridge_emits_structured_user_intent_actions():
     bridge.attachments_selected.connect(lambda paths: attachment_events.append(paths))
     bridge.history_session_selected.connect(lambda session_id: history_select_events.append(session_id))
     bridge.history_session_open_requested.connect(lambda session_id: history_open_events.append(session_id))
+    bridge.history_export_dialog_open_requested.connect(lambda session_id: history_export_open_events.append(session_id))
+    bridge.history_export_dialog_close_requested.connect(lambda: history_export_close_events.append(True))
+    bridge.history_export_format_changed.connect(lambda export_format: history_export_format_events.append(export_format))
+    bridge.history_export_path_pick_requested.connect(lambda: history_export_path_events.append(True))
     bridge.history_session_export_requested.connect(
-        lambda session_id, export_format: history_export_events.append((session_id, export_format))
+        lambda session_id, export_format, file_path: history_export_events.append((session_id, export_format, file_path))
     )
     bridge.history_session_delete_requested.connect(lambda session_id: history_delete_events.append(session_id))
     bridge.confirm_dialog_resolved.connect(lambda accepted: confirm_events.append(accepted))
@@ -433,7 +454,11 @@ def test_conversation_web_bridge_emits_structured_user_intent_actions():
     bridge.requestRollback("message-3")
     bridge.selectHistorySession("session-1")
     bridge.openHistorySession("session-2")
-    bridge.requestExportHistorySession("session-3", "md")
+    bridge.openHistoryExportDialog("session-3")
+    bridge.setHistoryExportFormat("md")
+    bridge.chooseHistoryExportPath()
+    bridge.requestExportHistorySession("session-3", "md", "E:/demo/export.md")
+    bridge.closeHistoryExportDialog()
     bridge.requestDeleteHistorySession("session-4")
     bridge.resolveConfirmDialog(True)
     bridge.closeNoticeDialog()
@@ -451,7 +476,11 @@ def test_conversation_web_bridge_emits_structured_user_intent_actions():
     assert attachment_events == [["E:/demo/a.png", "E:/demo/b.txt"]]
     assert history_select_events == ["session-1"]
     assert history_open_events == ["session-2"]
-    assert history_export_events == [("session-3", "md")]
+    assert history_export_open_events == ["session-3"]
+    assert history_export_close_events == [True]
+    assert history_export_format_events == ["md"]
+    assert history_export_path_events == [True]
+    assert history_export_events == [("session-3", "md", "E:/demo/export.md")]
     assert history_delete_events == ["session-4"]
     assert confirm_events == [True]
     assert notice_close_events == [True]

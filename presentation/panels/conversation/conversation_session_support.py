@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from PyQt6.QtWidgets import QFileDialog, QWidget
@@ -138,33 +139,58 @@ class ConversationSessionSupport:
     def rename_current_session(self, new_name: str) -> bool:
         return self.rename_session(self.get_current_session_id(), new_name)
 
-    def export_session(
+    def build_default_export_path(self, session_id: str, export_format: str) -> str:
+        normalized_format = self.normalize_export_format(export_format)
+        if not session_id or not normalized_format:
+            return ""
+        filename = self.build_default_export_filename(session_id, normalized_format)
+        project_root = self.get_project_root()
+        if project_root:
+            return os.path.join(project_root, filename)
+        return filename
+
+    def choose_export_file_path(
         self,
         session_id: str,
         export_format: str,
         *,
         parent: Optional[QWidget],
         dialog_title: str,
+        initial_path: str = "",
+    ) -> str:
+        normalized_format = self.normalize_export_format(export_format)
+        if not session_id or not normalized_format:
+            return ""
+        suggested_path = self.normalize_export_file_path(
+            initial_path or self.build_default_export_path(session_id, normalized_format),
+            normalized_format,
+        )
+        file_path, _ = QFileDialog.getSaveFileName(
+            parent,
+            dialog_title,
+            suggested_path,
+            self.export_file_filter(normalized_format),
+        )
+        return self.normalize_export_file_path(file_path, normalized_format) if file_path else ""
+
+    def export_session_to_path(
+        self,
+        session_id: str,
+        export_format: str,
+        file_path: str,
     ) -> Tuple[bool, str]:
         messages = self.get_session_messages(session_id)
         if not session_id:
             return False, ""
         normalized_format = self.normalize_export_format(export_format)
-        if not normalized_format:
-            return False, ""
-        file_path, _ = QFileDialog.getSaveFileName(
-            parent,
-            dialog_title,
-            self.build_default_export_filename(session_id, normalized_format),
-            self.export_file_filter(normalized_format),
-        )
-        if not file_path:
+        normalized_path = self.normalize_export_file_path(file_path, normalized_format)
+        if not normalized_format or not normalized_path:
             return False, ""
         try:
             content = self.format_export_content(messages, normalized_format)
-            with open(file_path, "w", encoding="utf-8") as handle:
+            with open(normalized_path, "w", encoding="utf-8") as handle:
                 handle.write(content)
-            return True, file_path
+            return True, normalized_path
         except Exception:
             return False, ""
 
@@ -184,6 +210,20 @@ class ConversationSessionSupport:
     @staticmethod
     def build_default_export_filename(session_id: str, export_format: str) -> str:
         return f"conversation_{str(session_id or '')[:8]}.{export_format}"
+
+    @staticmethod
+    def normalize_export_file_path(file_path: str, export_format: str) -> str:
+        normalized_path = str(file_path or "").strip()
+        normalized_format = ConversationSessionSupport.normalize_export_format(export_format)
+        if not normalized_path or not normalized_format:
+            return ""
+        expected_suffix = f".{normalized_format}"
+        root, extension = os.path.splitext(normalized_path)
+        if extension.lower() == expected_suffix:
+            return normalized_path
+        if extension:
+            return f"{root}{expected_suffix}"
+        return f"{normalized_path}{expected_suffix}"
 
     @classmethod
     def format_export_content(

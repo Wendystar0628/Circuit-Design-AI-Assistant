@@ -15,7 +15,7 @@
 
 from typing import Optional, Dict, Any, List
 
-from PyQt6.QtWidgets import QMainWindow, QSplitter, QWidget, QTabWidget
+from PyQt6.QtWidgets import QMainWindow, QSplitter, QWidget
 
 
 class WindowStateManager:
@@ -46,15 +46,6 @@ class WindowStateManager:
             except Exception:
                 pass
         return self._config_manager
-
-    def _is_tab_page_widget(self, widget: Optional[QWidget]) -> bool:
-        current = widget.parentWidget() if widget is not None else None
-        while current is not None:
-            if isinstance(current, QTabWidget):
-                return True
-            current = current.parentWidget()
-        return False
-
 
     def save_window_state(self, splitters: Dict[str, QSplitter], panels: Dict[str, QWidget]):
         """
@@ -164,8 +155,6 @@ class WindowStateManager:
         
         panel_visibility = {}
         for panel_name, panel in panels.items():
-            if self._is_tab_page_widget(panel):
-                continue
             panel_visibility[panel_name] = panel.isVisible()
         self.config_manager.set("panel_visibility", panel_visibility)
 
@@ -186,8 +175,6 @@ class WindowStateManager:
         
         for panel_name, visible in panel_visibility.items():
             if panel_name in panels:
-                if self._is_tab_page_widget(panels[panel_name]):
-                    continue
                 is_visible = bool(visible) if visible is not None else True
                 panels[panel_name].setVisible(is_visible)
                 # 同步菜单勾选状态

@@ -14,7 +14,7 @@
 - 会话管理委托给 SessionManager
 - 动作处理委托给 ActionHandlers
 - 面板生命周期管理委托给 PanelManager
-- 右栏标签页管理委托给 TabController
+- 右栏统一面板委托给 React 右栏宿主
 
 初始化顺序：
 - Phase 2.2，依赖 ServiceLocator（获取 I18nManager 等）
@@ -24,14 +24,14 @@
 - 延迟获取 ServiceLocator 中的服务
 - 所有用户可见文本通过 i18n_manager.get_text() 获取
 - 面板管理通过 PanelManager 统一处理
-- 右栏使用 QTabWidget + TabController 管理多个标签页
+- 右栏使用单一 React 面板统一承载对话与索引库
 """
 
 from typing import Optional, Dict, Any
 
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout,
-    QSplitter, QTabWidget
+    QSplitter
 )
 from PyQt6.QtCore import Qt, QTimer
 
@@ -41,9 +41,6 @@ from presentation.window_state_manager import WindowStateManager
 from presentation.session_manager import SessionManager
 from presentation.action_handlers import ActionHandlers
 from presentation.core.panel_manager import PanelManager, PanelRegion
-from presentation.core.tab_controller import (
-    TabController, TAB_CONVERSATION, TAB_DEVTOOLS, TAB_RAG
-)
 
 
 class MainWindow(QMainWindow):
@@ -51,10 +48,10 @@ class MainWindow(QMainWindow):
     应用程序主窗口
     
     布局结构：
-    - 外层：水平 QSplitter，分割左侧工作区与右栏标签页
+    - 外层：水平 QSplitter，分割左侧工作区与右栏统一面板
     - 左侧：垂直 QSplitter，分割上部工作区与下部仿真结果区
     - 上部工作区：水平 QSplitter，分割文件浏览器与代码编辑器
-    - 右栏：QTabWidget 承载多个标签页（对话、调试等）
+    - 右栏：统一 React 面板承载对话与索引库
     - 初始比例：左侧约 70%、右栏约 30%、仿真结果区约 22% 高度
     """
 
@@ -73,9 +70,6 @@ class MainWindow(QMainWindow):
         
         # 面板管理器
         self._panel_manager: Optional[PanelManager] = None
-        
-        # 右栏标签页控制器
-        self._tab_controller: Optional[TabController] = None
         
         # 管理器实例（延迟初始化）
         self._menu_manager: Optional[MenuManager] = None
@@ -163,11 +157,6 @@ class MainWindow(QMainWindow):
         """获取面板管理器"""
         return self._panel_manager
 
-    @property
-    def tab_controller(self) -> Optional[TabController]:
-        """获取右栏标签页控制器"""
-        return self._tab_controller
-
     def _get_text(self, key: str, default: Optional[str] = None) -> str:
         """获取国际化文本"""
         if self.i18n_manager:
@@ -248,8 +237,8 @@ class MainWindow(QMainWindow):
         code_editor.workspace_file_state_changed.connect(file_browser.set_workspace_file_state)
         file_browser.set_workspace_file_state(code_editor.get_workspace_file_state())
         
-        # 右栏 - 使用 QTabWidget 承载多个面板
-        self._create_right_panel_tabs()
+        # 右栏 - 统一 React 面板
+        self._create_right_panel()
         
         # 下栏 - 仿真结果面板
         from presentation.panels.simulation.simulation_tab import SimulationTab
@@ -262,79 +251,17 @@ class MainWindow(QMainWindow):
             title_key="panel.simulation"
         )
 
-    def _create_right_panel_tabs(self):
-        """创建右栏标签页容器和面板"""
-        # 创建标签页容器
-        right_tab_widget = QTabWidget()
-        right_tab_widget.setMinimumWidth(250)
-        right_tab_widget.setDocumentMode(True)  # 更现代的外观
-        
-        # 初始化标签页控制器
-        self._tab_controller = TabController()
-        self._tab_controller.bind_tab_widget(right_tab_widget)
-        
-        # 注册对话面板
+    def _create_right_panel(self):
+        """创建统一右栏面板"""
         from presentation.panels.conversation_panel import ConversationPanel
-        chat_panel = ConversationPanel()
-        self._tab_controller.register_tab(
-            TAB_CONVERSATION,
-            chat_panel,
-            self._get_text("panel.conversation", "对话"),
-            "resources/icons/panel/chat.svg"
-        )
-        self._panels["chat"] = chat_panel
+        right_panel = ConversationPanel()
+        right_panel.setMinimumWidth(250)
+        self._panels["right_panel"] = right_panel
         self._panel_manager.register_panel(
-            "conversation", chat_panel, PanelRegion.RIGHT,
+            "right_panel", right_panel, PanelRegion.RIGHT,
             title_key="panel.conversation"
         )
-        
-        # 注册知识库面板（RAG Tab）
-        from presentation.panels.rag_panel import RAGPanel
-        from shared.service_locator import ServiceLocator
-        from shared.service_names import SVC_EVENT_BUS, SVC_RAG_MANAGER
-
-        rag_panel = RAGPanel(
-            event_bus=ServiceLocator.get_optional(SVC_EVENT_BUS),
-            rag_manager=ServiceLocator.get_optional(SVC_RAG_MANAGER),
-        )
-        self._tab_controller.register_tab(
-            TAB_RAG,
-            rag_panel,
-            self._get_text("panel.rag", "索引库"),
-            "resources/icons/panel/knowledge.svg"
-        )
-        self._panels["rag"] = rag_panel
-        self._panel_manager.register_panel(
-            "rag", rag_panel, PanelRegion.RIGHT,
-            title_key="panel.rag"
-        )
-        
-        # 注册调试面板（根据配置）
-        if self._should_show_devtools():
-            from presentation.panels.devtools_panel import DevToolsPanel
-            devtools_panel = DevToolsPanel()
-            self._tab_controller.register_tab(
-                TAB_DEVTOOLS,
-                devtools_panel,
-                self._get_text("panel.devtools", "DevTools"),
-                "resources/icons/panel/bug.svg"
-            )
-            self._panels["devtools"] = devtools_panel
-            self._panel_manager.register_panel(
-                "devtools", devtools_panel, PanelRegion.RIGHT,
-                title_key="panel.devtools"
-            )
-        
-        # 添加到分割器
-        self._splitters["main_horizontal"].addWidget(right_tab_widget)
-        self._panels["right_tabs"] = right_tab_widget
-        self._tab_controller.switch_to_tab(TAB_CONVERSATION)
-
-    def _should_show_devtools(self) -> bool:
-        """检查是否应显示调试面板"""
-        if self.config_manager:
-            return self.config_manager.get("debug.show_devtools_panel", True)
-        return True  # 默认显示
+        self._splitters["main_horizontal"].addWidget(right_panel)
 
     def _setup_splitter_sizes(self):
         """设置分割器初始比例"""
@@ -414,10 +341,10 @@ class MainWindow(QMainWindow):
                 self._simulation_command_controller.bind_code_editor(editor)
             self._on_workspace_file_state_changed(editor.get_workspace_file_state())
 
-        if "chat" in self._panels:
-            chat_panel = self._panels["chat"]
-            chat_panel.file_clicked.connect(self._on_file_clicked)
-            chat_panel.compress_requested.connect(self._on_compress_requested)
+        if "right_panel" in self._panels:
+            right_panel = self._panels["right_panel"]
+            right_panel.file_clicked.connect(self._on_file_clicked)
+            right_panel.compress_requested.connect(self._on_compress_requested)
 
     def _initialize_panels(self) -> None:
         initialized = set()
@@ -443,7 +370,7 @@ class MainWindow(QMainWindow):
     def _on_show_history_dialog(self):
         """显示对话历史面板"""
         self.activate_right_panel("conversation")
-        panel = self._panels.get("chat")
+        panel = self._panels.get("right_panel")
         if panel is None or not hasattr(panel, "request_history"):
             return
         try:
@@ -465,8 +392,8 @@ class MainWindow(QMainWindow):
                 if self.logger:
                     self.logger.info("Context compression confirmed")
                 
-                if "chat" in self._panels:
-                    self._panels["chat"].refresh_display()
+                if "right_panel" in self._panels:
+                    self._panels["right_panel"].refresh_display()
             else:
                 if self.logger:
                     self.logger.info("Context compression cancelled")
@@ -535,6 +462,15 @@ class MainWindow(QMainWindow):
                 self._panel_manager.hide_panel(panel_id)
 
     def toggle_panel(self, panel_id: str, visible: Optional[bool] = None) -> bool:
+        if panel_id in {"conversation", "rag"}:
+            if visible is False:
+                if self.logger:
+                    self.logger.warning(
+                        f"Right-side surface '{panel_id}' cannot be hidden individually"
+                    )
+                return False
+            return self.activate_right_panel(panel_id)
+
         if self._panel_manager is None:
             return False
 
@@ -545,6 +481,16 @@ class MainWindow(QMainWindow):
             return False
 
         if panel_info.region == PanelRegion.RIGHT:
+            if panel_id == "right_panel":
+                if visible is False:
+                    if self.logger:
+                        self.logger.warning(
+                            "Unified right panel cannot be hidden individually"
+                        )
+                    return False
+                if visible:
+                    self._panel_manager.show_panel(panel_id)
+                return self._panel_manager.is_panel_visible(panel_id)
             if visible is False:
                 if self.logger:
                     self.logger.warning(
@@ -562,38 +508,18 @@ class MainWindow(QMainWindow):
         return self._panel_manager.is_panel_visible(panel_id)
 
     def activate_right_panel(self, panel_id: str) -> bool:
-        if self._tab_controller is None:
-            return False
-
-        tab_id_map = {
-            "conversation": TAB_CONVERSATION,
-            "rag": TAB_RAG,
-            "devtools": TAB_DEVTOOLS,
-        }
-        target_tab_id = tab_id_map.get(panel_id)
-        if target_tab_id is None:
+        if panel_id not in {"conversation", "rag"}:
             if self.logger:
                 self.logger.warning(f"Unknown right panel id: {panel_id}")
             return False
-        return self._tab_controller.switch_to_tab(target_tab_id)
+
+        panel = self._panels.get("right_panel")
+        if panel is None or not hasattr(panel, "activate_surface"):
+            return False
+        return bool(panel.activate_surface(panel_id))
 
     def retranslate_ui(self) -> None:
         self.setWindowTitle(self._get_text("app.title", "Circuit Design AI"))
-
-        if self._tab_controller is not None:
-            self._tab_controller.update_tab_title(
-                TAB_CONVERSATION,
-                self._get_text("panel.conversation", "对话"),
-            )
-            self._tab_controller.update_tab_title(
-                TAB_RAG,
-                self._get_text("panel.rag", "索引库"),
-            )
-            if "devtools" in self._panels:
-                self._tab_controller.update_tab_title(
-                    TAB_DEVTOOLS,
-                    self._get_text("panel.devtools", "DevTools"),
-                )
 
         if self._menu_manager is not None:
             self._menu_manager.retranslate_ui()

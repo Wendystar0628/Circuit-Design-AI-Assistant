@@ -67,9 +67,6 @@ UI_EDITOR_SCROLL_POSITIONS = "editor_scroll_positions"
 UI_INPUT_DRAFT = "input_draft"
 UI_IS_GENERATING = "is_generating"
 
-# 调试面板状态
-UI_DEVTOOLS_VISIBLE = "devtools_visible"
-
 
 # 状态字段到事件的映射
 UI_STATE_EVENT_MAP = {
@@ -134,8 +131,6 @@ class UIState:
             # 对话面板状态
             UI_INPUT_DRAFT: "",
             UI_IS_GENERATING: False,
-            # 调试面板状态
-            UI_DEVTOOLS_VISIBLE: False,
         }
 
     # ============================================================
@@ -439,5 +434,4 @@ __all__ = [
     "UI_EDITOR_SCROLL_POSITIONS",
     "UI_INPUT_DRAFT",
     "UI_IS_GENERATING",
-    "UI_DEVTOOLS_VISIBLE",
 ]

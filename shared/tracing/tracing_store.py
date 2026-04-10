@@ -4,7 +4,7 @@
 
 职责：
 - 管理追踪数据的持久化存储
-- 提供查询接口供 DevToolsPanel 使用
+- 提供追踪查询接口供上层消费者使用
 - 自动清理过期数据
 
 存储位置：
@@ -499,7 +499,7 @@ class TracingStore:
         """
         获取指定 Span 的所有直接子 Span
         
-        用于 DevToolsPanel 展开查看 Sub-Spans 树。
+        用于按父子关系遍历追踪树。
         
         Args:
             parent_span_id: 父 Span ID

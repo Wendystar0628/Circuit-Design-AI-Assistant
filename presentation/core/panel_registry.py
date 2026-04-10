@@ -15,7 +15,6 @@
 被调用方：
 - panel_manager.py
 - main_window.py
-- tab_controller.py
 """
 
 from typing import Optional, Dict, Any, Type, List
@@ -104,14 +103,13 @@ PANEL_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "icon": "icons/panel/code.svg",
         "min_width": 400,
     },
-    "conversation": {
+    "right_panel": {
         "class": "ConversationPanel",
         "module": "presentation.panels.conversation_panel",
         "region": "RIGHT",
         "default_visible": True,
         "title_key": "panel.conversation",
         "icon": "icons/panel/chat.svg",
-        "tab_id": "TAB_CONVERSATION",
         "min_width": 250,
     },
     "info": {
@@ -121,7 +119,6 @@ PANEL_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "default_visible": False,
         "title_key": "panel.info",
         "icon": "icons/panel/info.svg",
-        "tab_id": "TAB_INFO",
         "phase": 9,
     },
     "simulation": {
@@ -141,7 +138,6 @@ PANEL_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "default_visible": False,
         "title_key": "panel.component",
         "icon": "icons/panel/chip.svg",
-        "tab_id": "TAB_COMPONENT",
         "phase": 10,
     },
 }
@@ -247,36 +243,6 @@ class PanelRegistry:
         }
     
     @classmethod
-    def get_tab_panels(cls) -> Dict[str, Dict[str, Any]]:
-        """
-        获取所有标签页面板定义
-        
-        Returns:
-            带有 tab_id 的面板定义字典
-        """
-        return {
-            panel_id: definition
-            for panel_id, definition in PANEL_DEFINITIONS.items()
-            if "tab_id" in definition
-        }
-    
-    @classmethod
-    def get_panel_by_tab_id(cls, tab_id: str) -> Optional[str]:
-        """
-        根据 tab_id 获取面板 ID
-        
-        Args:
-            tab_id: 标签页 ID（如 TAB_CONVERSATION）
-            
-        Returns:
-            面板 ID，不存在则返回 None
-        """
-        for panel_id, definition in PANEL_DEFINITIONS.items():
-            if definition.get("tab_id") == tab_id:
-                return panel_id
-        return None
-    
-    @classmethod
     def get_available_panels(cls, current_phase: int = 99) -> Dict[str, Dict[str, Any]]:
         """
         获取当前阶段可用的面板定义
@@ -348,20 +314,6 @@ class PanelRegistry:
         return definition.get("icon", "") if definition else ""
     
     @classmethod
-    def get_tab_id(cls, panel_id: str) -> Optional[str]:
-        """
-        获取面板的 tab_id
-        
-        Args:
-            panel_id: 面板唯一标识
-            
-        Returns:
-            tab_id，不存在则返回 None
-        """
-        definition = PANEL_DEFINITIONS.get(panel_id)
-        return definition.get("tab_id") if definition else None
-    
-    @classmethod
     def get_default_visible(cls, panel_id: str) -> bool:
         """
         获取面板默认可见性
@@ -413,20 +365,6 @@ class PanelRegistry:
         
         required_phase = definition.get("phase", 1)
         return current_phase >= required_phase
-    
-    @classmethod
-    def is_tab_panel(cls, panel_id: str) -> bool:
-        """
-        检查面板是否为标签页面板
-        
-        Args:
-            panel_id: 面板唯一标识
-            
-        Returns:
-            是否为标签页面板
-        """
-        definition = PANEL_DEFINITIONS.get(panel_id)
-        return "tab_id" in definition if definition else False
     
     # ============================================================
     # 延迟加载

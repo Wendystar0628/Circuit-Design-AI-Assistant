@@ -132,11 +132,9 @@ class ActionHandlers:
             "on_toggle_panel": self.on_toggle_panel,
             "on_show_conversation": self.on_show_conversation,
             "on_show_rag": self.on_show_rag,
-            "on_show_devtools": self.on_show_devtools,
             "on_new_conversation": self.on_new_conversation,
             "on_conversation_history": self.on_conversation_history,
             "on_conversation_compress": self.on_conversation_compress,
-            "on_conversation_clear": self.on_conversation_clear,
             "on_reindex_knowledge": self.on_reindex_knowledge,
             "on_clear_knowledge": self.on_clear_knowledge,
             "on_design_goals": self.on_design_goals,
@@ -348,42 +346,33 @@ class ActionHandlers:
     def on_show_rag(self):
         self._activate_right_panel("rag")
 
-    def on_show_devtools(self):
-        self._activate_right_panel("devtools")
-
     def on_new_conversation(self):
         self.on_show_conversation()
-        panel = self._get_panel("chat")
+        panel = self._get_panel("right_panel")
         if panel is not None and hasattr(panel, "start_new_conversation"):
             panel.start_new_conversation()
 
     def on_conversation_history(self):
         self.on_show_conversation()
-        panel = self._get_panel("chat")
+        panel = self._get_panel("right_panel")
         if panel is not None and hasattr(panel, "request_history"):
             panel.request_history()
 
     def on_conversation_compress(self):
         self.on_show_conversation()
-        panel = self._get_panel("chat")
+        panel = self._get_panel("right_panel")
         if panel is not None and hasattr(panel, "request_compress_context"):
             panel.request_compress_context()
 
-    def on_conversation_clear(self):
-        self.on_show_conversation()
-        panel = self._get_panel("chat")
-        if panel is not None and hasattr(panel, "request_clear_display"):
-            panel.request_clear_display()
-
     def on_reindex_knowledge(self):
         self.on_show_rag()
-        panel = self._get_panel("rag")
+        panel = self._get_panel("right_panel")
         if panel is not None and hasattr(panel, "trigger_reindex"):
             panel.trigger_reindex()
 
     def on_clear_knowledge(self):
         self.on_show_rag()
-        panel = self._get_panel("rag")
+        panel = self._get_panel("right_panel")
         if panel is not None and hasattr(panel, "request_clear_index"):
             panel.request_clear_index()
 

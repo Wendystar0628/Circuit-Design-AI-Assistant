@@ -5,7 +5,6 @@ UI层核心基础设施
 包含：
 - BaseViewModel: ViewModel 基类
 - PanelManager: 面板管理器
-- TabController: 标签页控制器
 - UIEventBridge: UI事件桥接器
 - PanelRegistry: 面板注册表
 """
@@ -13,15 +12,6 @@ UI层核心基础设施
 from presentation.core.base_view_model import BaseViewModel
 from presentation.core.panel_manager import PanelManager, PanelRegion
 from presentation.core.panel_registry import PanelRegistry, PanelDefinition, PANEL_DEFINITIONS
-from presentation.core.tab_controller import (
-    TabController,
-    TabInfo,
-    AutoSwitchPolicy,
-    TAB_CONVERSATION,
-    TAB_INFO,
-    TAB_COMPONENT,
-    TAB_RAG,
-)
 
 __all__ = [
     # ViewModel
@@ -32,11 +22,4 @@ __all__ = [
     "PanelRegistry",
     "PanelDefinition",
     "PANEL_DEFINITIONS",
-    # Tab Controller
-    "TabController",
-    "TabInfo",
-    "AutoSwitchPolicy",
-    "TAB_CONVERSATION",
-    "TAB_INFO",
-    "TAB_COMPONENT",
 ]

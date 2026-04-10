@@ -46,6 +46,8 @@ class ConversationStateSerializer:
         can_send: bool = True,
         send_in_progress: bool = False,
         rollback_in_progress: bool = False,
+        active_surface: str = "conversation",
+        rag_state: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         usage_snapshot = self.serialize_usage_info(usage_info)
         pending_summary = self.serialize_pending_workspace_edit_summary(
@@ -60,6 +62,9 @@ class ConversationStateSerializer:
         has_pending_workspace_edits = bool(pending_summary.get("file_count", 0))
 
         return {
+            "ui": {
+                "active_surface": self.serialize_active_surface(active_surface),
+            },
             "session": {
                 "id": str(session_id or ""),
                 "name": str(session_name or ""),
@@ -97,6 +102,75 @@ class ConversationStateSerializer:
                 "rollback": self.serialize_rollback_overlay_state(rollback_overlay),
                 "confirm": self.serialize_confirm_dialog_state(confirm_dialog),
                 "notice": self.serialize_notice_dialog_state(notice_dialog),
+            },
+            "rag": self.serialize_rag_state(rag_state),
+        }
+
+    def serialize_active_surface(self, active_surface: str) -> str:
+        normalized_surface = str(active_surface or "conversation")
+        return normalized_surface if normalized_surface in {"conversation", "rag"} else "conversation"
+
+    def serialize_rag_state(self, rag_state: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        data = rag_state if isinstance(rag_state, dict) else {}
+        status = data.get("status", {}) if isinstance(data.get("status", {}), dict) else {}
+        stats = data.get("stats", {}) if isinstance(data.get("stats", {}), dict) else {}
+        progress = data.get("progress", {}) if isinstance(data.get("progress", {}), dict) else {}
+        actions = data.get("actions", {}) if isinstance(data.get("actions", {}), dict) else {}
+        search = data.get("search", {}) if isinstance(data.get("search", {}), dict) else {}
+        info = data.get("info", {}) if isinstance(data.get("info", {}), dict) else {}
+
+        serialized_files: List[Dict[str, Any]] = []
+        for item in data.get("files", []) or []:
+            if not isinstance(item, dict):
+                continue
+            serialized_files.append(
+                {
+                    "path": str(item.get("path", "") or ""),
+                    "relative_path": str(item.get("relative_path", "") or ""),
+                    "status": str(item.get("status", "pending") or "pending"),
+                    "status_label": str(item.get("status_label", "") or ""),
+                    "chunks_count": max(0, int(item.get("chunks_count", 0) or 0)),
+                    "indexed_at": str(item.get("indexed_at", "") or ""),
+                    "tooltip": str(item.get("tooltip", "") or ""),
+                }
+            )
+
+        return {
+            "status": {
+                "phase": str(status.get("phase", "idle") or "idle"),
+                "label": str(status.get("label", "") or ""),
+                "tone": str(status.get("tone", "neutral") or "neutral"),
+            },
+            "stats": {
+                "total_files": max(0, int(stats.get("total_files", 0) or 0)),
+                "processed": max(0, int(stats.get("processed", 0) or 0)),
+                "failed": max(0, int(stats.get("failed", 0) or 0)),
+                "excluded": max(0, int(stats.get("excluded", 0) or 0)),
+                "total_chunks": max(0, int(stats.get("total_chunks", 0) or 0)),
+                "total_entities": max(0, int(stats.get("total_entities", 0) or 0)),
+                "total_relations": max(0, int(stats.get("total_relations", 0) or 0)),
+                "storage_size_mb": max(0.0, float(stats.get("storage_size_mb", 0.0) or 0.0)),
+            },
+            "progress": {
+                "is_visible": bool(progress.get("is_visible", False)),
+                "processed": max(0, int(progress.get("processed", 0) or 0)),
+                "total": max(0, int(progress.get("total", 0) or 0)),
+                "current_file": str(progress.get("current_file", "") or ""),
+            },
+            "actions": {
+                "can_reindex": bool(actions.get("can_reindex", False)),
+                "can_clear": bool(actions.get("can_clear", False)),
+                "can_search": bool(actions.get("can_search", False)),
+                "is_indexing": bool(actions.get("is_indexing", False)),
+            },
+            "files": serialized_files,
+            "search": {
+                "is_running": bool(search.get("is_running", False)),
+                "result_text": str(search.get("result_text", "") or ""),
+            },
+            "info": {
+                "message": str(info.get("message", "") or ""),
+                "tone": str(info.get("tone", "neutral") or "neutral"),
             },
         }
 

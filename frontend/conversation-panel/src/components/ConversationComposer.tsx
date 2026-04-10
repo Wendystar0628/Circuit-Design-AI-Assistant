@@ -212,18 +212,21 @@ function toDroppedPaths(event: DragEvent): string[] {
     .filter((value) => Boolean(value))
 }
 
-function formatPercent(value: number): string {
-  const percentage = Math.max(0, Math.min(100, value * 100))
-  if (percentage >= 100) {
-    return '100%'
+function formatCompactTokenCount(value: number): string {
+  const normalized = Math.max(0, value)
+  if (normalized >= 1_000_000) {
+    const compact = normalized >= 10_000_000
+      ? (normalized / 1_000_000).toFixed(0)
+      : (normalized / 1_000_000).toFixed(1)
+    return `${compact.replace(/\.0$/, '')}M`
   }
-  if (percentage >= 10) {
-    return `${Math.round(percentage)}%`
+  if (normalized >= 1_000) {
+    const compact = normalized >= 100_000
+      ? (normalized / 1_000).toFixed(0)
+      : (normalized / 1_000).toFixed(1)
+    return `${compact.replace(/\.0$/, '')}K`
   }
-  if (percentage > 0) {
-    return `${percentage.toFixed(1)}%`
-  }
-  return '0%'
+  return `${Math.round(normalized)}`
 }
 
 function primaryActionLabel(mode: string): string {
@@ -463,212 +466,183 @@ actionMode === 'rollbacking' ||
 const galleryAttachments = draftAttachments.filter((attachment) => !isInlineAttachment(attachment))
 
 return (
-<section className="composer-shell">
-<PendingEditSummary summary={state.composer.pending_workspace_edit_summary} bridge={bridge} />
+  <section className="composer-shell">
+    <PendingEditSummary summary={state.composer.pending_workspace_edit_summary} bridge={bridge} />
 
-<div className="composer-toolbar">
-<button
-type="button"
-className="model-card"
-onClick={() => bridge?.requestModelConfig?.()}
-disabled={!bridgeReady}
->
-{state.composer.model_display_name || '模型'}
-</button>
-<div className={`usage-card usage-card--${usageTone(state.composer.compress_button_state)}`}>
-<div className="usage-card__row">
-<span>上下文</span>
-<span>{formatPercent(state.composer.usage.ratio)}</span>
-</div>
-<progress
-className="usage-bar"
-max={100}
-value={Math.max(0, Math.min(100, state.composer.usage.ratio * 100))}
-/>
-<div className="usage-card__meta">
-<span>{state.composer.usage.current_tokens} / {state.composer.usage.max_tokens}</span>
-<button
-type="button"
-className="ghost-button"
-onClick={() => bridge?.requestCompressContext?.()}
-disabled={!bridgeReady}
->
-压缩上下文
-</button>
-</div>
-</div>
-</div>
+    {galleryAttachments.length ? (
+      <div className="composer-gallery">
+        {galleryAttachments.map((attachment) => (
+          <div key={attachmentKey(attachment)} className="composer-gallery__item">
+            <div className="composer-gallery__meta">
+              <span className="composer-gallery__name">{attachment.name || '未命名附件'}</span>
+              <span className="composer-gallery__path">{attachment.path}</span>
+            </div>
+            <button type="button" className="ghost-button ghost-button--danger" onClick={() => removeAttachment(attachmentKey(attachment))}>
+              移除
+            </button>
+          </div>
+        ))}
+      </div>
+    ) : null}
 
-{galleryAttachments.length ? (
-<div className="composer-gallery">
-{galleryAttachments.map((attachment) => (
-<div key={attachmentKey(attachment)} className="composer-gallery__item">
-<div className="composer-gallery__meta">
-<span className="composer-gallery__name">{attachment.name || '未命名附件'}</span>
-<span className="composer-gallery__path">{attachment.path}</span>
-</div>
-<button type="button" className="ghost-button ghost-button--danger" onClick={() => removeAttachment(attachmentKey(attachment))}>
-移除
-</button>
-</div>
-))}
-</div>
-) : null}
+    <div
+      className="composer-editor-shell"
+      onDragOver={(event) => {
+        event.preventDefault()
+      }}
+      onDrop={(event) => {
+        event.preventDefault()
+        const paths = toDroppedPaths(event.nativeEvent)
+        if (paths.length) {
+          bridge?.attachFiles?.(paths)
+        }
+      }}
+    >
+      <div
+        ref={editorRef}
+        className="composer-editor"
+        contentEditable={bridgeReady}
+        suppressContentEditableWarning
+        role="textbox"
+        aria-label="消息输入框"
+        aria-multiline="true"
+        data-empty="true"
+        data-placeholder="输入消息。Shift+Enter 换行，Enter 发送。"
+        onFocus={() => {
+          if (editorRef.current && editorRef.current.textContent === '') {
+            editorRef.current.dataset.empty = draftAttachments.length ? 'false' : 'true'
+          }
+        }}
+        onInput={() => {
+          refreshComposerState()
+        }}
+        onPaste={(event) => {
+          event.preventDefault()
+          insertPlainTextAtCursor(editorRef.current as HTMLDivElement, event.clipboardData.getData('text/plain'))
+          refreshComposerState()
+        }}
+        onMouseDown={(event) => {
+          const target = event.target as HTMLElement | null
+          const removeTarget = target?.closest<HTMLElement>('[data-remove-inline-attachment]')
+          if (removeTarget?.dataset.removeInlineAttachment) {
+            event.preventDefault()
+            removeAttachment(removeTarget.dataset.removeInlineAttachment)
+          }
+        }}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' && !event.shiftKey) {
+            event.preventDefault()
+            if (!primaryActionDisabled && actionMode === 'send') {
+              bridge?.sendMessage?.(serializedDraft, { attachments: draftAttachments })
+              return
+            }
+            if (!primaryActionDisabled && actionMode === 'stop') {
+              bridge?.requestStop?.()
+            }
+            return
+          }
+          if (event.key === 'Enter' && event.shiftKey) {
+            event.preventDefault()
+            if (editorRef.current) {
+              insertLineBreakAtCursor(editorRef.current)
+              refreshComposerState()
+            }
+            return
+          }
+          if (event.key === 'Escape' && actionMode === 'stop') {
+            event.preventDefault()
+            bridge?.requestStop?.()
+            return
+          }
+          if ((event.key === 'Backspace' || event.key === 'Delete') && editorRef.current) {
+            const selection = window.getSelection()
+            if (!selection || !selection.isCollapsed) {
+              return
+            }
+            const anchorNode = selection.anchorNode
+            const anchorOffset = selection.anchorOffset
+            const editor = editorRef.current
+            let candidate: Node | null = null
 
-<div
-className="composer-editor-shell"
-onDragOver={(event) => {
-event.preventDefault()
-}}
-onDrop={(event) => {
-event.preventDefault()
-const paths = toDroppedPaths(event.nativeEvent)
-if (paths.length) {
-bridge?.attachFiles?.(paths)
-}
-}}
->
-<div
-ref={editorRef}
-className="composer-editor"
-contentEditable={bridgeReady}
-suppressContentEditableWarning
-role="textbox"
-aria-label="消息输入框"
-aria-multiline="true"
-data-empty="true"
-data-placeholder="输入消息。Shift+Enter 换行，Enter 发送。"
-onFocus={() => {
-if (editorRef.current && editorRef.current.textContent === '') {
-editorRef.current.dataset.empty = draftAttachments.length ? 'false' : 'true'
-}
-}}
-onInput={() => {
-refreshComposerState()
-}}
-onPaste={(event) => {
-event.preventDefault()
-insertPlainTextAtCursor(editorRef.current as HTMLDivElement, event.clipboardData.getData('text/plain'))
-refreshComposerState()
-}}
-onMouseDown={(event) => {
-const target = event.target as HTMLElement | null
-const removeTarget = target?.closest<HTMLElement>('[data-remove-inline-attachment]')
-if (removeTarget?.dataset.removeInlineAttachment) {
-event.preventDefault()
-removeAttachment(removeTarget.dataset.removeInlineAttachment)
-}
-}}
-onKeyDown={(event) => {
-if (event.key === 'Enter' && !event.shiftKey) {
-event.preventDefault()
-if (!primaryActionDisabled && actionMode === 'send') {
-bridge?.sendMessage?.(serializedDraft, { attachments: draftAttachments })
-return
-}
-if (!primaryActionDisabled && actionMode === 'stop') {
-bridge?.requestStop?.()
-}
-return
-}
-if (event.key === 'Enter' && event.shiftKey) {
-event.preventDefault()
-if (editorRef.current) {
-insertLineBreakAtCursor(editorRef.current)
-refreshComposerState()
-}
-return
-}
-if (event.key === 'Escape' && actionMode === 'stop') {
-event.preventDefault()
-bridge?.requestStop?.()
-return
-}
-if ((event.key === 'Backspace' || event.key === 'Delete') && editorRef.current) {
-const selection = window.getSelection()
-if (!selection || !selection.isCollapsed) {
-return
-}
-const anchorNode = selection.anchorNode
-const anchorOffset = selection.anchorOffset
-const editor = editorRef.current
-let candidate: Node | null = null
+            if (anchorNode?.nodeType === Node.TEXT_NODE) {
+              const textNode = anchorNode as Text
+              if (event.key === 'Backspace' && anchorOffset === 0) {
+                candidate = textNode.previousSibling
+              } else if (event.key === 'Delete' && anchorOffset === textNode.textContent?.length) {
+                candidate = textNode.nextSibling
+              }
+            } else if (anchorNode?.nodeType === Node.ELEMENT_NODE) {
+              const element = anchorNode as Element
+              candidate = event.key === 'Backspace'
+                ? element.childNodes[anchorOffset - 1] ?? null
+                : element.childNodes[anchorOffset] ?? null
+            }
 
-if (anchorNode?.nodeType === Node.TEXT_NODE) {
-const textNode = anchorNode as Text
-if (event.key === 'Backspace' && anchorOffset === 0) {
-candidate = textNode.previousSibling
-} else if (event.key === 'Delete' && anchorOffset === textNode.textContent?.length) {
-candidate = textNode.nextSibling
-}
-} else if (anchorNode?.nodeType === Node.ELEMENT_NODE) {
-const element = anchorNode as Element
-candidate = event.key === 'Backspace'
-? element.childNodes[anchorOffset - 1] ?? null
-: element.childNodes[anchorOffset] ?? null
-}
+            const candidateElement = candidate?.nodeType === Node.TEXT_NODE && candidate.textContent === '\u200b'
+              ? (event.key === 'Backspace' ? candidate.previousSibling : candidate.nextSibling)
+              : candidate
+            const inlineKey = candidateElement instanceof HTMLElement ? candidateElement.dataset.attachmentKey : undefined
+            if (inlineKey) {
+              event.preventDefault()
+              removeAttachment(inlineKey)
+              if (editor) {
+                editor.focus()
+              }
+            }
+          }
+        }}
+      />
 
-const candidateElement = candidate?.nodeType === Node.TEXT_NODE && candidate.textContent === '\u200b'
-? (event.key === 'Backspace' ? candidate.previousSibling : candidate.nextSibling)
-: candidate
-const inlineKey = candidateElement instanceof HTMLElement ? candidateElement.dataset.attachmentKey : undefined
-if (inlineKey) {
-event.preventDefault()
-removeAttachment(inlineKey)
-if (editor) {
-editor.focus()
-}
-}
-}
-}}
-/>
-
-<div className="composer-actions">
-<button
-type="button"
-className="icon-button"
-onClick={() => bridge?.requestUploadImage?.()}
-disabled={!bridgeReady}
-title="上传图片"
->
-图片
-</button>
-<button
-type="button"
-className="icon-button"
-onClick={() => bridge?.requestSelectFile?.()}
-disabled={!bridgeReady}
-title="选择文件"
->
-文件
-</button>
-<button
-type="button"
-className={`primary-button primary-button--${actionMode}`}
-disabled={primaryActionDisabled}
-onClick={() => {
-if (actionMode === 'send') {
-bridge?.sendMessage?.(serializedDraft, { attachments: draftAttachments })
-return
-}
-if (actionMode === 'stop') {
-bridge?.requestStop?.()
-}
-}}
->
-{primaryActionLabel(actionMode)}
-</button>
-</div>
-</div>
-
-<div className="composer-footer">
-<div className="composer-footer__status">{state.composer.action_status || '就绪'}</div>
-<div className="composer-footer__meta">
-<span>{plainTextValue.trim() ? `${plainTextValue.trim().length} 字` : '无文本'}</span>
-<span>{draftAttachments.length} 个附件</span>
-<span>{state.view_flags.is_busy ? '忙碌中' : '空闲'}</span>
-</div>
-</div>
-</section>
+      <div className="composer-controls">
+        <button
+          type="button"
+          className="icon-button composer-control-button"
+          onClick={() => bridge?.requestUploadImage?.()}
+          disabled={!bridgeReady}
+          title="上传图片"
+        >
+          图片
+        </button>
+        <button
+          type="button"
+          className="icon-button composer-control-button"
+          onClick={() => bridge?.requestSelectFile?.()}
+          disabled={!bridgeReady}
+          title="选择文件"
+        >
+          文件
+        </button>
+        <div className={`usage-card composer-usage-pill usage-card--${usageTone(state.composer.compress_button_state)}`}>
+          <span className="usage-card__tokens">
+            {formatCompactTokenCount(state.composer.usage.current_tokens)} / {formatCompactTokenCount(state.composer.usage.max_tokens)}
+          </span>
+        </div>
+        <button
+          type="button"
+          className="model-card composer-model-button"
+          onClick={() => bridge?.requestModelConfig?.()}
+          disabled={!bridgeReady}
+        >
+          {state.composer.model_display_name || '模型'}
+        </button>
+        <button
+          type="button"
+          className={`primary-button primary-button--${actionMode} composer-send-button`}
+          disabled={primaryActionDisabled}
+          onClick={() => {
+            if (actionMode === 'send') {
+              bridge?.sendMessage?.(serializedDraft, { attachments: draftAttachments })
+              return
+            }
+            if (actionMode === 'stop') {
+              bridge?.requestStop?.()
+            }
+          }}
+        >
+          {primaryActionLabel(actionMode)}
+        </button>
+      </div>
+    </div>
+  </section>
 )
 }

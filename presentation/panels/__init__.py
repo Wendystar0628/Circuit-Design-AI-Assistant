@@ -37,9 +37,6 @@ from presentation.panels.conversation import (
     SUGGESTION_STATE_EXPIRED,
 )
 
-# 从调试工具面板导入
-from presentation.panels.devtools_panel import DevToolsPanel
-
 __all__ = [
     # File Browser
     "FileBrowserPanel",
@@ -56,6 +53,4 @@ __all__ = [
     "SUGGESTION_STATE_ACTIVE",
     "SUGGESTION_STATE_SELECTED",
     "SUGGESTION_STATE_EXPIRED",
-    # DevTools Panel
-    "DevToolsPanel",
 ]

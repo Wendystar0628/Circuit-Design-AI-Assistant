@@ -7,6 +7,7 @@ from PyQt6.QtCore import QObject, QJsonValue, pyqtSignal, pyqtSlot
 
 class ConversationWebBridge(QObject):
     ready = pyqtSignal()
+    surface_activation_requested = pyqtSignal(str)
     send_requested = pyqtSignal(str, dict)
     stop_requested = pyqtSignal()
     new_conversation_requested = pyqtSignal()
@@ -16,7 +17,6 @@ class ConversationWebBridge(QObject):
     history_session_open_requested = pyqtSignal(str)
     history_session_export_requested = pyqtSignal(str, str)
     history_session_delete_requested = pyqtSignal(str)
-    clear_display_requested = pyqtSignal()
     confirm_dialog_resolved = pyqtSignal(bool)
     notice_dialog_close_requested = pyqtSignal()
     compress_requested = pyqtSignal()
@@ -34,11 +34,21 @@ class ConversationWebBridge(QObject):
     upload_image_requested = pyqtSignal()
     select_file_requested = pyqtSignal()
     model_config_requested = pyqtSignal()
+    rag_reindex_requested = pyqtSignal()
+    rag_clear_requested = pyqtSignal()
+    rag_search_requested = pyqtSignal(str)
     attachments_selected = pyqtSignal(list)
 
     @pyqtSlot()
     def markReady(self) -> None:
         self.ready.emit()
+
+    @pyqtSlot(str)
+    def activateSurface(self, surface_id: str) -> None:
+        normalized_surface = str(surface_id or "conversation")
+        if normalized_surface not in {"conversation", "rag"}:
+            normalized_surface = "conversation"
+        self.surface_activation_requested.emit(normalized_surface)
 
     def _normalize_json_payload(self, payload: Any) -> Any:
         if isinstance(payload, QJsonValue):
@@ -86,10 +96,6 @@ class ConversationWebBridge(QObject):
     @pyqtSlot(str)
     def requestDeleteHistorySession(self, session_id: str) -> None:
         self.history_session_delete_requested.emit(str(session_id or ""))
-
-    @pyqtSlot()
-    def requestClearDisplay(self) -> None:
-        self.clear_display_requested.emit()
 
     @pyqtSlot(bool)
     def resolveConfirmDialog(self, accepted: bool) -> None:
@@ -158,6 +164,18 @@ class ConversationWebBridge(QObject):
     @pyqtSlot()
     def requestModelConfig(self) -> None:
         self.model_config_requested.emit()
+
+    @pyqtSlot()
+    def requestReindexKnowledge(self) -> None:
+        self.rag_reindex_requested.emit()
+
+    @pyqtSlot()
+    def requestClearKnowledge(self) -> None:
+        self.rag_clear_requested.emit()
+
+    @pyqtSlot(str)
+    def requestRagSearch(self, query: str) -> None:
+        self.rag_search_requested.emit(str(query or ""))
 
     @pyqtSlot(QJsonValue)
     @pyqtSlot(list)

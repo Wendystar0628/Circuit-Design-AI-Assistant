@@ -25,7 +25,6 @@ DEFAULT_TRACING_MAX_BUFFER_SIZE = 100         # 追踪缓冲区上限
 DEFAULT_TRACING_RETENTION_DAYS = 7            # 追踪数据保留天数
 DEFAULT_TRACING_LOG_INPUTS_OUTPUTS = True     # 是否记录输入输出
 DEFAULT_DEBUG_RERAISE_ASYNC_ERRORS = False    # 异步槽异常是否重新抛出
-DEFAULT_DEBUG_SHOW_DEVTOOLS_PANEL = True      # 是否显示调试面板
 TRACING_DB_FILE = "traces.sqlite3"            # 追踪数据库文件名
 
 # ============================================================

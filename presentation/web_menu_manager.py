@@ -90,8 +90,6 @@ class MenuManager:
         self._register_action("view_simulation", "menu.view.simulation", "Simulation Results", handler=self._callbacks.get("on_toggle_panel"), checkable=True, checked=True, invoke_with_checked=True, handler_arg="simulation")
         self._register_action("view_conversation", "menu.view.conversation", "Conversation", handler=self._callbacks.get("on_show_conversation"))
         self._register_action("view_rag", "menu.view.knowledge", "Index Library", handler=self._callbacks.get("on_show_rag"))
-        if self._has_panel("devtools"):
-            self._register_action("view_devtools", "menu.view.devtools", "DevTools", handler=self._callbacks.get("on_show_devtools"))
 
         self._register_action("design_goals", "menu.design.goals", "Design Goals", handler=self._callbacks.get("on_design_goals"))
         self._register_action("design_iteration_history", "menu.design.iteration_history", "Iteration History", handler=self._callbacks.get("on_iteration_history"))
@@ -101,7 +99,6 @@ class MenuManager:
         self._register_action("conversation_new", "menu.conversation.new", "New Conversation", handler=self._callbacks.get("on_new_conversation"), shortcut="Ctrl+Shift+N")
         self._register_action("conversation_history", "menu.conversation.history", "History", handler=self._callbacks.get("on_conversation_history"))
         self._register_action("conversation_compress", "menu.conversation.compress", "Compress Context", handler=self._callbacks.get("on_conversation_compress"))
-        self._register_action("conversation_clear", "menu.conversation.clear", "Clear Display", handler=self._callbacks.get("on_conversation_clear"))
 
         self._register_action("knowledge_open", "menu.knowledge.open", "Open Index Library", handler=self._callbacks.get("on_show_rag"))
         self._register_action("knowledge_rebuild", "menu.knowledge.rebuild", "Rebuild Index", handler=self._callbacks.get("on_reindex_knowledge"), enabled=False)
@@ -141,10 +138,6 @@ class MenuManager:
             "invoke_with_checked": bool(invoke_with_checked),
             "handler_arg": handler_arg,
         }
-
-    def _has_panel(self, panel_id: str) -> bool:
-        panels = getattr(self._main_window, "_panels", {})
-        return panel_id in panels
 
     def _dynamic_recent_items(self) -> List[Dict[str, Any]]:
         if not self._recent_projects:
@@ -207,8 +200,6 @@ class MenuManager:
             self._menu_item("view_conversation"),
             self._menu_item("view_rag"),
         ]
-        if "view_devtools" in self._actions:
-            view_items.append(self._menu_item("view_devtools"))
         return [
             {
                 "id": "file",
@@ -270,8 +261,6 @@ class MenuManager:
                     self._menu_item("conversation_new"),
                     self._menu_item("conversation_history"),
                     self._menu_item("conversation_compress"),
-                    {"type": "separator"},
-                    self._menu_item("conversation_clear"),
                 ],
             },
             {

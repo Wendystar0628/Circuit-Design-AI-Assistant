@@ -172,7 +172,73 @@ export interface ConversationNoticeDialogState {
   tone: string
 }
 
+export interface RightPanelUiState {
+  active_surface: string
+}
+
+export interface RagStatusState {
+  phase: string
+  label: string
+  tone: string
+}
+
+export interface RagStatsState {
+  total_files: number
+  processed: number
+  failed: number
+  excluded: number
+  total_chunks: number
+  total_entities: number
+  total_relations: number
+  storage_size_mb: number
+}
+
+export interface RagProgressState {
+  is_visible: boolean
+  processed: number
+  total: number
+  current_file: string
+}
+
+export interface RagActionsState {
+  can_reindex: boolean
+  can_clear: boolean
+  can_search: boolean
+  is_indexing: boolean
+}
+
+export interface RagFileState {
+  path: string
+  relative_path: string
+  status: string
+  status_label: string
+  chunks_count: number
+  indexed_at: string
+  tooltip: string
+}
+
+export interface RagSearchState {
+  is_running: boolean
+  result_text: string
+}
+
+export interface RagInfoState {
+  message: string
+  tone: string
+}
+
+export interface RagMainState {
+  status: RagStatusState
+  stats: RagStatsState
+  progress: RagProgressState
+  actions: RagActionsState
+  files: RagFileState[]
+  search: RagSearchState
+  info: RagInfoState
+}
+
 export interface ConversationMainState {
+  ui: RightPanelUiState
   session: {
     id: string
     name: string
@@ -208,6 +274,7 @@ export interface ConversationMainState {
     confirm: ConversationConfirmDialogState
     notice: ConversationNoticeDialogState
   }
+  rag: RagMainState
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -462,6 +529,9 @@ function normalizeNoticeDialogState(value: unknown): ConversationNoticeDialogSta
 }
 
 export const emptyConversationState: ConversationMainState = {
+  ui: {
+    active_surface: 'conversation',
+  },
   session: {
     id: '',
     name: '',
@@ -556,10 +626,111 @@ export const emptyConversationState: ConversationMainState = {
       tone: 'info',
     },
   },
+  rag: {
+    status: {
+      phase: 'idle',
+      label: '',
+      tone: 'neutral',
+    },
+    stats: {
+      total_files: 0,
+      processed: 0,
+      failed: 0,
+      excluded: 0,
+      total_chunks: 0,
+      total_entities: 0,
+      total_relations: 0,
+      storage_size_mb: 0,
+    },
+    progress: {
+      is_visible: false,
+      processed: 0,
+      total: 0,
+      current_file: '',
+    },
+    actions: {
+      can_reindex: false,
+      can_clear: false,
+      can_search: false,
+      is_indexing: false,
+    },
+    files: [],
+    search: {
+      is_running: false,
+      result_text: '',
+    },
+    info: {
+      message: '',
+      tone: 'neutral',
+    },
+  },
+}
+
+function normalizeRagFileState(value: unknown): RagFileState {
+  const file = asRecord(value)
+  return {
+    path: asString(file.path),
+    relative_path: asString(file.relative_path),
+    status: asString(file.status, 'pending'),
+    status_label: asString(file.status_label),
+    chunks_count: Math.max(0, asNumber(file.chunks_count)),
+    indexed_at: asString(file.indexed_at),
+    tooltip: asString(file.tooltip),
+  }
+}
+
+function normalizeRagState(value: unknown): RagMainState {
+  const rag = asRecord(value)
+  const status = asRecord(rag.status)
+  const stats = asRecord(rag.stats)
+  const progress = asRecord(rag.progress)
+  const actions = asRecord(rag.actions)
+  const search = asRecord(rag.search)
+  const info = asRecord(rag.info)
+
+  return {
+    status: {
+      phase: asString(status.phase, 'idle'),
+      label: asString(status.label),
+      tone: asString(status.tone, 'neutral'),
+    },
+    stats: {
+      total_files: Math.max(0, asNumber(stats.total_files)),
+      processed: Math.max(0, asNumber(stats.processed)),
+      failed: Math.max(0, asNumber(stats.failed)),
+      excluded: Math.max(0, asNumber(stats.excluded)),
+      total_chunks: Math.max(0, asNumber(stats.total_chunks)),
+      total_entities: Math.max(0, asNumber(stats.total_entities)),
+      total_relations: Math.max(0, asNumber(stats.total_relations)),
+      storage_size_mb: Math.max(0, asNumber(stats.storage_size_mb)),
+    },
+    progress: {
+      is_visible: asBoolean(progress.is_visible),
+      processed: Math.max(0, asNumber(progress.processed)),
+      total: Math.max(0, asNumber(progress.total)),
+      current_file: asString(progress.current_file),
+    },
+    actions: {
+      can_reindex: asBoolean(actions.can_reindex),
+      can_clear: asBoolean(actions.can_clear),
+      can_search: asBoolean(actions.can_search),
+      is_indexing: asBoolean(actions.is_indexing),
+    },
+    files: Array.isArray(rag.files) ? rag.files.map((file) => normalizeRagFileState(file)) : [],
+    search: {
+      is_running: asBoolean(search.is_running),
+      result_text: asString(search.result_text),
+    },
+    info: {
+      message: asString(info.message),
+      tone: asString(info.tone, 'neutral'),
+    },
+  }
 }
 
 export function normalizeConversationState(nextState: unknown): ConversationMainState {
   const incoming = asRecord(nextState)
+  const ui = asRecord(incoming.ui)
   const session = asRecord(incoming.session)
   const conversation = asRecord(incoming.conversation)
   const composer = asRecord(incoming.composer)
@@ -567,6 +738,9 @@ export function normalizeConversationState(nextState: unknown): ConversationMain
   const viewFlags = asRecord(incoming.view_flags)
 
   return {
+    ui: {
+      active_surface: asString(ui.active_surface, 'conversation'),
+    },
     session: {
       id: asString(session.id),
       name: asString(session.name),
@@ -616,5 +790,6 @@ export function normalizeConversationState(nextState: unknown): ConversationMain
       confirm: normalizeConfirmDialogState(incoming.overlays && asRecord(incoming.overlays).confirm),
       notice: normalizeNoticeDialogState(incoming.overlays && asRecord(incoming.overlays).notice),
     },
+    rag: normalizeRagState(incoming.rag),
   }
 }

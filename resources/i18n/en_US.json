@@ -28,7 +28,6 @@
   "menu.view.simulation": "Simulation Results",
   "menu.view.conversation": "Conversation",
   "menu.view.knowledge": "Index Library",
-  "menu.view.devtools": "DevTools",
 
   "menu.design": "Design",
   "menu.design.goals": "Design Goals",
@@ -111,18 +110,7 @@
   "panel.rag": "Index Library",
   "panel.simulation": "Simulation Results",
   "panel.iteration_history": "Iteration History",
-  "panel.devtools": "DevTools",
   "panel.new_conversation": "New Chat",
-
-  "devtools.refresh": "Refresh",
-  "devtools.clear": "Clear",
-  "devtools.export": "Export",
-  "devtools.filter": "Filter:",
-  "devtools.all": "All",
-  "devtools.success": "Success",
-  "devtools.error": "Error",
-  "devtools.running": "Running",
-  "devtools.cancelled": "Cancelled",
 
   "dialog.open_workspace.title": "Open Workspace",
   "dialog.api_config.title": "API Configuration",

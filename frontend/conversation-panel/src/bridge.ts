@@ -1,5 +1,6 @@
 export interface ConversationBridge {
   markReady?: () => void
+  activateSurface?: (surfaceId: string) => void
   sendMessage?: (text: string, composerState: Record<string, unknown>) => void
   requestStop?: () => void
   requestNewConversation?: () => void
@@ -9,7 +10,6 @@ export interface ConversationBridge {
   openHistorySession?: (sessionId: string) => void
   requestExportHistorySession?: (sessionId: string, exportFormat: string) => void
   requestDeleteHistorySession?: (sessionId: string) => void
-  requestClearDisplay?: () => void
   resolveConfirmDialog?: (accepted: boolean) => void
   closeNoticeDialog?: () => void
   requestCompressContext?: () => void
@@ -27,6 +27,9 @@ export interface ConversationBridge {
   requestUploadImage?: () => void
   requestSelectFile?: () => void
   requestModelConfig?: () => void
+  requestReindexKnowledge?: () => void
+  requestClearKnowledge?: () => void
+  requestRagSearch?: (query: string) => void
   attachFiles?: (paths: string[]) => void
 }
 

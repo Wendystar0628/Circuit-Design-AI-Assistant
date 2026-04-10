@@ -132,13 +132,13 @@ def test_conversation_state_serializer_builds_authoritative_main_payload():
         },
         confirm_dialog={
             "is_open": True,
-            "kind": "clear_display",
-            "title": "确认",
-            "message": "确认清空显示？",
-            "confirm_label": "确认",
+            "kind": "history_delete",
+            "title": "警告",
+            "message": "确定删除这个会话吗？此操作无法撤销。",
+            "confirm_label": "删除",
             "cancel_label": "取消",
-            "tone": "normal",
-            "payload": {},
+            "tone": "danger",
+            "payload": {"session_id": "session-1"},
         },
         notice_dialog={
             "is_open": True,
@@ -150,8 +150,58 @@ def test_conversation_state_serializer_builds_authoritative_main_payload():
         can_send=False,
         send_in_progress=False,
         rollback_in_progress=False,
+        active_surface="rag",
+        rag_state={
+            "status": {
+                "phase": "ready",
+                "label": "已就绪 (1 文件)",
+                "tone": "success",
+            },
+            "stats": {
+                "total_files": 1,
+                "processed": 1,
+                "failed": 0,
+                "excluded": 0,
+                "total_chunks": 8,
+                "total_entities": 0,
+                "total_relations": 0,
+                "storage_size_mb": 1.5,
+            },
+            "progress": {
+                "is_visible": False,
+                "processed": 0,
+                "total": 0,
+                "current_file": "",
+            },
+            "actions": {
+                "can_reindex": True,
+                "can_clear": True,
+                "can_search": True,
+                "is_indexing": False,
+            },
+            "files": [
+                {
+                    "path": "E:/demo/file.py",
+                    "relative_path": "file.py",
+                    "status": "processed",
+                    "status_label": "已索引",
+                    "chunks_count": 8,
+                    "indexed_at": "2026-04-10T12:00:00",
+                    "tooltip": "",
+                }
+            ],
+            "search": {
+                "is_running": False,
+                "result_text": "片段: 1",
+            },
+            "info": {
+                "message": "索引完成",
+                "tone": "success",
+            },
+        },
     )
 
+    assert payload["ui"]["active_surface"] == "rag"
     assert payload["session"] == {
         "id": "session-1",
         "name": "Chat 2026-04-10 12:00",
@@ -170,8 +220,11 @@ def test_conversation_state_serializer_builds_authoritative_main_payload():
     assert payload["view_flags"]["has_pending_workspace_edits"] is True
     assert payload["view_flags"]["is_busy"] is True
     assert payload["overlays"]["history"]["is_open"] is True
-    assert payload["overlays"]["confirm"]["kind"] == "clear_display"
+    assert payload["overlays"]["confirm"]["kind"] == "history_delete"
     assert payload["overlays"]["notice"]["tone"] == "success"
+    assert payload["rag"]["status"]["phase"] == "ready"
+    assert payload["rag"]["files"][0]["relative_path"] == "file.py"
+    assert payload["rag"]["actions"]["can_search"] is True
 
 
 def test_conversation_state_serializer_serializes_history_and_rollback_payloads():
@@ -337,6 +390,7 @@ def test_conversation_session_support_formats_exports():
 def test_conversation_web_bridge_emits_structured_user_intent_actions():
     bridge = ConversationWebBridge()
     ready_events = []
+    surface_events = []
     send_events = []
     rollback_events = []
     attachment_events = []
@@ -348,8 +402,12 @@ def test_conversation_web_bridge_emits_structured_user_intent_actions():
     notice_close_events = []
     rollback_close_events = []
     rollback_confirm_events = []
+    rag_reindex_events = []
+    rag_clear_events = []
+    rag_search_events = []
 
     bridge.ready.connect(lambda: ready_events.append(True))
+    bridge.surface_activation_requested.connect(lambda surface_id: surface_events.append(surface_id))
     bridge.send_requested.connect(
         lambda text, payload: send_events.append((text, payload))
     )
@@ -365,8 +423,12 @@ def test_conversation_web_bridge_emits_structured_user_intent_actions():
     bridge.notice_dialog_close_requested.connect(lambda: notice_close_events.append(True))
     bridge.rollback_preview_close_requested.connect(lambda: rollback_close_events.append(True))
     bridge.rollback_confirm_requested.connect(lambda: rollback_confirm_events.append(True))
+    bridge.rag_reindex_requested.connect(lambda: rag_reindex_events.append(True))
+    bridge.rag_clear_requested.connect(lambda: rag_clear_events.append(True))
+    bridge.rag_search_requested.connect(lambda query: rag_search_events.append(query))
 
     bridge.markReady()
+    bridge.activateSurface("rag")
     bridge.sendMessage("请继续", {"draftAttachments": ["a.png"]})
     bridge.requestRollback("message-3")
     bridge.selectHistorySession("session-1")
@@ -377,9 +439,13 @@ def test_conversation_web_bridge_emits_structured_user_intent_actions():
     bridge.closeNoticeDialog()
     bridge.closeRollbackPreview()
     bridge.confirmRollback()
+    bridge.requestReindexKnowledge()
+    bridge.requestClearKnowledge()
+    bridge.requestRagSearch("检索测试")
     bridge.attachFiles(["E:/demo/a.png", "", None, "E:/demo/b.txt"])
 
     assert ready_events == [True]
+    assert surface_events == ["rag"]
     assert send_events == [("请继续", {"draftAttachments": ["a.png"]})]
     assert rollback_events == ["message-3"]
     assert attachment_events == [["E:/demo/a.png", "E:/demo/b.txt"]]
@@ -391,6 +457,9 @@ def test_conversation_web_bridge_emits_structured_user_intent_actions():
     assert notice_close_events == [True]
     assert rollback_close_events == [True]
     assert rollback_confirm_events == [True]
+    assert rag_reindex_events == [True]
+    assert rag_clear_events == [True]
+    assert rag_search_events == ["检索测试"]
 
 
 def test_partial_response_persists_latest_reasoning_content():

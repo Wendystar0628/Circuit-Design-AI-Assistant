@@ -110,7 +110,7 @@ class TracingEvents:
     批量写入完成事件
     
     由 TracingLogger 在批量写入 SQLite 后发布。
-    DevToolsPanel 订阅此事件以增量更新 UI。
+    上层 tracing 消费者可订阅此事件以增量刷新视图或缓存。
     
     数据结构：
         {
@@ -128,7 +128,7 @@ class TracingEvents:
     Span 执行出错事件
     
     当 Span 以 ERROR 状态结束时发布。
-    DevToolsPanel 订阅此事件以高亮显示错误。
+    上层 tracing 消费者可订阅此事件以标记错误状态。
     
     数据结构：
         {

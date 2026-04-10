@@ -28,7 +28,6 @@
   "menu.view.simulation": "仿真结果",
   "menu.view.conversation": "对话",
   "menu.view.knowledge": "索引库",
-  "menu.view.devtools": "调试工具",
 
   "menu.design": "设计",
   "menu.design.goals": "设计目标",
@@ -111,18 +110,7 @@
   "panel.rag": "索引库",
   "panel.simulation": "仿真结果",
   "panel.iteration_history": "迭代历史",
-  "panel.devtools": "调试",
   "panel.new_conversation": "新对话",
-
-  "devtools.refresh": "刷新",
-  "devtools.clear": "清除",
-  "devtools.export": "导出",
-  "devtools.filter": "过滤：",
-  "devtools.all": "全部",
-  "devtools.success": "成功",
-  "devtools.error": "错误",
-  "devtools.running": "运行中",
-  "devtools.cancelled": "已取消",
 
   "dialog.open_workspace.title": "打开工作文件夹",
   "dialog.api_config.title": "API 配置",

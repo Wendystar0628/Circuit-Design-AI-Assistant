@@ -3,10 +3,11 @@ import json
 import threading
 from dataclasses import dataclass
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Dict, List, Optional
 
 from domain.services import context_service, snapshot_service
+from shared.constants import SYSTEM_DIR
 
 
 @dataclass(frozen=True)
@@ -309,11 +310,9 @@ class ConversationRollbackService:
             session_id,
         )
         restore_preview = snapshot_service.preview_restore_snapshot(project_root, snapshot_id)
-        workspace_changed_files = [
-            change
-            for change in restore_preview.changed_files
-            if not self._is_internal_conversation_change(change.relative_path)
-        ]
+        workspace_changed_files = self._filter_user_workspace_changes(
+            restore_preview.changed_files
+        )
         removed_messages = self._build_removed_messages(current_messages, target_messages)
         anchor_message = next(
             (
@@ -450,13 +449,24 @@ class ConversationRollbackService:
             self._build_message_preview(message, limit=400),
         )
 
-    def _is_internal_conversation_change(self, relative_path: str) -> bool:
-        normalized_path = str(relative_path or "").replace("\\", "/")
-        if normalized_path.startswith(f"{context_service.CONVERSATIONS_DIR}/"):
-            return True
-        if normalized_path == ".circuit_ai/pending_workspace_edits.json":
-            return True
-        return False
+    def _filter_user_workspace_changes(
+        self,
+        changes: List[snapshot_service.SnapshotFileChange],
+    ) -> List[snapshot_service.SnapshotFileChange]:
+        return [
+            change
+            for change in (changes or [])
+            if self._is_user_workspace_path(change.relative_path)
+        ]
+
+    def _is_user_workspace_path(self, relative_path: str) -> bool:
+        return not self._is_system_managed_path(relative_path)
+
+    def _is_system_managed_path(self, relative_path: str) -> bool:
+        normalized_path = str(relative_path or "").replace("\\", "/").strip("/")
+        if not normalized_path:
+            return False
+        return bool(PurePosixPath(normalized_path).parts) and PurePosixPath(normalized_path).parts[0] == SYSTEM_DIR
 
     def _cleanup_hidden_snapshots(self, project_root: str, session_id: str) -> None:
         snapshots_dir = Path(snapshot_service.get_snapshots_dir(project_root))

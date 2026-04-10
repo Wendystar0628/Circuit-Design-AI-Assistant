@@ -9,6 +9,7 @@ from domain.llm.conversation_rollback_service import ConversationRollbackService
 from domain.llm.session_state_manager import SessionStateManager
 from domain.services import context_service
 from presentation.panels.conversation.conversation_view_model import ConversationViewModel
+from shared.constants import SYSTEM_DIR
 from shared.event_bus import EventBus
 from shared.event_types import EVENT_STATE_PROJECT_OPENED
 from shared.service_locator import ServiceLocator
@@ -119,6 +120,9 @@ def test_preview_rollback_to_anchor_exposes_workspace_changes_and_message_trunca
     metadata_path = tmp_path / ".circuit_ai" / "pending_workspace_edits.json"
     metadata_path.parent.mkdir(parents=True, exist_ok=True)
     metadata_path.write_text('{"files": []}', encoding="utf-8")
+    design_goals_path = tmp_path / ".circuit_ai" / "design_goals.json"
+    design_goals_path.parent.mkdir(parents=True, exist_ok=True)
+    design_goals_path.write_text('{"target": "narrow-band"}', encoding="utf-8")
 
     preview = asyncio.run(
         env["rollback_service"].preview_rollback_to_anchor("anchor-user")
@@ -138,13 +142,22 @@ def test_preview_rollback_to_anchor_exposes_workspace_changes_and_message_trunca
         not path.startswith(f"{context_service.CONVERSATIONS_DIR}/")
         for path in workspace_paths
     )
+    assert all(
+        not path.startswith(f"{SYSTEM_DIR}/")
+        for path in workspace_paths
+    )
     assert ".circuit_ai/pending_workspace_edits.json" not in workspace_paths
+    assert ".circuit_ai/design_goals.json" not in workspace_paths
     assert any(
         change.relative_path.startswith(f"{context_service.CONVERSATIONS_DIR}/")
         for change in preview.changed_files
     )
     assert any(
         change.relative_path == ".circuit_ai/pending_workspace_edits.json"
+        for change in preview.changed_files
+    )
+    assert any(
+        change.relative_path == ".circuit_ai/design_goals.json"
         for change in preview.changed_files
     )
 

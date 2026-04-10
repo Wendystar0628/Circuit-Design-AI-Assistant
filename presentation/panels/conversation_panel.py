@@ -227,6 +227,28 @@ class ConversationPanel(QWidget):
             "file_path": normalized_path,
         }
 
+    def _set_history_export_dialog_state(
+        self,
+        session_id: str = "",
+        export_format: str = "md",
+        file_path: str = "",
+        *,
+        is_open: bool = False,
+    ) -> None:
+        self._history_overlay_state["export_dialog"] = self._create_history_export_dialog_state(
+            session_id,
+            export_format,
+            file_path,
+            is_open=is_open,
+        )
+
+    def _clear_history_export_dialog_state(self) -> None:
+        self._set_history_export_dialog_state()
+
+    def _current_history_export_dialog_state(self) -> Dict[str, Any]:
+        dialog_state = self._history_overlay_state.get("export_dialog", {})
+        return dialog_state if isinstance(dialog_state, dict) else {}
+
     def _create_history_overlay_state(self) -> Dict[str, Any]:
         return {
             "is_open": False,
@@ -1070,7 +1092,7 @@ class ConversationPanel(QWidget):
         )
         if not normalized_session_id:
             return
-        self._history_overlay_state["export_dialog"] = self._create_history_export_dialog_state(
+        self._set_history_export_dialog_state(
             normalized_session_id,
             is_open=True,
         )
@@ -1079,16 +1101,16 @@ class ConversationPanel(QWidget):
     def _on_history_export_dialog_close_requested(self) -> None:
         if not self._history_overlay_state.get("is_open", False):
             return
-        self._history_overlay_state["export_dialog"] = self._create_history_export_dialog_state()
+        self._clear_history_export_dialog_state()
         self._update_authoritative_frontend_state()
 
     def _on_history_export_format_changed(self, export_format: str) -> None:
-        dialog_state = self._history_overlay_state.get("export_dialog", {})
+        dialog_state = self._current_history_export_dialog_state()
         session_id = str(dialog_state.get("session_id", "") or "")
         normalized_format = self._session_support.normalize_export_format(export_format)
         if not session_id or not normalized_format:
             return
-        self._history_overlay_state["export_dialog"] = self._create_history_export_dialog_state(
+        self._set_history_export_dialog_state(
             session_id,
             normalized_format,
             str(dialog_state.get("file_path", "") or ""),
@@ -1097,7 +1119,7 @@ class ConversationPanel(QWidget):
         self._update_authoritative_frontend_state()
 
     def _on_history_export_path_pick_requested(self) -> None:
-        dialog_state = self._history_overlay_state.get("export_dialog", {})
+        dialog_state = self._current_history_export_dialog_state()
         session_id = str(dialog_state.get("session_id", "") or "")
         export_format = self._session_support.normalize_export_format(
             str(dialog_state.get("export_format", "") or "")
@@ -1113,7 +1135,7 @@ class ConversationPanel(QWidget):
         )
         if not selected_path:
             return
-        self._history_overlay_state["export_dialog"] = self._create_history_export_dialog_state(
+        self._set_history_export_dialog_state(
             session_id,
             export_format,
             selected_path,
@@ -1145,7 +1167,7 @@ class ConversationPanel(QWidget):
             normalized_path,
         )
         if success:
-            self._history_overlay_state["export_dialog"] = self._create_history_export_dialog_state()
+            self._clear_history_export_dialog_state()
             self._update_authoritative_frontend_state()
             self._open_notice_dialog(
                 self._get_text("dialog.export.success", "会话导出成功"),

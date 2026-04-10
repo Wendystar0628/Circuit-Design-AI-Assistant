@@ -1,11 +1,11 @@
 import type { ChangeEvent } from 'react'
-import type { ModelConfigBridge } from './modelConfigBridge'
+import type { ConversationBridge } from './bridge'
 import type { ModelConfigState } from './modelConfigTypes'
 
 interface ModelConfigAppProps {
   state: ModelConfigState
   bridgeConnected: boolean
-  bridge: ModelConfigBridge | null
+  bridge: ConversationBridge | null
 }
 
 function FieldLabel({ children }: { children: string }) {
@@ -95,13 +95,13 @@ function ToggleInput(props: {
   )
 }
 
-function StatusBadge({ state, text }: ModelConfigState['dialog']['status']) {
+function StatusBadge({ state, text }: ModelConfigState['surface']['status']) {
   return <div className={`model-config-status model-config-status--${state}`}>{text}</div>
 }
 
 export function ModelConfigApp({ state, bridgeConnected, bridge }: ModelConfigAppProps) {
   const sendDraft = (section: 'chat' | 'embedding', field: string, value: unknown) => {
-    bridge?.updateDraft?.(section, field, value)
+    bridge?.updateModelConfigDraft?.(section, field, value)
   }
 
   return (
@@ -109,28 +109,28 @@ export function ModelConfigApp({ state, bridgeConnected, bridge }: ModelConfigAp
       <div className="model-config-card">
         <div className="model-config-header">
           <div>
-            <h1 className="model-config-title">{state.dialog.title}</h1>
+            <h1 className="model-config-title">{state.surface.title}</h1>
             <p className="model-config-subtitle">
-              {bridgeConnected ? '' : state.dialog.messages.bridgeUnavailable}
+              {bridgeConnected ? '' : state.surface.messages.bridgeUnavailable}
             </p>
           </div>
-          <StatusBadge {...state.dialog.status} />
+          <StatusBadge {...state.surface.status} />
         </div>
 
-        <div className="model-config-tabs" aria-label={state.dialog.title}>
-          {state.dialog.tabs.map((tab) => (
+        <div className="model-config-tabs" aria-label={state.surface.title}>
+          {state.surface.tabs.map((tab) => (
             <button
               key={tab.id}
               type="button"
-              className={`model-config-tab${state.dialog.activeTab === tab.id ? ' model-config-tab--active' : ''}`}
-              onClick={() => bridge?.selectTab?.(tab.id)}
+              className={`model-config-tab${state.surface.activeTab === tab.id ? ' model-config-tab--active' : ''}`}
+              onClick={() => bridge?.selectModelConfigTab?.(tab.id)}
             >
               {tab.label}
             </button>
           ))}
         </div>
 
-        {state.dialog.activeTab === 'chat' ? (
+        {state.surface.activeTab === 'chat' ? (
           <div className="model-config-section">
             <div className="model-config-grid">
               <div className="model-config-field">
@@ -281,70 +281,27 @@ export function ModelConfigApp({ state, bridgeConnected, bridge }: ModelConfigAp
           <button
             type="button"
             className="model-config-button model-config-button--secondary"
-            onClick={() => bridge?.requestTestConnection?.()}
-            disabled={state.dialog.status.state === 'testing'}
+            onClick={() => bridge?.requestModelConfigTestConnection?.()}
+            disabled={state.surface.status.state === 'testing'}
           >
-            {state.dialog.actions.test}
+            {state.surface.actions.test}
           </button>
           <button
             type="button"
             className="model-config-button model-config-button--ghost"
-            onClick={() => bridge?.requestCancel?.()}
+            onClick={() => bridge?.closeModelConfig?.()}
           >
-            {state.dialog.actions.cancel}
+            {state.surface.actions.cancel}
           </button>
           <button
             type="button"
             className="model-config-button model-config-button--primary"
-            onClick={() => bridge?.requestSave?.()}
+            onClick={() => bridge?.requestModelConfigSave?.()}
           >
-            {state.dialog.actions.save}
+            {state.surface.actions.save}
           </button>
         </div>
       </div>
-
-      {state.confirmDialog.open ? (
-        <div className="model-config-overlay">
-          <div className="model-config-modal">
-            <div className="model-config-modal__title">{state.confirmDialog.title}</div>
-            <div className="model-config-modal__message">{state.confirmDialog.message}</div>
-            <div className="model-config-modal__actions">
-              <button
-                type="button"
-                className="model-config-button model-config-button--ghost"
-                onClick={() => bridge?.resolveConfirmDialog?.(false)}
-              >
-                {state.confirmDialog.cancelText}
-              </button>
-              <button
-                type="button"
-                className="model-config-button model-config-button--primary"
-                onClick={() => bridge?.resolveConfirmDialog?.(true)}
-              >
-                {state.confirmDialog.confirmText}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {state.noticeDialog.open ? (
-        <div className="model-config-overlay">
-          <div className={`model-config-modal model-config-modal--${state.noticeDialog.level}`}>
-            <div className="model-config-modal__title">{state.noticeDialog.title}</div>
-            <div className="model-config-modal__message">{state.noticeDialog.message}</div>
-            <div className="model-config-modal__actions">
-              <button
-                type="button"
-                className="model-config-button model-config-button--primary"
-                onClick={() => bridge?.closeNoticeDialog?.()}
-              >
-                {state.noticeDialog.closeText}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
     </div>
   )
 }

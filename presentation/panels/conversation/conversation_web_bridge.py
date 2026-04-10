@@ -38,6 +38,11 @@ class ConversationWebBridge(QObject):
     upload_image_requested = pyqtSignal()
     select_file_requested = pyqtSignal()
     model_config_requested = pyqtSignal()
+    model_config_draft_update_requested = pyqtSignal(str, str, object)
+    model_config_tab_change_requested = pyqtSignal(str)
+    model_config_test_requested = pyqtSignal()
+    model_config_save_requested = pyqtSignal()
+    model_config_close_requested = pyqtSignal()
     rag_reindex_requested = pyqtSignal()
     rag_clear_requested = pyqtSignal()
     rag_search_requested = pyqtSignal(str)
@@ -185,6 +190,34 @@ class ConversationWebBridge(QObject):
     @pyqtSlot()
     def requestModelConfig(self) -> None:
         self.model_config_requested.emit()
+
+    @pyqtSlot(str, str, QJsonValue)
+    @pyqtSlot(str, str, object)
+    def updateModelConfigDraft(self, section: str, field: str, value: Any) -> None:
+        self.model_config_draft_update_requested.emit(
+            str(section or ""),
+            str(field or ""),
+            self._normalize_json_payload(value),
+        )
+
+    @pyqtSlot(str)
+    def selectModelConfigTab(self, tab_id: str) -> None:
+        normalized_tab_id = str(tab_id or "chat")
+        if normalized_tab_id not in {"chat", "embedding"}:
+            normalized_tab_id = "chat"
+        self.model_config_tab_change_requested.emit(normalized_tab_id)
+
+    @pyqtSlot()
+    def requestModelConfigTestConnection(self) -> None:
+        self.model_config_test_requested.emit()
+
+    @pyqtSlot()
+    def requestModelConfigSave(self) -> None:
+        self.model_config_save_requested.emit()
+
+    @pyqtSlot()
+    def closeModelConfig(self) -> None:
+        self.model_config_close_requested.emit()
 
     @pyqtSlot()
     def requestReindexKnowledge(self) -> None:

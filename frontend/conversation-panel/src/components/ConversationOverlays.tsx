@@ -1,7 +1,9 @@
 import type { ConversationBridge } from '../bridge'
+import { ModelConfigApp } from '../ModelConfigApp'
 import type {
   ConversationHistoryOverlayState,
   ConversationMainState,
+  ConversationModelConfigOverlayState,
   ConversationRollbackFileChangeState,
   ConversationRollbackPreviewState,
   ConversationSessionInfoState,
@@ -11,6 +13,7 @@ import type {
 interface ConversationOverlaysProps {
   state: ConversationMainState
   bridge: ConversationBridge | null
+  bridgeConnected: boolean
 }
 
 const EXPORT_FORMATS = [
@@ -419,13 +422,45 @@ function RollbackOverlay({
   )
 }
 
-export function ConversationOverlays({ state, bridge }: ConversationOverlaysProps) {
-  const { history, rollback, confirm, notice } = state.overlays
+function ModelConfigOverlay({
+  overlay,
+  bridge,
+  bridgeConnected,
+}: {
+  overlay: ConversationModelConfigOverlayState
+  bridge: ConversationBridge | null
+  bridgeConnected: boolean
+}) {
+  return (
+    <div className="conversation-overlay conversation-overlay--modal">
+      <button
+        type="button"
+        className="conversation-overlay__backdrop"
+        onClick={() => bridge?.closeModelConfig?.()}
+        aria-label="关闭模型配置"
+      />
+      <div
+        className="conversation-modal conversation-modal--model-config"
+        role="dialog"
+        aria-modal="true"
+        aria-label={overlay.state.surface.title || '模型配置'}
+      >
+        <ModelConfigApp state={overlay.state} bridge={bridge} bridgeConnected={bridgeConnected} />
+      </div>
+    </div>
+  )
+}
+
+export function ConversationOverlays({ state, bridge, bridgeConnected }: ConversationOverlaysProps) {
+  const { history, rollback, model_config, confirm, notice } = state.overlays
 
   return (
     <>
       {history.is_open ? <HistoryOverlay history={history} bridge={bridge} /> : null}
       {rollback.is_open ? <RollbackOverlay preview={rollback.preview} bridge={bridge} /> : null}
+      {model_config.is_open ? (
+        <ModelConfigOverlay overlay={model_config} bridge={bridge} bridgeConnected={bridgeConnected} />
+      ) : null}
       {confirm.is_open ? (
         <div className="conversation-overlay conversation-overlay--modal">
           <button

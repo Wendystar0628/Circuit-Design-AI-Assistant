@@ -8,7 +8,7 @@ export interface ModelConfigTabState {
   label: string
 }
 
-export interface ModelConfigDialogState {
+export interface ModelConfigSurfaceState {
   title: string
   activeTab: 'chat' | 'embedding'
   tabs: ModelConfigTabState[]
@@ -76,35 +76,16 @@ export interface EmbeddingConfigState {
   }
 }
 
-export interface ConfirmDialogState {
-  open: boolean
-  title: string
-  message: string
-  action: string
-  confirmText: string
-  cancelText: string
-}
-
-export interface NoticeDialogState {
-  open: boolean
-  title: string
-  message: string
-  level: 'info' | 'warning' | 'error' | 'success'
-  closeText: string
-}
-
 export interface ModelConfigState {
-  dialog: ModelConfigDialogState
+  surface: ModelConfigSurfaceState
   chat: ChatConfigState
   embedding: EmbeddingConfigState
-  confirmDialog: ConfirmDialogState
-  noticeDialog: NoticeDialogState
 }
 
 const defaultOptions: SelectOption[] = []
 
 export const emptyModelConfigState: ModelConfigState = {
-  dialog: {
+  surface: {
     title: 'Model Configuration',
     activeTab: 'chat',
     tabs: [
@@ -172,21 +153,6 @@ export const emptyModelConfigState: ModelConfigState = {
       batchSize: 'Batch Size',
     },
   },
-  confirmDialog: {
-    open: false,
-    title: '',
-    message: '',
-    action: '',
-    confirmText: 'Save',
-    cancelText: 'Cancel',
-  },
-  noticeDialog: {
-    open: false,
-    title: '',
-    message: '',
-    level: 'info',
-    closeText: 'OK',
-  },
 }
 
 function normalizeOptionList(value: unknown): SelectOption[] {
@@ -213,19 +179,17 @@ export function normalizeModelConfigState(value: unknown): ModelConfigState {
   }
 
   const payload = value as Record<string, unknown>
-  const dialog = (payload.dialog as Record<string, unknown> | undefined) ?? {}
+  const surface = (payload.surface as Record<string, unknown> | undefined) ?? {}
   const chat = (payload.chat as Record<string, unknown> | undefined) ?? {}
   const embedding = (payload.embedding as Record<string, unknown> | undefined) ?? {}
-  const confirmDialog = (payload.confirmDialog as Record<string, unknown> | undefined) ?? {}
-  const noticeDialog = (payload.noticeDialog as Record<string, unknown> | undefined) ?? {}
-  const normalizedDialogState = String(dialog.status && typeof dialog.status === 'object' ? (dialog.status as Record<string, unknown>).state ?? 'not_verified' : 'not_verified')
+  const normalizedSurfaceState = String(surface.status && typeof surface.status === 'object' ? (surface.status as Record<string, unknown>).state ?? 'not_verified' : 'not_verified')
 
   return {
-    dialog: {
-      title: String(dialog.title ?? emptyModelConfigState.dialog.title),
-      activeTab: dialog.activeTab === 'embedding' ? 'embedding' : 'chat',
-      tabs: Array.isArray(dialog.tabs)
-        ? dialog.tabs
+    surface: {
+      title: String(surface.title ?? emptyModelConfigState.surface.title),
+      activeTab: surface.activeTab === 'embedding' ? 'embedding' : 'chat',
+      tabs: Array.isArray(surface.tabs)
+        ? surface.tabs
             .map((item) => {
               if (!item || typeof item !== 'object') {
                 return null
@@ -241,18 +205,18 @@ export function normalizeModelConfigState(value: unknown): ModelConfigState {
               }
             })
             .filter((item): item is ModelConfigTabState => Boolean(item))
-        : emptyModelConfigState.dialog.tabs,
+        : emptyModelConfigState.surface.tabs,
       actions: {
-        test: String((dialog.actions as Record<string, unknown> | undefined)?.test ?? emptyModelConfigState.dialog.actions.test),
-        save: String((dialog.actions as Record<string, unknown> | undefined)?.save ?? emptyModelConfigState.dialog.actions.save),
-        cancel: String((dialog.actions as Record<string, unknown> | undefined)?.cancel ?? emptyModelConfigState.dialog.actions.cancel),
+        test: String((surface.actions as Record<string, unknown> | undefined)?.test ?? emptyModelConfigState.surface.actions.test),
+        save: String((surface.actions as Record<string, unknown> | undefined)?.save ?? emptyModelConfigState.surface.actions.save),
+        cancel: String((surface.actions as Record<string, unknown> | undefined)?.cancel ?? emptyModelConfigState.surface.actions.cancel),
       },
       status: {
-        state: normalizedDialogState === 'testing' || normalizedDialogState === 'verified' || normalizedDialogState === 'failed' ? normalizedDialogState : 'not_verified',
-        text: String((dialog.status as Record<string, unknown> | undefined)?.text ?? emptyModelConfigState.dialog.status.text),
+        state: normalizedSurfaceState === 'testing' || normalizedSurfaceState === 'verified' || normalizedSurfaceState === 'failed' ? normalizedSurfaceState : 'not_verified',
+        text: String((surface.status as Record<string, unknown> | undefined)?.text ?? emptyModelConfigState.surface.status.text),
       },
       messages: {
-        bridgeUnavailable: String((dialog.messages as Record<string, unknown> | undefined)?.bridgeUnavailable ?? emptyModelConfigState.dialog.messages.bridgeUnavailable),
+        bridgeUnavailable: String((surface.messages as Record<string, unknown> | undefined)?.bridgeUnavailable ?? emptyModelConfigState.surface.messages.bridgeUnavailable),
       },
     },
     chat: {
@@ -302,26 +266,6 @@ export function normalizeModelConfigState(value: unknown): ModelConfigState {
         timeout: String((embedding.labels as Record<string, unknown> | undefined)?.timeout ?? emptyModelConfigState.embedding.labels.timeout),
         batchSize: String((embedding.labels as Record<string, unknown> | undefined)?.batchSize ?? emptyModelConfigState.embedding.labels.batchSize),
       },
-    },
-    confirmDialog: {
-      open: Boolean(confirmDialog.open),
-      title: String(confirmDialog.title ?? ''),
-      message: String(confirmDialog.message ?? ''),
-      action: String(confirmDialog.action ?? ''),
-      confirmText: String(confirmDialog.confirmText ?? emptyModelConfigState.confirmDialog.confirmText),
-      cancelText: String(confirmDialog.cancelText ?? emptyModelConfigState.confirmDialog.cancelText),
-    },
-    noticeDialog: {
-      open: Boolean(noticeDialog.open),
-      title: String(noticeDialog.title ?? ''),
-      message: String(noticeDialog.message ?? ''),
-      level:
-        noticeDialog.level === 'warning' ||
-        noticeDialog.level === 'error' ||
-        noticeDialog.level === 'success'
-          ? noticeDialog.level
-          : 'info',
-      closeText: String(noticeDialog.closeText ?? emptyModelConfigState.noticeDialog.closeText),
     },
   }
 }

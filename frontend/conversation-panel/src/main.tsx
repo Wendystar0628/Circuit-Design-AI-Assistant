@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import { App } from './App'
 import { setConversationBridge, type ConversationAppApi, type ConversationBridge } from './bridge'
 import './styles.css'
+import './model-config.css'
 import {
   emptyConversationState,
   normalizeAttachmentList,
@@ -65,6 +66,11 @@ function Root() {
   )
 }
 
+const rootElement = document.getElementById('root')
+if (!rootElement) {
+  throw new Error('Missing root element')
+}
+
 window.conversationApp = {
   setState(nextState: unknown) {
     pendingState = normalizeConversationState(nextState)
@@ -87,11 +93,6 @@ window.conversationApp = {
     clearDraftAttachmentsHandler?.()
   },
 } satisfies ConversationAppApi
-
-const rootElement = document.getElementById('root')
-if (!rootElement) {
-  throw new Error('Missing root element')
-}
 
 createRoot(rootElement).render(
   <StrictMode>

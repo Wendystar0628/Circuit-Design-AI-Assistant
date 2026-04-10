@@ -1,3 +1,9 @@
+import {
+  emptyModelConfigState,
+  normalizeModelConfigState,
+  type ModelConfigState,
+} from './modelConfigTypes'
+
 export interface ConversationUsageState {
   ratio: number
   current_tokens: number
@@ -158,6 +164,11 @@ export interface ConversationRollbackOverlayState {
   preview: ConversationRollbackPreviewState
 }
 
+export interface ConversationModelConfigOverlayState {
+  is_open: boolean
+  state: ModelConfigState
+}
+
 export interface ConversationConfirmDialogState {
   is_open: boolean
   kind: string
@@ -275,6 +286,7 @@ export interface ConversationMainState {
   overlays: {
     history: ConversationHistoryOverlayState
     rollback: ConversationRollbackOverlayState
+    model_config: ConversationModelConfigOverlayState
     confirm: ConversationConfirmDialogState
     notice: ConversationNoticeDialogState
   }
@@ -509,6 +521,14 @@ function normalizeRollbackOverlayState(value: unknown): ConversationRollbackOver
   }
 }
 
+function normalizeModelConfigOverlayState(value: unknown): ConversationModelConfigOverlayState {
+  const overlay = asRecord(value)
+  return {
+    is_open: Boolean(overlay.is_open),
+    state: normalizeModelConfigState(overlay.state),
+  }
+}
+
 function normalizeConfirmDialogState(value: unknown): ConversationConfirmDialogState {
   const dialog = asRecord(value)
   return {
@@ -615,6 +635,10 @@ export const emptyConversationState: ConversationMainState = {
         total_added_lines: 0,
         total_deleted_lines: 0,
       },
+    },
+    model_config: {
+      is_open: false,
+      state: emptyModelConfigState,
     },
     confirm: {
       is_open: false,
@@ -794,6 +818,7 @@ export function normalizeConversationState(nextState: unknown): ConversationMain
     overlays: {
       history: normalizeHistoryOverlayState(incoming.overlays && asRecord(incoming.overlays).history),
       rollback: normalizeRollbackOverlayState(incoming.overlays && asRecord(incoming.overlays).rollback),
+      model_config: normalizeModelConfigOverlayState(incoming.overlays && asRecord(incoming.overlays).model_config),
       confirm: normalizeConfirmDialogState(incoming.overlays && asRecord(incoming.overlays).confirm),
       notice: normalizeNoticeDialogState(incoming.overlays && asRecord(incoming.overlays).notice),
     },

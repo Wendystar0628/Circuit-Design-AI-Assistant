@@ -1737,19 +1737,22 @@
 
  .conversation-modal--wide {
    width: min(940px, calc(100vw - 20px));
- }
+}
 
- .conversation-modal--compact {
-   width: min(440px, calc(100vw - 20px));
- }
+.conversation-modal--model-config {
+  width: min(980px, calc(100vw - 20px));
+  height: min(760px, calc(100vh - 20px));
+  padding: 0;
+  overflow: hidden;
+  max-width: 100%;
+  max-height: 100vh;
+}
 
- .conversation-modal__footer {
-   justify-content: flex-end;
-   padding: 12px 14px;
-   border-top: 1px solid #eef2f7;
- }
+.conversation-modal--compact {
+  width: min(440px, calc(100vw - 20px));
+}
 
- @media (max-width: 960px) {
+@media (max-width: 960px) {
    .conversation-header {
      align-items: center;
    }
@@ -1822,7 +1825,12 @@
    }
 
    .conversation-modal--wide,
-   .conversation-modal--compact {
+   .conversation-modal--compact,
+   .conversation-modal--model-config {
      width: calc(100vw - 16px);
+   }
+
+   .conversation-modal--model-config {
+     height: calc(100vh - 16px);
    }
  }

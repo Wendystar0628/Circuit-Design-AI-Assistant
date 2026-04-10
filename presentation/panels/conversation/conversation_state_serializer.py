@@ -40,6 +40,7 @@ class ConversationStateSerializer:
         clear_draft_nonce: int = 0,
         history_overlay: Optional[Dict[str, Any]] = None,
         rollback_overlay: Optional[Dict[str, Any]] = None,
+        model_config_overlay: Optional[Dict[str, Any]] = None,
         confirm_dialog: Optional[Dict[str, Any]] = None,
         notice_dialog: Optional[Dict[str, Any]] = None,
         is_loading: bool = False,
@@ -100,6 +101,7 @@ class ConversationStateSerializer:
             "overlays": {
                 "history": self.serialize_history_overlay_state(history_overlay),
                 "rollback": self.serialize_rollback_overlay_state(rollback_overlay),
+                "model_config": self.serialize_model_config_overlay_state(model_config_overlay),
                 "confirm": self.serialize_confirm_dialog_state(confirm_dialog),
                 "notice": self.serialize_notice_dialog_state(notice_dialog),
             },
@@ -172,6 +174,17 @@ class ConversationStateSerializer:
                 "message": str(info.get("message", "") or ""),
                 "tone": str(info.get("tone", "neutral") or "neutral"),
             },
+        }
+
+    def serialize_model_config_overlay_state(
+        self,
+        overlay_state: Optional[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        data = overlay_state if isinstance(overlay_state, dict) else {}
+        state = data.get("state", {}) if isinstance(data.get("state", {}), dict) else {}
+        return {
+            "is_open": bool(data.get("is_open", False)),
+            "state": state,
         }
 
     def serialize_usage_info(self, usage_info: Optional[Dict[str, Any]]) -> Dict[str, Any]:

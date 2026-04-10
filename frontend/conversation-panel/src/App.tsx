@@ -52,7 +52,7 @@ export function App({
           <RagPanel state={state} bridge={bridge} bridgeConnected={bridgeConnected} />
         </div>
       )}
-      <ConversationOverlays state={state} bridge={bridge} />
+      <ConversationOverlays state={state} bridge={bridge} bridgeConnected={bridgeConnected} />
     </div>
   )
 }

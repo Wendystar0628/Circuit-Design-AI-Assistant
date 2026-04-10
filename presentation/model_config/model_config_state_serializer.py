@@ -18,10 +18,11 @@ class ModelConfigStateSerializer:
         chat_provider: Any,
         embedding_provider: Any,
         supports_thinking: bool,
-        validation_status_text: str,
+        status_state: str,
+        status_text: str,
     ) -> Dict[str, Any]:
         return {
-            "dialog": {
+            "surface": {
                 "title": self._get_text("dialog.model_config.title", "Model Configuration"),
                 "activeTab": draft.active_tab,
                 "tabs": [
@@ -40,8 +41,8 @@ class ModelConfigStateSerializer:
                     "cancel": self._get_text("btn.cancel", "Cancel"),
                 },
                 "status": {
-                    "state": draft.validation_status,
-                    "text": validation_status_text,
+                    "state": status_state,
+                    "text": status_text,
                 },
                 "messages": {
                     "bridgeUnavailable": self._get_text(
@@ -124,7 +125,7 @@ class ModelConfigStateSerializer:
                 "baseUrlPlaceholder": embedding_provider.base_url if embedding_provider else "",
                 "timeout": draft.embedding_timeout,
                 "batchSize": draft.embedding_batch_size,
-                "requiresApiKey": bool(embedding_provider.requires_api_key) if embedding_provider else False,
+                "requiresApiKey": bool(getattr(embedding_provider, "requires_api_key", False)) if embedding_provider else False,
                 "labels": {
                     "provider": self._get_text(
                         "dialog.model_config.embedding_provider",
@@ -151,21 +152,6 @@ class ModelConfigStateSerializer:
                         "Batch Size",
                     ),
                 },
-            },
-            "confirmDialog": {
-                "open": False,
-                "title": "",
-                "message": "",
-                "action": "",
-                "confirmText": self._get_text("btn.save", "Save"),
-                "cancelText": self._get_text("btn.cancel", "Cancel"),
-            },
-            "noticeDialog": {
-                "open": False,
-                "title": "",
-                "message": "",
-                "level": "info",
-                "closeText": self._get_text("btn.ok", "OK"),
             },
         }
 

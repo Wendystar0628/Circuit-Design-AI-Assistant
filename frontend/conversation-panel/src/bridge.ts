@@ -31,6 +31,11 @@ export interface ConversationBridge {
   requestUploadImage?: () => void
   requestSelectFile?: () => void
   requestModelConfig?: () => void
+  updateModelConfigDraft?: (section: string, field: string, value: unknown) => void
+  selectModelConfigTab?: (tabId: string) => void
+  requestModelConfigTestConnection?: () => void
+  requestModelConfigSave?: () => void
+  closeModelConfig?: () => void
   requestReindexKnowledge?: () => void
   requestClearKnowledge?: () => void
   requestRagSearch?: (query: string) => void

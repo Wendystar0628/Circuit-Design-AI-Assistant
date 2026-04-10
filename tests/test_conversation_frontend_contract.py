@@ -136,6 +136,79 @@ def test_conversation_state_serializer_builds_authoritative_main_payload():
             "target_message_id": "",
             "preview": None,
         },
+        model_config_overlay={
+            "is_open": True,
+            "state": {
+                "surface": {
+                    "title": "Model Configuration",
+                    "activeTab": "embedding",
+                    "tabs": [
+                        {"id": "chat", "label": "Chat Model"},
+                        {"id": "embedding", "label": "Embedding Model"},
+                    ],
+                    "actions": {
+                        "test": "Test Connection",
+                        "save": "Save",
+                        "cancel": "Cancel",
+                    },
+                    "status": {
+                        "state": "verified",
+                        "text": "Connection successful",
+                    },
+                    "messages": {
+                        "bridgeUnavailable": "Qt bridge unavailable",
+                    },
+                },
+                "chat": {
+                    "provider": "zhipu",
+                    "providerOptions": [{"value": "zhipu", "label": "智谱 AI"}],
+                    "model": "glm-4.7",
+                    "modelOptions": [{"value": "glm-4.7", "label": "glm-4.7"}],
+                    "apiKey": "sk-chat",
+                    "baseUrl": "https://chat.example.com",
+                    "baseUrlPlaceholder": "https://chat.example.com",
+                    "timeout": 60,
+                    "streaming": True,
+                    "enableThinking": False,
+                    "thinkingTimeout": 300,
+                    "supportsThinking": True,
+                    "labels": {
+                        "provider": "Provider",
+                        "model": "Model",
+                        "apiKey": "API Key",
+                        "baseUrl": "Base URL",
+                        "timeout": "Timeout",
+                        "streaming": "Streaming",
+                        "enableThinking": "Deep Thinking",
+                        "thinkingTimeout": "Thinking Timeout",
+                        "featuresTitle": "Provider Features",
+                        "enabled": "Enabled",
+                        "disabled": "Disabled",
+                        "notSupported": "Not supported",
+                    },
+                },
+                "embedding": {
+                    "provider": "zhipu",
+                    "providerOptions": [{"value": "zhipu", "label": "智谱 AI"}],
+                    "model": "embedding-3",
+                    "modelOptions": [{"value": "embedding-3", "label": "embedding-3"}],
+                    "apiKey": "sk-embedding",
+                    "baseUrl": "https://embedding.example.com",
+                    "baseUrlPlaceholder": "https://embedding.example.com",
+                    "timeout": 30,
+                    "batchSize": 16,
+                    "requiresApiKey": True,
+                    "labels": {
+                        "provider": "Provider",
+                        "model": "Model",
+                        "apiKey": "API Key",
+                        "baseUrl": "Base URL",
+                        "timeout": "Timeout",
+                        "batchSize": "Batch Size",
+                    },
+                },
+            },
+        },
         confirm_dialog={
             "is_open": True,
             "kind": "history_delete",
@@ -226,6 +299,8 @@ def test_conversation_state_serializer_builds_authoritative_main_payload():
     assert payload["view_flags"]["has_pending_workspace_edits"] is True
     assert payload["view_flags"]["is_busy"] is True
     assert payload["overlays"]["history"]["is_open"] is True
+    assert payload["overlays"]["model_config"]["is_open"] is True
+    assert payload["overlays"]["model_config"]["state"]["surface"]["activeTab"] == "embedding"
     assert payload["overlays"]["confirm"]["kind"] == "history_delete"
     assert payload["overlays"]["notice"]["tone"] == "success"
     assert payload["rag"]["status"]["phase"] == "ready"

@@ -35,6 +35,7 @@ from PyQt6.QtWidgets import (
 )
 
 from domain.rag.file_extractor import resolve_attachment_type
+from presentation.model_config.model_config_controller import ModelConfigController
 from presentation.panels.conversation import (
     ConversationViewModel,
 )
@@ -94,6 +95,7 @@ class ConversationPanel(QWidget):
         self._draft_clear_nonce = 0
         self._history_overlay_state = self._create_history_overlay_state()
         self._rollback_overlay_state = self._create_rollback_overlay_state()
+        self._model_config_overlay_state = self._create_model_config_overlay_state()
         self._confirm_dialog_state = self._create_confirm_dialog_state()
         self._notice_dialog_state = self._create_notice_dialog_state()
         self._active_surface = "conversation"
@@ -109,6 +111,7 @@ class ConversationPanel(QWidget):
         
         # 子组件引用
         self._react_host: Optional[ReactConversationHost] = None
+        self._model_config_controller: Optional[ModelConfigController] = None
         
         # 初始化 UI
         self._setup_ui()
@@ -270,6 +273,12 @@ class ConversationPanel(QWidget):
             "preview": None,
         }
 
+    def _create_model_config_overlay_state(self) -> Dict[str, Any]:
+        return {
+            "is_open": False,
+            "state": {},
+        }
+
     def _create_confirm_dialog_state(self) -> Dict[str, Any]:
         return {
             "is_open": False,
@@ -427,6 +436,71 @@ class ConversationPanel(QWidget):
         # React 消息区与输入区
         self._react_host = ReactConversationHost(self)
         main_layout.addWidget(self._react_host, 1)
+
+    def _setup_model_config_controller(self) -> None:
+        try:
+            from shared.service_locator import ServiceLocator
+            from shared.service_names import (
+                SVC_CONFIG_MANAGER,
+                SVC_CREDENTIAL_MANAGER,
+                SVC_LLM_RUNTIME_CONFIG_MANAGER,
+            )
+
+            self._model_config_controller = ModelConfigController(
+                config_manager=ServiceLocator.get_optional(SVC_CONFIG_MANAGER),
+                llm_runtime_config_manager=ServiceLocator.get_optional(SVC_LLM_RUNTIME_CONFIG_MANAGER),
+                credential_manager=ServiceLocator.get_optional(SVC_CREDENTIAL_MANAGER),
+                event_bus=self.event_bus,
+                i18n_manager=self.i18n,
+                logger=self.logger,
+                on_state_changed=self._on_model_config_state_changed,
+                on_close_requested=self._close_model_config_overlay,
+                on_confirm_requested=self._open_confirm_dialog,
+                on_notice_requested=self._open_notice_dialog,
+            )
+        except Exception as exc:
+            self._model_config_controller = None
+            if self.logger:
+                self.logger.error(f"Failed to create model config controller: {exc}")
+
+    def _on_model_config_state_changed(self, state: Dict[str, Any]) -> None:
+        overlay_state = dict(self._model_config_overlay_state)
+        overlay_state["state"] = state if isinstance(state, dict) else {}
+        self._model_config_overlay_state = overlay_state
+        self._update_authoritative_frontend_state()
+
+    def open_model_config(self) -> None:
+        if self._model_config_controller is None:
+            self._setup_model_config_controller()
+        if self._model_config_controller is None:
+            self._open_notice_dialog(
+                self._get_text(
+                    "dialog.model_config.error.missing_services",
+                    "Model configuration services are unavailable.",
+                ),
+                title=self._get_text("dialog.error.title", "错误"),
+                tone="error",
+            )
+            return
+        self.activate_surface("conversation")
+        if self._history_overlay_state.get("is_open", False):
+            self._history_overlay_state = self._create_history_overlay_state()
+        if self._rollback_overlay_state.get("is_open", False):
+            self._rollback_overlay_state = self._create_rollback_overlay_state()
+        overlay_state = dict(self._model_config_overlay_state)
+        overlay_state["is_open"] = True
+        self._model_config_overlay_state = overlay_state
+        self._model_config_controller.activate()
+
+    def _close_model_config_overlay(self) -> None:
+        if self._confirm_dialog_state.get("kind", "") == "model_config_save_without_verify":
+            self._confirm_dialog_state = self._create_confirm_dialog_state()
+        if self._model_config_controller is not None:
+            self._model_config_controller.deactivate()
+        overlay_state = dict(self._model_config_overlay_state)
+        overlay_state["is_open"] = False
+        self._model_config_overlay_state = overlay_state
+        self._update_authoritative_frontend_state()
     
     def _connect_component_signals(self) -> None:
         """连接子组件信号"""
@@ -488,6 +562,15 @@ class ConversationPanel(QWidget):
             bridge.upload_image_requested.connect(self._on_upload_image_requested)
             bridge.select_file_requested.connect(self._on_select_file_requested)
             bridge.model_config_requested.connect(self._on_model_config_requested)
+            bridge.model_config_draft_update_requested.connect(
+                self._on_model_config_draft_update_requested
+            )
+            bridge.model_config_tab_change_requested.connect(
+                self._on_model_config_tab_change_requested
+            )
+            bridge.model_config_test_requested.connect(self._on_model_config_test_requested)
+            bridge.model_config_save_requested.connect(self._on_model_config_save_requested)
+            bridge.model_config_close_requested.connect(self._on_model_config_close_requested)
             bridge.rag_reindex_requested.connect(self._on_rag_reindex_requested)
             bridge.rag_clear_requested.connect(self._on_rag_clear_requested)
             bridge.rag_search_requested.connect(self._on_rag_search_requested)
@@ -541,6 +624,8 @@ class ConversationPanel(QWidget):
                 )
             except Exception:
                 pass
+        if self._model_config_controller is not None:
+            self._model_config_controller.cleanup()
         if self._view_model:
             self._view_model.cleanup()
         if self._react_host:
@@ -720,6 +805,7 @@ class ConversationPanel(QWidget):
             clear_draft_nonce=self._draft_clear_nonce,
             history_overlay=self._history_overlay_state,
             rollback_overlay=self._rollback_overlay_state,
+            model_config_overlay=self._model_config_overlay_state,
             confirm_dialog=self._confirm_dialog_state,
             notice_dialog=self._notice_dialog_state,
             is_loading=view_model.is_loading if view_model else False,
@@ -1060,6 +1146,8 @@ class ConversationPanel(QWidget):
     @pyqtSlot()
     def _on_history_requested(self) -> None:
         """处理历史对话请求"""
+        if self._model_config_overlay_state.get("is_open", False):
+            self._close_model_config_overlay()
         self._refresh_history_overlay()
 
     def _on_history_close_requested(self) -> None:
@@ -1202,6 +1290,8 @@ class ConversationPanel(QWidget):
 
     def activate_surface(self, surface_id: str) -> bool:
         normalized_surface = "rag" if str(surface_id or "") == "rag" else "conversation"
+        if normalized_surface != "conversation" and self._model_config_overlay_state.get("is_open", False):
+            self._close_model_config_overlay()
         if self._active_surface == normalized_surface:
             return True
         self._active_surface = normalized_surface
@@ -1294,6 +1384,10 @@ class ConversationPanel(QWidget):
             return
         kind = str(confirm_state.get("kind", "") or "")
         payload = confirm_state.get("payload", {})
+        if kind == "model_config_save_without_verify":
+            if self._model_config_controller is not None:
+                self._model_config_controller.confirm_save_without_verify()
+            return
         if kind == "history_delete":
             session_id = str(payload.get("session_id", "") or "") if isinstance(payload, dict) else ""
             if not session_id:
@@ -1364,10 +1458,31 @@ class ConversationPanel(QWidget):
 
     @pyqtSlot()
     def _on_model_config_requested(self) -> None:
-        from presentation.dialogs import ModelConfigDialog
+        self.open_model_config()
 
-        dialog = ModelConfigDialog(self)
-        dialog.exec()
+    @pyqtSlot(str, str, object)
+    def _on_model_config_draft_update_requested(self, section: str, field: str, value: object) -> None:
+        if self._model_config_controller is not None:
+            self._model_config_controller.update_draft(section, field, value)
+
+    @pyqtSlot(str)
+    def _on_model_config_tab_change_requested(self, tab_id: str) -> None:
+        if self._model_config_controller is not None:
+            self._model_config_controller.select_tab(tab_id)
+
+    @pyqtSlot()
+    def _on_model_config_test_requested(self) -> None:
+        if self._model_config_controller is not None:
+            self._model_config_controller.request_test_connection()
+
+    @pyqtSlot()
+    def _on_model_config_save_requested(self) -> None:
+        if self._model_config_controller is not None:
+            self._model_config_controller.request_save()
+
+    @pyqtSlot()
+    def _on_model_config_close_requested(self) -> None:
+        self._close_model_config_overlay()
 
     @pyqtSlot()
     def _on_rag_reindex_requested(self) -> None:
@@ -1434,6 +1549,8 @@ class ConversationPanel(QWidget):
     def _on_rollback_requested(self, message_id: str) -> None:
         if self._rollback_in_progress or self._send_in_progress:
             return
+        if self._model_config_overlay_state.get("is_open", False):
+            self._close_model_config_overlay()
         asyncio.create_task(self._confirm_and_perform_rollback(message_id))
 
     def _on_rollback_preview_close_requested(self) -> None:

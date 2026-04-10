@@ -341,8 +341,8 @@ class MainWindow(QMainWindow):
                 self._simulation_command_controller.bind_code_editor(editor)
             self._on_workspace_file_state_changed(editor.get_workspace_file_state())
 
-        if "right_panel" in self._panels:
-            right_panel = self._panels["right_panel"]
+        right_panel = self.get_right_panel()
+        if right_panel is not None:
             right_panel.file_clicked.connect(self._on_file_clicked)
             right_panel.compress_requested.connect(self._on_compress_requested)
 
@@ -370,14 +370,31 @@ class MainWindow(QMainWindow):
     def _on_show_history_dialog(self):
         """显示对话历史面板"""
         self.activate_right_panel("conversation")
-        panel = self._panels.get("right_panel")
-        if panel is None or not hasattr(panel, "request_history"):
+        panel = self.get_right_panel()
+        if panel is None:
             return
         try:
             panel.request_history()
         except Exception as e:
             if self.logger:
                 self.logger.error(f"Failed to open conversation history surface: {e}")
+
+    def get_right_panel(self):
+        from presentation.panels.conversation_panel import ConversationPanel
+
+        panel = self._panels.get("right_panel")
+        return panel if isinstance(panel, ConversationPanel) else None
+
+    def open_model_config_surface(self) -> None:
+        self.activate_right_panel("conversation")
+        panel = self.get_right_panel()
+        if panel is None:
+            return
+        try:
+            panel.open_model_config()
+        except Exception as e:
+            if self.logger:
+                self.logger.error(f"Failed to open model config surface: {e}")
 
     def _on_compress_requested(self):
         """处理压缩上下文请求，显示压缩对话框"""
@@ -391,9 +408,10 @@ class MainWindow(QMainWindow):
             if dialog.exec():
                 if self.logger:
                     self.logger.info("Context compression confirmed")
-                
-                if "right_panel" in self._panels:
-                    self._panels["right_panel"].refresh_display()
+
+                right_panel = self.get_right_panel()
+                if right_panel is not None:
+                    right_panel.refresh_display()
             else:
                 if self.logger:
                     self.logger.info("Context compression cancelled")
@@ -513,8 +531,8 @@ class MainWindow(QMainWindow):
                 self.logger.warning(f"Unknown right panel id: {panel_id}")
             return False
 
-        panel = self._panels.get("right_panel")
-        if panel is None or not hasattr(panel, "activate_surface"):
+        panel = self.get_right_panel()
+        if panel is None:
             return False
         return bool(panel.activate_surface(panel_id))
 

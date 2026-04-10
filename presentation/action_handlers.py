@@ -103,9 +103,11 @@ class ActionHandlers:
     def _get_panel(self, panel_id: str):
         return self._panels.get(panel_id)
 
+    def _get_right_panel(self):
+        return self._main_window.get_right_panel()
+
     def _activate_right_panel(self, panel_id: str) -> None:
-        if hasattr(self._main_window, "activate_right_panel"):
-            self._main_window.activate_right_panel(panel_id)
+        self._main_window.activate_right_panel(panel_id)
 
     # ============================================================
     # 回调字典
@@ -348,32 +350,32 @@ class ActionHandlers:
 
     def on_new_conversation(self):
         self.on_show_conversation()
-        panel = self._get_panel("right_panel")
-        if panel is not None and hasattr(panel, "start_new_conversation"):
+        panel = self._get_right_panel()
+        if panel is not None:
             panel.start_new_conversation()
 
     def on_conversation_history(self):
         self.on_show_conversation()
-        panel = self._get_panel("right_panel")
-        if panel is not None and hasattr(panel, "request_history"):
+        panel = self._get_right_panel()
+        if panel is not None:
             panel.request_history()
 
     def on_conversation_compress(self):
         self.on_show_conversation()
-        panel = self._get_panel("right_panel")
-        if panel is not None and hasattr(panel, "request_compress_context"):
+        panel = self._get_right_panel()
+        if panel is not None:
             panel.request_compress_context()
 
     def on_reindex_knowledge(self):
         self.on_show_rag()
-        panel = self._get_panel("right_panel")
-        if panel is not None and hasattr(panel, "trigger_reindex"):
+        panel = self._get_right_panel()
+        if panel is not None:
             panel.trigger_reindex()
 
     def on_clear_knowledge(self):
         self.on_show_rag()
-        panel = self._get_panel("right_panel")
-        if panel is not None and hasattr(panel, "request_clear_index"):
+        panel = self._get_right_panel()
+        if panel is not None:
             panel.request_clear_index()
 
     # ============================================================
@@ -479,9 +481,7 @@ class ActionHandlers:
 
     def on_api_config(self):
         """打开模型配置对话框"""
-        from presentation.dialogs import ModelConfigDialog
-        dialog = ModelConfigDialog(self._main_window)
-        dialog.exec()
+        self._main_window.open_model_config_surface()
 
     def on_help_docs(self):
         """打开文档"""

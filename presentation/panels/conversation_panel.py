@@ -20,6 +20,7 @@
     panel.refresh_display()
 """
 
+import copy
 import asyncio
 import os
 from typing import Any, Dict, Optional
@@ -27,30 +28,34 @@ from typing import Any, Dict, Optional
 from PyQt6.QtCore import pyqtSignal, pyqtSlot, QUrl, Qt
 from PyQt6.QtGui import QDesktopServices, QDragEnterEvent, QDropEvent
 from PyQt6.QtWidgets import (
-    QDialog,
     QWidget,
     QVBoxLayout,
-    QMessageBox,
     QFileDialog,
 )
 
 from domain.rag.file_extractor import resolve_attachment_type
-from presentation.dialogs.rollback_confirmation_dialog import RollbackConfirmationDialog
-# 从子模块导入组件
 from presentation.panels.conversation import (
     ConversationViewModel,
-    TitleBar,
-    MessageArea,
-    InputArea,
-    ButtonMode,
 )
-
+from presentation.panels.conversation.conversation_attachment_support import (
+    ConversationAttachmentError,
+    ConversationAttachmentSupport,
+)
+from presentation.panels.conversation.conversation_session_support import (
+    ConversationSessionSupport,
+)
+from presentation.panels.conversation.conversation_state_serializer import ConversationStateSerializer
+from presentation.panels.conversation.react_conversation_host import ReactConversationHost
 
 # ============================================================
 # 常量定义
 # ============================================================
 
 PANEL_BACKGROUND = "#ffffff"
+ACTION_MODE_SEND = "send"
+ACTION_MODE_STOP = "stop"
+ACTION_MODE_STOPPING = "stopping"
+ACTION_MODE_ROLLBACKING = "rollbacking"
 
 
 # ============================================================
@@ -66,9 +71,6 @@ class ConversationPanel(QWidget):
     
     # 信号定义
     compress_requested = pyqtSignal()              # 用户请求压缩上下文
-    new_conversation_requested = pyqtSignal()      # 用户请求新开对话
-    history_requested = pyqtSignal()               # 用户请求查看历史对话
-    session_name_changed = pyqtSignal(str)         # 用户修改会话名称 (name)
     file_clicked = pyqtSignal(str)                 # 用户点击文件名 (file_path)
     
     def __init__(self, parent: Optional[QWidget] = None):
@@ -81,15 +83,26 @@ class ConversationPanel(QWidget):
         self._i18n = None
         self._logger = None
         self._pending_workspace_edit_service = None
+        self._session_support = ConversationSessionSupport()
         self._send_in_progress = False
         self._rollback_in_progress = False
-        self._rollback_confirmation_dialog: Optional[RollbackConfirmationDialog] = None
-        self._warning_dialog: Optional[QMessageBox] = None
+        self._state_serializer = ConversationStateSerializer()
+        self._composer_action_mode = ACTION_MODE_SEND
+        self._composer_action_status = ""
+        self._draft_clear_nonce = 0
+        self._history_overlay_state = self._create_history_overlay_state()
+        self._rollback_overlay_state = self._create_rollback_overlay_state()
+        self._confirm_dialog_state = self._create_confirm_dialog_state()
+        self._notice_dialog_state = self._create_notice_dialog_state()
+        self._authoritative_frontend_state: Dict[str, Any] = self._state_serializer.serialize_main_state(
+            session_id="",
+            session_name="",
+            messages=[],
+            runtime_steps=[],
+        )
         
         # 子组件引用
-        self._title_bar: Optional[TitleBar] = None
-        self._message_area: Optional[MessageArea] = None
-        self._input_area: Optional[InputArea] = None
+        self._react_host: Optional[ReactConversationHost] = None
         
         # 初始化 UI
         self._setup_ui()
@@ -169,6 +182,134 @@ class ConversationPanel(QWidget):
             return self.i18n.get_text(key, default)
         return default
 
+    def _create_history_overlay_state(self) -> Dict[str, Any]:
+        return {
+            "is_open": False,
+            "is_loading": False,
+            "error_message": "",
+            "current_session_id": "",
+            "selected_session_id": "",
+            "sessions": [],
+            "preview_messages": [],
+        }
+
+    def _create_rollback_overlay_state(self) -> Dict[str, Any]:
+        return {
+            "is_open": False,
+            "is_loading": False,
+            "error_message": "",
+            "target_message_id": "",
+            "preview": None,
+        }
+
+    def _create_confirm_dialog_state(self) -> Dict[str, Any]:
+        return {
+            "is_open": False,
+            "kind": "",
+            "title": "",
+            "message": "",
+            "confirm_label": "",
+            "cancel_label": "",
+            "tone": "normal",
+            "payload": {},
+        }
+
+    def _create_notice_dialog_state(self) -> Dict[str, Any]:
+        return {
+            "is_open": False,
+            "title": "",
+            "message": "",
+            "tone": "info",
+        }
+
+    def _open_confirm_dialog(
+        self,
+        *,
+        kind: str,
+        title: str,
+        message: str,
+        confirm_label: str,
+        cancel_label: str,
+        tone: str = "normal",
+        payload: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        self._confirm_dialog_state = {
+            "is_open": True,
+            "kind": str(kind or ""),
+            "title": str(title or ""),
+            "message": str(message or ""),
+            "confirm_label": str(confirm_label or ""),
+            "cancel_label": str(cancel_label or ""),
+            "tone": str(tone or "normal"),
+            "payload": dict(payload or {}),
+        }
+        self._update_authoritative_frontend_state()
+
+    def _close_confirm_dialog(self) -> None:
+        self._confirm_dialog_state = self._create_confirm_dialog_state()
+        self._update_authoritative_frontend_state()
+
+    def _open_notice_dialog(
+        self,
+        message: str,
+        *,
+        title: str = "",
+        tone: str = "info",
+    ) -> None:
+        if not message:
+            return
+        self._notice_dialog_state = {
+            "is_open": True,
+            "title": str(title or ""),
+            "message": str(message or ""),
+            "tone": str(tone or "info"),
+        }
+        self._update_authoritative_frontend_state()
+
+    def _close_notice_dialog(self) -> None:
+        self._notice_dialog_state = self._create_notice_dialog_state()
+        self._update_authoritative_frontend_state()
+
+    def _close_history_overlay(self) -> None:
+        self._history_overlay_state = self._create_history_overlay_state()
+        self._update_authoritative_frontend_state()
+
+    def _close_rollback_overlay(self) -> None:
+        self._rollback_overlay_state = self._create_rollback_overlay_state()
+        self._update_authoritative_frontend_state()
+
+    def _refresh_history_overlay(self, preferred_session_id: str = "") -> None:
+        self._session_support.ensure_current_session_persisted()
+        sessions = self._session_support.list_sessions()
+        current_session_id = self._session_support.get_current_session_id()
+        selected_session_id = str(
+            preferred_session_id
+            or self._history_overlay_state.get("selected_session_id", "")
+            or current_session_id
+        )
+        available_session_ids = {
+            str(getattr(session, "session_id", "") or "") for session in sessions
+        }
+        if not selected_session_id or selected_session_id not in available_session_ids:
+            selected_session_id = current_session_id
+        if (not selected_session_id or selected_session_id not in available_session_ids) and sessions:
+            selected_session_id = str(getattr(sessions[0], "session_id", "") or "")
+        preview_messages = (
+            self._session_support.get_session_messages(selected_session_id)
+            if selected_session_id
+            else []
+        )
+        self._history_overlay_state = {
+            "is_open": True,
+            "is_loading": False,
+            "error_message": "",
+            "current_session_id": current_session_id,
+            "selected_session_id": selected_session_id,
+            "sessions": sessions,
+            "preview_messages": preview_messages,
+        }
+        self._update_authoritative_frontend_state()
+
 
     # ============================================================
     # UI 初始化
@@ -180,84 +321,61 @@ class ConversationPanel(QWidget):
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
-        
-        # 设置面板背景
         self.setStyleSheet(f"background-color: {PANEL_BACKGROUND};")
         
-        # 1. 标题栏
-        self._title_bar = TitleBar(self)
-        main_layout.addWidget(self._title_bar)
-        
-        # 2. 消息显示区域
-        self._message_area = MessageArea(self)
-        main_layout.addWidget(self._message_area, 1)
-
-        # 3. 输入区域
-        self._input_area = InputArea(self)
-        main_layout.addWidget(self._input_area)
+        # React 消息区与输入区
+        self._react_host = ReactConversationHost(self)
+        main_layout.addWidget(self._react_host, 1)
     
     def _connect_component_signals(self) -> None:
         """连接子组件信号"""
-        # 标题栏信号
-        if self._title_bar:
-            self._title_bar.new_conversation_clicked.connect(
-                self._on_new_conversation_clicked
+        if self._react_host:
+            self._react_host.files_dropped.connect(self.add_attachments)
+
+        bridge = self._react_host.bridge if self._react_host else None
+        if bridge is not None:
+            bridge.send_requested.connect(self._on_send_requested)
+            bridge.stop_requested.connect(self._on_stop_clicked)
+            bridge.new_conversation_requested.connect(self._on_new_conversation_clicked)
+            bridge.history_requested.connect(self._on_history_clicked)
+            bridge.history_close_requested.connect(self._on_history_close_requested)
+            bridge.history_session_selected.connect(self._on_history_session_selected)
+            bridge.history_session_open_requested.connect(
+                self._on_history_session_open_requested
             )
-            self._title_bar.history_clicked.connect(
-                self._on_history_clicked
+            bridge.history_session_export_requested.connect(
+                self._on_history_session_export_requested
             )
-            self._title_bar.clear_clicked.connect(
-                self._on_clear_clicked
+            bridge.history_session_delete_requested.connect(
+                self._on_history_session_delete_requested
             )
-            self._title_bar.session_name_changed.connect(
-                self._on_session_name_changed
+            bridge.clear_display_requested.connect(self._on_clear_clicked)
+            bridge.confirm_dialog_resolved.connect(self._on_confirm_dialog_resolved)
+            bridge.notice_dialog_close_requested.connect(self._on_notice_dialog_close_requested)
+            bridge.compress_requested.connect(self._on_compress_clicked)
+            bridge.session_name_changed.connect(self._on_session_name_changed)
+            bridge.suggestion_selected.connect(self._on_suggestion_clicked)
+            bridge.rollback_requested.connect(self._on_rollback_requested)
+            bridge.rollback_preview_close_requested.connect(
+                self._on_rollback_preview_close_requested
             )
-            self._title_bar.compress_clicked.connect(
-                self._on_compress_clicked
+            bridge.rollback_confirm_requested.connect(
+                self._on_rollback_confirm_requested
             )
-        
-        # 输入区域信号
-        if self._input_area:
-            self._input_area.send_clicked.connect(self._on_send_clicked)
-            self._input_area.stop_clicked.connect(self._on_stop_clicked)
-            self._input_area.upload_image_clicked.connect(
-                self._on_upload_image_clicked
-            )
-            self._input_area.select_file_clicked.connect(
-                self._on_select_file_clicked
-            )
-            self._input_area.model_card_clicked.connect(
-                self._on_model_card_clicked
-            )
-            self._input_area.attachment_error.connect(
-                self._on_attachment_error
-            )
-            self._input_area.image_preview_requested.connect(
-                self._on_image_preview_requested
-            )
-            self._input_area.pending_edit_accept_all_requested.connect(
+            bridge.pending_edit_accept_all_requested.connect(
                 self._on_pending_edit_accept_all_requested
             )
-            self._input_area.pending_edit_reject_all_requested.connect(
+            bridge.pending_edit_reject_all_requested.connect(
                 self._on_pending_edit_reject_all_requested
             )
-            self._input_area.pending_edit_file_clicked.connect(
-                self._on_pending_edit_file_clicked
-            )
-
-        if self._message_area:
-            self._message_area.file_clicked.connect(
-                self._on_message_file_clicked
-            )
-            self._message_area.link_clicked.connect(
-                self._on_link_clicked
-            )
-            self._message_area.suggestion_clicked.connect(
-                self._on_suggestion_clicked
-            )
-            self._message_area.rollback_requested.connect(
-                self._on_rollback_requested
-            )
+            bridge.pending_edit_file_requested.connect(self._on_pending_edit_file_clicked)
+            bridge.file_open_requested.connect(self._on_message_file_clicked)
+            bridge.link_open_requested.connect(self._on_link_clicked)
+            bridge.image_preview_requested.connect(self._on_image_preview_requested)
+            bridge.upload_image_requested.connect(self._on_upload_image_clicked)
+            bridge.select_file_requested.connect(self._on_select_file_clicked)
+            bridge.model_config_requested.connect(self._on_model_card_clicked)
+            bridge.attachments_selected.connect(self.add_attachments)
     
     def _connect_view_model_signals(self) -> None:
         """连接 ViewModel 信号"""
@@ -300,14 +418,6 @@ class ConversationPanel(QWidget):
     def cleanup(self) -> None:
         """清理资源"""
         self._unsubscribe_events()
-        if self._rollback_confirmation_dialog is not None:
-            self._rollback_confirmation_dialog.close()
-            self._rollback_confirmation_dialog.deleteLater()
-            self._rollback_confirmation_dialog = None
-        if self._warning_dialog is not None:
-            self._warning_dialog.close()
-            self._warning_dialog.deleteLater()
-            self._warning_dialog = None
         if self.pending_workspace_edit_service is not None:
             try:
                 self.pending_workspace_edit_service.summary_changed.disconnect(
@@ -317,8 +427,8 @@ class ConversationPanel(QWidget):
                 pass
         if self._view_model:
             self._view_model.cleanup()
-        if self._message_area:
-            self._message_area.cleanup()
+        if self._react_host:
+            self._react_host.cleanup()
 
     def _subscribe_events(self) -> None:
         """订阅事件"""
@@ -406,67 +516,111 @@ class ConversationPanel(QWidget):
     # 消息显示
     # ============================================================
     
+    def get_authoritative_frontend_state(self) -> Dict[str, Any]:
+        return copy.deepcopy(self._authoritative_frontend_state)
+
+    def _get_pending_workspace_edit_summary_state(self) -> Dict[str, Any]:
+        service = self.pending_workspace_edit_service
+        if service is None:
+            return {
+                "file_count": 0,
+                "added_lines": 0,
+                "deleted_lines": 0,
+                "files": [],
+            }
+        try:
+            summary_state = service.get_summary_state()
+            return summary_state if isinstance(summary_state, dict) else {
+                "file_count": 0,
+                "added_lines": 0,
+                "deleted_lines": 0,
+                "files": [],
+            }
+        except Exception as exc:
+            if self.logger:
+                self.logger.error(f"Failed to get pending workspace edit state: {exc}")
+            return {
+                "file_count": 0,
+                "added_lines": 0,
+                "deleted_lines": 0,
+                "files": [],
+            }
+
+    def _get_model_display_name(self) -> str:
+        display_name = "Model"
+        try:
+            from shared.service_locator import ServiceLocator
+            from shared.service_names import SVC_LLM_RUNTIME_CONFIG_MANAGER
+
+            llm_runtime_config_manager = ServiceLocator.get_optional(
+                SVC_LLM_RUNTIME_CONFIG_MANAGER
+            )
+            if llm_runtime_config_manager:
+                active_config = llm_runtime_config_manager.resolve_active_config()
+                model_name = active_config.model
+                provider = active_config.provider
+                if active_config.display_name:
+                    display_name = active_config.display_name
+
+                from shared.model_registry import ModelRegistry
+
+                if provider and model_name:
+                    model_id = f"{provider}:{model_name}"
+                    model_config = ModelRegistry.get_model(model_id)
+                    if model_config:
+                        display_name = model_config.display_name
+                    else:
+                        display_name = model_name.upper().replace("GLM-", "GLM-")
+        except Exception:
+            pass
+        return display_name
+
+    def _build_authoritative_frontend_state(self) -> Dict[str, Any]:
+        view_model = self.view_model
+        session_manager = view_model.session_state_manager if view_model else None
+        session_id = session_manager.get_current_session_id() if session_manager else ""
+        session_name = session_manager.get_current_session_name() if session_manager else ""
+        return self._state_serializer.serialize_main_state(
+            session_id=session_id,
+            session_name=session_name,
+            messages=view_model.messages if view_model else [],
+            runtime_steps=view_model.active_agent_steps if view_model else [],
+            usage_info=view_model.get_usage_info() if view_model else None,
+            pending_workspace_edit_summary=self._get_pending_workspace_edit_summary_state(),
+            model_display_name=self._get_model_display_name(),
+            action_mode=self._composer_action_mode,
+            action_status=self._composer_action_status,
+            clear_draft_nonce=self._draft_clear_nonce,
+            history_overlay=self._history_overlay_state,
+            rollback_overlay=self._rollback_overlay_state,
+            confirm_dialog=self._confirm_dialog_state,
+            notice_dialog=self._notice_dialog_state,
+            is_loading=view_model.is_loading if view_model else False,
+            can_send=view_model.can_send if view_model else True,
+            send_in_progress=self._send_in_progress,
+            rollback_in_progress=self._rollback_in_progress,
+        )
+
+    def _update_authoritative_frontend_state(self) -> None:
+        self._authoritative_frontend_state = self._build_authoritative_frontend_state()
+        if self._react_host is not None:
+            self._react_host.set_state(self._authoritative_frontend_state)
+     
     def refresh_display(self) -> None:
         """从 ViewModel 获取数据并刷新显示"""
         if self.view_model is None:
             return
-        
-        # 委托给 MessageArea 渲染消息
-        if self._message_area:
-            self._message_area.render_conversation(
-                self.view_model.messages,
-                self.view_model.active_agent_steps,
-            )
-        
-        # 更新状态栏
-        self._update_usage_display()
-        self._refresh_pending_workspace_edit_summary()
+
+        self._update_authoritative_frontend_state()
 
     def _refresh_pending_workspace_edit_summary(self) -> None:
-        if self._input_area is None:
-            return
-        service = self.pending_workspace_edit_service
-        if service is None:
-            self._input_area.set_pending_workspace_edit_summary_state(
-                {
-                    "file_count": 0,
-                    "added_lines": 0,
-                    "deleted_lines": 0,
-                    "files": [],
-                }
-            )
-            return
-        try:
-            self._input_area.set_pending_workspace_edit_summary_state(
-                service.get_summary_state()
-            )
-        except Exception as exc:
-            if self.logger:
-                self.logger.error(f"Failed to refresh pending workspace edit state: {exc}")
-    
+        self._update_authoritative_frontend_state()
+     
     def _update_usage_display(self) -> None:
         """更新上下文占用显示"""
-        if self.view_model is None or self._input_area is None:
+        if self.view_model is None:
             return
-        
-        # 获取完整的使用信息
-        usage_info = self.view_model.get_usage_info()
-        ratio = usage_info.get("ratio", 0.0)
-        current_tokens = usage_info.get("current_tokens", 0)
-        max_tokens = usage_info.get("max_tokens", 0)
-        input_limit = usage_info.get("input_limit", 0)
-        output_reserve = usage_info.get("output_reserve", 0)
-        state = usage_info.get("state", "normal")
-        
-        # 更新输入区域的占用显示
-        self._input_area.update_usage(
-            ratio,
-            current_tokens,
-            max_tokens,
-            input_limit=input_limit,
-            output_reserve=output_reserve,
-            state=state,
-        )
+        self._update_authoritative_frontend_state()
 
     # ============================================================
     # 事件处理 - EventBus 事件
@@ -503,8 +657,9 @@ class ConversationPanel(QWidget):
             self.logger.debug(f"Session changed in panel: {action}, name={session_name}")
         
         # 只更新标题栏，不刷新消息显示（避免重复刷新）
-        if self._title_bar and session_name:
-            self._title_bar.set_session_name(session_name)
+        if self._history_overlay_state.get("is_open", False):
+            self._refresh_history_overlay()
+        self._update_authoritative_frontend_state()
     
     def _on_model_changed(self, event_data: Dict[str, Any]) -> None:
         """
@@ -512,8 +667,7 @@ class ConversationPanel(QWidget):
         
         更新输入区域的模型卡片显示。
         """
-        if self._input_area:
-            self._input_area.update_model_display()
+        self._update_authoritative_frontend_state()
 
     def _on_attach_files_requested(self, event_data: Dict[str, Any]) -> None:
         data = event_data.get("data", event_data)
@@ -532,13 +686,14 @@ class ConversationPanel(QWidget):
 
     @pyqtSlot(dict)
     def _on_pending_workspace_edit_summary_changed(self, summary_state: Dict[str, Any]) -> None:
-        if self._input_area:
-            self._input_area.set_pending_workspace_edit_summary_state(summary_state)
+        del summary_state
+        self._update_authoritative_frontend_state()
     
     @pyqtSlot(float)
     def _on_usage_changed(self, ratio: float) -> None:
         """处理上下文占用变化"""
         self._update_usage_display()
+        self._update_authoritative_frontend_state()
     
     @pyqtSlot(bool)
     def _on_can_send_changed(self, can_send: bool) -> None:
@@ -548,8 +703,8 @@ class ConversationPanel(QWidget):
     @pyqtSlot()
     def _on_stop_requested(self) -> None:
         """处理停止请求信号（来自 ViewModel）"""
-        if self._input_area and self._input_area.get_button_mode() != ButtonMode.STOPPING:
-            self._input_area.set_button_mode(ButtonMode.STOPPING)
+        if self._composer_action_mode != ACTION_MODE_STOPPING:
+            self._composer_action_mode = ACTION_MODE_STOPPING
         self._sync_input_action_state()
         if self.logger:
             self.logger.debug("Stop requested, UI updated")
@@ -573,13 +728,13 @@ class ConversationPanel(QWidget):
     @pyqtSlot()
     def _on_new_conversation_suggested(self) -> None:
         """处理建议新开对话"""
-        QMessageBox.information(
-            self,
-            self._get_text("dialog.info.title", "提示"),
+        self._open_notice_dialog(
             self._get_text(
                 "msg.suggest_new_conversation",
                 "上下文已接近上限，建议开启新对话以获得更好的体验。"
-            )
+            ),
+            title=self._get_text("dialog.info.title", "提示"),
+            tone="info",
         )
 
     # ============================================================
@@ -589,29 +744,93 @@ class ConversationPanel(QWidget):
     def _on_new_conversation_clicked(self) -> None:
         """处理新开对话按钮点击"""
         self.start_new_conversation()
-    
+     
     def _on_history_clicked(self) -> None:
         """处理历史对话按钮点击"""
-        self.history_requested.emit()
+        self._refresh_history_overlay()
+
+    def _on_history_close_requested(self) -> None:
+        self._close_history_overlay()
+
+    def _on_history_session_selected(self, session_id: str) -> None:
+        self._refresh_history_overlay(session_id)
+
+    def _on_history_session_open_requested(self, session_id: str) -> None:
+        if not session_id:
+            return
+        success = self._session_support.open_session(session_id)
+        if success:
+            self._close_history_overlay()
+            self._draft_clear_nonce += 1
+            self._update_authoritative_frontend_state()
+            return
+        self._open_notice_dialog(
+            self._get_text("dialog.history.open_failed", "打开会话失败"),
+            title=self._get_text("dialog.error.title", "错误"),
+            tone="error",
+        )
+
+    def _on_history_session_export_requested(
+        self,
+        session_id: str,
+        export_format: str,
+    ) -> None:
+        normalized_format = self._session_support.normalize_export_format(export_format)
+        if not session_id or not normalized_format:
+            self._open_notice_dialog(
+                self._get_text("dialog.export.failed", "导出会话失败"),
+                title=self._get_text("dialog.error.title", "错误"),
+                tone="error",
+            )
+            return
+        success, export_path = self._session_support.export_session(
+            session_id,
+            normalized_format,
+            parent=self,
+            dialog_title=self._get_text("dialog.export.title", "Export Conversation"),
+        )
+        if success:
+            self._open_notice_dialog(
+                self._get_text("dialog.export.success", "Conversation exported successfully"),
+                title=self._get_text("dialog.info.title", "提示"),
+                tone="success",
+            )
+            if self.logger:
+                self.logger.info(f"Session exported to: {export_path}")
+            return
+
+    def _on_history_session_delete_requested(self, session_id: str) -> None:
+        if not session_id:
+            return
+        self._open_confirm_dialog(
+            kind="history_delete",
+            title=self._get_text("dialog.warning.title", "警告"),
+            message=self._get_text(
+                "dialog.history.delete_confirm",
+                "Are you sure you want to delete this session? This action cannot be undone.",
+            ),
+            confirm_label=self._get_text("btn.delete", "Delete"),
+            cancel_label=self._get_text("btn.cancel", "Cancel"),
+            tone="danger",
+            payload={"session_id": session_id},
+        )
     
     def _on_clear_clicked(self) -> None:
         """处理清空对话按钮点击"""
-        reply = QMessageBox.question(
-            self,
-            self._get_text("dialog.confirm.title", "确认"),
-            self._get_text(
+        self._open_confirm_dialog(
+            kind="clear_display",
+            title=self._get_text("dialog.confirm.title", "确认"),
+            message=self._get_text(
                 "msg.confirm_clear_conversation",
                 "是否清空当前对话显示？（不影响历史记录）"
             ),
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No
+            confirm_label=self._get_text("btn.confirm", "确认"),
+            cancel_label=self._get_text("btn.cancel", "取消"),
+            tone="normal",
         )
-        
-        if reply == QMessageBox.StandardButton.Yes:
-            self.clear_display()
 
     def request_history(self) -> None:
-        self.history_requested.emit()
+        self._refresh_history_overlay()
 
     def request_clear_display(self) -> None:
         self._on_clear_clicked()
@@ -619,78 +838,57 @@ class ConversationPanel(QWidget):
     def request_compress_context(self) -> None:
         self.compress_requested.emit()
 
+    def _on_confirm_dialog_resolved(self, accepted: bool) -> None:
+        confirm_state = dict(self._confirm_dialog_state)
+        self._close_confirm_dialog()
+        if not accepted:
+            return
+        kind = str(confirm_state.get("kind", "") or "")
+        payload = confirm_state.get("payload", {})
+        if kind == "clear_display":
+            self.clear_display()
+            return
+        if kind == "history_delete":
+            session_id = str(payload.get("session_id", "") or "") if isinstance(payload, dict) else ""
+            if not session_id:
+                return
+            success = self._session_support.delete_session(session_id)
+            if success:
+                self._refresh_history_overlay()
+                return
+            self._open_notice_dialog(
+                self._get_text("dialog.history.delete_failed", "删除会话失败"),
+                title=self._get_text("dialog.error.title", "错误"),
+                tone="error",
+            )
+
+    def _on_notice_dialog_close_requested(self) -> None:
+        self._close_notice_dialog()
+
     def _on_session_name_changed(self, name: str) -> None:
         """处理会话名称变更"""
-        self.session_name_changed.emit(name)
+        normalized_name = str(name or "").strip()
+        if not normalized_name:
+            return
+        if self._session_support.rename_current_session(normalized_name):
+            self._update_authoritative_frontend_state()
+            return
+        self._open_notice_dialog(
+            self._get_text("dialog.history.rename_failed", "重命名会话失败"),
+            title=self._get_text("dialog.error.title", "错误"),
+            tone="error",
+        )
     
     def _on_compress_clicked(self) -> None:
         """处理压缩按钮点击"""
         self.compress_requested.emit()
-    
-    def _on_send_clicked(self) -> None:
-        """处理发送按钮点击"""
-        if self._rollback_in_progress:
-            return
-        asyncio.create_task(self._send_message())
-    
-    def _on_stop_clicked(self) -> None:
-        """处理停止按钮点击"""
-        if self.view_model:
-            success = self.view_model.request_stop()
-            if not success:
-                self._sync_input_action_state()
-                if self.logger:
-                    self.logger.warning("Stop request failed")
-    
-    def _on_upload_image_clicked(self) -> None:
-        """处理上传图片按钮点击"""
-        file_filter = "Images (*.png *.jpg *.jpeg *.webp)"
-        paths, _ = QFileDialog.getOpenFileNames(
-            self,
-            self._get_text("dialog.select_image.title", "选择图片"),
-            "",
-            file_filter
-        )
-        
-        if self._input_area:
-            for path in paths:
-                self._input_area.add_attachment(path)
-    
-    def _on_select_file_clicked(self) -> None:
-        """处理选择文件按钮点击"""
-        paths, _ = QFileDialog.getOpenFileNames(
-            self,
-            self._get_text("dialog.select_file.title", "选择文件"),
-            "",
-            "All Files (*.*)"
-        )
-        
-        if self._input_area:
-            for path in paths:
-                self._input_area.add_attachment(path)
-
-    def _on_model_card_clicked(self) -> None:
-        """处理模型卡片点击，打开模型设置对话框"""
-        try:
-            from presentation.dialogs.model_config_dialog import ModelConfigDialog
-            
-            dialog = ModelConfigDialog(self)
-            if dialog.exec():
-                if self._input_area:
-                    self._input_area.update_model_display()
-                
-                if self.logger:
-                    self.logger.info("Model configuration updated from conversation panel")
-        except Exception as e:
-            if self.logger:
-                self.logger.error(f"Failed to open model config dialog: {e}")
 
     def _on_attachment_error(self, message: str) -> None:
         """处理附件错误"""
-        QMessageBox.warning(
-            self,
-            self._get_text("dialog.warning.title", "警告"),
-            message
+        self._open_notice_dialog(
+            message,
+            title=self._get_text("dialog.warning.title", "警告"),
+            tone="error",
         )
 
     def _on_image_preview_requested(self, image_path: str) -> None:
@@ -746,9 +944,19 @@ class ConversationPanel(QWidget):
     def _on_rollback_requested(self, message_id: str) -> None:
         if self._rollback_in_progress or self._send_in_progress:
             return
-        if self._rollback_confirmation_dialog is not None:
-            return
         asyncio.create_task(self._confirm_and_perform_rollback(message_id))
+
+    def _on_rollback_preview_close_requested(self) -> None:
+        self._close_rollback_overlay()
+
+    def _on_rollback_confirm_requested(self) -> None:
+        target_message_id = str(
+            self._rollback_overlay_state.get("target_message_id", "") or ""
+        )
+        if not target_message_id:
+            return
+        self._close_rollback_overlay()
+        asyncio.create_task(self._perform_rollback(target_message_id))
 
     def _open_image_preview(self, image_path: str) -> None:
         if not image_path or not os.path.isfile(image_path):
@@ -756,6 +964,7 @@ class ConversationPanel(QWidget):
         from presentation.dialogs.image_preview_dialog import ImagePreviewDialog
 
         dialog = ImagePreviewDialog(image_path, self)
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         dialog.exec()
 
     # ============================================================
@@ -769,25 +978,30 @@ class ConversationPanel(QWidget):
 
     def dropEvent(self, event: QDropEvent) -> None:
         """处理放下事件"""
-        if self._input_area is None:
-            return
-
+        accepted_paths = []
         for url in event.mimeData().urls():
             path = url.toLocalFile()
             if os.path.isfile(path):
-                self._input_area.add_attachment(path)
+                accepted_paths.append(path)
+        if accepted_paths:
+            self.add_attachments(accepted_paths)
 
     # ============================================================
 
-    async def _send_message(self) -> None:
+    async def _send_message(self, text: str, composer_state: Optional[Dict[str, Any]] = None) -> None:
         """发送消息"""
-        if self._input_area is None:
-            return
         if self._send_in_progress:
             return
 
-        text = self._input_area.get_text()
-        attachments = self._input_area.get_attachments()
+        payload = composer_state if isinstance(composer_state, dict) else {}
+        attachments = []
+        for raw_attachment in payload.get("attachments", []) or []:
+            try:
+                attachments.append(
+                    ConversationAttachmentSupport.attachment_from_payload(raw_attachment)
+                )
+            except ConversationAttachmentError:
+                continue
         if not text.strip() and not attachments:
             return
 
@@ -800,7 +1014,7 @@ class ConversationPanel(QWidget):
             try:
                 success = await self.view_model.send_message(text, attachments)
                 if success:
-                    self._input_area.clear()
+                    self._draft_clear_nonce += 1
             finally:
                 self._send_in_progress = False
                 self._sync_input_action_state()
@@ -813,12 +1027,21 @@ class ConversationPanel(QWidget):
 
         preview, error_message = await self.view_model.preview_rollback_to_message(message_id)
         if preview is None:
-            self._show_warning_dialog(
-                error_message or self._get_text("msg.rollback_failed", "撤回失败")
+            self._open_notice_dialog(
+                error_message or self._get_text("msg.rollback_failed", "撤回失败"),
+                title=self._get_text("dialog.error.title", "错误"),
+                tone="error",
             )
             return
 
-        self._show_rollback_confirmation_dialog(preview, message_id)
+        self._rollback_overlay_state = {
+            "is_open": True,
+            "is_loading": False,
+            "error_message": "",
+            "target_message_id": str(message_id or ""),
+            "preview": preview,
+        }
+        self._update_authoritative_frontend_state()
 
     async def _perform_rollback(self, message_id: str) -> None:
         if not message_id or self.view_model is None:
@@ -830,108 +1053,87 @@ class ConversationPanel(QWidget):
         self._sync_input_action_state()
         try:
             success, error_message = await self.view_model.rollback_to_message(message_id)
-            self._sync_input_action_state()
             if not success:
-                self._show_warning_dialog(
-                    error_message or self._get_text("msg.rollback_failed", "撤回失败")
+                self._open_notice_dialog(
+                    error_message or self._get_text("msg.rollback_failed", "撤回失败"),
+                    title=self._get_text("dialog.error.title", "错误"),
+                    tone="error",
                 )
         finally:
             self._rollback_in_progress = False
             self._sync_input_action_state()
 
-    def _show_rollback_confirmation_dialog(self, preview: Any, message_id: str) -> None:
-        if self._rollback_confirmation_dialog is not None:
-            self._rollback_confirmation_dialog.close()
-            self._rollback_confirmation_dialog.deleteLater()
-
-        dialog = RollbackConfirmationDialog(preview, self)
-        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
-        dialog.finished.connect(
-            lambda result, target_message_id=message_id: self._on_rollback_confirmation_finished(
-                result,
-                target_message_id,
-            )
-        )
-        self._rollback_confirmation_dialog = dialog
-        dialog.open()
-
-    def _on_rollback_confirmation_finished(self, result: int, message_id: str) -> None:
-        self._rollback_confirmation_dialog = None
-        if result != int(QDialog.DialogCode.Accepted):
-            return
-        if self._rollback_in_progress or self._send_in_progress:
-            return
-        asyncio.create_task(self._perform_rollback(message_id))
-
-    def _show_warning_dialog(self, message: str) -> None:
-        if not message:
-            return
-
-        if self._warning_dialog is not None:
-            self._warning_dialog.close()
-            self._warning_dialog.deleteLater()
-
-        dialog = QMessageBox(self)
-        dialog.setIcon(QMessageBox.Icon.Warning)
-        dialog.setWindowTitle(self._get_text("dialog.warning.title", "警告"))
-        dialog.setText(message)
-        dialog.setStandardButtons(QMessageBox.StandardButton.Ok)
-        dialog.setModal(True)
-        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
-        dialog.finished.connect(self._on_warning_dialog_finished)
-        self._warning_dialog = dialog
-        dialog.open()
-
-    def _on_warning_dialog_finished(self, result: int) -> None:
-        del result
-        self._warning_dialog = None
-
     def _sync_input_action_state(self) -> None:
-        if self._input_area is None:
-            return
         if self._send_in_progress:
-            self._input_area.set_action_status(
-                self._get_text("conversation.send.in_progress", "正在发送…")
+            self._composer_action_status = self._get_text(
+                "conversation.send.in_progress", "正在发送…"
             )
-            self._input_area.set_button_mode(ButtonMode.SEND)
-            self._input_area.set_send_enabled(False)
+            self._composer_action_mode = ACTION_MODE_SEND
+            self._update_authoritative_frontend_state()
             return
         if self._rollback_in_progress:
-            self._input_area.set_action_status(
-                self._get_text("conversation.rollback.in_progress", "正在撤回…")
+            self._composer_action_status = self._get_text(
+                "conversation.rollback.in_progress", "正在撤回…"
             )
-            self._input_area.set_button_mode(ButtonMode.ROLLBACKING)
-            self._input_area.set_send_enabled(False)
+            self._composer_action_mode = ACTION_MODE_ROLLBACKING
+            self._update_authoritative_frontend_state()
             return
         if self.view_model and self.view_model.is_loading:
-            if self._input_area.get_button_mode() != ButtonMode.STOPPING:
-                self._input_area.set_button_mode(ButtonMode.STOP)
-                self._input_area.set_action_status(
-                    self._get_text("conversation.generate.in_progress", "正在生成…")
+            if self._composer_action_mode != ACTION_MODE_STOPPING:
+                self._composer_action_mode = ACTION_MODE_STOP
+                self._composer_action_status = self._get_text(
+                    "conversation.generate.in_progress", "正在生成…"
                 )
             else:
-                self._input_area.set_action_status(
-                    self._get_text("conversation.stop.in_progress", "正在停止…")
+                self._composer_action_status = self._get_text(
+                    "conversation.stop.in_progress", "正在停止…"
                 )
-            self._input_area.set_send_enabled(False)
+            self._update_authoritative_frontend_state()
             return
-        self._input_area.set_action_status("")
-        self._input_area.set_button_mode(ButtonMode.SEND)
-        self._input_area.set_send_enabled(self.view_model.can_send if self.view_model else True)
+        self._composer_action_status = ""
+        self._composer_action_mode = ACTION_MODE_SEND
+        self._update_authoritative_frontend_state()
 
     def add_attachments(self, paths: list[str]) -> None:
-        if self._input_area is None:
+        if self._react_host is None:
             return
+        serialized_attachments = []
         for path in paths:
             if isinstance(path, str) and path:
-                self._input_area.add_attachment(path)
+                try:
+                    attachment = ConversationAttachmentSupport.build_attachment_from_path(path)
+                except ConversationAttachmentError as exc:
+                    self._on_attachment_error(str(exc))
+                    continue
+                serialized_attachments.append(
+                    self._state_serializer.serialize_attachment(attachment)
+                )
+        if serialized_attachments:
+            self._react_host.append_draft_attachments(serialized_attachments)
 
     def clear_display(self) -> None:
         """清空显示区（不清空 ViewModel 数据）"""
-        if self._message_area:
-            self._message_area.clear_messages()
-        if self._input_area:
-            self._input_area.clear_attachments()
+        if self._react_host:
+            cleared_state = copy.deepcopy(self._authoritative_frontend_state)
+            conversation_state = (
+                cleared_state.get("conversation", {})
+                if isinstance(cleared_state, dict)
+                else {}
+            )
+            view_flags = (
+                cleared_state.get("view_flags", {})
+                if isinstance(cleared_state, dict)
+                else {}
+            )
+            if isinstance(conversation_state, dict):
+                conversation_state["messages"] = []
+                conversation_state["runtime_steps"] = []
+                conversation_state["message_count"] = 0
+            if isinstance(view_flags, dict):
+                view_flags["has_messages"] = False
+                view_flags["has_runtime_steps"] = False
+            self._react_host.set_state(cleared_state)
+            self._react_host.clear_draft_attachments()
 
     def start_new_conversation(self) -> None:
         """
@@ -948,16 +1150,15 @@ class ConversationPanel(QWidget):
             success, new_session_name = self.view_model.request_new_session()
             
             if success:
-                if self._input_area:
-                    self._input_area.clear_attachments()
+                self._draft_clear_nonce += 1
+                self._close_history_overlay()
+                self._close_rollback_overlay()
                 
                 if self.logger:
                     self.logger.info(f"New conversation started: {new_session_name}")
             else:
                 if self.logger:
                     self.logger.warning(f"Failed to start new conversation: {new_session_name}")
-        
-        self.new_conversation_requested.emit()
 
     # ============================================================
     # 国际化
@@ -965,11 +1166,6 @@ class ConversationPanel(QWidget):
     
     def retranslate_ui(self) -> None:
         """刷新 UI 文本"""
-        if self._title_bar:
-            self._title_bar.retranslate_ui()
-        if self._input_area:
-            self._input_area.retranslate_ui()
-        
         self.refresh_display()
 
 

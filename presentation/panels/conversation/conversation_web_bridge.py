@@ -1,0 +1,165 @@
+from __future__ import annotations
+
+from typing import Any, Dict, List
+
+from PyQt6.QtCore import QObject, pyqtSignal, pyqtSlot
+
+
+class ConversationWebBridge(QObject):
+    ready = pyqtSignal()
+    send_requested = pyqtSignal(str, dict)
+    stop_requested = pyqtSignal()
+    new_conversation_requested = pyqtSignal()
+    history_requested = pyqtSignal()
+    history_close_requested = pyqtSignal()
+    history_session_selected = pyqtSignal(str)
+    history_session_open_requested = pyqtSignal(str)
+    history_session_export_requested = pyqtSignal(str, str)
+    history_session_delete_requested = pyqtSignal(str)
+    clear_display_requested = pyqtSignal()
+    confirm_dialog_resolved = pyqtSignal(bool)
+    notice_dialog_close_requested = pyqtSignal()
+    compress_requested = pyqtSignal()
+    session_name_changed = pyqtSignal(str)
+    suggestion_selected = pyqtSignal(str)
+    rollback_requested = pyqtSignal(str)
+    rollback_preview_close_requested = pyqtSignal()
+    rollback_confirm_requested = pyqtSignal()
+    pending_edit_accept_all_requested = pyqtSignal()
+    pending_edit_reject_all_requested = pyqtSignal()
+    pending_edit_file_requested = pyqtSignal(str)
+    file_open_requested = pyqtSignal(str)
+    link_open_requested = pyqtSignal(str)
+    image_preview_requested = pyqtSignal(str)
+    upload_image_requested = pyqtSignal()
+    select_file_requested = pyqtSignal()
+    model_config_requested = pyqtSignal()
+    attachments_selected = pyqtSignal(list)
+
+    @pyqtSlot()
+    def markReady(self) -> None:
+        self.ready.emit()
+
+    @pyqtSlot(str, dict)
+    def sendMessage(self, text: str, composer_state: Dict[str, Any]) -> None:
+        payload = composer_state if isinstance(composer_state, dict) else {}
+        self.send_requested.emit(str(text or ""), payload)
+
+    @pyqtSlot()
+    def requestStop(self) -> None:
+        self.stop_requested.emit()
+
+    @pyqtSlot()
+    def requestNewConversation(self) -> None:
+        self.new_conversation_requested.emit()
+
+    @pyqtSlot()
+    def requestHistory(self) -> None:
+        self.history_requested.emit()
+
+    @pyqtSlot()
+    def closeHistory(self) -> None:
+        self.history_close_requested.emit()
+
+    @pyqtSlot(str)
+    def selectHistorySession(self, session_id: str) -> None:
+        self.history_session_selected.emit(str(session_id or ""))
+
+    @pyqtSlot(str)
+    def openHistorySession(self, session_id: str) -> None:
+        self.history_session_open_requested.emit(str(session_id or ""))
+
+    @pyqtSlot(str, str)
+    def requestExportHistorySession(self, session_id: str, export_format: str) -> None:
+        self.history_session_export_requested.emit(
+            str(session_id or ""),
+            str(export_format or ""),
+        )
+
+    @pyqtSlot(str)
+    def requestDeleteHistorySession(self, session_id: str) -> None:
+        self.history_session_delete_requested.emit(str(session_id or ""))
+
+    @pyqtSlot()
+    def requestClearDisplay(self) -> None:
+        self.clear_display_requested.emit()
+
+    @pyqtSlot(bool)
+    def resolveConfirmDialog(self, accepted: bool) -> None:
+        self.confirm_dialog_resolved.emit(bool(accepted))
+
+    @pyqtSlot()
+    def closeNoticeDialog(self) -> None:
+        self.notice_dialog_close_requested.emit()
+
+    @pyqtSlot()
+    def requestCompressContext(self) -> None:
+        self.compress_requested.emit()
+
+    @pyqtSlot(str)
+    def renameSession(self, name: str) -> None:
+        self.session_name_changed.emit(str(name or ""))
+
+    @pyqtSlot(str)
+    def selectSuggestion(self, suggestion_id: str) -> None:
+        self.suggestion_selected.emit(str(suggestion_id or ""))
+
+    @pyqtSlot(str)
+    def requestRollback(self, message_id: str) -> None:
+        self.rollback_requested.emit(str(message_id or ""))
+
+    @pyqtSlot()
+    def closeRollbackPreview(self) -> None:
+        self.rollback_preview_close_requested.emit()
+
+    @pyqtSlot()
+    def confirmRollback(self) -> None:
+        self.rollback_confirm_requested.emit()
+
+    @pyqtSlot()
+    def acceptAllPendingEdits(self) -> None:
+        self.pending_edit_accept_all_requested.emit()
+
+    @pyqtSlot()
+    def rejectAllPendingEdits(self) -> None:
+        self.pending_edit_reject_all_requested.emit()
+
+    @pyqtSlot(str)
+    def openPendingEditFile(self, file_path: str) -> None:
+        self.pending_edit_file_requested.emit(str(file_path or ""))
+
+    @pyqtSlot(str)
+    def openFile(self, file_path: str) -> None:
+        self.file_open_requested.emit(str(file_path or ""))
+
+    @pyqtSlot(str)
+    def openLink(self, url: str) -> None:
+        self.link_open_requested.emit(str(url or ""))
+
+    @pyqtSlot(str)
+    def previewImage(self, image_path: str) -> None:
+        self.image_preview_requested.emit(str(image_path or ""))
+
+    @pyqtSlot()
+    def requestUploadImage(self) -> None:
+        self.upload_image_requested.emit()
+
+    @pyqtSlot()
+    def requestSelectFile(self) -> None:
+        self.select_file_requested.emit()
+
+    @pyqtSlot()
+    def requestModelConfig(self) -> None:
+        self.model_config_requested.emit()
+
+    @pyqtSlot(list)
+    def attachFiles(self, paths: List[Any]) -> None:
+        normalized_paths = []
+        for path in paths or []:
+            normalized = str(path or "")
+            if normalized:
+                normalized_paths.append(normalized)
+        self.attachments_selected.emit(normalized_paths)
+
+
+__all__ = ["ConversationWebBridge"]

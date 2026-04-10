@@ -4,9 +4,9 @@
 
 包含对话面板的各个组件：
 - ConversationViewModel - ViewModel 层，隔离 UI 与数据层
-- InputArea - 输入区域组件
+- ConversationAttachmentSupport - 附件支持组件
 - TitleBar - 标题栏组件
-- MessageArea - 消息显示区域
+- ReactConversationHost - React 会话宿主
 """
 
 from presentation.panels.conversation.conversation_view_model import (
@@ -18,20 +18,26 @@ from presentation.panels.conversation.conversation_view_model import (
     SUGGESTION_STATE_EXPIRED,
 )
 
-from presentation.panels.conversation.input_area import (
-    InputArea,
-    ButtonMode,
+from presentation.panels.conversation.conversation_attachment_support import (
+    ConversationAttachmentError,
+    ConversationAttachmentSupport,
     MAX_IMAGE_SIZE_MB,
 )
 
-from presentation.panels.conversation.title_bar import (
-    TitleBar,
-    TITLE_BAR_HEIGHT,
+from presentation.panels.conversation.conversation_session_support import (
+    ConversationSessionSupport,
 )
 
-from presentation.panels.conversation.message_area import (
-    MessageArea,
-    MESSAGE_SPACING,
+from presentation.panels.conversation.conversation_state_serializer import (
+    ConversationStateSerializer,
+)
+
+from presentation.panels.conversation.conversation_web_bridge import (
+    ConversationWebBridge,
+)
+
+from presentation.panels.conversation.react_conversation_host import (
+    ReactConversationHost,
 )
 
 __all__ = [
@@ -42,14 +48,13 @@ __all__ = [
     "SUGGESTION_STATE_ACTIVE",
     "SUGGESTION_STATE_SELECTED",
     "SUGGESTION_STATE_EXPIRED",
-    # InputArea
-    "InputArea",
-    "ButtonMode",
+    # Attachment support
+    "ConversationAttachmentError",
+    "ConversationAttachmentSupport",
     "MAX_IMAGE_SIZE_MB",
-    # TitleBar
-    "TitleBar",
-    "TITLE_BAR_HEIGHT",
-    # MessageArea
-    "MessageArea",
-    "MESSAGE_SPACING",
+    "ConversationSessionSupport",
+    # Frontend contract and web host
+    "ConversationStateSerializer",
+    "ConversationWebBridge",
+    "ReactConversationHost",
 ]

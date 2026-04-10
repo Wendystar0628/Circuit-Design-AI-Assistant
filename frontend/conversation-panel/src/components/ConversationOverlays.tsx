@@ -1,0 +1,418 @@
+import type { ConversationBridge } from '../bridge'
+import type {
+  ConversationHistoryOverlayState,
+  ConversationMainState,
+  ConversationRollbackFileChangeState,
+  ConversationRollbackPreviewState,
+  ConversationSessionInfoState,
+  ConversationSessionMessageState,
+} from '../types'
+
+interface ConversationOverlaysProps {
+  state: ConversationMainState
+  bridge: ConversationBridge | null
+}
+
+const EXPORT_FORMATS = [
+  { value: 'json', label: 'JSON' },
+  { value: 'txt', label: 'TXT' },
+  { value: 'md', label: 'Markdown' },
+] as const
+
+ function roleLabel(role: string): string {
+   return {
+     user: '用户',
+     assistant: '助手',
+     system: '系统',
+   }[role] ?? '消息'
+ }
+
+function findSelectedSession(history: ConversationHistoryOverlayState): ConversationSessionInfoState | null {
+  return history.sessions.find((session) => session.session_id === history.selected_session_id) ?? null
+}
+
+function renderSessionPreviewMessage(message: ConversationSessionMessageState) {
+  return (
+    <div key={message.message_id || `${message.role}-${message.timestamp}`} className="conversation-overlay-card">
+      <div className="conversation-overlay-card__header">
+        <span className="conversation-overlay-card__title">{roleLabel(message.role)}</span>
+        <span className="conversation-overlay-card__subtitle">{message.timestamp || '未知时间'}</span>
+      </div>
+      <div className="conversation-overlay-card__body conversation-overlay-card__body--text">
+        {message.content || '（空消息）'}
+      </div>
+      {message.attachments.length > 0 ? (
+        <div className="conversation-overlay-chip-list">
+          {message.attachments.map((attachment) => (
+            <span
+              key={attachment.reference_id || attachment.path || attachment.name}
+              className="conversation-overlay-chip"
+            >
+              {attachment.name || attachment.path || '附件'}
+            </span>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function renderFileChangeList(fileChanges: ConversationRollbackFileChangeState[]) {
+  if (fileChanges.length === 0) {
+    return <div className="conversation-overlay-empty">暂无文件变更。</div>
+  }
+
+  return (
+    <div className="conversation-overlay-card-list">
+      {fileChanges.map((fileChange) => (
+        <div
+          key={`${fileChange.relative_path}-${fileChange.change_type}-${fileChange.added_lines}-${fileChange.deleted_lines}`}
+          className="conversation-overlay-card"
+        >
+          <div className="conversation-overlay-card__header">
+            <div>
+              <div className="conversation-overlay-card__title">{fileChange.relative_path || '工作区文件'}</div>
+              <div className="conversation-overlay-card__subtitle">{fileChange.summary || fileChange.change_type || '已变更'}</div>
+            </div>
+            <div className="conversation-overlay-stats">
+              <span>+{fileChange.added_lines}</span>
+              <span>-{fileChange.deleted_lines}</span>
+            </div>
+          </div>
+          {fileChange.diff_preview ? (
+            <pre className="conversation-overlay-code">{fileChange.diff_preview}</pre>
+          ) : null}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function HistoryOverlay({
+  history,
+  bridge,
+}: {
+  history: ConversationHistoryOverlayState
+  bridge: ConversationBridge | null
+}) {
+  const selectedSession = findSelectedSession(history)
+
+  return (
+    <div className="conversation-overlay conversation-overlay--sheet">
+      <button
+        type="button"
+        className="conversation-overlay__backdrop"
+        onClick={() => bridge?.closeHistory?.()}
+        aria-label="关闭会话历史"
+      />
+      <div className="conversation-drawer" role="dialog" aria-modal="true" aria-label="会话历史">
+        <div className="conversation-drawer__header">
+          <div>
+            <div className="conversation-drawer__title">会话历史</div>
+            <div className="conversation-drawer__subtitle">
+              {history.sessions.length > 0 ? `共 ${history.sessions.length} 个会话` : '暂无历史会话'}
+            </div>
+          </div>
+          <button type="button" className="ghost-button" onClick={() => bridge?.closeHistory?.()}>
+            关闭
+          </button>
+        </div>
+        <div className="conversation-drawer__content">
+          <div className="conversation-drawer__list">
+            {history.sessions.length > 0 ? (
+              history.sessions.map((session) => (
+                <button
+                  key={session.session_id}
+                  type="button"
+                  className={[
+                    'conversation-session-row',
+                    session.session_id === history.selected_session_id ? 'conversation-session-row--active' : '',
+                  ]
+                    .filter(Boolean)
+                    .join(' ')}
+                  onClick={() => bridge?.selectHistorySession?.(session.session_id)}
+                >
+                  <div className="conversation-session-row__header">
+                    <span className="conversation-session-row__title">{session.name || session.session_id}</span>
+                    {session.session_id === history.current_session_id ? (
+                      <span className="conversation-status-badge">当前</span>
+                    ) : null}
+                  </div>
+                  <div className="conversation-session-row__meta">
+                    <span>{session.message_count} 条消息</span>
+                    <span>{session.updated_at || session.created_at || ''}</span>
+                  </div>
+                  <div className="conversation-session-row__preview">{session.preview || '无摘要'}</div>
+                </button>
+              ))
+            ) : (
+              <div className="conversation-overlay-empty">暂无历史会话。</div>
+            )}
+          </div>
+          <div className="conversation-drawer__detail">
+            {selectedSession ? (
+              <>
+                <div className="conversation-detail-hero">
+                  <div>
+                    <div className="conversation-detail-hero__title">{selectedSession.name || selectedSession.session_id}</div>
+                    <div className="conversation-detail-hero__meta">
+                      <span>{selectedSession.message_count} 条消息</span>
+                      <span>{selectedSession.updated_at || selectedSession.created_at || ''}</span>
+                    </div>
+                  </div>
+                  <div className="conversation-detail-hero__actions">
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      onClick={() => bridge?.openHistorySession?.(selectedSession.session_id)}
+                    >
+                      打开
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary-button secondary-button--danger"
+                      onClick={() => bridge?.requestDeleteHistorySession?.(selectedSession.session_id)}
+                    >
+                      删除
+                    </button>
+                  </div>
+                </div>
+                <div className="conversation-section">
+                  <div className="conversation-section__header">
+                    <div className="conversation-section__title">导出</div>
+                    <div className="conversation-section__subtitle">选择导出格式</div>
+                  </div>
+                  <div className="conversation-overlay-chip-list">
+                    {EXPORT_FORMATS.map((item) => (
+                      <button
+                        key={item.value}
+                        type="button"
+                        className="secondary-button"
+                        onClick={() =>
+                          bridge?.requestExportHistorySession?.(selectedSession.session_id, item.value)
+                        }
+                      >
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="conversation-section">
+                  <div className="conversation-section__header">
+                    <div className="conversation-section__title">预览</div>
+                    <div className="conversation-section__subtitle">
+                      {history.preview_messages.length > 0 ? '当前选中会话的消息片段' : '当前会话暂无可预览内容'}
+                    </div>
+                  </div>
+                  <div className="conversation-overlay-card-list">
+                    {history.preview_messages.length > 0
+                      ? history.preview_messages.map((message) => renderSessionPreviewMessage(message))
+                      : <div className="conversation-overlay-empty">暂无消息预览。</div>}
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div className="conversation-overlay-empty">请选择一个会话查看详情。</div>
+            )}
+            {history.error_message ? (
+              <div className="conversation-overlay-alert conversation-overlay-alert--error">
+                {history.error_message}
+              </div>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function RollbackOverlay({
+  preview,
+  bridge,
+}: {
+  preview: ConversationRollbackPreviewState
+  bridge: ConversationBridge | null
+}) {
+  return (
+    <div className="conversation-overlay conversation-overlay--modal">
+      <button
+        type="button"
+        className="conversation-overlay__backdrop"
+        onClick={() => bridge?.closeRollbackPreview?.()}
+        aria-label="关闭撤回预览"
+      />
+      <div className="conversation-modal conversation-modal--wide" role="dialog" aria-modal="true" aria-label="撤回预览">
+        <div className="conversation-modal__header">
+          <div>
+            <div className="conversation-modal__title">撤回预览</div>
+            <div className="conversation-modal__subtitle">目标消息：{preview.anchor_label || preview.anchor_message_id || '未知消息'}</div>
+          </div>
+          <button type="button" className="ghost-button" onClick={() => bridge?.closeRollbackPreview?.()}>
+            取消
+          </button>
+        </div>
+        <div className="conversation-modal__content">
+          <div className="conversation-overlay-stat-grid">
+            <div className="conversation-overlay-stat-card">
+              <span className="conversation-overlay-stat-card__label">当前消息数</span>
+              <span className="conversation-overlay-stat-card__value">{preview.current_message_count}</span>
+            </div>
+            <div className="conversation-overlay-stat-card">
+              <span className="conversation-overlay-stat-card__label">撤回后消息数</span>
+              <span className="conversation-overlay-stat-card__value">{preview.target_message_count}</span>
+            </div>
+            <div className="conversation-overlay-stat-card">
+              <span className="conversation-overlay-stat-card__label">移除消息</span>
+              <span className="conversation-overlay-stat-card__value">{preview.removed_message_count}</span>
+            </div>
+            <div className="conversation-overlay-stat-card">
+              <span className="conversation-overlay-stat-card__label">工作区变更文件</span>
+              <span className="conversation-overlay-stat-card__value">{preview.workspace_changed_file_count}</span>
+            </div>
+          </div>
+          <div className="conversation-section">
+            <div className="conversation-section__header">
+              <div className="conversation-section__title">将被移除的消息</div>
+              <div className="conversation-section__subtitle">{preview.removed_message_count} 条</div>
+            </div>
+            <div className="conversation-overlay-card-list">
+              {preview.removed_messages.length > 0 ? (
+                preview.removed_messages.map((message) => (
+                  <div key={message.message_id} className="conversation-overlay-card">
+                    <div className="conversation-overlay-card__header">
+                      <span className="conversation-overlay-card__title">{roleLabel(message.role)}</span>
+                      <span className="conversation-overlay-card__subtitle">{message.timestamp || '未知时间'}</span>
+                    </div>
+                    <div className="conversation-overlay-card__body conversation-overlay-card__body--text">
+                      {message.content_preview || '（空消息）'}
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="conversation-overlay-empty">没有待移除消息。</div>
+              )}
+            </div>
+          </div>
+          <div className="conversation-section">
+            <div className="conversation-section__header">
+              <div className="conversation-section__title">对话关联文件</div>
+              <div className="conversation-section__subtitle">
+                +{preview.total_added_lines} / -{preview.total_deleted_lines}
+              </div>
+            </div>
+            {renderFileChangeList(preview.changed_files)}
+          </div>
+          <div className="conversation-section">
+            <div className="conversation-section__header">
+              <div className="conversation-section__title">工作区快照差异</div>
+              <div className="conversation-section__subtitle">
+                +{preview.workspace_total_added_lines} / -{preview.workspace_total_deleted_lines}
+              </div>
+            </div>
+            {renderFileChangeList(preview.workspace_changed_files)}
+          </div>
+        </div>
+        <div className="conversation-modal__footer">
+          <button type="button" className="secondary-button" onClick={() => bridge?.closeRollbackPreview?.()}>
+            取消
+          </button>
+          <button type="button" className="primary-button primary-button--stop" onClick={() => bridge?.confirmRollback?.()}>
+            确认撤回
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+export function ConversationOverlays({ state, bridge }: ConversationOverlaysProps) {
+  const { history, rollback, confirm, notice } = state.overlays
+
+  return (
+    <>
+      {history.is_open ? <HistoryOverlay history={history} bridge={bridge} /> : null}
+      {rollback.is_open ? <RollbackOverlay preview={rollback.preview} bridge={bridge} /> : null}
+      {confirm.is_open ? (
+        <div className="conversation-overlay conversation-overlay--modal">
+          <button
+            type="button"
+            className="conversation-overlay__backdrop"
+            onClick={() => bridge?.resolveConfirmDialog?.(false)}
+            aria-label="关闭确认对话框"
+          />
+          <div className="conversation-modal conversation-modal--compact" role="dialog" aria-modal="true" aria-label="确认操作">
+            <div className="conversation-modal__header">
+              <div>
+                <div className="conversation-modal__title">{confirm.title || '确认操作'}</div>
+              </div>
+            </div>
+            <div className="conversation-modal__content">
+              <div
+                className={[
+                  'conversation-overlay-alert',
+                  confirm.tone === 'danger' ? 'conversation-overlay-alert--error' : '',
+                ]
+                  .filter(Boolean)
+                  .join(' ')}
+              >
+                {confirm.message}
+              </div>
+            </div>
+            <div className="conversation-modal__footer">
+              <button type="button" className="secondary-button" onClick={() => bridge?.resolveConfirmDialog?.(false)}>
+                {confirm.cancel_label || '取消'}
+              </button>
+              <button
+                type="button"
+                className={[
+                  'primary-button',
+                  confirm.tone === 'danger' ? 'primary-button--stop' : '',
+                ]
+                  .filter(Boolean)
+                  .join(' ')}
+                onClick={() => bridge?.resolveConfirmDialog?.(true)}
+              >
+                {confirm.confirm_label || '确认'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {notice.is_open ? (
+        <div className="conversation-overlay conversation-overlay--modal">
+          <button
+            type="button"
+            className="conversation-overlay__backdrop"
+            onClick={() => bridge?.closeNoticeDialog?.()}
+            aria-label="关闭提示对话框"
+          />
+          <div className="conversation-modal conversation-modal--compact" role="dialog" aria-modal="true" aria-label="提示">
+            <div className="conversation-modal__header">
+              <div>
+                <div className="conversation-modal__title">{notice.title || '提示'}</div>
+              </div>
+            </div>
+            <div className="conversation-modal__content">
+              <div
+                className={[
+                  'conversation-overlay-alert',
+                  notice.tone === 'error' ? 'conversation-overlay-alert--error' : '',
+                  notice.tone === 'success' ? 'conversation-overlay-alert--success' : '',
+                ]
+                  .filter(Boolean)
+                  .join(' ')}
+              >
+                {notice.message}
+              </div>
+            </div>
+            <div className="conversation-modal__footer">
+              <button type="button" className="primary-button" onClick={() => bridge?.closeNoticeDialog?.()}>
+                知道了
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </>
+  )
+}

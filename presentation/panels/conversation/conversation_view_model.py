@@ -1498,6 +1498,10 @@ class ConversationViewModel(QObject):
             if last_step.tool_calls or last_step.web_search_query:
                 content = "本轮已中断，已保留当前步骤轨迹。请参考下方步骤中的搜索与工具记录继续处理。"
 
+        latest_reasoning = ""
+        if self._active_agent_steps:
+            latest_reasoning = self._active_agent_steps[-1].reasoning_content
+
         serialized_steps = self._serialize_agent_steps()
         
         # 创建消息（设置 is_partial 和 stop_reason 供消息渲染层展示中断标记）

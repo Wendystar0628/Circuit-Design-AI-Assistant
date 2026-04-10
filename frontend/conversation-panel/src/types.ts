@@ -148,10 +148,6 @@ export interface ConversationRollbackPreviewState {
   changed_file_count: number
   total_added_lines: number
   total_deleted_lines: number
-  workspace_changed_files: ConversationRollbackFileChangeState[]
-  workspace_changed_file_count: number
-  workspace_total_added_lines: number
-  workspace_total_deleted_lines: number
 }
 
 export interface ConversationRollbackOverlayState {
@@ -499,12 +495,6 @@ function normalizeRollbackPreviewState(value: unknown): ConversationRollbackPrev
     changed_file_count: Math.max(0, asNumber(preview.changed_file_count)),
     total_added_lines: Math.max(0, asNumber(preview.total_added_lines)),
     total_deleted_lines: Math.max(0, asNumber(preview.total_deleted_lines)),
-    workspace_changed_files: Array.isArray(preview.workspace_changed_files)
-      ? preview.workspace_changed_files.map((fileChange) => normalizeRollbackFileChangeState(fileChange))
-      : [],
-    workspace_changed_file_count: Math.max(0, asNumber(preview.workspace_changed_file_count)),
-    workspace_total_added_lines: Math.max(0, asNumber(preview.workspace_total_added_lines)),
-    workspace_total_deleted_lines: Math.max(0, asNumber(preview.workspace_total_deleted_lines)),
   }
 }
 
@@ -624,10 +614,6 @@ export const emptyConversationState: ConversationMainState = {
         changed_file_count: 0,
         total_added_lines: 0,
         total_deleted_lines: 0,
-        workspace_changed_files: [],
-        workspace_changed_file_count: 0,
-        workspace_total_added_lines: 0,
-        workspace_total_deleted_lines: 0,
       },
     },
     confirm: {

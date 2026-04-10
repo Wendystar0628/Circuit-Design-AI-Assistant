@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 from pathlib import Path
 
@@ -66,6 +67,16 @@ def _prepare_checkpointed_conversation(tmp_path: Path):
 
     workspace_file = tmp_path / "design.txt"
     workspace_file.write_text("base-1\nbase-2\nbase-3\n", encoding="utf-8")
+    pending_edits_path = tmp_path / ".circuit_ai" / "pending_workspace_edits.json"
+    pending_edits_path.parent.mkdir(parents=True, exist_ok=True)
+    pending_edits_base = {
+        "files": [{"path": "design.txt", "added_lines": 1}],
+        "updated": "before-anchor",
+    }
+    pending_edits_path.write_text(json.dumps(pending_edits_base), encoding="utf-8")
+    design_goals_path = tmp_path / ".circuit_ai" / "design_goals.json"
+    design_goals_base = {"target": "wide-band"}
+    design_goals_path.write_text(json.dumps(design_goals_base), encoding="utf-8")
 
     context_manager.add_user_message(
         "base question",
@@ -89,6 +100,14 @@ def _prepare_checkpointed_conversation(tmp_path: Path):
     workspace_file.write_text("base-1\nchanged-2\n", encoding="utf-8")
     new_workspace_file = tmp_path / "after-anchor.txt"
     new_workspace_file.write_text("temp-1\ntemp-2\n", encoding="utf-8")
+    pending_edits_path.write_text(
+        json.dumps({"files": [], "updated": "after-anchor"}),
+        encoding="utf-8",
+    )
+    design_goals_path.write_text(
+        json.dumps({"target": "narrow-band"}),
+        encoding="utf-8",
+    )
 
     long_user_message = "anchor " + "very long message " * 20
     context_manager.add_user_message(
@@ -111,24 +130,22 @@ def _prepare_checkpointed_conversation(tmp_path: Path):
         "session_id": session_id,
         "workspace_file": workspace_file,
         "new_workspace_file": new_workspace_file,
+        "pending_edits_path": pending_edits_path,
+        "pending_edits_base": pending_edits_base,
+        "design_goals_path": design_goals_path,
+        "design_goals_base": design_goals_base,
         "long_user_message": long_user_message,
     }
 
 
 def test_preview_rollback_to_anchor_exposes_workspace_changes_and_message_truncation(tmp_path: Path):
     env = _prepare_checkpointed_conversation(tmp_path)
-    metadata_path = tmp_path / ".circuit_ai" / "pending_workspace_edits.json"
-    metadata_path.parent.mkdir(parents=True, exist_ok=True)
-    metadata_path.write_text('{"files": []}', encoding="utf-8")
-    design_goals_path = tmp_path / ".circuit_ai" / "design_goals.json"
-    design_goals_path.parent.mkdir(parents=True, exist_ok=True)
-    design_goals_path.write_text('{"target": "narrow-band"}', encoding="utf-8")
 
     preview = asyncio.run(
         env["rollback_service"].preview_rollback_to_anchor("anchor-user")
     )
 
-    workspace_paths = [change.relative_path for change in preview.workspace_changed_files]
+    workspace_paths = [change.relative_path for change in preview.changed_files]
 
     assert preview.removed_message_count == 2
     assert preview.removed_messages[0].message_id == "anchor-user"
@@ -136,7 +153,7 @@ def test_preview_rollback_to_anchor_exposes_workspace_changes_and_message_trunca
     assert len(preview.removed_messages[0].content_preview) <= 123
     assert preview.anchor_label == preview.removed_messages[0].content_preview
 
-    assert preview.workspace_changed_file_count == 2
+    assert preview.changed_file_count == 2
     assert workspace_paths == ["after-anchor.txt", "design.txt"]
     assert all(
         not path.startswith(f"{context_service.CONVERSATIONS_DIR}/")
@@ -148,18 +165,6 @@ def test_preview_rollback_to_anchor_exposes_workspace_changes_and_message_trunca
     )
     assert ".circuit_ai/pending_workspace_edits.json" not in workspace_paths
     assert ".circuit_ai/design_goals.json" not in workspace_paths
-    assert any(
-        change.relative_path.startswith(f"{context_service.CONVERSATIONS_DIR}/")
-        for change in preview.changed_files
-    )
-    assert any(
-        change.relative_path == ".circuit_ai/pending_workspace_edits.json"
-        for change in preview.changed_files
-    )
-    assert any(
-        change.relative_path == ".circuit_ai/design_goals.json"
-        for change in preview.changed_files
-    )
 
 
 def test_rollback_to_anchor_restores_workspace_and_session_state(tmp_path: Path):
@@ -173,6 +178,8 @@ def test_rollback_to_anchor_restores_workspace_and_session_state(tmp_path: Path)
     assert result["success"] is True
     assert env["workspace_file"].read_text(encoding="utf-8") == "base-1\nbase-2\nbase-3\n"
     assert not env["new_workspace_file"].exists()
+    assert json.loads(env["pending_edits_path"].read_text(encoding="utf-8")) == env["pending_edits_base"]
+    assert json.loads(env["design_goals_path"].read_text(encoding="utf-8")) == env["design_goals_base"]
 
     persisted_messages = context_service.load_messages(str(tmp_path), env["session_id"])
     persisted_ids = [

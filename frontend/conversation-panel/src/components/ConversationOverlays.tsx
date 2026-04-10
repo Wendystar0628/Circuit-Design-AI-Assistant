@@ -370,7 +370,7 @@ function RollbackOverlay({
             </div>
             <div className="conversation-overlay-stat-card">
               <span className="conversation-overlay-stat-card__label">工作区变更文件</span>
-              <span className="conversation-overlay-stat-card__value">{preview.workspace_changed_file_count}</span>
+              <span className="conversation-overlay-stat-card__value">{preview.changed_file_count}</span>
             </div>
           </div>
           <div className="conversation-section">
@@ -398,21 +398,12 @@ function RollbackOverlay({
           </div>
           <div className="conversation-section">
             <div className="conversation-section__header">
-              <div className="conversation-section__title">对话关联文件</div>
+              <div className="conversation-section__title">工作区快照差异</div>
               <div className="conversation-section__subtitle">
                 +{preview.total_added_lines} / -{preview.total_deleted_lines}
               </div>
             </div>
             {renderFileChangeList(preview.changed_files)}
-          </div>
-          <div className="conversation-section">
-            <div className="conversation-section__header">
-              <div className="conversation-section__title">工作区快照差异</div>
-              <div className="conversation-section__subtitle">
-                +{preview.workspace_total_added_lines} / -{preview.workspace_total_deleted_lines}
-              </div>
-            </div>
-            {renderFileChangeList(preview.workspace_changed_files)}
           </div>
         </div>
         <div className="conversation-modal__footer">

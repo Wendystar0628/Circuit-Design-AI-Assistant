@@ -432,10 +432,6 @@ class ConversationStateSerializer:
                 "changed_file_count": 0,
                 "total_added_lines": 0,
                 "total_deleted_lines": 0,
-                "workspace_changed_files": [],
-                "workspace_changed_file_count": 0,
-                "workspace_total_added_lines": 0,
-                "workspace_total_deleted_lines": 0,
             }
 
         return {
@@ -463,19 +459,6 @@ class ConversationStateSerializer:
             "changed_file_count": max(0, int(preview.changed_file_count or 0)),
             "total_added_lines": max(0, int(preview.total_added_lines or 0)),
             "total_deleted_lines": max(0, int(preview.total_deleted_lines or 0)),
-            "workspace_changed_files": [
-                self._serialize_snapshot_file_change(change)
-                for change in (preview.workspace_changed_files or [])
-            ],
-            "workspace_changed_file_count": max(
-                0, int(preview.workspace_changed_file_count or 0)
-            ),
-            "workspace_total_added_lines": max(
-                0, int(preview.workspace_total_added_lines or 0)
-            ),
-            "workspace_total_deleted_lines": max(
-                0, int(preview.workspace_total_deleted_lines or 0)
-            ),
         }
 
     def serialize_rollback_overlay_state(

@@ -265,10 +265,6 @@ def test_conversation_state_serializer_serializes_history_and_rollback_payloads(
         changed_file_count=1,
         total_added_lines=7,
         total_deleted_lines=3,
-        workspace_changed_files=[file_change],
-        workspace_changed_file_count=1,
-        workspace_total_added_lines=7,
-        workspace_total_deleted_lines=3,
     )
     history_state = serializer.serialize_history_state(
         sessions=[
@@ -369,8 +365,8 @@ def test_conversation_state_serializer_serializes_history_and_rollback_payloads(
     assert history_state["sessions"][0]["session_id"] == "session-rollback"
     assert history_state["preview_messages"][0]["message_id"] == "user-2"
     assert rollback_state["anchor_message_id"] == "user-2"
-    assert rollback_state["workspace_changed_files"][0]["relative_path"] == "src/app.py"
-    assert rollback_state["workspace_total_added_lines"] == 7
+    assert rollback_state["changed_files"][0]["relative_path"] == "src/app.py"
+    assert rollback_state["total_added_lines"] == 7
     assert history_overlay["is_open"] is True
     assert history_overlay["export_dialog"]["export_format"] == "json"
     assert rollback_overlay["target_message_id"] == "user-2"

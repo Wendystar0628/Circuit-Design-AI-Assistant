@@ -33,10 +33,6 @@ class ConversationRollbackPreview:
     changed_file_count: int
     total_added_lines: int
     total_deleted_lines: int
-    workspace_changed_files: List[snapshot_service.SnapshotFileChange]
-    workspace_changed_file_count: int
-    workspace_total_added_lines: int
-    workspace_total_deleted_lines: int
 
 
 class ConversationRollbackService:
@@ -310,7 +306,7 @@ class ConversationRollbackService:
             session_id,
         )
         restore_preview = snapshot_service.preview_restore_snapshot(project_root, snapshot_id)
-        workspace_changed_files = self._filter_user_workspace_changes(
+        changed_files = self._build_visible_workspace_changes(
             restore_preview.changed_files
         )
         removed_messages = self._build_removed_messages(current_messages, target_messages)
@@ -333,14 +329,10 @@ class ConversationRollbackService:
             target_message_count=len(target_messages),
             removed_message_count=len(removed_messages),
             removed_messages=removed_messages,
-            changed_files=restore_preview.changed_files,
-            changed_file_count=restore_preview.changed_file_count,
-            total_added_lines=restore_preview.total_added_lines,
-            total_deleted_lines=restore_preview.total_deleted_lines,
-            workspace_changed_files=workspace_changed_files,
-            workspace_changed_file_count=len(workspace_changed_files),
-            workspace_total_added_lines=sum(change.added_lines for change in workspace_changed_files),
-            workspace_total_deleted_lines=sum(change.deleted_lines for change in workspace_changed_files),
+            changed_files=changed_files,
+            changed_file_count=len(changed_files),
+            total_added_lines=sum(change.added_lines for change in changed_files),
+            total_deleted_lines=sum(change.deleted_lines for change in changed_files),
         )
 
     def _load_snapshot_session_messages(
@@ -449,17 +441,17 @@ class ConversationRollbackService:
             self._build_message_preview(message, limit=400),
         )
 
-    def _filter_user_workspace_changes(
+    def _build_visible_workspace_changes(
         self,
         changes: List[snapshot_service.SnapshotFileChange],
     ) -> List[snapshot_service.SnapshotFileChange]:
         return [
             change
             for change in (changes or [])
-            if self._is_user_workspace_path(change.relative_path)
+            if self._is_visible_workspace_path(change.relative_path)
         ]
 
-    def _is_user_workspace_path(self, relative_path: str) -> bool:
+    def _is_visible_workspace_path(self, relative_path: str) -> bool:
         return not self._is_system_managed_path(relative_path)
 
     def _is_system_managed_path(self, relative_path: str) -> bool:

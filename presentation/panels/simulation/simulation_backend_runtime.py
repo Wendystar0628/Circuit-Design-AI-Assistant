@@ -59,7 +59,7 @@ class SimulationBackendRuntime(QWidget):
 
     def clear(self):
         self._chart_viewer.clear()
-        self._waveform_widget.clear_waveforms()
+        self._waveform_widget.reset()
         self._analysis_info_panel.clear()
         self._raw_data_table.clear()
         self._output_log_viewer.clear()

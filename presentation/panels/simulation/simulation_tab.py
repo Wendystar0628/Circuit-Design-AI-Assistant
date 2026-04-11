@@ -442,7 +442,7 @@ class SimulationTab(QWidget):
         bridge.load_result_requested.connect(self.load_history_result)
         bridge.load_history_result_requested.connect(self.load_history_result)
         bridge.signal_visibility_toggled.connect(self._on_waveform_signal_visibility_toggled)
-        bridge.clear_all_signals_requested.connect(self._backend_runtime.waveform_widget.clear_waveforms)
+        bridge.clear_all_signals_requested.connect(self._backend_runtime.waveform_widget.clear_displayed_signals)
         bridge.cursor_visibility_toggled.connect(self._on_waveform_cursor_visibility_toggled)
         bridge.cursor_move_requested.connect(self._on_waveform_cursor_move_requested)
         bridge.fit_requested.connect(self._backend_runtime.waveform_widget.fit_to_view)

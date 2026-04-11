@@ -111,16 +111,8 @@ class WaveformWidget(QWidget):
     - 双光标测量
     - 多信号叠加显示
     - 动态分辨率加载
-    
-    Signals:
-        measurement_changed: 测量结果变化时发出
-        viewport_changed: 视口范围变化时发出
-        signal_selected: 信号选择变化时发出
     """
-    
-    measurement_changed = pyqtSignal(object)  # WaveformMeasurement
-    viewport_changed = pyqtSignal(float, float, float, float)  # x_min, x_max, y_min, y_max
-    signal_selected = pyqtSignal(str)  # signal_name
+
     add_to_conversation_clicked = pyqtSignal()
     
     def __init__(self, parent=None):
@@ -616,8 +608,13 @@ class WaveformWidget(QWidget):
         self._update_add_to_conversation_enabled()
         return True
     
-    def clear_waveforms(self):
-        """清空所有波形"""
+    def clear_displayed_signals(self):
+        """清空当前已显示信号，但保留当前结果上下文与信号目录"""
+        self._clear_displayed_waveforms(preserve_result_context=True)
+        self._update_add_to_conversation_enabled()
+
+    def reset(self):
+        """清空波形结果上下文与所有显示状态"""
         self._clear_displayed_waveforms(preserve_result_context=False)
         self._update_add_to_conversation_enabled()
 
@@ -790,7 +787,6 @@ class WaveformWidget(QWidget):
         self._apply_domain_limits()
         self._apply_viewport(clamped_x_range, current_left_y, current_right_y)
         self._update_measurement()
-        self._emit_viewport_changed()
 
     def _get_result_signature(self, result: Optional[SimulationResult]) -> Optional[Tuple[str, str, str]]:
         if result is None:
@@ -911,19 +907,6 @@ class WaveformWidget(QWidget):
 
         self._apply_domain_limits()
         self._apply_viewport(self._x_domain, self._left_y_domain, self._right_y_domain)
-        self._emit_viewport_changed()
-
-    def _emit_viewport_changed(self):
-        current_x = self._viewport_manager.get_current_view_x_range(self._plot_widget)
-        current_left_y = self._viewport_manager.get_current_left_view_range(self._plot_widget)
-        if current_x is None or current_left_y is None:
-            return
-        self.viewport_changed.emit(
-            self._from_view_x_value(current_x[0]),
-            self._from_view_x_value(current_x[1]),
-            current_left_y[0],
-            current_left_y[1],
-        )
 
     def _on_rect_selected(
         self,
@@ -967,7 +950,6 @@ class WaveformWidget(QWidget):
         self._apply_domain_limits()
         self._apply_viewport(clamped_x_range, clamped_left_y_range, applied_right_y_range)
         self._update_measurement()
-        self._emit_viewport_changed()
 
     
     # ============================================================
@@ -1072,18 +1054,15 @@ class WaveformWidget(QWidget):
             self._freq_label.setText(f"f: {measurement.frequency:.4g} Hz")
         else:
             self._freq_label.setText("f: --")
-        
+
         # 更新第二行：各信号在光标处的 Y 值
         value_parts = self._measurement_support.build_value_parts(measurement, self._plot_items)
         self._signal_values_label.setText("  |  ".join(value_parts))
-        
-        # 发出信号
-        self.measurement_changed.emit(measurement)
-    
+
     # ============================================================
     # 内部方法 - 事件处理
     # ============================================================
-    
+
     def _on_signal_item_changed(self, item: QTreeWidgetItem, column: int):
         """信号树复选框变化 —— 勾选添加信号，取消勾选移除信号"""
         if self._updating_tree:
@@ -1099,15 +1078,13 @@ class WaveformWidget(QWidget):
         if checked:
             if signal_name not in self._plot_items:
                 self.add_waveform(self._current_result, signal_name)
-            self.signal_selected.emit(signal_name)
         else:
             if signal_name in self._plot_items:
                 self.remove_waveform(signal_name)
 
     def _on_clear_all_signals(self):
         """清除所有已显示的信号（保留信号树）"""
-        self._clear_displayed_waveforms(preserve_result_context=True)
-        self._update_add_to_conversation_enabled()
+        self.clear_displayed_signals()
 
     def _update_add_to_conversation_enabled(self):
         self._add_to_conversation_btn.setEnabled(bool(self._current_result is not None and self._plot_items))

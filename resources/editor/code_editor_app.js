@@ -24,6 +24,33 @@
   const monacoBaseUrl = `${monacoVsUrl}/`;
   let monacoWorkerUrl = null;
 
+  function isBenignCancellationError(error) {
+    if (!error) {
+      return false;
+    }
+    const raw = typeof error === 'string' ? error : '';
+    const name = typeof error.name === 'string' ? error.name : '';
+    const message = typeof error.message === 'string' ? error.message : '';
+    const combined = [raw, name, message, `${name}: ${message}`]
+      .join(' ')
+      .toLowerCase();
+    return combined.includes('canceled: canceled')
+      || combined.includes('cancelled: cancelled')
+      || combined === 'canceled'
+      || combined === 'cancelled'
+      || name === 'Canceled'
+      || name === 'Cancelled'
+      || name === 'CancellationError'
+      || name === 'CanceledError'
+      || name === 'AbortError';
+  }
+
+  window.addEventListener('unhandledrejection', (event) => {
+    if (isBenignCancellationError(event.reason)) {
+      event.preventDefault();
+    }
+  });
+
   function showError(message) {
     startupError.textContent = message;
     startupError.classList.add('visible');
@@ -349,7 +376,17 @@
     if (!action || typeof action.run !== 'function') {
       return false;
     }
-    action.run();
+    const result = action.run();
+    if (result && typeof result.then === 'function') {
+      result.catch((error) => {
+        if (isBenignCancellationError(error)) {
+          return;
+        }
+        setTimeout(() => {
+          throw error;
+        }, 0);
+      });
+    }
     return true;
   }
 

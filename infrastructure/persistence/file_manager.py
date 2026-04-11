@@ -34,6 +34,7 @@
 import hashlib
 import os
 import shutil
+import threading
 import time
 from datetime import datetime
 from fnmatch import fnmatch
@@ -83,6 +84,9 @@ class FileManager:
     # 默认文件锁超时（秒）
     DEFAULT_LOCK_TIMEOUT = 5.0
     
+    # 内部写入回声抑制窗口（秒）
+    INTERNAL_CHANGE_ECHO_WINDOW_S = 0.5
+    
     def __init__(self):
         """初始化文件管理器"""
         # 工作目录（延迟设置）
@@ -91,6 +95,8 @@ class FileManager:
         # 延迟获取的服务
         self._logger = None
         self._event_bus = None
+        self._recent_internal_changes: Dict[str, float] = {}
+        self._recent_internal_changes_lock = threading.Lock()
     
     # ============================================================
     # 延迟获取服务（避免循环依赖）
@@ -326,9 +332,10 @@ class FileManager:
         """
         if self.event_bus is None:
             return
-        
+
         try:
             from shared.event_types import EVENT_FILE_CHANGED
+            self._mark_recent_internal_change(path)
             self.event_bus.publish(
                 EVENT_FILE_CHANGED,
                 {
@@ -336,11 +343,53 @@ class FileManager:
                     "operation": operation,
                     "char_count": char_count,
                     "timestamp": time.time()
-                }
+                },
+                source="file_manager"
             )
         except Exception as e:
             if self.logger:
                 self.logger.warning(f"发布文件变更事件失败: {e}")
+    
+    def _mark_recent_internal_change(self, path: Union[str, Path]) -> None:
+        normalized_path = os.path.normcase(os.path.abspath(str(path)))
+        now = time.time()
+        cutoff = now - self.INTERNAL_CHANGE_ECHO_WINDOW_S
+        with self._recent_internal_changes_lock:
+            stale_paths = [
+                candidate
+                for candidate, timestamp in self._recent_internal_changes.items()
+                if timestamp < cutoff
+            ]
+            for candidate in stale_paths:
+                self._recent_internal_changes.pop(candidate, None)
+            self._recent_internal_changes[normalized_path] = now
+
+    def is_recent_internal_change(self, path: Union[str, Path]) -> bool:
+        normalized_path = os.path.normcase(os.path.abspath(str(path)))
+        now = time.time()
+        cutoff = now - self.INTERNAL_CHANGE_ECHO_WINDOW_S
+        with self._recent_internal_changes_lock:
+            timestamp = self._recent_internal_changes.get(normalized_path)
+            if timestamp is None:
+                return False
+            if timestamp < cutoff:
+                self._recent_internal_changes.pop(normalized_path, None)
+                return False
+            return True
+
+    def consume_recent_internal_change(self, path: Union[str, Path]) -> bool:
+        normalized_path = os.path.normcase(os.path.abspath(str(path)))
+        now = time.time()
+        cutoff = now - self.INTERNAL_CHANGE_ECHO_WINDOW_S
+        with self._recent_internal_changes_lock:
+            timestamp = self._recent_internal_changes.get(normalized_path)
+            if timestamp is None:
+                return False
+            if timestamp < cutoff:
+                self._recent_internal_changes.pop(normalized_path, None)
+                return False
+            self._recent_internal_changes.pop(normalized_path, None)
+            return True
     
     # ============================================================
     # 哈希计算
@@ -447,6 +496,7 @@ class FileManager:
         
         try:
             with lock:
+                existed_before = resolved.exists()
                 # 原子性写入：先写临时文件
                 temp_path = resolved.with_suffix(resolved.suffix + '.tmp')
                 
@@ -466,7 +516,11 @@ class FileManager:
                     log_file_operation("write", str(resolved), char_count, success=True)
                 
                 # 发布事件
-                self._publish_file_changed(resolved, "update", len(content))
+                self._publish_file_changed(
+                    resolved,
+                    "update" if existed_before else "create",
+                    len(content),
+                )
                 
                 return True
                 
@@ -545,10 +599,7 @@ class FileManager:
         # 创建文件
         try:
             result = self.write_file(resolved, content, encoding)
-            
-            # 发布创建事件
-            self._publish_file_changed(resolved, "create", len(content))
-            
+
             return result
             
         except Exception as e:

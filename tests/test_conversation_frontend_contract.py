@@ -1,3 +1,5 @@
+from PyQt6.QtCore import QObject, pyqtSignal
+
 from domain.llm.context_manager import ContextManager
 from domain.llm.conversation_rollback_service import (
     ConversationRollbackPreview,
@@ -13,6 +15,7 @@ from presentation.panels.conversation.conversation_session_support import (
 from presentation.panels.conversation.conversation_state_serializer import (
     ConversationStateSerializer,
 )
+from presentation.panels.conversation_panel import ConversationPanel
 from presentation.panels.conversation.conversation_view_model import (
     AgentStep,
     AgentStepToolCall,
@@ -23,6 +26,36 @@ from presentation.panels.conversation.conversation_view_model import (
 from presentation.panels.conversation.conversation_web_bridge import (
     ConversationWebBridge,
 )
+from shared.service_locator import ServiceLocator
+from shared.service_names import SVC_PENDING_WORKSPACE_EDIT_SERVICE
+
+
+class _FakePendingWorkspaceEditService(QObject):
+    summary_changed = pyqtSignal(dict)
+
+    def __init__(self, summary=None):
+        super().__init__()
+        self._summary = summary or {
+            "file_count": 0,
+            "added_lines": 0,
+            "deleted_lines": 0,
+            "files": [],
+        }
+
+    def get_summary_state(self):
+        return dict(self._summary)
+
+    def set_summary(self, summary):
+        self._summary = dict(summary)
+
+
+class _TestConversationPanel(ConversationPanel):
+    @property
+    def view_model(self):
+        return None
+
+    def _setup_ui(self) -> None:
+        self._react_host = None
 
 
 def test_conversation_state_serializer_builds_authoritative_main_payload():
@@ -306,6 +339,53 @@ def test_conversation_state_serializer_builds_authoritative_main_payload():
     assert payload["rag"]["status"]["phase"] == "ready"
     assert payload["rag"]["files"][0]["relative_path"] == "file.py"
     assert payload["rag"]["actions"]["can_search"] is True
+
+
+def test_conversation_panel_tracks_pending_edit_summary_after_late_service_registration(qtbot):
+    ServiceLocator.unregister(SVC_PENDING_WORKSPACE_EDIT_SERVICE)
+    panel = _TestConversationPanel()
+    qtbot.addWidget(panel)
+    panel.initialize()
+
+    try:
+        assert panel.get_authoritative_frontend_state()["composer"]["pending_workspace_edit_summary"]["file_count"] == 0
+
+        service = _FakePendingWorkspaceEditService(
+            {
+                "file_count": 1,
+                "added_lines": 7,
+                "deleted_lines": 0,
+                "files": [
+                    {
+                        "path": "E:/demo/file.py",
+                        "relative_path": "file.py",
+                        "added_lines": 7,
+                        "deleted_lines": 0,
+                    }
+                ],
+            }
+        )
+        ServiceLocator.register(SVC_PENDING_WORKSPACE_EDIT_SERVICE, service)
+
+        assert panel.pending_workspace_edit_service is service
+        panel._refresh_pending_workspace_edit_summary()
+        assert panel.get_authoritative_frontend_state()["composer"]["pending_workspace_edit_summary"]["file_count"] == 1
+
+        service.set_summary(
+            {
+                "file_count": 0,
+                "added_lines": 0,
+                "deleted_lines": 0,
+                "files": [],
+            }
+        )
+        service.summary_changed.emit(service.get_summary_state())
+
+        assert panel.get_authoritative_frontend_state()["composer"]["pending_workspace_edit_summary"]["file_count"] == 0
+        assert panel.get_authoritative_frontend_state()["view_flags"]["has_pending_workspace_edits"] is False
+    finally:
+        panel.cleanup()
+        ServiceLocator.unregister(SVC_PENDING_WORKSPACE_EDIT_SERVICE)
 
 
 def test_conversation_state_serializer_serializes_history_and_rollback_payloads():

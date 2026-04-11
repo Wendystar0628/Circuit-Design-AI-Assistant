@@ -23,7 +23,6 @@
 import copy
 import asyncio
 import os
-from pathlib import Path
 from typing import Any, Dict, Optional
 
 from PyQt6.QtCore import pyqtSignal, pyqtSlot, QUrl, Qt
@@ -42,6 +41,12 @@ from presentation.panels.conversation import (
 from presentation.panels.conversation.conversation_attachment_support import (
     ConversationAttachmentError,
     ConversationAttachmentSupport,
+)
+from presentation.panels.conversation.conversation_history_controller import (
+    ConversationHistoryController,
+)
+from presentation.panels.conversation.conversation_rag_controller import (
+    ConversationRagController,
 )
 from presentation.panels.conversation.conversation_session_support import (
     ConversationSessionSupport,
@@ -86,6 +91,7 @@ class ConversationPanel(QWidget):
         self._logger = None
         self._rag_manager = None
         self._pending_workspace_edit_service = None
+        self._pending_workspace_edit_connected = False
         self._session_support = ConversationSessionSupport()
         self._send_in_progress = False
         self._rollback_in_progress = False
@@ -93,15 +99,26 @@ class ConversationPanel(QWidget):
         self._composer_action_mode = ACTION_MODE_SEND
         self._composer_action_status = ""
         self._draft_clear_nonce = 0
-        self._history_overlay_state = self._create_history_overlay_state()
         self._rollback_overlay_state = self._create_rollback_overlay_state()
         self._model_config_overlay_state = self._create_model_config_overlay_state()
         self._confirm_dialog_state = self._create_confirm_dialog_state()
         self._notice_dialog_state = self._create_notice_dialog_state()
         self._active_surface = "conversation"
-        self._rag_progress_state = self._create_rag_progress_state()
-        self._rag_info_state = self._create_rag_info_state()
-        self._rag_search_state = self._create_rag_search_state()
+        self._history_controller = ConversationHistoryController(
+            session_support=self._session_support,
+            get_text=self._get_text,
+            on_state_changed=self._update_authoritative_frontend_state,
+            on_notice_requested=self._open_notice_dialog,
+            on_confirm_requested=self._open_confirm_dialog,
+            logger_getter=lambda: self.logger,
+        )
+        self._rag_controller = ConversationRagController(
+            rag_manager_getter=lambda: self.rag_manager,
+            get_text=self._get_text,
+            on_state_changed=self._update_authoritative_frontend_state,
+            on_confirm_requested=self._open_confirm_dialog,
+            logger_getter=lambda: self.logger,
+        )
         self._authoritative_frontend_state: Dict[str, Any] = self._state_serializer.serialize_main_state(
             session_id="",
             session_name="",
@@ -170,6 +187,20 @@ class ConversationPanel(QWidget):
                 )
             except Exception:
                 pass
+        if (
+            self._pending_workspace_edit_service is not None
+            and not self._pending_workspace_edit_connected
+        ):
+            try:
+                self._pending_workspace_edit_service.summary_changed.connect(
+                    self._on_pending_workspace_edit_summary_changed
+                )
+                self._pending_workspace_edit_connected = True
+            except Exception as exc:
+                if self.logger:
+                    self.logger.warning(
+                        f"Failed to connect pending workspace edit summary service: {exc}"
+                    )
         return self._pending_workspace_edit_service
 
     @property
@@ -202,67 +233,6 @@ class ConversationPanel(QWidget):
         if self.i18n:
             return self.i18n.get_text(key, default)
         return default
-
-    def _create_history_export_dialog_state(
-        self,
-        session_id: str = "",
-        export_format: str = "md",
-        file_path: str = "",
-        *,
-        is_open: bool = False,
-    ) -> Dict[str, Any]:
-        normalized_session_id = str(session_id or "")
-        normalized_format = self._session_support.normalize_export_format(export_format) or "md"
-        normalized_path = ""
-        if normalized_session_id:
-            normalized_path = self._session_support.normalize_export_file_path(
-                file_path
-                or self._session_support.build_default_export_path(
-                    normalized_session_id,
-                    normalized_format,
-                ),
-                normalized_format,
-            )
-        return {
-            "is_open": bool(is_open and normalized_session_id),
-            "session_id": normalized_session_id,
-            "export_format": normalized_format,
-            "file_path": normalized_path,
-        }
-
-    def _set_history_export_dialog_state(
-        self,
-        session_id: str = "",
-        export_format: str = "md",
-        file_path: str = "",
-        *,
-        is_open: bool = False,
-    ) -> None:
-        self._history_overlay_state["export_dialog"] = self._create_history_export_dialog_state(
-            session_id,
-            export_format,
-            file_path,
-            is_open=is_open,
-        )
-
-    def _clear_history_export_dialog_state(self) -> None:
-        self._set_history_export_dialog_state()
-
-    def _current_history_export_dialog_state(self) -> Dict[str, Any]:
-        dialog_state = self._history_overlay_state.get("export_dialog", {})
-        return dialog_state if isinstance(dialog_state, dict) else {}
-
-    def _create_history_overlay_state(self) -> Dict[str, Any]:
-        return {
-            "is_open": False,
-            "is_loading": False,
-            "error_message": "",
-            "current_session_id": "",
-            "selected_session_id": "",
-            "sessions": [],
-            "preview_messages": [],
-            "export_dialog": self._create_history_export_dialog_state(),
-        }
 
     def _create_rollback_overlay_state(self) -> Dict[str, Any]:
         return {
@@ -297,38 +267,6 @@ class ConversationPanel(QWidget):
             "title": "",
             "message": "",
             "tone": "info",
-        }
-
-    def _create_rag_progress_state(self) -> Dict[str, Any]:
-        return {
-            "is_visible": False,
-            "processed": 0,
-            "total": 0,
-            "current_file": "",
-        }
-
-    def _create_rag_info_state(self) -> Dict[str, Any]:
-        return {
-            "message": "",
-            "tone": "neutral",
-        }
-
-    def _create_rag_search_state(self) -> Dict[str, Any]:
-        return {
-            "is_running": False,
-            "result_text": "",
-        }
-
-    def _reset_rag_runtime_state(self, *, clear_search: bool = True) -> None:
-        self._rag_progress_state = self._create_rag_progress_state()
-        self._rag_info_state = self._create_rag_info_state()
-        if clear_search:
-            self._rag_search_state = self._create_rag_search_state()
-
-    def _set_rag_info(self, message: str = "", tone: str = "neutral") -> None:
-        self._rag_info_state = {
-            "message": str(message or ""),
-            "tone": str(tone or "neutral"),
         }
 
     def _open_confirm_dialog(
@@ -379,45 +317,8 @@ class ConversationPanel(QWidget):
         self._notice_dialog_state = self._create_notice_dialog_state()
         self._update_authoritative_frontend_state()
 
-    def _close_history_overlay(self) -> None:
-        self._history_overlay_state = self._create_history_overlay_state()
-        self._update_authoritative_frontend_state()
-
     def _close_rollback_overlay(self) -> None:
         self._rollback_overlay_state = self._create_rollback_overlay_state()
-        self._update_authoritative_frontend_state()
-
-    def _refresh_history_overlay(self, preferred_session_id: str = "") -> None:
-        self._session_support.ensure_current_session_persisted()
-        sessions = self._session_support.list_sessions()
-        current_session_id = self._session_support.get_current_session_id()
-        selected_session_id = str(
-            preferred_session_id
-            or self._history_overlay_state.get("selected_session_id", "")
-            or current_session_id
-        )
-        available_session_ids = {
-            str(getattr(session, "session_id", "") or "") for session in sessions
-        }
-        if not selected_session_id or selected_session_id not in available_session_ids:
-            selected_session_id = current_session_id
-        if (not selected_session_id or selected_session_id not in available_session_ids) and sessions:
-            selected_session_id = str(getattr(sessions[0], "session_id", "") or "")
-        preview_messages = (
-            self._session_support.get_session_messages(selected_session_id)
-            if selected_session_id
-            else []
-        )
-        self._history_overlay_state = {
-            "is_open": True,
-            "is_loading": False,
-            "error_message": "",
-            "current_session_id": current_session_id,
-            "selected_session_id": selected_session_id,
-            "sessions": sessions,
-            "preview_messages": preview_messages,
-            "export_dialog": self._create_history_export_dialog_state(),
-        }
         self._update_authoritative_frontend_state()
 
 
@@ -483,8 +384,8 @@ class ConversationPanel(QWidget):
             )
             return
         self.activate_surface("conversation")
-        if self._history_overlay_state.get("is_open", False):
-            self._history_overlay_state = self._create_history_overlay_state()
+        if self._history_controller.is_open():
+            self._history_controller.close()
         if self._rollback_overlay_state.get("is_open", False):
             self._rollback_overlay_state = self._create_rollback_overlay_state()
         overlay_state = dict(self._model_config_overlay_state)
@@ -512,34 +413,34 @@ class ConversationPanel(QWidget):
             bridge.surface_activation_requested.connect(self.activate_surface)
             bridge.send_requested.connect(self._on_send_requested)
             bridge.stop_requested.connect(self._on_stop_requested)
-            bridge.new_conversation_requested.connect(self._on_new_conversation_requested)
-            bridge.history_requested.connect(self._on_history_requested)
-            bridge.history_close_requested.connect(self._on_history_close_requested)
-            bridge.history_session_selected.connect(self._on_history_session_selected)
+            bridge.new_conversation_requested.connect(self.start_new_conversation)
+            bridge.history_requested.connect(self.request_history)
+            bridge.history_close_requested.connect(self._history_controller.close)
+            bridge.history_session_selected.connect(self._history_controller.refresh)
             bridge.history_session_open_requested.connect(
                 self._on_history_session_open_requested
             )
             bridge.history_export_dialog_open_requested.connect(
-                self._on_history_export_dialog_open_requested
+                self._history_controller.open_export_dialog
             )
             bridge.history_export_dialog_close_requested.connect(
-                self._on_history_export_dialog_close_requested
+                self._history_controller.close_export_dialog
             )
             bridge.history_export_format_changed.connect(
-                self._on_history_export_format_changed
+                self._history_controller.change_export_format
             )
             bridge.history_export_path_pick_requested.connect(
                 self._on_history_export_path_pick_requested
             )
             bridge.history_session_export_requested.connect(
-                self._on_history_session_export_requested
+                self._history_controller.export_session
             )
             bridge.history_session_delete_requested.connect(
-                self._on_history_session_delete_requested
+                self._history_controller.request_delete_session
             )
             bridge.confirm_dialog_resolved.connect(self._on_confirm_dialog_resolved)
             bridge.notice_dialog_close_requested.connect(self._on_notice_dialog_close_requested)
-            bridge.compress_requested.connect(self._on_compress_requested)
+            bridge.compress_requested.connect(self.request_compress_context)
             bridge.session_name_changed.connect(self._on_session_name_changed)
             bridge.suggestion_selected.connect(self._on_suggestion_selected)
             bridge.rollback_requested.connect(self._on_rollback_requested)
@@ -558,10 +459,10 @@ class ConversationPanel(QWidget):
             bridge.pending_edit_file_requested.connect(self._on_pending_edit_file_requested)
             bridge.file_open_requested.connect(self._on_file_open_requested)
             bridge.link_open_requested.connect(self._on_link_open_requested)
-            bridge.image_preview_requested.connect(self._on_image_preview_requested)
+            bridge.image_preview_requested.connect(self._open_image_preview)
             bridge.upload_image_requested.connect(self._on_upload_image_requested)
             bridge.select_file_requested.connect(self._on_select_file_requested)
-            bridge.model_config_requested.connect(self._on_model_config_requested)
+            bridge.model_config_requested.connect(self.open_model_config)
             bridge.model_config_draft_update_requested.connect(
                 self._on_model_config_draft_update_requested
             )
@@ -571,9 +472,9 @@ class ConversationPanel(QWidget):
             bridge.model_config_test_requested.connect(self._on_model_config_test_requested)
             bridge.model_config_save_requested.connect(self._on_model_config_save_requested)
             bridge.model_config_close_requested.connect(self._on_model_config_close_requested)
-            bridge.rag_reindex_requested.connect(self._on_rag_reindex_requested)
-            bridge.rag_clear_requested.connect(self._on_rag_clear_requested)
-            bridge.rag_search_requested.connect(self._on_rag_search_requested)
+            bridge.rag_reindex_requested.connect(self.trigger_reindex)
+            bridge.rag_clear_requested.connect(self.request_clear_index)
+            bridge.rag_search_requested.connect(self.request_rag_search)
             bridge.attachments_selected.connect(self.add_attachments)
 
     def _connect_view_model_signals(self) -> None:
@@ -599,13 +500,7 @@ class ConversationPanel(QWidget):
         # 确保 ViewModel 已创建
         _ = self.view_model
 
-        if self.pending_workspace_edit_service is not None:
-            try:
-                self.pending_workspace_edit_service.summary_changed.connect(
-                    self._on_pending_workspace_edit_summary_changed
-                )
-            except Exception:
-                pass
+        _ = self.pending_workspace_edit_service
 
         # 订阅事件
         self._subscribe_events()
@@ -617,11 +512,13 @@ class ConversationPanel(QWidget):
     def cleanup(self) -> None:
         """清理资源"""
         self._unsubscribe_events()
-        if self.pending_workspace_edit_service is not None:
+        service = self._pending_workspace_edit_service
+        if service is not None:
             try:
-                self.pending_workspace_edit_service.summary_changed.disconnect(
+                service.summary_changed.disconnect(
                     self._on_pending_workspace_edit_summary_changed
                 )
+                self._pending_workspace_edit_connected = False
             except Exception:
                 pass
         if self._model_config_controller is not None:
@@ -660,13 +557,13 @@ class ConversationPanel(QWidget):
                 EVENT_UI_ATTACH_FILES_TO_CONVERSATION,
                 self._on_attach_files_requested,
             )
-            self.event_bus.subscribe(EVENT_RAG_INIT_COMPLETE, self._on_rag_init_complete)
-            self.event_bus.subscribe(EVENT_RAG_INDEX_STARTED, self._on_rag_index_started)
-            self.event_bus.subscribe(EVENT_RAG_INDEX_PROGRESS, self._on_rag_index_progress)
-            self.event_bus.subscribe(EVENT_RAG_INDEX_COMPLETE, self._on_rag_index_complete)
-            self.event_bus.subscribe(EVENT_RAG_INDEX_ERROR, self._on_rag_index_error)
-            self.event_bus.subscribe(EVENT_STATE_PROJECT_OPENED, self._on_rag_project_opened)
-            self.event_bus.subscribe(EVENT_STATE_PROJECT_CLOSED, self._on_rag_project_closed)
+            self.event_bus.subscribe(EVENT_RAG_INIT_COMPLETE, self._rag_controller.handle_init_complete)
+            self.event_bus.subscribe(EVENT_RAG_INDEX_STARTED, self._rag_controller.handle_index_started)
+            self.event_bus.subscribe(EVENT_RAG_INDEX_PROGRESS, self._rag_controller.handle_index_progress)
+            self.event_bus.subscribe(EVENT_RAG_INDEX_COMPLETE, self._rag_controller.handle_index_complete)
+            self.event_bus.subscribe(EVENT_RAG_INDEX_ERROR, self._rag_controller.handle_index_error)
+            self.event_bus.subscribe(EVENT_STATE_PROJECT_OPENED, self._rag_controller.handle_project_opened)
+            self.event_bus.subscribe(EVENT_STATE_PROJECT_CLOSED, self._rag_controller.handle_project_closed)
 
             from shared.event_types import EVENT_MODEL_CHANGED
 
@@ -707,13 +604,13 @@ class ConversationPanel(QWidget):
                 EVENT_UI_ATTACH_FILES_TO_CONVERSATION,
                 self._on_attach_files_requested,
             )
-            self.event_bus.unsubscribe(EVENT_RAG_INIT_COMPLETE, self._on_rag_init_complete)
-            self.event_bus.unsubscribe(EVENT_RAG_INDEX_STARTED, self._on_rag_index_started)
-            self.event_bus.unsubscribe(EVENT_RAG_INDEX_PROGRESS, self._on_rag_index_progress)
-            self.event_bus.unsubscribe(EVENT_RAG_INDEX_COMPLETE, self._on_rag_index_complete)
-            self.event_bus.unsubscribe(EVENT_RAG_INDEX_ERROR, self._on_rag_index_error)
-            self.event_bus.unsubscribe(EVENT_STATE_PROJECT_OPENED, self._on_rag_project_opened)
-            self.event_bus.unsubscribe(EVENT_STATE_PROJECT_CLOSED, self._on_rag_project_closed)
+            self.event_bus.unsubscribe(EVENT_RAG_INIT_COMPLETE, self._rag_controller.handle_init_complete)
+            self.event_bus.unsubscribe(EVENT_RAG_INDEX_STARTED, self._rag_controller.handle_index_started)
+            self.event_bus.unsubscribe(EVENT_RAG_INDEX_PROGRESS, self._rag_controller.handle_index_progress)
+            self.event_bus.unsubscribe(EVENT_RAG_INDEX_COMPLETE, self._rag_controller.handle_index_complete)
+            self.event_bus.unsubscribe(EVENT_RAG_INDEX_ERROR, self._rag_controller.handle_index_error)
+            self.event_bus.unsubscribe(EVENT_STATE_PROJECT_OPENED, self._rag_controller.handle_project_opened)
+            self.event_bus.unsubscribe(EVENT_STATE_PROJECT_CLOSED, self._rag_controller.handle_project_closed)
 
             from shared.event_types import EVENT_MODEL_CHANGED
 
@@ -803,7 +700,7 @@ class ConversationPanel(QWidget):
             action_mode=self._composer_action_mode,
             action_status=self._composer_action_status,
             clear_draft_nonce=self._draft_clear_nonce,
-            history_overlay=self._history_overlay_state,
+            history_overlay=self._history_controller.state,
             rollback_overlay=self._rollback_overlay_state,
             model_config_overlay=self._model_config_overlay_state,
             confirm_dialog=self._confirm_dialog_state,
@@ -813,110 +710,8 @@ class ConversationPanel(QWidget):
             send_in_progress=self._send_in_progress,
             rollback_in_progress=self._rollback_in_progress,
             active_surface=self._active_surface,
-            rag_state=self._build_rag_frontend_state(),
+            rag_state=self._rag_controller.build_frontend_state(),
         )
-
-    def _resolve_rag_file_path(self, relative_path: str) -> str:
-        manager = self.rag_manager
-        if manager is None or not manager.project_root or not relative_path:
-            return ""
-        try:
-            return str((Path(manager.project_root) / relative_path.replace("/", os.sep)).resolve())
-        except Exception:
-            return ""
-
-    def _build_rag_status_state(self, total_files: int) -> Dict[str, Any]:
-        manager = self.rag_manager
-        progress_state = self._rag_progress_state
-        if manager is None or not manager.project_root:
-            return {
-                "phase": "idle",
-                "label": self._get_text("rag.status.await_project", "等待项目"),
-                "tone": "neutral",
-            }
-        if progress_state.get("is_visible", False) or getattr(manager, "is_indexing", False):
-            total = max(0, int(progress_state.get("total", 0) or 0))
-            processed = max(0, int(progress_state.get("processed", 0) or 0))
-            progress_label = (
-                f"索引中 {processed}/{total}" if total > 0 else self._get_text("rag.status.indexing", "索引中...")
-            )
-            return {
-                "phase": "indexing",
-                "label": progress_label,
-                "tone": "info",
-            }
-        if getattr(manager, "init_error", None):
-            return {
-                "phase": "error",
-                "label": self._get_text("rag.status.init_error", "初始化失败"),
-                "tone": "error",
-            }
-        if getattr(manager, "is_available", False):
-            return {
-                "phase": "ready",
-                "label": f"已就绪 ({total_files} 文件)",
-                "tone": "success",
-            }
-        return {
-            "phase": "initializing",
-            "label": self._get_text("rag.status.initializing", "初始化中..."),
-            "tone": "info",
-        }
-
-    def _build_rag_frontend_state(self) -> Dict[str, Any]:
-        manager = self.rag_manager
-        status = None
-        if manager is not None:
-            try:
-                status = manager.get_index_status()
-            except Exception as exc:
-                if self.logger:
-                    self.logger.debug(f"Failed to query RAG status: {exc}")
-
-        stats = getattr(status, "stats", None)
-        files = getattr(status, "files", []) if status is not None else []
-        total_files = max(0, int(getattr(stats, "total_files", 0) or 0)) if stats is not None else 0
-
-        return {
-            "status": self._build_rag_status_state(total_files),
-            "stats": {
-                "total_files": total_files,
-                "processed": max(0, int(getattr(stats, "processed", 0) or 0)) if stats is not None else 0,
-                "failed": max(0, int(getattr(stats, "failed", 0) or 0)) if stats is not None else 0,
-                "excluded": max(0, int(getattr(stats, "excluded", 0) or 0)) if stats is not None else 0,
-                "total_chunks": max(0, int(getattr(stats, "total_chunks", 0) or 0)) if stats is not None else 0,
-                "total_entities": max(0, int(getattr(stats, "total_entities", 0) or 0)) if stats is not None else 0,
-                "total_relations": max(0, int(getattr(stats, "total_relations", 0) or 0)) if stats is not None else 0,
-                "storage_size_mb": max(0.0, float(getattr(stats, "storage_size_mb", 0.0) or 0.0)) if stats is not None else 0.0,
-            },
-            "progress": dict(self._rag_progress_state),
-            "actions": {
-                "can_reindex": bool(manager and manager.project_root and manager.is_available and not manager.is_indexing),
-                "can_clear": bool(manager and manager.project_root and manager.is_available and not manager.is_indexing),
-                "can_search": bool(manager and manager.project_root and manager.is_available and not self._rag_search_state.get("is_running", False)),
-                "is_indexing": bool(manager.is_indexing) if manager is not None else False,
-            },
-            "files": [
-                {
-                    "path": self._resolve_rag_file_path(str(getattr(file_info, "relative_path", "") or "")),
-                    "relative_path": str(getattr(file_info, "relative_path", "") or ""),
-                    "status": str(getattr(file_info, "status", "pending") or "pending"),
-                    "status_label": {
-                        "processed": "已索引",
-                        "processing": "索引中",
-                        "failed": "失败",
-                        "excluded": "排除索引",
-                        "pending": "待索引",
-                    }.get(str(getattr(file_info, "status", "pending") or "pending"), str(getattr(file_info, "status", "pending") or "pending")),
-                    "chunks_count": max(0, int(getattr(file_info, "chunks_count", 0) or 0)),
-                    "indexed_at": str(getattr(file_info, "indexed_at", "") or ""),
-                    "tooltip": str(getattr(file_info, "exclude_reason", "") or getattr(file_info, "error", "") or ""),
-                }
-                for file_info in files
-            ],
-            "search": dict(self._rag_search_state),
-            "info": dict(self._rag_info_state),
-        }
 
     def _update_authoritative_frontend_state(self) -> None:
         self._authoritative_frontend_state = self._build_authoritative_frontend_state()
@@ -965,12 +760,13 @@ class ConversationPanel(QWidget):
         if action == "project_closed":
             self._close_confirm_dialog()
             self._close_notice_dialog()
-            self._close_history_overlay()
+            self._history_controller.close()
             self._close_rollback_overlay()
             self._draft_clear_nonce += 1
 
-        if self._history_overlay_state.get("is_open", False):
-            self._refresh_history_overlay()
+        if self._history_controller.is_open():
+            self._history_controller.refresh()
+            return
         self._update_authoritative_frontend_state()
 
     def _on_model_changed(self, event_data: Dict[str, Any]) -> None:
@@ -981,74 +777,6 @@ class ConversationPanel(QWidget):
         """
         del event_data
         self._update_authoritative_frontend_state()
-
-    def _on_rag_project_opened(self, event_data: Dict[str, Any]) -> None:
-        del event_data
-        self._reset_rag_runtime_state(clear_search=True)
-        self._update_authoritative_frontend_state()
-
-    def _on_rag_project_closed(self, event_data: Dict[str, Any]) -> None:
-        del event_data
-        self._reset_rag_runtime_state(clear_search=True)
-        self._update_authoritative_frontend_state()
-
-    def _on_rag_init_complete(self, event_data: Dict[str, Any]) -> None:
-        data = event_data.get("data", event_data) if isinstance(event_data, dict) else event_data
-        if isinstance(data, dict) and data.get("status") == "error":
-            self._set_rag_info(str(data.get("error", "") or ""), tone="error")
-        elif isinstance(data, dict) and data.get("status") == "ready":
-            self._set_rag_info("", tone="neutral")
-        self._update_authoritative_frontend_state()
-
-    def _on_rag_index_started(self, event_data: Dict[str, Any]) -> None:
-        data = event_data.get("data", event_data) if isinstance(event_data, dict) else event_data
-        total_files = max(0, int(data.get("total_files", 0) or 0)) if isinstance(data, dict) else 0
-        self._rag_progress_state = {
-            "is_visible": True,
-            "processed": 0,
-            "total": total_files,
-            "current_file": "",
-        }
-        self._set_rag_info("", tone="neutral")
-        self._update_authoritative_frontend_state()
-
-    def _on_rag_index_progress(self, event_data: Dict[str, Any]) -> None:
-        data = event_data.get("data", event_data) if isinstance(event_data, dict) else event_data
-        if not isinstance(data, dict):
-            return
-        self._rag_progress_state = {
-            "is_visible": True,
-            "processed": max(0, int(data.get("processed", 0) or 0)),
-            "total": max(0, int(data.get("total", 0) or 0)),
-            "current_file": str(data.get("current_file", "") or ""),
-        }
-        self._update_authoritative_frontend_state()
-
-    def _on_rag_index_complete(self, event_data: Dict[str, Any]) -> None:
-        data = event_data.get("data", event_data) if isinstance(event_data, dict) else event_data
-        self._rag_progress_state = self._create_rag_progress_state()
-        if isinstance(data, dict):
-            total = max(0, int(data.get("total_indexed", 0) or 0))
-            failed = max(0, int(data.get("failed", 0) or 0))
-            duration = float(data.get("duration_s", 0.0) or 0.0)
-            if data.get("already_up_to_date"):
-                self._set_rag_info("索引已是最新", tone="neutral")
-            elif failed > 0:
-                self._set_rag_info(f"索引完成：{total} 成功，{failed} 失败，耗时 {duration:.1f}s", tone="neutral")
-            else:
-                self._set_rag_info(f"索引完成：{total} 文件，耗时 {duration:.1f}s", tone="success")
-        self._update_authoritative_frontend_state()
-
-    def _on_rag_index_error(self, event_data: Dict[str, Any]) -> None:
-        data = event_data.get("data", event_data) if isinstance(event_data, dict) else event_data
-        if isinstance(data, dict):
-            error = str(data.get("error", "") or "")
-            file_path = str(data.get("file_path", "") or "")
-            if file_path:
-                self._set_rag_info(f"错误 ({file_path}): {error}", tone="error")
-            else:
-                self._set_rag_info(f"错误: {error}", tone="error")
-            self._update_authoritative_frontend_state()
 
     def _on_attach_files_requested(self, event_data: Dict[str, Any]) -> None:
         data = event_data.get("data", event_data)
@@ -1138,155 +866,25 @@ class ConversationPanel(QWidget):
             return
         self.view_model.request_stop()
 
-    @pyqtSlot()
-    def _on_new_conversation_requested(self) -> None:
-        """处理新开对话请求"""
-        self.start_new_conversation()
-
-    @pyqtSlot()
-    def _on_history_requested(self) -> None:
-        """处理历史对话请求"""
-        if self._model_config_overlay_state.get("is_open", False):
-            self._close_model_config_overlay()
-        self._refresh_history_overlay()
-
-    def _on_history_close_requested(self) -> None:
-        self._close_history_overlay()
-
-    def _on_history_session_selected(self, session_id: str) -> None:
-        self._refresh_history_overlay(session_id)
-
     def _on_history_session_open_requested(self, session_id: str) -> None:
         if not session_id:
             return
-        success = self._session_support.open_session(session_id)
+        success = self._history_controller.open_session(session_id)
         if success:
-            self._close_history_overlay()
             self._draft_clear_nonce += 1
             self._update_authoritative_frontend_state()
             return
-        self._open_notice_dialog(
-            self._get_text("dialog.history.open_failed", "打开会话失败"),
-            title=self._get_text("dialog.error.title", "错误"),
-            tone="error",
-        )
-
-    def _on_history_export_dialog_open_requested(self, session_id: str) -> None:
-        normalized_session_id = str(
-            session_id
-            or self._history_overlay_state.get("selected_session_id", "")
-            or self._history_overlay_state.get("current_session_id", "")
-            or ""
-        )
-        if not normalized_session_id:
-            return
-        self._set_history_export_dialog_state(
-            normalized_session_id,
-            is_open=True,
-        )
-        self._update_authoritative_frontend_state()
-
-    def _on_history_export_dialog_close_requested(self) -> None:
-        if not self._history_overlay_state.get("is_open", False):
-            return
-        self._clear_history_export_dialog_state()
-        self._update_authoritative_frontend_state()
-
-    def _on_history_export_format_changed(self, export_format: str) -> None:
-        dialog_state = self._current_history_export_dialog_state()
-        session_id = str(dialog_state.get("session_id", "") or "")
-        normalized_format = self._session_support.normalize_export_format(export_format)
-        if not session_id or not normalized_format:
-            return
-        self._set_history_export_dialog_state(
-            session_id,
-            normalized_format,
-            str(dialog_state.get("file_path", "") or ""),
-            is_open=bool(dialog_state.get("is_open", False)),
-        )
-        self._update_authoritative_frontend_state()
 
     def _on_history_export_path_pick_requested(self) -> None:
-        dialog_state = self._current_history_export_dialog_state()
-        session_id = str(dialog_state.get("session_id", "") or "")
-        export_format = self._session_support.normalize_export_format(
-            str(dialog_state.get("export_format", "") or "")
-        )
-        if not session_id or not export_format:
-            return
-        selected_path = self._session_support.choose_export_file_path(
-            session_id,
-            export_format,
-            parent=self,
-            dialog_title=self._get_text("dialog.export.title", "选择导出路径"),
-            initial_path=str(dialog_state.get("file_path", "") or ""),
-        )
-        if not selected_path:
-            return
-        self._set_history_export_dialog_state(
-            session_id,
-            export_format,
-            selected_path,
-            is_open=True,
-        )
-        self._update_authoritative_frontend_state()
-
-    def _on_history_session_export_requested(
-        self,
-        session_id: str,
-        export_format: str,
-        file_path: str,
-    ) -> None:
-        normalized_format = self._session_support.normalize_export_format(export_format)
-        normalized_path = self._session_support.normalize_export_file_path(
-            file_path,
-            normalized_format,
-        )
-        if not session_id or not normalized_format or not normalized_path:
-            self._open_notice_dialog(
-                self._get_text("dialog.export.failed", "导出会话失败"),
-                title=self._get_text("dialog.error.title", "错误"),
-                tone="error",
-            )
-            return
-        success, export_path = self._session_support.export_session_to_path(
-            session_id,
-            normalized_format,
-            normalized_path,
-        )
-        if success:
-            self._clear_history_export_dialog_state()
-            self._update_authoritative_frontend_state()
-            self._open_notice_dialog(
-                self._get_text("dialog.export.success", "会话导出成功"),
-                title=self._get_text("dialog.info.title", "提示"),
-                tone="success",
-            )
-            if self.logger:
-                self.logger.info(f"Session exported to: {export_path}")
-            return
-
-    def _on_history_session_delete_requested(self, session_id: str) -> None:
-        if not session_id:
-            return
-        self._open_confirm_dialog(
-            kind="history_delete",
-            title=self._get_text("dialog.warning.title", "警告"),
-            message=self._get_text(
-                "dialog.history.delete_confirm",
-                "确定删除这个会话吗？此操作无法撤销。",
-            ),
-            confirm_label=self._get_text("btn.delete", "删除"),
-            cancel_label=self._get_text("btn.cancel", "取消"),
-            tone="danger",
-            payload={"session_id": session_id},
-        )
+        self._history_controller.pick_export_path(self)
 
     def request_history(self) -> None:
-        self._on_history_requested()
+        if self._model_config_overlay_state.get("is_open", False):
+            self._close_model_config_overlay()
+        self._history_controller.refresh()
 
     def request_compress_context(self) -> None:
-        self._on_compress_requested()
+        self.compress_requested.emit()
 
     def activate_surface(self, surface_id: str) -> bool:
         normalized_surface = "rag" if str(surface_id or "") == "rag" else "conversation"
@@ -1300,82 +898,15 @@ class ConversationPanel(QWidget):
 
     def trigger_reindex(self) -> None:
         self.activate_surface("rag")
-        manager = self.rag_manager
-        if manager is None or not manager.is_available:
-            return
-        manager.trigger_index()
+        self._rag_controller.trigger_reindex()
 
     def request_clear_index(self) -> None:
         self.activate_surface("rag")
-        manager = self.rag_manager
-        if manager is None or not manager.is_available:
-            return
-        self._open_confirm_dialog(
-            kind="rag_clear",
-            title=self._get_text("dialog.warning.title", "警告"),
-            message="确定要清空当前项目的索引库吗？\n已索引的内容将被全部删除。",
-            confirm_label=self._get_text("btn.delete", "删除"),
-            cancel_label=self._get_text("btn.cancel", "取消"),
-            tone="danger",
-        )
+        self._rag_controller.request_clear_index()
 
     def request_rag_search(self, query: str) -> None:
         self.activate_surface("rag")
-        normalized_query = str(query or "").strip()
-        if not normalized_query:
-            return
-        manager = self.rag_manager
-        if manager is None or not manager.is_available:
-            self._rag_search_state = {
-                "is_running": False,
-                "result_text": "索引库未就绪（请等待初始化完成）",
-            }
-            self._update_authoritative_frontend_state()
-            return
-        self._rag_search_state = {
-            "is_running": True,
-            "result_text": "检索中...",
-        }
-        self._update_authoritative_frontend_state()
-        asyncio.create_task(self._async_rag_search(normalized_query))
-
-    async def _async_rag_search(self, query: str) -> None:
-        manager = self.rag_manager
-        if manager is None:
-            self._rag_search_state = {
-                "is_running": False,
-                "result_text": "索引库未就绪（请等待初始化完成）",
-            }
-            self._update_authoritative_frontend_state()
-            return
-        try:
-            result = await manager.query_async(query)
-            if result.is_empty:
-                result_text = f'未找到与 "{query}" 相关的内容'
-            else:
-                result_text = f"片段: {result.chunks_count}\n\n{result.format_as_context(max_tokens=3000)}"
-            self._rag_search_state = {
-                "is_running": False,
-                "result_text": result_text,
-            }
-        except Exception as exc:
-            self._rag_search_state = {
-                "is_running": False,
-                "result_text": f"检索失败: {exc}",
-            }
-        self._update_authoritative_frontend_state()
-
-    async def _async_clear_rag_index(self) -> None:
-        manager = self.rag_manager
-        if manager is None:
-            return
-        try:
-            await manager.clear_index_async()
-            self._rag_search_state = self._create_rag_search_state()
-            self._set_rag_info("索引库已清空", tone="success")
-        except Exception as exc:
-            self._set_rag_info(f"清空失败: {exc}", tone="error")
-        self._update_authoritative_frontend_state()
+        self._rag_controller.request_search(query)
 
     def _on_confirm_dialog_resolved(self, accepted: bool) -> None:
         confirm_state = dict(self._confirm_dialog_state)
@@ -1388,21 +919,10 @@ class ConversationPanel(QWidget):
             if self._model_config_controller is not None:
                 self._model_config_controller.confirm_save_without_verify()
             return
-        if kind == "history_delete":
-            session_id = str(payload.get("session_id", "") or "") if isinstance(payload, dict) else ""
-            if not session_id:
-                return
-            success = self._session_support.delete_session(session_id)
-            if success:
-                self._refresh_history_overlay()
-                return
-            self._open_notice_dialog(
-                self._get_text("dialog.history.delete_failed", "删除会话失败"),
-                title=self._get_text("dialog.error.title", "错误"),
-                tone="error",
-            )
-        if kind == "rag_clear":
-            asyncio.create_task(self._async_clear_rag_index())
+        if self._history_controller.handle_confirm_acceptance(kind, payload):
+            return
+        if self._rag_controller.handle_confirm_acceptance(kind):
+            return
 
     def _on_notice_dialog_close_requested(self) -> None:
         self._close_notice_dialog()
@@ -1420,11 +940,6 @@ class ConversationPanel(QWidget):
             title=self._get_text("dialog.error.title", "错误"),
             tone="error",
         )
-
-    @pyqtSlot()
-    def _on_compress_requested(self) -> None:
-        """处理压缩请求"""
-        self.compress_requested.emit()
 
     def _on_attachment_error(self, message: str) -> None:
         """处理附件错误"""
@@ -1456,10 +971,6 @@ class ConversationPanel(QWidget):
         if file_paths:
             self.add_attachments(file_paths)
 
-    @pyqtSlot()
-    def _on_model_config_requested(self) -> None:
-        self.open_model_config()
-
     @pyqtSlot(str, str, object)
     def _on_model_config_draft_update_requested(self, section: str, field: str, value: object) -> None:
         if self._model_config_controller is not None:
@@ -1483,21 +994,6 @@ class ConversationPanel(QWidget):
     @pyqtSlot()
     def _on_model_config_close_requested(self) -> None:
         self._close_model_config_overlay()
-
-    @pyqtSlot()
-    def _on_rag_reindex_requested(self) -> None:
-        self.trigger_reindex()
-
-    @pyqtSlot()
-    def _on_rag_clear_requested(self) -> None:
-        self.request_clear_index()
-
-    @pyqtSlot(str)
-    def _on_rag_search_requested(self, query: str) -> None:
-        self.request_rag_search(query)
-
-    def _on_image_preview_requested(self, image_path: str) -> None:
-        self._open_image_preview(image_path)
 
     def _on_pending_edit_accept_all_requested(self) -> None:
         service = self.pending_workspace_edit_service
@@ -1734,7 +1230,7 @@ class ConversationPanel(QWidget):
             
             if success:
                 self._draft_clear_nonce += 1
-                self._close_history_overlay()
+                self._history_controller.close()
                 self._close_rollback_overlay()
                 
                 if self.logger:

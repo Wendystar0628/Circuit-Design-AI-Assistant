@@ -115,6 +115,7 @@ class FileWatchReceiver(QObject):
         
         # 延迟获取的服务
         self._event_bus = None
+        self._file_manager = None
         self._logger = None
     
     @property
@@ -139,6 +140,18 @@ class FileWatchReceiver(QObject):
             except Exception:
                 pass
         return self._logger
+
+    @property
+    def file_manager(self):
+        if self._file_manager is None:
+            try:
+                from shared.service_locator import ServiceLocator
+                from shared.service_names import SVC_FILE_MANAGER
+
+                self._file_manager = ServiceLocator.get_optional(SVC_FILE_MANAGER)
+            except Exception:
+                pass
+        return self._file_manager
     
     @pyqtSlot(str, str, bool, str)
     def on_file_event(
@@ -198,6 +211,9 @@ class FileWatchReceiver(QObject):
             
             for path, event_data in events_to_publish.items():
                 try:
+                    file_manager = self.file_manager
+                    if file_manager is not None and file_manager.consume_recent_internal_change(path):
+                        continue
                     self.event_bus.publish(
                         EVENT_FILE_CHANGED,
                         event_data,

@@ -139,9 +139,27 @@ export interface HistoryResultsViewState {
   can_load: boolean
 }
 
+export interface OpResultRowState {
+  name: string
+  formatted_value: string
+  raw_value: number | null
+  unit: string
+}
+
+export interface OpResultSectionState {
+  id: string
+  title: string
+  row_count: number
+  rows: OpResultRowState[]
+}
+
 export interface OpResultViewState {
   is_available: boolean
+  file_name: string
+  analysis_command: string
   row_count: number
+  section_count: number
+  sections: OpResultSectionState[]
   can_add_to_conversation: boolean
 }
 
@@ -256,7 +274,11 @@ export const EMPTY_SIMULATION_STATE: SimulationMainState = {
   },
   op_result_view: {
     is_available: false,
+    file_name: '',
+    analysis_command: '',
     row_count: 0,
+    section_count: 0,
+    sections: [],
     can_add_to_conversation: false,
   },
 }
@@ -277,6 +299,10 @@ function asNumber(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0
 }
 
+function asNullableNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
 function asStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) {
     return []
@@ -290,6 +316,30 @@ function asRange(value: unknown): number[] | null {
   }
   const [start, end] = value
   return [asNumber(start), asNumber(end)]
+}
+
+function normalizeOpResultSections(value: unknown): OpResultSectionState[] {
+  if (!Array.isArray(value)) {
+    return []
+  }
+  return value.map((item) => {
+    const section = asRecord(item)
+    const rows = Array.isArray(section.rows) ? section.rows.map((row) => {
+      const rowRecord = asRecord(row)
+      return {
+        name: asString(rowRecord.name),
+        formatted_value: asString(rowRecord.formatted_value),
+        raw_value: asNullableNumber(rowRecord.raw_value),
+        unit: asString(rowRecord.unit),
+      }
+    }) : []
+    return {
+      id: asString(section.id),
+      title: asString(section.title),
+      row_count: asNumber(section.row_count),
+      rows,
+    }
+  })
 }
 
 export function normalizeSimulationState(input: unknown): SimulationMainState {
@@ -402,7 +452,11 @@ export function normalizeSimulationState(input: unknown): SimulationMainState {
     },
     op_result_view: {
       is_available: asBoolean(opResultView.is_available),
+      file_name: asString(opResultView.file_name),
+      analysis_command: asString(opResultView.analysis_command),
       row_count: asNumber(opResultView.row_count),
+      section_count: asNumber(opResultView.section_count),
+      sections: normalizeOpResultSections(opResultView.sections),
       can_add_to_conversation: asBoolean(opResultView.can_add_to_conversation),
     },
   }

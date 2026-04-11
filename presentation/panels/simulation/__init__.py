@@ -4,14 +4,13 @@
 
 包含仿真结果展示相关的 UI 组件：
 - SimulationViewModel: 仿真面板 ViewModel
-- MetricCard: 指标卡片组件
-- MetricsPanel: 指标显示面板
 - ChartViewer: 图表查看器
 - WaveformWidget: 交互式波形图表组件
 - RawDataTable: 原始数据表格（结果快照绑定）
 - OutputLogViewer: 仿真输出日志查看器
-- TuningPanel: 快速调参面板
-- SimulationTab: 仿真结果标签页主类
+- SimulationExportPanel: 统一导出面板
+- SimulationTab: 仿真结果标签页主类（Web host + backend runtime）
+- SimulationWebHost / SimulationWebBridge: Web 前端宿主与桥接
 """
 
 from presentation.panels.simulation.simulation_view_model import (
@@ -30,11 +29,6 @@ from presentation.panels.simulation.simulation_export_panel import SimulationExp
 from presentation.panels.simulation.simulation_frontend_state_serializer import SimulationFrontendStateSerializer
 from presentation.panels.simulation.simulation_tab import (
     SimulationTab,
-)
-from presentation.panels.simulation.simulation_tab_widgets import (
-    SimulationMetricsSummaryPanel,
-    SimulationResultTabView,
-    SimulationStatusBanner,
 )
 from presentation.panels.simulation.simulation_web_bridge import SimulationWebBridge
 from presentation.panels.simulation.simulation_web_host import SimulationWebHost
@@ -55,9 +49,6 @@ __all__ = [
     "SimulationExportPanel",
     "SimulationFrontendStateSerializer",
     "SimulationTab",
-    "SimulationMetricsSummaryPanel",
-    "SimulationResultTabView",
-    "SimulationStatusBanner",
     "SimulationWebBridge",
     "SimulationWebHost",
 ]

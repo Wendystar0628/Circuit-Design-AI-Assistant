@@ -222,7 +222,7 @@ class BottomPanel(QWidget):
         """刷新当前标签页"""
         current_index = self._tab_widget.currentIndex()
         if current_index == TAB_SIMULATION:
-            self._simulation_tab.refresh()
+            self._simulation_tab.reload_latest_result()
         elif current_index == TAB_REPORT and self._report_tab is not None:
             if hasattr(self._report_tab, "refresh"):
                 self._report_tab.refresh()

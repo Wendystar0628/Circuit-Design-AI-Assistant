@@ -32,6 +32,7 @@ import logging
 from typing import Dict, List, Optional, Tuple
 
 from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -704,7 +705,15 @@ class WaveformWidget(QWidget):
     def export_image(self, path: str) -> bool:
         if self._current_result is None or not self._plot_items:
             return False
-        pixmap = self._plot_widget.grab()
+        self.resize(max(self.width(), 1280), max(self.height(), 840))
+        layout = self.layout()
+        if layout is not None:
+            layout.activate()
+        render_width = max(self._plot_widget.width(), 960)
+        render_height = max(self._plot_widget.height(), 640)
+        pixmap = QPixmap(render_width, render_height)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        self._plot_widget.render(pixmap)
         if pixmap.isNull():
             return False
         return pixmap.save(path)

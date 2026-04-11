@@ -13,6 +13,7 @@ EXPORT_TYPE_ORDER = (
     "analysis_info",
     "raw_data",
     "output_log",
+    "op_result",
 )
 
 
@@ -134,6 +135,8 @@ class SimulationExportCoordinator:
             return simulation_artifact_exporter.export_raw_data(export_root, result)
         if export_type == "output_log":
             return simulation_artifact_exporter.export_output_log(export_root, result)
+        if export_type == "op_result":
+            return simulation_artifact_exporter.export_op_result(export_root, result)
         raise ValueError(f"Unsupported export type: {export_type}")
 
     def _to_relative_paths(self, export_root: Path, file_paths: List[str]) -> List[str]:

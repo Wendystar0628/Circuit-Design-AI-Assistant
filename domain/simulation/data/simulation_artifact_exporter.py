@@ -4,6 +4,7 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from domain.simulation.data.op_result_data_builder import op_result_data_builder
 from domain.simulation.data.simulation_output_reader import simulation_output_reader
 from domain.simulation.data.waveform_data_service import waveform_data_service
 from domain.simulation.models.simulation_result import SimulationResult
@@ -211,6 +212,29 @@ class SimulationArtifactExporter:
                 "raw_output": raw_output,
                 "lines": [line.to_dict() for line in log_lines],
             },
+        ))
+        return [str(text_path), str(json_path)]
+
+    def export_op_result(self, export_root: Path, result: SimulationResult) -> List[str]:
+        if not op_result_data_builder.is_available(result):
+            raise ValueError("OP result export is unavailable for the current simulation result")
+        category_dir = self._ensure_category_dir(export_root, "op_result")
+        json_path = category_dir / "op_result.json"
+        text_path = category_dir / "op_result.txt"
+
+        payload = op_result_data_builder.build(result)
+        text_path.write_text(op_result_data_builder.build_text(result), encoding="utf-8")
+        self._write_json(json_path, self.build_artifact_payload(
+            result,
+            "op_result",
+            summary={
+                "row_count": int(payload.get("row_count", 0)),
+                "section_count": int(payload.get("section_count", 0)),
+            },
+            files={
+                "text": text_path.name,
+            },
+            data=payload,
         ))
         return [str(text_path), str(json_path)]
 

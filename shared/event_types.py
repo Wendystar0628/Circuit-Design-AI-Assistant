@@ -211,14 +211,6 @@ EVENT_WEB_SEARCH_ERROR = "web_search_error"
 #   - config: dict - 仿真配置参数
 EVENT_SIM_STARTED = "sim_started"
 
-# 仿真进度
-# 携带数据：
-#   - progress: float - 进度百分比（0.0-1.0）
-#   - current_step: str - 当前步骤描述
-#   - elapsed_seconds: float - 已用时间（秒）
-#   - estimated_remaining: float - 预计剩余时间（秒，可选）
-EVENT_SIM_PROGRESS = "sim_progress"
-
 # 仿真完成
 # 携带数据：
 #   - result_path: str - 结果文件路径
@@ -770,7 +762,6 @@ __all__ = [
     "EVENT_WEB_SEARCH_ERROR",
     # 仿真事件
     "EVENT_SIM_STARTED",
-    "EVENT_SIM_PROGRESS",
     "EVENT_SIM_COMPLETE",
     "EVENT_SIM_ERROR",
     "EVENT_SIM_PAUSED",

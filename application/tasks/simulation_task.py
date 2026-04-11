@@ -4,7 +4,7 @@
 
 职责：
 - 在后台线程执行仿真，避免阻塞 UI
-- 通过信号通知仿真进度和完成状态
+- 通过信号通知仿真生命周期与完成状态
 
 设计原则：
 - 使用 QThread 实现后台执行
@@ -16,7 +16,6 @@
     
     task = SimulationTask()
     task.simulation_started.connect(on_started)
-    task.simulation_progress.connect(on_progress)
     task.simulation_completed.connect(on_completed)
     task.simulation_error.connect(on_error)
     
@@ -24,7 +23,6 @@
 """
 
 import logging
-from pathlib import Path
 from typing import Any, Dict, Optional
 
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
@@ -39,7 +37,6 @@ class SimulationWorker(QObject):
     
     # 信号定义
     started = pyqtSignal(str)  # file_path
-    progress = pyqtSignal(float, str)  # progress (0-1), message
     completed = pyqtSignal(object)  # SimulationResult
     error = pyqtSignal(str, str)  # error_type, error_message
     
@@ -85,14 +82,12 @@ class SimulationWorker(QObject):
         
         # 发送开始信号
         self.started.emit(self._file_path)
-        self.progress.emit(0.1, f"正在仿真: {Path(self._file_path).name}")
 
         # 执行仿真
         result = service.run_simulation(
             file_path=self._file_path,
             analysis_config=self._analysis_config,
             project_root=self._project_root,
-            on_progress=self._on_progress,
         )
 
         # 发送完成信号 - 无论成功与否都发送 completed，让 UI 层处理
@@ -103,13 +98,6 @@ class SimulationWorker(QObject):
             error_msg = str(result.error.message) if hasattr(result.error, 'message') else str(result.error)
             self._logger.warning(f"仿真失败: {error_msg}")
     
-    def _on_progress(self, progress: float, message: str) -> None:
-        """进度回调"""
-        # 映射进度到 0.1-0.9 范围（0.1 是开始，1.0 是完成）
-        mapped_progress = 0.1 + progress * 0.8
-        self.progress.emit(mapped_progress, message)
-
-
 class SimulationTask(QObject):
     """
     仿真任务管理器
@@ -119,7 +107,6 @@ class SimulationTask(QObject):
     
     # 对外信号
     simulation_started = pyqtSignal(str)  # file_path
-    simulation_progress = pyqtSignal(float, str)  # progress (0-1), message
     simulation_completed = pyqtSignal(object)  # SimulationResult
     simulation_error = pyqtSignal(str, str)  # error_type, error_message
     
@@ -173,7 +160,6 @@ class SimulationTask(QObject):
         # 连接信号
         self._thread.started.connect(self._worker.run)
         self._worker.started.connect(self.simulation_started.emit)
-        self._worker.progress.connect(self.simulation_progress.emit)
         self._worker.completed.connect(self._on_completed)
         self._worker.error.connect(self._on_error)
     

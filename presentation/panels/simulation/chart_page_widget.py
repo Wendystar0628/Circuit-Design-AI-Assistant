@@ -3,6 +3,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import pyqtgraph as pg
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QSplitter, QTreeWidgetItem, QVBoxLayout, QWidget
 
 from presentation.panels.simulation.chart_data_cursor import ChartDataCursorController, DataCursorSample, DataCursorValue, build_draggable_vertical_cursor_line
@@ -335,7 +336,15 @@ class ChartPage(QWidget):
         return self._cursor_a is not None or self._cursor_b is not None
 
     def export_image(self, path: str) -> bool:
-        pixmap = self._plot_widget.grab()
+        self.resize(max(self.width(), 1280), max(self.height(), 840))
+        layout = self.layout()
+        if layout is not None:
+            layout.activate()
+        render_width = max(self._plot_widget.width(), 960)
+        render_height = max(self._plot_widget.height(), 640)
+        pixmap = QPixmap(render_width, render_height)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        self._plot_widget.render(pixmap)
         if pixmap.isNull():
             return False
         return pixmap.save(path)

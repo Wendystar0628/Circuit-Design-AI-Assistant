@@ -53,6 +53,22 @@ class SimulationConversationAttachmentCoordinator:
         self._publish([str(target_path)])
         return str(target_path)
 
+    def attach_op_result(
+        self,
+        project_root: str,
+        export_root: Optional[str],
+        result: SimulationResult,
+    ) -> str:
+        root = self._resolve_export_root(project_root, export_root, result)
+        text_path = root / "op_result" / "op_result.txt"
+        json_path = root / "op_result" / "op_result.json"
+        if not text_path.is_file() or not json_path.is_file():
+            simulation_artifact_exporter.export_op_result(root, result)
+        self._ensure_file(text_path)
+        self._ensure_file(json_path)
+        self._publish([str(text_path), str(json_path)])
+        return str(json_path)
+
     def attach_chart_image(
         self,
         project_root: str,

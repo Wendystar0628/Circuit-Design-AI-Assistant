@@ -38,7 +38,7 @@
 import logging
 import time
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from domain.simulation.executor.executor_registry import ExecutorRegistry, executor_registry
 from domain.simulation.models.simulation_result import (
@@ -56,7 +56,6 @@ from shared.event_bus import EventBus
 from shared.event_types import (
     EVENT_SIM_STARTED,
     EVENT_SIM_COMPLETE,
-    EVENT_SIM_PROGRESS,
     EVENT_SIM_ERROR,
 )
 
@@ -85,10 +84,6 @@ def _get_event_bus() -> Optional[EventBus]:
 # 默认超时时间（秒）
 DEFAULT_TIMEOUT = 300
 
-# 进度事件节流间隔（秒）
-PROGRESS_THROTTLE_INTERVAL = 0.5
-
-
 # ============================================================
 # SimulationService - 仿真服务
 # ============================================================
@@ -102,7 +97,7 @@ class SimulationService:
     特性：
     - 统一入口：所有仿真请求通过此服务
     - 自动选择执行器：根据文件扩展名自动选择合适的执行器
-    - 事件发布：仿真开始、进度、完成时发布事件
+    - 事件发布：仿真开始、完成、错误时发布事件
     - 结果持久化：仿真结果自动保存到文件
     """
     
@@ -124,7 +119,6 @@ class SimulationService:
         # 内部状态
         self._is_running = False
         self._last_simulation_file: Optional[Path] = None
-        self._last_progress_time = 0.0
     
     # ============================================================
     # 核心仿真方法
@@ -137,7 +131,6 @@ class SimulationService:
         project_root: Optional[str] = None,
         version: int = 1,
         session_id: str = "",
-        on_progress: Optional[Callable[[float, str], None]] = None,
     ) -> SimulationResult:
         """
         执行仿真并返回结果
@@ -148,7 +141,6 @@ class SimulationService:
             project_root: 项目根目录（用于保存结果）
             version: 版本号（对应 GraphState.iteration_count + 1）
             session_id: 会话 ID
-            on_progress: 进度回调函数
             
         Returns:
             SimulationResult: 仿真结果
@@ -307,26 +299,6 @@ class SimulationService:
                 "circuit_file": file_path,
                 "simulation_type": analysis_type,
                 "config": config or {},
-            })
-    
-    def _publish_progress_event(
-        self,
-        progress: float,
-        current_step: str,
-        elapsed_seconds: float,
-    ) -> None:
-        """发布仿真进度事件（带节流）"""
-        current_time = time.time()
-        if current_time - self._last_progress_time < PROGRESS_THROTTLE_INTERVAL:
-            return
-        
-        self._last_progress_time = current_time
-        bus = _get_event_bus()
-        if bus:
-            bus.publish(EVENT_SIM_PROGRESS, {
-                "progress": progress,
-                "current_step": current_step,
-                "elapsed_seconds": elapsed_seconds,
             })
     
     def _publish_complete_event(self, result: SimulationResult, result_path: str = "") -> None:

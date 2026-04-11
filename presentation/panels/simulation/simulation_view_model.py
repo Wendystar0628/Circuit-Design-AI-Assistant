@@ -6,7 +6,7 @@
 - 作为 UI 与仿真服务之间的中间层
 - 隔离 simulation_tab 与 SimulationService 的直接依赖
 - 订阅仿真事件并转换为 UI 友好格式
-- 管理仿真状态和进度
+- 管理仿真状态与结果展示
 
 设计原则：
 - 继承 BaseViewModel，使用统一的事件订阅和属性通知机制
@@ -20,10 +20,7 @@
     view_model = SimulationViewModel()
     view_model.property_changed.connect(on_property_changed)
     view_model.initialize()
-    
-    # 请求仿真
-    view_model.request_simulation()
-    
+
     # 响应属性变更
     def on_property_changed(name, value):
         if name == "metrics_list":

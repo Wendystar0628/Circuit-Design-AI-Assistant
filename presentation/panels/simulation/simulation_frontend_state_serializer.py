@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
+from domain.simulation.data.op_result_data_builder import op_result_data_builder
 from domain.simulation.models.simulation_result import SimulationResult
 from presentation.panels.simulation.simulation_view_model import DisplayMetric
 
@@ -24,6 +25,7 @@ class SimulationFrontendStateSerializer:
         "analysis_info",
         "raw_data",
         "output_log",
+        "op_result",
     ]
     _ANALYSIS_LABELS = {
         "ac": "AC 小信号分析",
@@ -71,7 +73,14 @@ class SimulationFrontendStateSerializer:
         has_waveform = self._has_waveform(result)
         has_chart = self._has_chart(result)
         has_output_log = bool(str(getattr(result, "raw_output", "") or "").strip())
+        has_op_result = self._has_op_result(result)
         result_summary = self.serialize_result(result, normalized_result_path)
+        op_result_view = self.serialize_op_result(result)
+        available_export_types = [
+            export_type
+            for export_type in self._EXPORT_TYPES
+            if export_type != "op_result" or has_op_result
+        ]
 
         return {
             "simulation_runtime": {
@@ -128,7 +137,7 @@ class SimulationFrontendStateSerializer:
             },
             "export_view": {
                 "has_result": has_result,
-                "available_types": list(self._EXPORT_TYPES),
+                "available_types": available_export_types,
                 "latest_project_export_root": str(latest_project_export_root or ""),
             },
             "history_results_view": {
@@ -136,11 +145,7 @@ class SimulationFrontendStateSerializer:
                 "selected_result_path": normalized_result_path,
                 "can_load": bool(project_root),
             },
-            "op_result_view": {
-                "is_available": self._has_op_result(result),
-                "row_count": len(self._signal_names(result)) if self._has_op_result(result) else 0,
-                "can_add_to_conversation": False,
-            },
+            "op_result_view": op_result_view,
         }
 
     def serialize_metric(self, metric: DisplayMetric) -> Dict[str, Any]:
@@ -252,6 +257,13 @@ class SimulationFrontendStateSerializer:
             "can_load": bool(result_path),
         }
 
+    def serialize_op_result(self, result: Optional[SimulationResult]) -> Dict[str, Any]:
+        payload = op_result_data_builder.build(result)
+        return {
+            **payload,
+            "can_add_to_conversation": bool(payload.get("is_available", False)),
+        }
+
     def _resolve_status_phase(self, simulation_status: Any, awaiting_confirmation: bool) -> str:
         if awaiting_confirmation:
             return "awaiting_confirmation"
@@ -270,9 +282,7 @@ class SimulationFrontendStateSerializer:
         return str(result.analysis_type or "").lower() != "op"
 
     def _has_op_result(self, result: Optional[SimulationResult]) -> bool:
-        if result is None:
-            return False
-        return bool(result.success and getattr(result, "data", None) is not None and str(result.analysis_type or "").lower() == "op")
+        return bool(op_result_data_builder.is_available(result))
 
     def _signal_names(self, result: Optional[SimulationResult]) -> List[str]:
         data = getattr(result, "data", None) if result is not None else None

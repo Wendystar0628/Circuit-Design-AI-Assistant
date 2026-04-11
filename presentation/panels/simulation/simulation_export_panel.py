@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from domain.simulation.data.op_result_data_builder import op_result_data_builder
 from domain.simulation.models.simulation_result import SimulationResult
 from presentation.panels.simulation.simulation_export_coordinator import SimulationExportCoordinator
 from resources.theme import (
@@ -67,6 +68,7 @@ class SimulationExportPanel(QWidget):
             ("analysis_info", 1, 1),
             ("raw_data", 2, 0),
             ("output_log", 2, 1),
+            ("op_result", 3, 0),
         ]
         for key, row, column in checkbox_specs:
             checkbox = QCheckBox()
@@ -126,8 +128,9 @@ class SimulationExportPanel(QWidget):
 
     def set_selected_types(self, selected_types: List[str]):
         selected = {str(item or "") for item in selected_types}
+        available_types = set(self._available_export_types())
         for key, checkbox in self._checkboxes.items():
-            checkbox.setChecked(key in selected)
+            checkbox.setChecked(key in selected and key in available_types)
 
     def export_selected_types(self, selected_types: List[str]):
         self.set_selected_types(selected_types)
@@ -141,13 +144,15 @@ class SimulationExportPanel(QWidget):
         self._checkboxes["analysis_info"].setText(self._get_text("simulation.export.analysis_info", "分析信息"))
         self._checkboxes["raw_data"].setText(self._get_text("simulation.export.raw_data", "原始数据"))
         self._checkboxes["output_log"].setText(self._get_text("simulation.export.output_log", "输出日志"))
+        self._checkboxes["op_result"].setText(self._get_text("simulation.export.op_result", "工作点结果"))
         self._select_all_btn.setText(self._get_text("simulation.export.select_all", "全选"))
         self._clear_selection_btn.setText(self._get_text("simulation.export.clear_selection", "清空选择"))
         self._export_btn.setText(self._get_text("simulation.export.execute", "导出所选内容"))
 
     def _select_all(self):
-        for checkbox in self._checkboxes.values():
-            checkbox.setChecked(True)
+        available_types = set(self._available_export_types())
+        for key, checkbox in self._checkboxes.items():
+            checkbox.setChecked(key in available_types)
 
     def _clear_selection(self):
         for checkbox in self._checkboxes.values():
@@ -229,18 +234,35 @@ class SimulationExportPanel(QWidget):
         return execution
 
     def _get_selected_types(self, fallback_to_all: bool = False) -> List[str]:
-        selected_types = [key for key, checkbox in self._checkboxes.items() if checkbox.isChecked()]
+        available_types = set(self._available_export_types())
+        selected_types = [key for key, checkbox in self._checkboxes.items() if checkbox.isChecked() and key in available_types]
         if selected_types or not fallback_to_all:
             return selected_types
-        return self._export_coordinator.all_export_types()
+        return self._available_export_types()
 
     def _update_enabled_state(self):
         has_result = self._result is not None
-        for checkbox in self._checkboxes.values():
-            checkbox.setEnabled(has_result)
+        available_types = set(self._available_export_types())
+        for key, checkbox in self._checkboxes.items():
+            was_enabled = checkbox.isEnabled()
+            is_enabled = has_result and key in available_types
+            checkbox.setEnabled(is_enabled)
+            if not is_enabled:
+                checkbox.setChecked(False)
+            elif not was_enabled:
+                checkbox.setChecked(True)
         self._select_all_btn.setEnabled(has_result)
         self._clear_selection_btn.setEnabled(has_result)
         self._export_btn.setEnabled(has_result)
+
+    def _available_export_types(self) -> List[str]:
+        result = self._result
+        if result is None:
+            return []
+        available_types = self._export_coordinator.all_export_types()
+        if not op_result_data_builder.is_available(result):
+            available_types = [item for item in available_types if item != "op_result"]
+        return available_types
 
     def _apply_style(self):
         checkmark_icon_path = (Path(__file__).resolve().parents[3] / "resources" / "icons" / "ui" / "checkmark-dark.svg").as_posix()

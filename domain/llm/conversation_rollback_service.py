@@ -6,6 +6,10 @@ from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import Any, Dict, List, Optional
 
+from domain.llm.message_helpers import (
+    get_serialized_message_id,
+    get_serialized_message_timestamp,
+)
 from domain.services import context_service, snapshot_service
 from shared.constants import SYSTEM_DIR
 
@@ -314,7 +318,7 @@ class ConversationRollbackService:
             (
                 message
                 for message in current_messages
-                if self._get_message_id(message) == anchor_message_id
+                if get_serialized_message_id(message) == anchor_message_id
             ),
             None,
         )
@@ -375,9 +379,9 @@ class ConversationRollbackService:
 
         return [
             RollbackMessageSummary(
-                message_id=self._get_message_id(message),
+                message_id=get_serialized_message_id(message),
                 role=str(message.get("type", "") or ""),
-                timestamp=self._get_message_timestamp(message),
+                timestamp=get_serialized_message_timestamp(message),
                 content_preview=self._build_message_preview(message),
             )
             for message in current_messages[prefix_length:]
@@ -421,22 +425,9 @@ class ConversationRollbackService:
             return normalized
         return f"{normalized[:limit]}..."
 
-    def _get_message_id(self, message: Dict[str, Any]) -> str:
-        additional_kwargs = message.get("additional_kwargs", {})
-        metadata = additional_kwargs.get("metadata", {}) if isinstance(additional_kwargs, dict) else {}
-        if isinstance(metadata, dict):
-            return str(metadata.get("id", "") or "")
-        return ""
-
-    def _get_message_timestamp(self, message: Dict[str, Any]) -> str:
-        additional_kwargs = message.get("additional_kwargs", {})
-        if isinstance(additional_kwargs, dict):
-            return str(additional_kwargs.get("timestamp", "") or "")
-        return ""
-
     def _message_signature(self, message: Dict[str, Any]) -> tuple[str, str, str]:
         return (
-            self._get_message_id(message),
+            get_serialized_message_id(message),
             str(message.get("type", "") or ""),
             self._build_message_preview(message, limit=400),
         )

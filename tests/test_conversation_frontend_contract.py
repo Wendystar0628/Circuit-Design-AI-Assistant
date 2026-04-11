@@ -440,6 +440,7 @@ def test_conversation_state_serializer_serializes_history_and_rollback_payloads(
                 "type": "user",
                 "content": "继续优化对话面板 [[attachment:ref-1|diagram.png]]",
                 "additional_kwargs": {
+                    "timestamp": "2026-04-10T12:00:00",
                     "attachments": [
                         Attachment(
                             type="file",
@@ -450,7 +451,6 @@ def test_conversation_state_serializer_serializes_history_and_rollback_payloads(
                         ).to_dict()
                     ],
                     "metadata": {
-                        "timestamp": "2026-04-10T12:00:00",
                         "id": "user-2",
                     }
                 },
@@ -481,6 +481,7 @@ def test_conversation_state_serializer_serializes_history_and_rollback_payloads(
                     "type": "user",
                     "content": "继续优化对话面板 [[attachment:ref-1|diagram.png]]",
                     "additional_kwargs": {
+                        "timestamp": "2026-04-10T12:00:00",
                         "attachments": [
                             Attachment(
                                 type="file",
@@ -491,7 +492,6 @@ def test_conversation_state_serializer_serializes_history_and_rollback_payloads(
                             ).to_dict()
                         ],
                         "metadata": {
-                            "timestamp": "2026-04-10T12:00:00",
                             "id": "user-2",
                         }
                     },
@@ -537,6 +537,7 @@ def test_conversation_state_serializer_serializes_history_and_rollback_payloads(
 
     assert history_state["sessions"][0]["session_id"] == "session-rollback"
     assert history_state["preview_messages"][0]["message_id"] == "user-2"
+    assert history_state["preview_messages"][0]["timestamp"] == "2026-04-10T12:00:00"
     assert history_state["preview_messages"][0]["content_html"]
     assert 'data-cai-action="open-file"' in history_state["preview_messages"][0]["content_html"]
     assert rollback_state["anchor_message_id"] == "user-2"
@@ -555,9 +556,7 @@ def test_conversation_session_support_formats_exports():
             "type": "assistant",
             "content": "已完成迁移。",
             "additional_kwargs": {
-                "metadata": {
-                    "timestamp": "2026-04-10T12:00:00",
-                }
+                "timestamp": "2026-04-10T12:00:00",
             },
         }
     ]

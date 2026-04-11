@@ -8,6 +8,10 @@ from domain.llm.attachment_references import (
     normalize_attachments,
 )
 from domain.llm.conversation_rollback_service import ConversationRollbackPreview
+from domain.llm.message_helpers import (
+    get_serialized_message_id,
+    get_serialized_message_timestamp,
+)
 from domain.llm.message_types import Attachment
 from domain.llm.session_state_manager import SessionInfo
 from presentation.panels.conversation.conversation_rich_text_support import (
@@ -404,16 +408,6 @@ class ConversationStateSerializer:
 
     def serialize_session_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
         data = message if isinstance(message, dict) else {}
-        metadata = (
-            data.get("additional_kwargs", {})
-            if isinstance(data.get("additional_kwargs", {}), dict)
-            else {}
-        )
-        message_metadata = (
-            metadata.get("metadata", {})
-            if isinstance(metadata.get("metadata", {}), dict)
-            else {}
-        )
         role = str(data.get("type", data.get("role", "")) or "")
         content = self._serialize_session_message_content(data.get("content", ""))
         attachments = self._normalize_session_message_attachments(data)
@@ -428,8 +422,8 @@ class ConversationStateSerializer:
             "role": role,
             "content": content,
             "content_html": content_html,
-            "timestamp": str(message_metadata.get("timestamp", "") or ""),
-            "message_id": str(message_metadata.get("id", "") or ""),
+            "timestamp": get_serialized_message_timestamp(data),
+            "message_id": get_serialized_message_id(data),
             "attachments": [
                 self.serialize_attachment(attachment)
                 for attachment in attachments

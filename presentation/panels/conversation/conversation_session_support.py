@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from PyQt6.QtWidgets import QFileDialog, QWidget
 
+from domain.llm.message_helpers import get_serialized_message_timestamp
 from domain.llm.session_state_manager import SessionInfo
 
 
@@ -238,7 +239,7 @@ class ConversationSessionSupport:
             lines: List[str] = []
             for message in messages or []:
                 role = str(message.get("type", "unknown") or "unknown").upper()
-                timestamp = cls._message_timestamp(message)
+                timestamp = get_serialized_message_timestamp(message)
                 lines.append(f"[{role}] {timestamp}")
                 lines.append(cls._message_content(message))
                 lines.append("")
@@ -247,7 +248,7 @@ class ConversationSessionSupport:
             lines = ["# Conversation Export", ""]
             for message in messages or []:
                 role = str(message.get("type", "unknown") or "unknown")
-                timestamp = cls._message_timestamp(message)
+                timestamp = get_serialized_message_timestamp(message)
                 if role == "user":
                     lines.append(f"## 👤 User ({timestamp})")
                 elif role == "assistant":
@@ -259,20 +260,6 @@ class ConversationSessionSupport:
                 lines.append("")
             return "\n".join(lines)
         return ""
-
-    @staticmethod
-    def _message_timestamp(message: Dict[str, Any]) -> str:
-        additional_kwargs = message.get("additional_kwargs", {})
-        if isinstance(additional_kwargs, dict):
-            metadata = additional_kwargs.get("metadata", {})
-            if isinstance(metadata, dict):
-                timestamp = metadata.get("timestamp", "")
-                if timestamp:
-                    return str(timestamp)
-            timestamp = additional_kwargs.get("timestamp", "")
-            if timestamp:
-                return str(timestamp)
-        return str(message.get("timestamp", "") or "")
 
     @staticmethod
     def _message_content(message: Dict[str, Any]) -> str:

@@ -547,6 +547,41 @@ def dicts_to_messages(data: List[Dict[str, Any]]) -> List[BaseMessage]:
     return [dict_to_message(d) for d in data]
 
 
+def _get_serialized_message_additional_kwargs(data: Dict[str, Any]) -> Dict[str, Any]:
+    additional_kwargs = data.get("additional_kwargs", {}) if isinstance(data, dict) else {}
+    return additional_kwargs if isinstance(additional_kwargs, dict) else {}
+
+
+def _get_serialized_message_metadata(data: Dict[str, Any]) -> Dict[str, Any]:
+    metadata = _get_serialized_message_additional_kwargs(data).get("metadata", {})
+    return metadata if isinstance(metadata, dict) else {}
+
+
+def get_serialized_message_timestamp(data: Dict[str, Any]) -> str:
+    additional_kwargs = _get_serialized_message_additional_kwargs(data)
+    timestamp = additional_kwargs.get("timestamp", "")
+    if timestamp:
+        return str(timestamp)
+
+    metadata = _get_serialized_message_metadata(data)
+    timestamp = metadata.get("timestamp", "")
+    if timestamp:
+        return str(timestamp)
+
+    return str(data.get("timestamp", "") or "") if isinstance(data, dict) else ""
+
+
+def get_serialized_message_id(data: Dict[str, Any]) -> str:
+    metadata = _get_serialized_message_metadata(data)
+    message_id = metadata.get("id", "")
+    if message_id:
+        return str(message_id)
+
+    if not isinstance(data, dict):
+        return ""
+    return str(data.get("message_id", data.get("id", "")) or "")
+
+
 # ============================================================
 # 模块导出
 # ============================================================
@@ -570,6 +605,8 @@ __all__ = [
     "get_attachments",
     "get_timestamp",
     "get_message_id",
+    "get_serialized_message_timestamp",
+    "get_serialized_message_id",
     "is_partial_response",
     "get_stop_reason",
     "get_tool_calls_pending",

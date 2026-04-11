@@ -20,7 +20,7 @@ import os
 import re
 import base64
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 try:
     import markdown
@@ -41,6 +41,9 @@ KATEX_AUTO_RENDER_CDN = "https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/
 
 # 缓存内联资源
 _KATEX_INLINE_CACHE: Optional[Tuple[str, str, str]] = None  # (css, js, auto_render_js)
+_PIPE_TABLE_SEPARATOR_PATTERN = re.compile(
+    r'^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$'
+)
 
 
 def _get_katex_base_path() -> Optional[Path]:
@@ -190,6 +193,7 @@ class MarkdownRenderer:
         
         # 保护 LaTeX 公式不被 Markdown 解析器处理
         text, latex_blocks = self._protect_latex(text)
+        text = self._normalize_pipe_table_blocks(text)
         
         # Markdown 转 HTML
         if self._md:
@@ -203,6 +207,117 @@ class MarkdownRenderer:
         html = self._restore_latex(html, latex_blocks)
         
         return html
+
+    def _normalize_pipe_table_blocks(self, text: str) -> str:
+        lines = text.splitlines()
+        if not lines:
+            return text
+
+        normalized_lines: List[str] = []
+        index = 0
+        while index < len(lines):
+            if self._is_pipe_table_start(lines, index):
+                if normalized_lines and normalized_lines[-1].strip():
+                    normalized_lines.append("")
+                end_index = self._pipe_table_block_end(lines, index)
+                normalized_lines.extend(lines[index:end_index])
+                if end_index < len(lines) and lines[end_index].strip():
+                    normalized_lines.append("")
+                index = end_index
+                continue
+            normalized_lines.append(lines[index])
+            index += 1
+
+        return "\n".join(normalized_lines)
+
+    def _protect_pipe_tables(self, text: str) -> Tuple[str, List[str]]:
+        lines = text.splitlines()
+        if not lines:
+            return text, []
+
+        table_blocks: List[str] = []
+        protected_lines: List[str] = []
+        index = 0
+        while index < len(lines):
+            if self._is_pipe_table_start(lines, index):
+                end_index = self._pipe_table_block_end(lines, index)
+                placeholder = f"PIPE_TABLE_{len(table_blocks)}_PLACEHOLDER"
+                table_blocks.append(self._render_pipe_table_html(lines[index:end_index]))
+                protected_lines.append(placeholder)
+                index = end_index
+                continue
+            protected_lines.append(lines[index])
+            index += 1
+
+        return "\n".join(protected_lines), table_blocks
+
+    @staticmethod
+    def _restore_pipe_tables(html: str, table_blocks: List[str]) -> str:
+        for idx, table_html in enumerate(table_blocks):
+            html = html.replace(f"PIPE_TABLE_{idx}_PLACEHOLDER", table_html)
+        return html
+
+    @staticmethod
+    def _is_pipe_table_start(lines: List[str], index: int) -> bool:
+        if index + 1 >= len(lines):
+            return False
+
+        header = lines[index].strip()
+        separator = lines[index + 1].strip()
+        if not header or "|" not in header:
+            return False
+        if header.startswith("```") or header.startswith("~~~"):
+            return False
+        return bool(_PIPE_TABLE_SEPARATOR_PATTERN.match(separator))
+
+    @staticmethod
+    def _pipe_table_block_end(lines: List[str], start_index: int) -> int:
+        index = start_index + 2
+        while index < len(lines):
+            stripped = lines[index].strip()
+            if not stripped or "|" not in stripped:
+                break
+            if stripped.startswith("```") or stripped.startswith("~~~"):
+                break
+            index += 1
+        return index
+
+    def _render_pipe_table_html(self, lines: List[str]) -> str:
+        header_cells = self._split_pipe_table_row(lines[0])
+        column_count = len(header_cells)
+        thead_html = "".join(
+            f"<th>{self._render_simple_inline_markdown(cell)}</th>"
+            for cell in header_cells
+        )
+
+        body_rows = [
+            self._split_pipe_table_row(line)
+            for line in lines[2:]
+            if line.strip()
+        ]
+        tbody_rows: List[str] = []
+        for row in body_rows:
+            normalized_row = row[:column_count] + [""] * max(0, column_count - len(row))
+            tbody_rows.append(
+                "<tr>"
+                + "".join(
+                    f"<td>{self._render_simple_inline_markdown(cell)}</td>"
+                    for cell in normalized_row
+                )
+                + "</tr>"
+            )
+
+        tbody_html = f"<tbody>{''.join(tbody_rows)}</tbody>" if tbody_rows else ""
+        return f"<table><thead><tr>{thead_html}</tr></thead>{tbody_html}</table>"
+
+    @staticmethod
+    def _split_pipe_table_row(line: str) -> List[str]:
+        stripped = line.strip()
+        if stripped.startswith("|"):
+            stripped = stripped[1:]
+        if stripped.endswith("|"):
+            stripped = stripped[:-1]
+        return [cell.strip() for cell in stripped.split("|")]
     
     def _protect_latex(self, text: str) -> tuple:
         """
@@ -265,23 +380,44 @@ class MarkdownRenderer:
     
     def _simple_markdown(self, text: str) -> str:
         """简单的 Markdown 转换（回退方案）"""
-        # 转义 HTML
+        text, table_blocks = self._protect_pipe_tables(text)
+        lines = text.splitlines()
+        html_parts: List[str] = []
+        paragraph_lines: List[str] = []
+
+        def flush_paragraph() -> None:
+            if not paragraph_lines:
+                return
+            html_parts.append(
+                "<br>".join(
+                    self._render_simple_inline_markdown(line)
+                    for line in paragraph_lines
+                )
+            )
+            paragraph_lines.clear()
+
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith("PIPE_TABLE_") and stripped.endswith("_PLACEHOLDER"):
+                flush_paragraph()
+                html_parts.append(stripped)
+                continue
+            if not stripped:
+                flush_paragraph()
+                continue
+            paragraph_lines.append(line)
+
+        flush_paragraph()
+        return self._restore_pipe_tables("\n".join(html_parts), table_blocks)
+
+    @staticmethod
+    def _render_simple_inline_markdown(text: str) -> str:
         html = text.replace("&", "&amp;")
         html = html.replace("<", "&lt;")
         html = html.replace(">", "&gt;")
-        
-        # 换行
-        html = html.replace("\n", "<br>")
-        
-        # 粗体
         html = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', html)
-        
-        # 斜体
         html = re.sub(r'\*(.+?)\*', r'<em>\1</em>', html)
-        
-        # 行内代码
         html = re.sub(r'`(.+?)`', r'<code>\1</code>', html)
-        
         return html
     
     def render_code_block(self, code: str, language: str = "") -> str:

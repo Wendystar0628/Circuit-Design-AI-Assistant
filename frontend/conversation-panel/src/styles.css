@@ -1420,6 +1420,36 @@
    min-width: 0;
  }
 
+ .conversation-drawer__header--history {
+   align-items: center;
+   gap: 14px;
+   padding: 10px 14px;
+ }
+
+ .conversation-drawer__header-info--history {
+   flex: 1 1 auto;
+   display: flex;
+   align-items: center;
+   min-width: 0;
+ }
+
+ .conversation-history-header-info-line {
+   display: inline-flex;
+   align-items: baseline;
+   gap: 10px;
+   min-width: 0;
+   white-space: nowrap;
+ }
+
+ .conversation-history-header-info-line__subtitle {
+   white-space: nowrap;
+ }
+
+ .conversation-drawer__header--history .conversation-drawer__title,
+ .conversation-drawer__header--history .conversation-drawer__subtitle {
+   white-space: nowrap;
+ }
+
  .conversation-drawer__title,
  .conversation-modal__title,
  .conversation-section__title,
@@ -1489,10 +1519,10 @@
 
 .conversation-drawer__header-controls {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: flex-end;
-  flex-wrap: wrap;
-  gap: 8px;
+  flex: 0 0 auto;
+  gap: 6px;
 }
 
 .conversation-history-preview {
@@ -1503,12 +1533,17 @@
 
 .conversation-history-header-actions {
   position: relative;
-  display: flex;
-  align-items: flex-start;
+  display: inline-flex;
+  align-items: center;
   justify-content: flex-end;
-  flex-wrap: wrap;
-  gap: 8px;
-}
+  flex-wrap: nowrap;
+  gap: 6px;
+ }
+
+ .conversation-history-header-actions .secondary-button,
+ .conversation-history-header-actions .ghost-button {
+   white-space: nowrap;
+ }
 
 .conversation-overlay-chip-list {
   display: flex;
@@ -1810,13 +1845,29 @@
      padding: 12px;
    }
 
+   .conversation-drawer__header--history {
+     align-items: flex-start;
+     flex-wrap: wrap;
+   }
+
+   .conversation-drawer__header-info--history {
+     width: 100%;
+   }
+
+   .conversation-history-header-info-line {
+     flex-wrap: wrap;
+     white-space: normal;
+   }
+
    .conversation-drawer__header-controls {
      width: 100%;
-     justify-content: space-between;
+     justify-content: flex-start;
+     flex-wrap: wrap;
    }
 
    .conversation-history-header-actions {
      justify-content: flex-start;
+     flex-wrap: wrap;
    }
 
    .conversation-history-export-dialog {

@@ -1429,14 +1429,14 @@
  }
 
  .conversation-drawer__header-info--history {
-   flex: 1 1 auto;
    display: flex;
    align-items: center;
    min-width: 0;
+   overflow: hidden;
  }
 
  .conversation-history-header-info-line {
-   display: inline-flex;
+   display: flex;
    align-items: baseline;
    gap: 10px;
    min-width: 0;
@@ -1533,7 +1533,7 @@
   justify-content: flex-end;
   flex-wrap: nowrap;
   gap: 6px;
-  flex: 0 0 auto;
+  justify-self: end;
  }
 
  .conversation-history-header-actions .secondary-button,
@@ -1867,25 +1867,6 @@
      padding: 12px;
    }
 
-   .conversation-drawer__header--history {
-     align-items: flex-start;
-     grid-template-columns: 1fr;
-   }
-
-   .conversation-drawer__header-info--history {
-     width: 100%;
-   }
-
-   .conversation-history-header-info-line {
-     flex-wrap: wrap;
-     white-space: normal;
-   }
-
-   .conversation-history-header-actions {
-     justify-content: flex-start;
-     flex-wrap: wrap;
-   }
-
    .conversation-history-export-dialog {
      left: 0;
      right: 0;
@@ -1917,5 +1898,27 @@
 
    .conversation-modal--model-config {
      height: calc(100vh - 16px);
+   }
+ }
+
+ @media (max-width: 560px) {
+   .conversation-drawer__header--history {
+     align-items: flex-start;
+     grid-template-columns: 1fr;
+   }
+
+   .conversation-drawer__header-info--history {
+     width: 100%;
+   }
+
+   .conversation-history-header-info-line {
+     flex-wrap: wrap;
+     white-space: normal;
+   }
+
+   .conversation-history-header-actions {
+     justify-self: start;
+     justify-content: flex-start;
+     flex-wrap: wrap;
    }
  }

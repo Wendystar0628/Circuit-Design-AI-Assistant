@@ -100,6 +100,8 @@ function HistorySessionRow({
   history: ConversationHistoryOverlayState
   bridge: ConversationBridge | null
 }) {
+  const isCurrentSession = session.session_id === history.current_session_id
+
   return (
     <button
       type="button"
@@ -112,18 +114,18 @@ function HistorySessionRow({
       onClick={() => bridge?.selectHistorySession?.(session.session_id)}
     >
       <div className="conversation-session-row__top">
-        <span className="conversation-session-row__title">{session.name || session.session_id}</span>
-        <div className="conversation-session-row__meta">
-          <span>{session.message_count} 条消息</span>
-          <span>{session.updated_at || session.created_at || ''}</span>
+        <div className="conversation-session-row__summary">
+          <span className="conversation-session-row__title">{session.name || session.session_id}</span>
+          <div className="conversation-session-row__meta">
+            <span>{session.message_count} 条消息</span>
+            <span>{session.updated_at || session.created_at || ''}</span>
+          </div>
         </div>
-      </div>
-      <div className="conversation-session-row__preview">{session.preview || '无摘要'}</div>
-      <div className="conversation-session-row__footer">
-        {session.session_id === history.current_session_id ? (
-          <span className="conversation-status-badge">当前</span>
+        {isCurrentSession ? (
+          <span className="conversation-status-badge conversation-status-badge--session-current">当前</span>
         ) : null}
       </div>
+      <div className="conversation-session-row__preview">{session.preview || '无摘要'}</div>
     </button>
   )
 }

@@ -224,34 +224,32 @@ function HistoryHeaderActions({
   const hasSelectedSession = Boolean(selectedSessionId)
 
   return (
-    <div className="conversation-drawer__header-controls">
-      <div className="conversation-history-header-actions">
-        <button
-          type="button"
-          className="secondary-button"
-          disabled={!hasSelectedSession}
-          onClick={() => bridge?.openHistorySession?.(selectedSessionId)}
-        >
-          打开
-        </button>
-        <button
-          type="button"
-          className="secondary-button secondary-button--danger"
-          disabled={!hasSelectedSession}
-          onClick={() => bridge?.requestDeleteHistorySession?.(selectedSessionId)}
-        >
-          删除
-        </button>
-        <button
-          type="button"
-          className="secondary-button"
-          disabled={!hasSelectedSession}
-          onClick={() => bridge?.openHistoryExportDialog?.(selectedSessionId)}
-        >
-          导出
-        </button>
-        {selectedSession ? <HistoryExportDialog history={history} selectedSession={selectedSession} bridge={bridge} /> : null}
-      </div>
+    <div className="conversation-history-header-actions">
+      <button
+        type="button"
+        className="secondary-button"
+        disabled={!hasSelectedSession}
+        onClick={() => bridge?.openHistorySession?.(selectedSessionId)}
+      >
+        打开
+      </button>
+      <button
+        type="button"
+        className="secondary-button secondary-button--danger"
+        disabled={!hasSelectedSession}
+        onClick={() => bridge?.requestDeleteHistorySession?.(selectedSessionId)}
+      >
+        删除
+      </button>
+      <button
+        type="button"
+        className="secondary-button"
+        disabled={!hasSelectedSession}
+        onClick={() => bridge?.openHistoryExportDialog?.(selectedSessionId)}
+      >
+        导出
+      </button>
+      {selectedSession ? <HistoryExportDialog history={history} selectedSession={selectedSession} bridge={bridge} /> : null}
     </div>
   )
 }

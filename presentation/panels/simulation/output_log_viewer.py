@@ -587,6 +587,11 @@ class OutputLogViewer(QWidget):
             line_number: 行号（从 1 开始）
         """
         self._jump_to_line(line_number)
+
+    def refresh_log(self):
+        """重新加载当前日志文件"""
+        if self._sim_result_path and self._project_root:
+            self.load_log(self._sim_result_path, self._project_root)
     
     def get_error_count(self) -> int:
         """获取错误数"""
@@ -746,8 +751,7 @@ class OutputLogViewer(QWidget):
     
     def _on_refresh(self):
         """刷新按钮点击"""
-        if self._sim_result_path and self._project_root:
-            self.load_log(self._sim_result_path, self._project_root)
+        self.refresh_log()
     
     def _tr(self, text: str) -> str:
         """获取国际化文本"""

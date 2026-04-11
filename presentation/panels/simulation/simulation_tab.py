@@ -18,6 +18,7 @@
 - main_window.py
 """
 
+import copy
 import logging
 from typing import List, Optional
 
@@ -39,10 +40,13 @@ from presentation.panels.simulation.simulation_view_model import (
 )
 from domain.simulation.service.simulation_result_repository import simulation_result_repository
 from presentation.panels.simulation.simulation_conversation_attachment_coordinator import SimulationConversationAttachmentCoordinator
+from presentation.panels.simulation.simulation_frontend_state_serializer import SimulationFrontendStateSerializer
 from presentation.panels.simulation.simulation_tab_widgets import (
     SimulationResultTabView,
     SimulationStatusBanner,
 )
+from presentation.panels.simulation.simulation_web_bridge import SimulationWebBridge
+from presentation.panels.simulation.simulation_web_host import SimulationWebHost
 from resources.theme import (
     COLOR_ACCENT,
     COLOR_ACCENT_LIGHT,
@@ -74,10 +78,10 @@ class SimulationTab(QWidget):
     协调各子组件，管理仿真结果标签页整体布局。
     
     Signals:
-        history_requested: 请求查看历史记录
+        authoritative_frontend_state_changed: 权威前端状态更新
     """
-    
-    history_requested = pyqtSignal()
+
+    authoritative_frontend_state_changed = pyqtSignal(dict)
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -90,7 +94,12 @@ class SimulationTab(QWidget):
         # 项目状态
         self._project_root: Optional[str] = None
         self._last_loaded_result_path: Optional[str] = None
-        self._last_shown_op_dialog_signature: str = ""
+        self._awaiting_confirmation = False
+        self._active_frontend_tab = "metrics"
+        self._runtime_status_message = ""
+        self._state_serializer = SimulationFrontendStateSerializer()
+        self._authoritative_frontend_state = self._state_serializer.serialize_main_state()
+        self._bound_web_bridge: Optional[SimulationWebBridge] = None
         
         # EventBus 引用
         self._event_bus = None
@@ -98,6 +107,8 @@ class SimulationTab(QWidget):
         
         # 初始化 UI
         self._setup_ui()
+        if self._web_host is not None:
+            self._web_host.attach_simulation_tab(self)
         self._conversation_attachment_coordinator = SimulationConversationAttachmentCoordinator(
             self._chart_viewer_panel.chart_viewer,
             self._chart_viewer_panel.waveform_widget,
@@ -113,6 +124,7 @@ class SimulationTab(QWidget):
         
         # 初始化文本
         self.retranslate_ui()
+        self._update_authoritative_frontend_state()
     
     def _setup_ui(self):
         """初始化 UI 组件"""
@@ -125,13 +137,19 @@ class SimulationTab(QWidget):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
+        self._web_host = SimulationWebHost(self)
+        self.setFocusProxy(self._web_host)
+        main_layout.addWidget(self._web_host, 1)
+
         self._chart_viewer_panel = SimulationResultTabView()
         self._metrics_panel_view = self._chart_viewer_panel.metrics_summary_panel
         main_layout.addWidget(self._chart_viewer_panel, 1)
+        self._chart_viewer_panel.hide()
         
         # 状态指示器
         self._status_indicator = SimulationStatusBanner()
         main_layout.addWidget(self._status_indicator)
+        self._status_indicator.hide()
         
         # 空状态提示
         self._empty_widget = QFrame()
@@ -164,6 +182,7 @@ class SimulationTab(QWidget):
         empty_layout.addWidget(self._load_history_btn, 0, Qt.AlignmentFlag.AlignCenter)
         
         main_layout.addWidget(self._empty_widget)
+        self._empty_widget.hide()
         
         # 初始显示空状态
         self._show_empty_state()
@@ -233,9 +252,44 @@ class SimulationTab(QWidget):
         self._chart_viewer_panel.output_log_viewer.add_to_conversation_clicked.connect(
             self._on_add_output_log_to_conversation_clicked
         )
+        self._chart_viewer_panel.active_tab_changed.connect(self._on_active_tab_changed)
         
         # 指标卡片点击
         self._metrics_panel_view.metrics_panel.metric_clicked.connect(self._on_metric_clicked)
+
+    def get_authoritative_frontend_state(self):
+        return copy.deepcopy(self._authoritative_frontend_state)
+
+    def _build_authoritative_frontend_state(self):
+        history_results = []
+        if self._project_root:
+            try:
+                history_results = simulation_result_repository.list(self._project_root, limit=20)
+            except Exception as exc:
+                self._logger.warning(f"Failed to list simulation result history: {exc}")
+        return self._state_serializer.serialize_main_state(
+            project_root=self._project_root or "",
+            active_tab=self._active_frontend_tab,
+            current_result=self._view_model.current_result,
+            current_result_path=self._last_loaded_result_path or "",
+            metrics=self._view_model.metrics_list,
+            overall_score=self._view_model.overall_score,
+            has_goals=self._view_model.has_goals,
+            simulation_status=self._view_model.simulation_status,
+            status_message=self._runtime_status_message,
+            error_message=self._view_model.error_message,
+            history_results=history_results,
+            latest_project_export_root=self._get_latest_project_export_root() or "",
+            awaiting_confirmation=self._awaiting_confirmation,
+        )
+
+    def _update_authoritative_frontend_state(self):
+        self._authoritative_frontend_state = self._build_authoritative_frontend_state()
+        self.authoritative_frontend_state_changed.emit(copy.deepcopy(self._authoritative_frontend_state))
+
+    def _on_active_tab_changed(self, tab_id: str):
+        self._active_frontend_tab = tab_id or "metrics"
+        self._update_authoritative_frontend_state()
     
     def _subscribe_events(self):
         """订阅事件"""
@@ -300,12 +354,15 @@ class SimulationTab(QWidget):
         elif name == "error_message":
             if value:
                 self._show_error(value)
+        self._update_authoritative_frontend_state()
     
     def _on_project_opened(self, event_data: dict):
         """处理项目打开事件"""
         # 事件数据在 "data" 字段中
         data = event_data.get("data", event_data)
         self._project_root = data.get("path")
+        self._awaiting_confirmation = False
+        self._runtime_status_message = ""
         self._logger.info(f"Project opened: {self._project_root}")
         
         # 清空当前显示
@@ -316,8 +373,11 @@ class SimulationTab(QWidget):
     def _on_project_closed(self, event_data: dict):
         """处理项目关闭事件"""
         self._project_root = None
+        self._awaiting_confirmation = False
+        self._runtime_status_message = ""
         self.clear()
         self._show_empty_state()
+        self._update_authoritative_frontend_state()
 
     def _on_simulation_started(self, event_data: dict):
         """处理仿真开始事件"""
@@ -325,10 +385,11 @@ class SimulationTab(QWidget):
         data = event_data.get("data", event_data)
         circuit_file = data.get("circuit_file", "")
         self._logger.info(f"Simulation started: {circuit_file}")
-        self._status_indicator.show_running(
-            self._get_text("simulation.running", "仿真进行中，请等待...")
-        )
+        self._awaiting_confirmation = False
+        self._runtime_status_message = self._get_text("simulation.running", "仿真进行中，请等待...")
+        self._status_indicator.hide_status()
         self._set_controls_enabled(False)
+        self._update_authoritative_frontend_state()
     
     def _on_simulation_complete(self, event_data: dict):
         """处理仿真完成事件"""
@@ -342,6 +403,8 @@ class SimulationTab(QWidget):
         # 隐藏运行状态
         self._status_indicator.hide_status()
         self._set_controls_enabled(True)
+        self._awaiting_confirmation = False
+        self._runtime_status_message = ""
         
         # 加载仿真结果
         loaded = False
@@ -353,18 +416,29 @@ class SimulationTab(QWidget):
 
         if loaded and self._project_root:
             self._auto_export_current_result()
+        self._update_authoritative_frontend_state()
 
     def _on_language_changed(self, event_data: dict):
         """处理语言切换事件"""
         self.retranslate_ui()
 
     def _on_awaiting_confirmation(self, event_data: dict):
-        """处理等待确认事件"""
-        self._status_indicator.show_awaiting_confirmation()
+        """处理等待用户确认事件"""
+        del event_data
+        self._awaiting_confirmation = True
+        self._runtime_status_message = self._get_text(
+            "simulation.awaiting_confirmation",
+            "迭代完成，请在对话面板中选择下一步操作"
+        )
+        self._status_indicator.hide_status()
+        self._update_authoritative_frontend_state()
 
     def _on_user_confirmed(self, event_data: dict):
         """处理用户确认事件"""
+        self._awaiting_confirmation = False
+        self._runtime_status_message = ""
         self._status_indicator.hide_status()
+        self._update_authoritative_frontend_state()
 
     def _on_simulation_error(self, event_data: dict):
         """处理仿真错误事件"""
@@ -372,13 +446,15 @@ class SimulationTab(QWidget):
         data = event_data.get("data", event_data)
         error_message = data.get("error_message", "")
         self._logger.error(f"Simulation error: {error_message}")
+        self._awaiting_confirmation = False
+        self._runtime_status_message = error_message
         self._status_indicator.hide_status()
         self._set_controls_enabled(True)
+        self._update_authoritative_frontend_state()
 
     def _on_history_clicked(self):
         """处理历史按钮点击"""
-        self.history_requested.emit()
-        self._show_history_dialog()
+        self.activate_result_tab("history")
     
     def _on_refresh_clicked(self):
         """处理刷新按钮点击"""
@@ -486,6 +562,62 @@ class SimulationTab(QWidget):
         """处理指标卡片点击"""
         self._logger.debug(f"Metric clicked: {metric_name}")
         # 可以高亮对应的图表区域或显示详情
+
+    def bind_web_bridge(self, bridge: Optional[SimulationWebBridge]):
+        if bridge is None or bridge is self._bound_web_bridge:
+            return
+        self._bound_web_bridge = bridge
+        bridge.activate_tab_requested.connect(self.activate_result_tab)
+        bridge.load_result_requested.connect(self.load_history_result)
+        bridge.load_history_result_requested.connect(self.load_history_result)
+        bridge.signal_visibility_toggled.connect(self._on_waveform_signal_visibility_toggled)
+        bridge.clear_all_signals_requested.connect(self._chart_viewer_panel.waveform_widget.clear_waveforms)
+        bridge.cursor_visibility_toggled.connect(self._on_waveform_cursor_visibility_toggled)
+        bridge.cursor_move_requested.connect(self._on_waveform_cursor_move_requested)
+        bridge.fit_requested.connect(self._chart_viewer_panel.waveform_widget.fit_to_view)
+        bridge.zoom_to_range_requested.connect(self._chart_viewer_panel.waveform_widget.zoom_to_x_range)
+        bridge.raw_data_jump_to_row_requested.connect(self._chart_viewer_panel.raw_data_table.jump_to_row)
+        bridge.raw_data_jump_to_x_requested.connect(self._chart_viewer_panel.raw_data_table.jump_to_x_value)
+        bridge.raw_data_value_search_requested.connect(self._chart_viewer_panel.raw_data_table.search_value)
+        bridge.output_log_search_requested.connect(self._chart_viewer_panel.output_log_viewer.search)
+        bridge.output_log_filter_requested.connect(self._chart_viewer_panel.output_log_viewer.filter_by_level)
+        bridge.output_log_jump_to_error_requested.connect(self._chart_viewer_panel.output_log_viewer.jump_to_error)
+        bridge.output_log_refresh_requested.connect(self._chart_viewer_panel.output_log_viewer.refresh_log)
+        bridge.export_requested.connect(self._chart_viewer_panel.export_panel.export_selected_types)
+        bridge.add_to_conversation_requested.connect(self._on_bridge_add_to_conversation_requested)
+
+    def _on_waveform_signal_visibility_toggled(self, signal_name: str, visible: bool):
+        self._chart_viewer_panel.waveform_widget.set_signal_visible(signal_name, visible)
+        self._update_authoritative_frontend_state()
+
+    def _on_waveform_cursor_visibility_toggled(self, cursor_id: str, visible: bool):
+        waveform_widget = self._chart_viewer_panel.waveform_widget
+        if cursor_id == "b":
+            waveform_widget.set_cursor_b_visible(visible)
+        else:
+            waveform_widget.set_cursor_a_visible(visible)
+        self._update_authoritative_frontend_state()
+
+    def _on_waveform_cursor_move_requested(self, cursor_id: str, position: float):
+        waveform_widget = self._chart_viewer_panel.waveform_widget
+        if cursor_id == "b":
+            waveform_widget.set_cursor_b(position)
+        else:
+            waveform_widget.set_cursor_a(position)
+        self._update_authoritative_frontend_state()
+
+    def _on_bridge_add_to_conversation_requested(self, target: str):
+        normalized_target = str(target or "metrics")
+        if normalized_target == "chart":
+            self._on_add_chart_to_conversation_clicked()
+            return
+        if normalized_target == "waveform":
+            self._on_add_waveform_to_conversation_clicked()
+            return
+        if normalized_target == "output_log":
+            self._on_add_output_log_to_conversation_clicked()
+            return
+        self._on_add_metrics_to_conversation_clicked()
     
     def load_result(self, result, result_path: Optional[str] = None, show_op_dialog: bool = False):
         """
@@ -522,7 +654,10 @@ class SimulationTab(QWidget):
             self._chart_viewer_panel.switch_to_log()
 
         if show_op_dialog:
-            self._maybe_show_op_result_dialog(result, result_path=result_path)
+            analysis_type = str(getattr(result, 'analysis_type', '') or '').lower()
+            if analysis_type == 'op' and getattr(result, 'success', False) and getattr(result, 'data', None) is not None:
+                self.activate_result_tab("op_result")
+        self._update_authoritative_frontend_state()
 
     def _restore_project_result_after_project_opened(self):
         if not self._project_root:
@@ -589,16 +724,38 @@ class SimulationTab(QWidget):
     def clear(self):
         """清空所有显示"""
         self._last_loaded_result_path = None
-        self._last_shown_op_dialog_signature = ""
+        self._awaiting_confirmation = False
+        self._active_frontend_tab = "metrics"
+        self._runtime_status_message = ""
         self._chart_viewer_panel.clear()
         self._view_model.clear()
         self._status_indicator.hide_status()
         self._show_empty_state()
+        self._update_authoritative_frontend_state()
 
     def refresh(self):
         """刷新显示"""
         if self._project_root:
             self._load_project_simulation_result()
+        self._update_authoritative_frontend_state()
+
+    def activate_result_tab(self, tab_id: str) -> bool:
+        normalized_tab_id = str(tab_id or "metrics")
+        self._active_frontend_tab = normalized_tab_id
+        activated = self._chart_viewer_panel.activate_tab(normalized_tab_id)
+        if activated:
+            self._update_authoritative_frontend_state()
+            return True
+        if normalized_tab_id in {"history", "op_result"}:
+            self._update_authoritative_frontend_state()
+            return True
+        return False
+
+    def load_history_result(self, result_path: str) -> bool:
+        loaded = self._load_simulation_result(result_path, show_op_dialog=False)
+        if loaded:
+            self._update_authoritative_frontend_state()
+        return loaded
     
     def retranslate_ui(self):
         """重新翻译 UI 文本"""
@@ -636,12 +793,8 @@ class SimulationTab(QWidget):
     
     def _update_status(self, status: SimulationStatus):
         """更新状态显示"""
-        if status == SimulationStatus.RUNNING:
-            self._status_indicator.show_running()
-        elif status == SimulationStatus.COMPLETE:
-            self._status_indicator.hide_status()
-        elif status == SimulationStatus.ERROR:
-            self._status_indicator.hide_status()
+        del status
+        self._status_indicator.hide_status()
     
     def _show_error(self, message: str):
         """显示错误信息"""
@@ -662,7 +815,7 @@ class SimulationTab(QWidget):
     def _show_empty_state(self):
         """显示空状态"""
         self._chart_viewer_panel.hide()
-        self._empty_widget.show()
+        self._empty_widget.hide()
         self._metrics_panel_view.clear_result_timestamp()
         # 隐藏顶部信息栏
         self._metrics_panel_view.hide_header_bar()
@@ -690,7 +843,7 @@ class SimulationTab(QWidget):
     def _hide_empty_state(self):
         """隐藏空状态"""
         self._empty_widget.hide()
-        self._chart_viewer_panel.show()
+        self._chart_viewer_panel.hide()
         # 显示顶部信息栏
         self._metrics_panel_view.show_header_bar()
     
@@ -714,11 +867,13 @@ class SimulationTab(QWidget):
             else:
                 self._logger.info(f"No simulation result found: {load_result.error_message}")
                 self._show_empty_state()
+                self._update_authoritative_frontend_state()
                 return False
                 
         except Exception as e:
             self._logger.warning(f"Failed to load simulation result: {e}")
             self._show_empty_state()
+            self._update_authoritative_frontend_state()
             return False
     
     def _load_simulation_result(self, result_path: str, show_op_dialog: bool = False) -> bool:
@@ -751,41 +906,20 @@ class SimulationTab(QWidget):
                 execution.export_root,
                 execution.errors,
             )
+            self._update_authoritative_frontend_state()
             return
         self._logger.info(
             "Project auto export completed: root=%s, files=%s",
             execution.export_root,
             len(execution.exported_files),
         )
+        self._update_authoritative_frontend_state()
 
     def _get_latest_project_export_root(self) -> Optional[str]:
         export_root = self._chart_viewer_panel.export_panel.latest_project_export_root
         if export_root is None:
             return None
         return str(export_root)
-
-    def _maybe_show_op_result_dialog(self, result, result_path: Optional[str] = None):
-        analysis_type = str(getattr(result, "analysis_type", "") or "").lower()
-        if analysis_type != "op":
-            return
-
-        if not getattr(result, "success", False) or getattr(result, "data", None) is None:
-            return
-
-        normalized_result_path = self._normalize_result_path(result_path or "")
-        signature = f"{normalized_result_path}|{getattr(result, 'timestamp', '')}"
-        if signature == self._last_shown_op_dialog_signature:
-            return
-
-        try:
-            from presentation.dialogs.op_result_dialog import OPResultDialog
-
-            dialog = OPResultDialog(self)
-            dialog.load_result(result)
-            self._last_shown_op_dialog_signature = signature
-            dialog.exec()
-        except Exception as e:
-            self._logger.warning(f"Failed to show OP result dialog: {e}")
 
     def _normalize_result_path(self, result_path: str) -> str:
         if not result_path:
@@ -813,25 +947,7 @@ class SimulationTab(QWidget):
     def _on_load_history_clicked(self):
         """处理加载历史结果按钮点击"""
         self._logger.info("Load history button clicked")
-        self._load_project_simulation_result()
-    
-    def _show_history_dialog(self):
-        """显示迭代历史记录对话框"""
-        try:
-            from presentation.dialogs.iteration_history_dialog import IterationHistoryDialog
-            
-            if not self._project_root:
-                self._logger.warning("No project root, cannot show history dialog")
-                return
-            
-            dialog = IterationHistoryDialog(self)
-            dialog.load_history(self._project_root)
-            dialog.exec()
-            
-        except ImportError as e:
-            self._logger.warning(f"Failed to import IterationHistoryDialog: {e}")
-        except Exception as e:
-            self._logger.warning(f"Failed to show history dialog: {e}")
+        self.activate_result_tab("history")
     
     def _get_text(self, key: str, default: str) -> str:
         """获取国际化文本"""
@@ -849,6 +965,8 @@ class SimulationTab(QWidget):
     def closeEvent(self, event):
         """处理关闭事件"""
         self._unsubscribe_events()
+        if self._web_host is not None:
+            self._web_host.cleanup()
         self._view_model.dispose()
         super().closeEvent(event)
     

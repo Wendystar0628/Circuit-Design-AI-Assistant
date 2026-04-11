@@ -619,6 +619,13 @@ class WaveformWidget(QWidget):
         """清空所有波形"""
         self._clear_displayed_waveforms(preserve_result_context=False)
         self._update_add_to_conversation_enabled()
+
+    def set_signal_visible(self, signal_name: str, visible: bool) -> bool:
+        if visible:
+            if self._current_result is None:
+                return False
+            return self.add_waveform(self._current_result, signal_name)
+        return self.remove_waveform(signal_name)
     
     def set_cursor_a(self, x_position: float):
         """
@@ -636,6 +643,18 @@ class WaveformWidget(QWidget):
         self._cursor_a_pos = x_position
         self._cursor_a_btn.setChecked(True)
         self._update_measurement()
+
+    def set_cursor_a_visible(self, visible: bool):
+        if visible:
+            if self._cursor_a is None:
+                if self._x_domain is not None:
+                    x_position = (self._x_domain[0] + self._x_domain[1]) / 2
+                else:
+                    x_position = 0.0
+                self.set_cursor_a(x_position)
+            return
+        self._remove_cursor_a()
+        self._cursor_a_btn.setChecked(False)
     
     def set_cursor_b(self, x_position: float):
         """
@@ -653,6 +672,19 @@ class WaveformWidget(QWidget):
         self._cursor_b_pos = x_position
         self._cursor_b_btn.setChecked(True)
         self._update_measurement()
+
+    def set_cursor_b_visible(self, visible: bool):
+        if visible:
+            if self._cursor_b is None:
+                if self._x_domain is not None:
+                    span = self._x_domain[1] - self._x_domain[0]
+                    x_position = self._x_domain[0] + span * 0.6
+                else:
+                    x_position = 0.0
+                self.set_cursor_b(x_position)
+            return
+        self._remove_cursor_b()
+        self._cursor_b_btn.setChecked(False)
     
     def get_measurement(self) -> WaveformMeasurement:
         """
@@ -722,6 +754,34 @@ class WaveformWidget(QWidget):
         self._rebuild_domains()
         self._apply_full_viewport()
         self._update_measurement()
+
+    def zoom_to_x_range(self, start: float, end: float):
+        if self._current_result is None or not self._plot_items or self._x_domain is None:
+            return
+        requested_range = np.asarray([min(start, end), max(start, end)], dtype=float)
+        view_range_array = self._to_view_x_data(requested_range)
+        if view_range_array.size != 2 or not np.isfinite(view_range_array).all():
+            return
+        clamped_x_range = clamp_range(
+            (float(view_range_array[0]), float(view_range_array[1])),
+            self._x_domain,
+            positive_only=self._is_log_x_enabled(),
+        )
+        if clamped_x_range is None:
+            return
+        current_left_y = self._viewport_manager.get_current_left_view_range(self._plot_widget) or self._left_y_domain
+        current_right_y = self._viewport_manager.get_current_right_view_range(self._right_vb) or self._right_y_domain
+        self._viewport_manager.reload_viewport_data(
+            self._current_result,
+            self._plot_items,
+            clamped_x_range,
+            self._from_view_x_value,
+            VIEWPORT_POINTS,
+        )
+        self._apply_domain_limits()
+        self._apply_viewport(clamped_x_range, current_left_y, current_right_y)
+        self._update_measurement()
+        self._emit_viewport_changed()
 
     def _get_result_signature(self, result: Optional[SimulationResult]) -> Optional[Tuple[str, str, str]]:
         if result is None:

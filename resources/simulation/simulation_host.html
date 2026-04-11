@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Simulation Host</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+      background: #f4f7fb;
+      color: #0f172a;
+    }
+
+    html,
+    body,
+    #simulation-root {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background: #f4f7fb;
+    }
+
+    .shell {
+      display: flex;
+      flex-direction: column;
+      box-sizing: border-box;
+      width: 100%;
+      height: 100%;
+      padding: 8px;
+      gap: 8px;
+    }
+
+    .tab-row {
+      display: flex;
+      gap: 6px;
+      min-height: 0;
+      overflow-x: auto;
+      overflow-y: hidden;
+      padding-bottom: 2px;
+    }
+
+    .tab-row::-webkit-scrollbar {
+      height: 4px;
+    }
+
+    .tab-row::-webkit-scrollbar-thumb {
+      background: #cbd5e1;
+      border-radius: 999px;
+    }
+
+    .tab-chip {
+      appearance: none;
+      border: 1px solid #d8e1ec;
+      background: #ffffff;
+      color: #475569;
+      border-radius: 8px;
+      height: 28px;
+      padding: 0 10px;
+      font-size: 12px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    .tab-chip.active {
+      border-color: #2563eb;
+      color: #1d4ed8;
+      background: #eff6ff;
+    }
+
+    .status-row {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .card {
+      min-width: 0;
+      border: 1px solid #d8e1ec;
+      border-radius: 10px;
+      background: #ffffff;
+      padding: 10px;
+      box-sizing: border-box;
+    }
+
+    .card__label {
+      font-size: 11px;
+      color: #64748b;
+      margin-bottom: 6px;
+    }
+
+    .card__value {
+      font-size: 12px;
+      line-height: 1.5;
+      word-break: break-word;
+    }
+
+    .content {
+      display: grid;
+      grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+      gap: 8px;
+      min-height: 0;
+      flex: 1 1 auto;
+    }
+
+    .panel {
+      min-height: 0;
+      border: 1px solid #d8e1ec;
+      border-radius: 10px;
+      background: #ffffff;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .panel__header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 10px;
+      border-bottom: 1px solid #e2e8f0;
+    }
+
+    .panel__title {
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .panel__body {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow: auto;
+      padding: 10px;
+      box-sizing: border-box;
+    }
+
+    .history-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .history-item {
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 8px;
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .history-item__meta {
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+
+    .history-item__title,
+    .history-item__sub {
+      font-size: 12px;
+      line-height: 1.4;
+      word-break: break-word;
+    }
+
+    .history-item__sub {
+      color: #64748b;
+      font-size: 11px;
+    }
+
+    .history-item__action,
+    .action-btn {
+      appearance: none;
+      border: 1px solid #cbd5e1;
+      background: #ffffff;
+      color: #334155;
+      border-radius: 8px;
+      height: 28px;
+      padding: 0 10px;
+      font-size: 12px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    .action-btn:disabled,
+    .history-item__action:disabled {
+      opacity: 0.45;
+      cursor: default;
+    }
+
+    pre {
+      margin: 0;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-size: 11px;
+      line-height: 1.5;
+    }
+
+    @media (max-width: 900px) {
+      .status-row,
+      .content {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="simulation-root"></div>
+  <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+  <script src="cai://app/simulation/simulation_host_app.js"></script>
+</body>
+</html>

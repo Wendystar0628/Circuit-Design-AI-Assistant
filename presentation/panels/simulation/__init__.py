@@ -27,7 +27,7 @@ from presentation.panels.simulation.waveform_plot_types import WaveformMeasureme
 from presentation.panels.simulation.raw_data_table import RawDataTable, RawDataTableModel
 from presentation.panels.simulation.output_log_viewer import OutputLogViewer, LogHighlighter
 from presentation.panels.simulation.simulation_export_panel import SimulationExportPanel
-from presentation.panels.simulation.tuning_panel import TuningPanel, ParameterSliderWidget
+from presentation.panels.simulation.simulation_frontend_state_serializer import SimulationFrontendStateSerializer
 from presentation.panels.simulation.simulation_tab import (
     SimulationTab,
 )
@@ -36,6 +36,8 @@ from presentation.panels.simulation.simulation_tab_widgets import (
     SimulationResultTabView,
     SimulationStatusBanner,
 )
+from presentation.panels.simulation.simulation_web_bridge import SimulationWebBridge
+from presentation.panels.simulation.simulation_web_host import SimulationWebHost
 
 __all__ = [
     "SimulationViewModel",
@@ -51,10 +53,11 @@ __all__ = [
     "OutputLogViewer",
     "LogHighlighter",
     "SimulationExportPanel",
-    "TuningPanel",
-    "ParameterSliderWidget",
+    "SimulationFrontendStateSerializer",
     "SimulationTab",
     "SimulationMetricsSummaryPanel",
     "SimulationResultTabView",
     "SimulationStatusBanner",
+    "SimulationWebBridge",
+    "SimulationWebHost",
 ]

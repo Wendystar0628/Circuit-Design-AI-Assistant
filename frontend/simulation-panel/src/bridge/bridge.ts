@@ -1,0 +1,54 @@
+import type { SimulationMainState, SimulationTabId } from '../types/state'
+
+export interface SimulationBridge {
+  markReady(): void
+  loadResult(resultPath: string): void
+  activateTab(tabId: SimulationTabId): void
+  loadHistoryResult(resultPath: string): void
+  setSignalVisible(signalName: string, visible: boolean): void
+  clearAllSignals(): void
+  setCursorVisible(cursorId: 'a' | 'b', visible: boolean): void
+  moveCursor(cursorId: 'a' | 'b', position: number): void
+  requestFit(): void
+  zoomToRange(start: number, end: number): void
+  jumpRawDataToRow(row: number): void
+  jumpRawDataToX(xValue: number): void
+  searchRawDataValue(column: number, value: number, tolerance: number): void
+  searchOutputLog(keyword: string): void
+  filterOutputLog(level: string): void
+  jumpToOutputLogError(): void
+  refreshOutputLog(): void
+  requestExport(exportTypes: string[]): void
+  addToConversation(target: string): void
+}
+
+export interface SimulationAppApi {
+  setState(state: SimulationMainState | Record<string, unknown>): void
+  activateTab(tabId: SimulationTabId): void
+}
+
+interface QtTransport {
+  send(data: unknown): void
+}
+
+interface QtChannelObjects {
+  simulationBridge?: SimulationBridge
+}
+
+interface QtChannel {
+  objects: QtChannelObjects
+}
+
+interface QtWebChannelConstructor {
+  new (transport: QtTransport, callback: (channel: QtChannel) => void): unknown
+}
+
+declare global {
+  interface Window {
+    qt?: {
+      webChannelTransport?: QtTransport
+    }
+    QWebChannel?: QtWebChannelConstructor
+    simulationApp?: SimulationAppApi
+  }
+}

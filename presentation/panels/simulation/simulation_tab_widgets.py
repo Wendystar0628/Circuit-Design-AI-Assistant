@@ -6,7 +6,6 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
-    QProgressBar,
     QVBoxLayout,
 )
 
@@ -66,15 +65,6 @@ class SimulationStatusBanner(QFrame):
         self._text_label.setObjectName("statusText")
         layout.addWidget(self._text_label, 1)
 
-        self._progress_bar = QProgressBar()
-        self._progress_bar.setObjectName("statusProgress")
-        self._progress_bar.setFixedWidth(120)
-        self._progress_bar.setFixedHeight(6)
-        self._progress_bar.setTextVisible(False)
-        self._progress_bar.setRange(0, 0)
-        self._progress_bar.hide()
-        layout.addWidget(self._progress_bar)
-
     def _apply_style(self):
         self.setStyleSheet(f"""
             #statusIndicator {{
@@ -90,17 +80,6 @@ class SimulationStatusBanner(QFrame):
                 color: {COLOR_TEXT_PRIMARY};
                 font-size: {FONT_SIZE_NORMAL}px;
             }}
-
-            #statusProgress {{
-                background-color: #e0e0e0;
-                border: none;
-                border-radius: 3px;
-            }}
-
-            #statusProgress::chunk {{
-                background-color: {COLOR_ACCENT};
-                border-radius: 3px;
-            }}
         """)
 
     def show_awaiting_confirmation(self):
@@ -109,7 +88,6 @@ class SimulationStatusBanner(QFrame):
             "simulation.awaiting_confirmation",
             "迭代完成，请在对话面板中选择下一步操作"
         ))
-        self._progress_bar.hide()
         self.show()
 
     def show_running(self, message: str = ""):
@@ -119,7 +97,6 @@ class SimulationStatusBanner(QFrame):
             "优化进行中，请等待本轮完成..."
         )
         self._text_label.setText(text)
-        self._progress_bar.show()
         self.show()
 
     def hide_status(self):
@@ -394,6 +371,8 @@ class SimulationMetricsSummaryPanel(QFrame):
 
 
 class SimulationResultTabView(QFrame):
+    active_tab_changed = pyqtSignal(str)
+
     TAB_METRICS = 0
     TAB_CHART = 1
     TAB_WAVEFORM = 2
@@ -401,6 +380,15 @@ class SimulationResultTabView(QFrame):
     TAB_RAW_DATA = 4
     TAB_LOG = 5
     TAB_EXPORT = 6
+    _TAB_IDS = (
+        "metrics",
+        "chart",
+        "waveform",
+        "analysis_info",
+        "raw_data",
+        "output_log",
+        "export",
+    )
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -442,6 +430,7 @@ class SimulationResultTabView(QFrame):
 
         self._export_panel = SimulationExportPanel(self._chart_viewer, self._waveform_widget)
         self._tab_widget.addTab(self._export_panel, "")
+        self._tab_widget.currentChanged.connect(self._on_current_changed)
 
         layout.addWidget(self._tab_widget)
         self._update_tab_titles()
@@ -521,6 +510,17 @@ class SimulationResultTabView(QFrame):
     def export_panel(self) -> SimulationExportPanel:
         return self._export_panel
 
+    def current_tab_id(self) -> str:
+        return self._tab_id_from_index(self._tab_widget.currentIndex())
+
+    def activate_tab(self, tab_id: str) -> bool:
+        try:
+            index = self._TAB_IDS.index(str(tab_id or "metrics"))
+        except ValueError:
+            return False
+        self._tab_widget.setCurrentIndex(index)
+        return True
+
     def clear(self):
         self._metrics_summary_panel.clear()
         self._chart_viewer.clear()
@@ -547,6 +547,14 @@ class SimulationResultTabView(QFrame):
 
     def switch_to_log(self):
         self._tab_widget.setCurrentIndex(self.TAB_LOG)
+
+    def _on_current_changed(self, index: int):
+        self.active_tab_changed.emit(self._tab_id_from_index(index))
+
+    def _tab_id_from_index(self, index: int) -> str:
+        if 0 <= index < len(self._TAB_IDS):
+            return self._TAB_IDS[index]
+        return self._TAB_IDS[self.TAB_METRICS]
 
     def retranslate_ui(self):
         self._update_tab_titles()

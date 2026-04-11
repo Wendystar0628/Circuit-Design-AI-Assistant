@@ -1,0 +1,68 @@
+:root {
+  color-scheme: light;
+  font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+  --sim-app-bg: #f3f6fb;
+  --sim-surface-bg: #ffffff;
+  --sim-surface-muted: #f8fafc;
+  --sim-border: #d9e2ec;
+  --sim-border-strong: #cbd5e1;
+  --sim-text-primary: #0f172a;
+  --sim-text-secondary: #475569;
+  --sim-text-tertiary: #64748b;
+  --sim-accent: #2563eb;
+  --sim-accent-soft: #eff6ff;
+  --sim-success: #047857;
+  --sim-error: #b42318;
+  --sim-warning: #9a6700;
+  --sim-radius-sm: 6px;
+  --sim-radius-md: 8px;
+  --sim-radius-lg: 10px;
+  --sim-gap-xs: 4px;
+  --sim-gap-sm: 6px;
+  --sim-gap-md: 8px;
+  --sim-gap-lg: 10px;
+  --sim-pad-outer: 10px;
+  --sim-pad-inner: 8px;
+  --sim-pad-tight: 6px;
+  --sim-control-height: 28px;
+}
+
+@media (max-width: 1080px) {
+  :root {
+    --sim-pad-outer: 8px;
+    --sim-pad-inner: 7px;
+  }
+}
+
+@media (max-width: 760px) {
+  :root {
+    --sim-pad-outer: 6px;
+    --sim-pad-inner: 6px;
+    --sim-control-height: 26px;
+  }
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  background: var(--sim-app-bg);
+}
+
+body {
+  overflow: hidden;
+  color: var(--sim-text-primary);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}

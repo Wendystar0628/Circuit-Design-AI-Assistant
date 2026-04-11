@@ -47,13 +47,9 @@ class BottomPanel(QWidget):
     
     Signals:
         tab_changed: 标签页切换信号，携带新标签页索引
-        history_requested: 请求查看历史记录
-        settings_requested: 请求打开仿真设置
     """
     
     tab_changed = pyqtSignal(int)
-    history_requested = pyqtSignal()
-    settings_requested = pyqtSignal()
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -101,10 +97,6 @@ class BottomPanel(QWidget):
         """连接信号"""
         # 标签页切换
         self._tab_widget.currentChanged.connect(self._on_tab_changed)
-        
-        # 仿真标签页信号
-        self._simulation_tab.history_requested.connect(self.history_requested.emit)
-        self._simulation_tab.settings_requested.connect(self.settings_requested.emit)
     
     def _subscribe_events(self):
         """订阅事件"""

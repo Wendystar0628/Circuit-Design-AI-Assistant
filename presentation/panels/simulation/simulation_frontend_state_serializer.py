@@ -1,0 +1,325 @@
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Sequence
+
+from domain.simulation.models.simulation_result import SimulationResult
+from presentation.panels.simulation.simulation_view_model import DisplayMetric
+
+
+class SimulationFrontendStateSerializer:
+    _BASE_TABS = [
+        "metrics",
+        "chart",
+        "waveform",
+        "analysis_info",
+        "raw_data",
+        "output_log",
+        "export",
+    ]
+    _EXPORT_TYPES = [
+        "metrics",
+        "charts",
+        "waveforms",
+        "analysis_info",
+        "raw_data",
+        "output_log",
+    ]
+    _ANALYSIS_LABELS = {
+        "ac": "AC 小信号分析",
+        "dc": "DC 扫描分析",
+        "tran": "瞬态分析",
+        "noise": "噪声分析",
+        "op": "工作点分析",
+    }
+
+    def serialize_main_state(
+        self,
+        *,
+        project_root: str = "",
+        active_tab: str = "metrics",
+        current_result: Optional[SimulationResult] = None,
+        current_result_path: str = "",
+        metrics: Optional[Sequence[DisplayMetric]] = None,
+        overall_score: float = 0.0,
+        has_goals: bool = False,
+        simulation_status: Any = "idle",
+        status_message: str = "",
+        error_message: str = "",
+        history_results: Optional[Sequence[Dict[str, Any]]] = None,
+        latest_project_export_root: str = "",
+        awaiting_confirmation: bool = False,
+    ) -> Dict[str, Any]:
+        result = current_result if isinstance(current_result, SimulationResult) else None
+        normalized_metrics = [
+            self.serialize_metric(metric) for metric in (metrics or []) if isinstance(metric, DisplayMetric)
+        ]
+        available_tabs = list(self._BASE_TABS)
+        if project_root:
+            available_tabs.append("history")
+        if self._has_op_result(result):
+            available_tabs.append("op_result")
+        status_phase = self._resolve_status_phase(simulation_status, awaiting_confirmation)
+        normalized_active_tab = active_tab if active_tab in available_tabs else "metrics"
+        normalized_result_path = self._normalize_result_path(current_result_path)
+        normalized_history = [
+            self.serialize_history_item(item, current_result_path=normalized_result_path)
+            for item in (history_results or [])
+            if isinstance(item, dict)
+        ]
+        has_result = result is not None
+        has_waveform = self._has_waveform(result)
+        has_chart = self._has_chart(result)
+        has_output_log = bool(str(getattr(result, "raw_output", "") or "").strip())
+        result_summary = self.serialize_result(result, normalized_result_path)
+
+        return {
+            "simulation_runtime": {
+                "status": status_phase,
+                "status_message": str(status_message or ""),
+                "error_message": str(error_message or ""),
+                "project_root": str(project_root or ""),
+                "has_project": bool(project_root),
+                "current_result_path": normalized_result_path,
+                "is_empty": not has_result,
+                "has_result": has_result,
+                "has_error": bool(error_message),
+                "awaiting_confirmation": bool(awaiting_confirmation),
+                "current_result": result_summary,
+            },
+            "surface_tabs": {
+                "active_tab": normalized_active_tab,
+                "available_tabs": available_tabs,
+                "has_history": bool(project_root),
+                "has_op_result": self._has_op_result(result),
+            },
+            "metrics_view": {
+                "items": normalized_metrics,
+                "total": len(normalized_metrics),
+                "overall_score": float(overall_score or 0.0),
+                "has_goals": bool(has_goals),
+                "can_add_to_conversation": has_result,
+            },
+            "analysis_chart_view": {
+                "has_chart": has_chart,
+                "chart_count": 1 if has_chart else 0,
+                "can_export": has_chart,
+                "can_add_to_conversation": has_chart,
+            },
+            "waveform_view": {
+                "has_waveform": has_waveform,
+                "signal_count": len(self._signal_names(result)),
+                "signal_names": self._signal_names(result),
+                "can_export": has_waveform,
+                "can_add_to_conversation": has_waveform,
+            },
+            "analysis_info_view": self.serialize_analysis_info(result),
+            "raw_data_view": {
+                "has_data": bool(result is not None and getattr(result, "data", None) is not None),
+                "row_count": self._row_count(result),
+                "signal_count": len(self._signal_names(result)),
+                "x_axis_label": str(getattr(result, "x_axis_label", "") or ""),
+            },
+            "output_log_view": {
+                "has_log": has_output_log,
+                "line_count": self._line_count(getattr(result, "raw_output", "") if result is not None else ""),
+                "can_refresh": bool(project_root and normalized_result_path),
+                "can_add_to_conversation": has_output_log,
+            },
+            "export_view": {
+                "has_result": has_result,
+                "available_types": list(self._EXPORT_TYPES),
+                "latest_project_export_root": str(latest_project_export_root or ""),
+            },
+            "history_results_view": {
+                "items": normalized_history,
+                "selected_result_path": normalized_result_path,
+                "can_load": bool(project_root),
+            },
+            "op_result_view": {
+                "is_available": self._has_op_result(result),
+                "row_count": len(self._signal_names(result)) if self._has_op_result(result) else 0,
+                "can_add_to_conversation": False,
+            },
+        }
+
+    def serialize_metric(self, metric: DisplayMetric) -> Dict[str, Any]:
+        return {
+            "name": metric.name,
+            "display_name": metric.display_name,
+            "value": metric.value,
+            "unit": metric.unit,
+            "target": metric.target,
+            "is_met": metric.is_met,
+            "trend": metric.trend,
+            "category": metric.category,
+            "raw_value": metric.raw_value,
+            "confidence": metric.confidence,
+            "error_message": metric.error_message,
+        }
+
+    def serialize_result(
+        self,
+        result: Optional[SimulationResult],
+        current_result_path: str,
+    ) -> Dict[str, Any]:
+        if result is None:
+            return {
+                "has_result": False,
+                "result_path": "",
+                "file_path": "",
+                "file_name": "",
+                "analysis_type": "",
+                "analysis_label": "",
+                "executor": "",
+                "success": False,
+                "timestamp": "",
+                "duration_seconds": 0.0,
+                "version": 0,
+                "session_id": "",
+                "x_axis_kind": "",
+                "x_axis_label": "",
+                "x_axis_scale": "",
+                "requested_x_range": None,
+                "actual_x_range": None,
+                "has_raw_output": False,
+            }
+        return {
+            "has_result": True,
+            "result_path": current_result_path,
+            "file_path": str(result.file_path or ""),
+            "file_name": Path(str(result.file_path or "")).name if str(result.file_path or "") else "",
+            "analysis_type": str(result.analysis_type or ""),
+            "analysis_label": self._ANALYSIS_LABELS.get(str(result.analysis_type or "").lower(), str(result.analysis_type or "")),
+            "executor": str(result.executor or ""),
+            "success": bool(result.success),
+            "timestamp": str(result.timestamp or ""),
+            "duration_seconds": float(result.duration_seconds or 0.0),
+            "version": int(result.version or 0),
+            "session_id": str(result.session_id or ""),
+            "x_axis_kind": str(result.x_axis_kind or ""),
+            "x_axis_label": str(result.x_axis_label or ""),
+            "x_axis_scale": str(result.x_axis_scale or ""),
+            "requested_x_range": self._range_to_list(result.requested_x_range),
+            "actual_x_range": self._range_to_list(result.actual_x_range),
+            "has_raw_output": bool(str(result.raw_output or "").strip()),
+        }
+
+    def serialize_analysis_info(self, result: Optional[SimulationResult]) -> Dict[str, Any]:
+        if result is None:
+            return {
+                "analysis_type": "",
+                "analysis_command": "",
+                "executor": "",
+                "file_name": "",
+                "x_axis_kind": "",
+                "x_axis_label": "",
+                "x_axis_scale": "",
+                "requested_x_range": None,
+                "actual_x_range": None,
+                "parameters": {},
+            }
+        info = result.analysis_info if isinstance(result.analysis_info, dict) else {}
+        return {
+            "analysis_type": str(info.get("analysis_type") or result.analysis_type or ""),
+            "analysis_command": str(info.get("analysis_command") or result.analysis_command or ""),
+            "executor": str(result.executor or ""),
+            "file_name": Path(str(result.file_path or "")).name if str(result.file_path or "") else "",
+            "x_axis_kind": str(info.get("x_axis_kind") or result.x_axis_kind or ""),
+            "x_axis_label": str(info.get("x_axis_label") or result.x_axis_label or ""),
+            "x_axis_scale": str(info.get("x_axis_scale") or result.x_axis_scale or ""),
+            "requested_x_range": self._range_to_list(info.get("requested_x_range") or result.requested_x_range),
+            "actual_x_range": self._range_to_list(info.get("actual_x_range") or result.actual_x_range),
+            "parameters": dict(info.get("parameters") or {}),
+        }
+
+    def serialize_history_item(
+        self,
+        item: Dict[str, Any],
+        *,
+        current_result_path: str,
+    ) -> Dict[str, Any]:
+        result_path = self._normalize_result_path(str(item.get("path", "") or ""))
+        return {
+            "id": str(item.get("id", "") or ""),
+            "result_path": result_path,
+            "file_path": str(item.get("file_path", "") or ""),
+            "file_name": Path(str(item.get("file_path", "") or "")).name if str(item.get("file_path", "") or "") else "",
+            "analysis_type": str(item.get("analysis_type", "") or ""),
+            "success": bool(item.get("success", False)),
+            "timestamp": str(item.get("timestamp", "") or ""),
+            "is_current": bool(result_path and result_path == current_result_path),
+            "can_load": bool(result_path),
+        }
+
+    def _resolve_status_phase(self, simulation_status: Any, awaiting_confirmation: bool) -> str:
+        if awaiting_confirmation:
+            return "awaiting_confirmation"
+        raw_value = getattr(simulation_status, "value", simulation_status)
+        normalized = str(raw_value or "idle").lower()
+        if normalized in {"idle", "running", "complete", "error"}:
+            return normalized
+        return "idle"
+
+    def _has_waveform(self, result: Optional[SimulationResult]) -> bool:
+        return bool(self._signal_names(result))
+
+    def _has_chart(self, result: Optional[SimulationResult]) -> bool:
+        if result is None or not result.success or getattr(result, "data", None) is None:
+            return False
+        return str(result.analysis_type or "").lower() != "op"
+
+    def _has_op_result(self, result: Optional[SimulationResult]) -> bool:
+        if result is None:
+            return False
+        return bool(result.success and getattr(result, "data", None) is not None and str(result.analysis_type or "").lower() == "op")
+
+    def _signal_names(self, result: Optional[SimulationResult]) -> List[str]:
+        data = getattr(result, "data", None) if result is not None else None
+        if data is None or not hasattr(data, "get_signal_names"):
+            return []
+        try:
+            names = data.get_signal_names()
+        except Exception:
+            return []
+        return [str(name or "") for name in names if str(name or "")]
+
+    def _row_count(self, result: Optional[SimulationResult]) -> int:
+        data = getattr(result, "data", None) if result is not None else None
+        if data is None:
+            return 0
+        for axis_name in ("time", "frequency", "sweep"):
+            axis_values = getattr(data, axis_name, None)
+            if axis_values is not None:
+                try:
+                    return int(len(axis_values))
+                except Exception:
+                    return 0
+        signal_names = self._signal_names(result)
+        if not signal_names or not hasattr(data, "get_signal"):
+            return 0
+        try:
+            signal = data.get_signal(signal_names[0])
+            return int(len(signal)) if signal is not None else 0
+        except Exception:
+            return 0
+
+    def _line_count(self, raw_output: Any) -> int:
+        text = str(raw_output or "")
+        if not text.strip():
+            return 0
+        return len(text.splitlines())
+
+    def _range_to_list(self, value: Any) -> Optional[List[float]]:
+        if not isinstance(value, (tuple, list)) or len(value) != 2:
+            return None
+        try:
+            return [float(value[0]), float(value[1])]
+        except (TypeError, ValueError):
+            return None
+
+    def _normalize_result_path(self, value: str) -> str:
+        return str(value or "").replace("\\", "/").lower()
+
+
+__all__ = ["SimulationFrontendStateSerializer"]

@@ -124,6 +124,15 @@ class SimulationExportPanel(QWidget):
     def latest_project_export_root(self) -> Optional[Path]:
         return self._latest_project_export_root
 
+    def set_selected_types(self, selected_types: List[str]):
+        selected = {str(item or "") for item in selected_types}
+        for key, checkbox in self._checkboxes.items():
+            checkbox.setChecked(key in selected)
+
+    def export_selected_types(self, selected_types: List[str]):
+        self.set_selected_types(selected_types)
+        self._export_selected()
+
     def retranslate_ui(self):
         self._selection_title.setText(self._get_text("simulation.export.selection_title", "导出内容"))
         self._checkboxes["metrics"].setText(self._get_text("simulation.export.metrics", "仿真指标"))

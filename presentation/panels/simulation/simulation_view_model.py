@@ -43,7 +43,6 @@ from presentation.core.base_view_model import BaseViewModel
 from domain.simulation.models.simulation_result import SimulationResult
 from shared.event_types import (
     EVENT_SIM_STARTED,
-    EVENT_SIM_PROGRESS,
     EVENT_SIM_COMPLETE,
     EVENT_SIM_ERROR,
 )
@@ -125,12 +124,8 @@ class SimulationViewModel(BaseViewModel):
         self._metrics_list: List[DisplayMetric] = []
         self._overall_score: float = 0.0
         self._simulation_status: SimulationStatus = SimulationStatus.IDLE
-        self._progress: float = 0.0
         self._error_message: str = ""
         self._has_goals: bool = False  # 是否有设计目标
-
-        # 服务引用（延迟获取）
-        self._simulation_service = None
     
     # ============================================================
     # 属性访问器
@@ -162,26 +157,9 @@ class SimulationViewModel(BaseViewModel):
         return self._simulation_status
     
     @property
-    def progress(self) -> float:
-        """仿真进度（0-100）"""
-        return self._progress
-    
-    @property
     def error_message(self) -> str:
         """错误信息"""
         return self._error_message
-    
-    # ============================================================
-    # 延迟获取服务
-    # ============================================================
-    
-    @property
-    def simulation_service(self):
-        """延迟获取仿真服务"""
-        if self._simulation_service is None:
-            from domain.services.simulation_service import SimulationService
-            self._simulation_service = SimulationService()
-        return self._simulation_service
     
     # ============================================================
     # 生命周期
@@ -193,7 +171,6 @@ class SimulationViewModel(BaseViewModel):
         
         # 订阅仿真事件
         self.subscribe(EVENT_SIM_STARTED, self._on_simulation_started)
-        self.subscribe(EVENT_SIM_PROGRESS, self._on_simulation_progress)
         self.subscribe(EVENT_SIM_COMPLETE, self._on_simulation_complete)
         self.subscribe(EVENT_SIM_ERROR, self._on_simulation_error)
         
@@ -206,31 +183,20 @@ class SimulationViewModel(BaseViewModel):
     def _on_simulation_started(self, event_data: Dict[str, Any]):
         """处理仿真开始事件"""
         self._set_status(SimulationStatus.RUNNING)
-        self._progress = 0.0
         self._error_message = ""
         
         self.notify_property_changed("simulation_status", self._simulation_status)
-        self.notify_property_changed("progress", self._progress)
         self.notify_property_changed("error_message", self._error_message)
         
         self._logger.info(
             f"Simulation started: {event_data.get('circuit_file', 'unknown')}"
         )
     
-    def _on_simulation_progress(self, event_data: Dict[str, Any]):
-        """处理仿真进度事件"""
-        progress = event_data.get("progress", 0.0)
-        self._progress = progress * 100  # 转换为百分比
-        
-        self.notify_property_changed("progress", self._progress)
-    
     def _on_simulation_complete(self, event_data: Dict[str, Any]):
         """处理仿真完成事件"""
         self._set_status(SimulationStatus.COMPLETE)
-        self._progress = 100.0
         
         self.notify_property_changed("simulation_status", self._simulation_status)
-        self.notify_property_changed("progress", self._progress)
         
         self._logger.info("Simulation complete")
     
@@ -457,68 +423,6 @@ class SimulationViewModel(BaseViewModel):
             self._overall_score = -1.0
 
     # ============================================================
-    # 仿真控制方法
-    # ============================================================
-    
-    def request_simulation(
-        self,
-        file_path: Optional[str] = None,
-        project_root: Optional[str] = None,
-        analysis_config: Optional[Dict[str, Any]] = None,
-    ):
-        """
-        请求执行仿真
-        
-        Args:
-            file_path: 电路文件路径
-            project_root: 项目根目录
-            analysis_config: 仿真配置
-        """
-        if self.simulation_service is None:
-            self._logger.error("SimulationService not available")
-            self._set_status(SimulationStatus.ERROR)
-            self._error_message = "仿真服务不可用"
-            self.notify_property_changed("error_message", self._error_message)
-            return
-        
-        if not file_path or not project_root:
-            self._logger.error("file_path and project_root are required")
-            self._set_status(SimulationStatus.ERROR)
-            self._error_message = "未指定电路文件或项目路径"
-            self.notify_property_changed("error_message", self._error_message)
-            return
-        
-        # 重置状态
-        self._set_status(SimulationStatus.RUNNING)
-        self._progress = 0.0
-        self._error_message = ""
-        
-        self.notify_properties_changed({
-            "simulation_status": self._simulation_status,
-            "progress": self._progress,
-            "error_message": self._error_message,
-        })
-        
-        try:
-            result = self.simulation_service.run_simulation(
-                file_path=file_path,
-                analysis_config=analysis_config,
-                project_root=project_root,
-            )
-            
-            # 加载结果
-            self.load_result(result)
-            
-        except Exception as e:
-            self._logger.exception(f"Simulation request failed: {e}")
-            self._set_status(SimulationStatus.ERROR)
-            self._error_message = str(e)
-            self.notify_properties_changed({
-                "simulation_status": self._simulation_status,
-                "error_message": self._error_message,
-            })
-
-    # ============================================================
     # 辅助方法
     # ============================================================
     
@@ -550,12 +454,11 @@ class SimulationViewModel(BaseViewModel):
         return None
     
     def clear(self):
-        """清空所有数据"""
+        """清空当前状态"""
         self._current_result = None
         self._metrics_list = []
         self._overall_score = 0.0
         self._simulation_status = SimulationStatus.IDLE
-        self._progress = 0.0
         self._error_message = ""
         
         self.notify_properties_changed({
@@ -563,7 +466,6 @@ class SimulationViewModel(BaseViewModel):
             "metrics_list": [],
             "overall_score": 0.0,
             "simulation_status": SimulationStatus.IDLE,
-            "progress": 0.0,
             "error_message": "",
         })
 

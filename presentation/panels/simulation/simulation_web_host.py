@@ -1,5 +1,4 @@
 import json
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from PyQt6.QtCore import Qt
@@ -62,10 +61,6 @@ class SimulationWebHost(QWidget):
         layout.addWidget(self._web_view)
 
     def _resolve_entry_resource_path(self) -> str:
-        project_root = Path(__file__).resolve().parents[3]
-        react_entry = project_root / "resources" / "simulation" / "react-dist" / "index.html"
-        if react_entry.is_file():
-            return "simulation/react-dist/index.html"
         return "simulation/simulation_host.html"
 
     def _on_load_finished(self, ok: bool) -> None:

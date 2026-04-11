@@ -7,7 +7,7 @@ from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QSplitter, QTreeWidgetItem, QVBoxLayout, QWidget
 
 from presentation.panels.simulation.chart_data_cursor import ChartDataCursorController, DataCursorSample, DataCursorValue, build_draggable_vertical_cursor_line
-from presentation.panels.simulation.chart_export_utils import build_chart_export_payload
+from presentation.panels.simulation.chart_export_utils import build_chart_export_payload, serialize_chart_series_for_web
 from presentation.panels.simulation.chart_signal_tree import SignalTreeWidget
 from presentation.panels.simulation.chart_view_types import ChartSeries, ChartSpec
 from presentation.panels.simulation.ltspice_plot_interaction import (
@@ -353,6 +353,63 @@ class ChartPage(QWidget):
         if self._spec is None or not self._spec.series:
             return None
         return build_chart_export_payload(self._spec, self._spec.series)
+
+    def get_web_snapshot(self) -> Dict[str, Any]:
+        spec = self._spec
+        visible_series = self._visible_series()
+        available_series = []
+        if spec is not None:
+            visible_names = {series.name for series in visible_series}
+            available_series = [
+                {
+                    "name": series.name,
+                    "color": series.color,
+                    "axis_key": series.axis_key,
+                    "line_style": series.line_style,
+                    "group_key": series.group_key,
+                    "component": series.component,
+                    "visible": series.name in visible_names,
+                    "point_count": int(len(series.y_data)),
+                }
+                for series in spec.series
+            ]
+        return {
+            "title": str(spec.title or "") if spec is not None else "",
+            "chart_type": str(spec.chart_type.value) if spec is not None else "",
+            "x_label": str(spec.x_label or "") if spec is not None else "",
+            "y_label": str(spec.y_label or "") if spec is not None else "",
+            "secondary_y_label": str(spec.secondary_y_label or "") if spec is not None and spec.secondary_y_label else "",
+            "log_x": bool(spec.log_x) if spec is not None else False,
+            "log_y": bool(spec.log_y) if spec is not None else False,
+            "available_series": available_series,
+            "visible_series": [serialize_chart_series_for_web(series) for series in visible_series],
+            "measurement_enabled": self.is_measurement_enabled(),
+            "measurement": self._build_measurement_snapshot(),
+        }
+
+    def _build_measurement_snapshot(self) -> Dict[str, Any]:
+        values_a: Dict[str, float] = {}
+        values_b: Dict[str, float] = {}
+        if self._cursor_a_pos is not None:
+            values_a = self._sample_series(self._cursor_a_pos)
+        if self._cursor_b_pos is not None:
+            values_b = self._sample_series(self._cursor_b_pos)
+        cursor_a_x = self._to_display_x(self._cursor_a_pos)
+        cursor_b_x = self._to_display_x(self._cursor_b_pos)
+        delta_x = None
+        frequency = None
+        if cursor_a_x is not None and cursor_b_x is not None:
+            delta_x = float(cursor_b_x - cursor_a_x)
+            if self._should_show_frequency() and delta_x != 0:
+                frequency = float(1.0 / abs(delta_x))
+        return {
+            "cursor_a_x": cursor_a_x,
+            "cursor_b_x": cursor_b_x,
+            "delta_x": delta_x,
+            "frequency": frequency,
+            "values_a": values_a,
+            "values_b": values_b,
+        }
 
     def _ensure_cursors(self):
         if self._spec is None or not self._plot_items or self._x_domain is None:

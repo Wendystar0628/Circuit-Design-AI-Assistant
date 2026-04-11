@@ -51,8 +51,8 @@ class ChartViewer(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._result: Optional[SimulationResult] = None
-        self._chart_specs: List[ChartSpec] = []
-        self._pages: List[QWidget] = []
+        self._chart_spec: Optional[ChartSpec] = None
+        self._chart_page: Optional[QWidget] = None
 
         self._setup_ui()
         self._apply_style()
@@ -143,23 +143,17 @@ class ChartViewer(QWidget):
         self._action_measure.setChecked(False)
         self._action_cursor.setChecked(False)
         self._action_cursor.setEnabled(False)
-        self._chart_specs = self._build_chart_specs(result)
-        self._rebuild_pages()
+        self._chart_spec = self._resolve_chart_spec(result)
+        self._rebuild_page()
 
     def clear(self):
         self._result = None
-        self._chart_specs = []
+        self._chart_spec = None
         self._action_measure.setChecked(False)
         self._action_cursor.setChecked(False)
         self._action_cursor.setEnabled(False)
         self._action_add_to_conversation.setEnabled(False)
-        while self._page_host_layout.count() > 0:
-            item = self._page_host_layout.takeAt(0)
-            widget = item.widget()
-            if widget is None:
-                continue
-            widget.deleteLater()
-        self._pages = []
+        self._clear_chart_page()
         self._show_empty_state()
 
     def retranslate_ui(self):
@@ -168,11 +162,22 @@ class ChartViewer(QWidget):
         self._action_cursor.setText(self._tr("Cursor"))
         self._action_add_to_conversation.setText(self._tr("Add to Conversation"))
         self._empty_label.setText(self._tr("No interactive chart available for the current result."))
-        for page in self._pages:
-            page.retranslate_ui()
+        if self._chart_page is not None:
+            self._chart_page.retranslate_ui()
+
+    def get_web_snapshot(self) -> Dict[str, Any]:
+        page = self._chart_page
+        page_snapshot = page.get_web_snapshot() if page is not None else {}
+        return {
+            "has_chart": bool(page is not None and page.has_chart()),
+            "chart_count": 1 if self._chart_spec is not None else 0,
+            "can_export": bool(page is not None and page.has_chart()),
+            "can_add_to_conversation": bool(self._action_add_to_conversation.isEnabled()),
+            **page_snapshot,
+        }
 
     def export_current_image(self, path: str) -> bool:
-        page = self._current_page()
+        page = self._chart_page
         if page is None or not page.has_chart():
             return False
         return bool(page.export_image(path))
@@ -181,61 +186,62 @@ class ChartViewer(QWidget):
         if self._result is None:
             return []
 
+        page = self._chart_page
+        spec = self._chart_spec
+        if page is None or spec is None or not page.has_chart():
+            return []
+
         target_dir = Path(output_dir)
         target_dir.mkdir(parents=True, exist_ok=True)
 
         exported_files: List[str] = []
         chart_entries: List[Dict[str, Any]] = []
-        for index, page in enumerate(self._pages, start=1):
-            if not page.has_chart():
-                continue
+        chart_payload = page.build_export_payload()
+        if chart_payload is None:
+            return []
 
-            spec = self._chart_specs[index - 1]
-            chart_payload = page.build_export_payload()
-            if chart_payload is None:
-                continue
+        chart_index = 1
+        base_name = f"{chart_index:02d}_{spec.chart_type.value}"
+        image_path = target_dir / f"{base_name}.png"
+        csv_path = target_dir / f"{base_name}.csv"
+        json_path = target_dir / f"{base_name}.json"
+        file_map: Dict[str, str] = {}
 
-            base_name = f"{index:02d}_{spec.chart_type.value}"
-            image_path = target_dir / f"{base_name}.png"
-            csv_path = target_dir / f"{base_name}.csv"
-            json_path = target_dir / f"{base_name}.json"
-            file_map: Dict[str, str] = {}
+        if page.export_image(str(image_path)):
+            exported_files.append(str(image_path))
+            file_map["image"] = image_path.name
+        if write_chart_csv(str(csv_path), chart_payload):
+            exported_files.append(str(csv_path))
+            file_map["csv"] = csv_path.name
 
-            if page.export_image(str(image_path)):
-                exported_files.append(str(image_path))
-                file_map["image"] = image_path.name
-            if write_chart_csv(str(csv_path), chart_payload):
-                exported_files.append(str(csv_path))
-                file_map["csv"] = csv_path.name
-
-            file_map["json"] = json_path.name
-            wrapped_payload = simulation_artifact_exporter.build_artifact_payload(
-                self._result,
-                "chart",
-                summary={
-                    "chart_index": index,
-                    "chart_type": spec.chart_type.value,
-                    "title": spec.title,
-                    "series_count": len(chart_payload["series"]),
-                    "row_count": len(chart_payload["rows"]),
-                },
-                files=file_map,
-                data=chart_payload,
-                extra_metadata={
-                    "chart_index": index,
-                },
-            )
-            json_path.write_text(json.dumps(wrapped_payload, ensure_ascii=False, indent=2), encoding="utf-8")
-            exported_files.append(str(json_path))
-
-            chart_entries.append({
-                "chart_index": index,
+        file_map["json"] = json_path.name
+        wrapped_payload = simulation_artifact_exporter.build_artifact_payload(
+            self._result,
+            "chart",
+            summary={
+                "chart_index": chart_index,
                 "chart_type": spec.chart_type.value,
                 "title": spec.title,
                 "series_count": len(chart_payload["series"]),
                 "row_count": len(chart_payload["rows"]),
-                "files": file_map,
-            })
+            },
+            files=file_map,
+            data=chart_payload,
+            extra_metadata={
+                "chart_index": chart_index,
+            },
+        )
+        json_path.write_text(json.dumps(wrapped_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        exported_files.append(str(json_path))
+
+        chart_entries.append({
+            "chart_index": chart_index,
+            "chart_type": spec.chart_type.value,
+            "title": spec.title,
+            "series_count": len(chart_payload["series"]),
+            "row_count": len(chart_payload["rows"]),
+            "files": file_map,
+        })
 
         manifest_path = target_dir / "charts.json"
         manifest_payload = simulation_artifact_exporter.build_artifact_payload(
@@ -256,71 +262,71 @@ class ChartViewer(QWidget):
 
         return exported_files
 
-    def _rebuild_pages(self):
+    def _clear_chart_page(self):
         while self._page_host_layout.count() > 0:
             item = self._page_host_layout.takeAt(0)
             widget = item.widget()
             if widget is None:
                 continue
             widget.deleteLater()
-        self._pages = []
+        self._chart_page = None
 
-        for spec in self._chart_specs:
-            page = self._create_page(spec)
-            page.set_chart(spec)
-            page.retranslate_ui()
-            self._pages.append(page)
-            self._page_host_layout.addWidget(page)
+    def _rebuild_page(self):
+        self._clear_chart_page()
 
-        if self._pages:
-            self._reset_page_interaction_state()
-            self._update_toolbar_state()
-            self._hide_empty_state()
-        else:
+        spec = self._chart_spec
+        if spec is None:
             self._action_cursor.setChecked(False)
             self._action_cursor.setEnabled(False)
+            self._action_add_to_conversation.setEnabled(False)
             self._show_empty_state()
+            return
+
+        page = self._create_page(spec)
+        page.set_chart(spec)
+        page.retranslate_ui()
+        self._chart_page = page
+        self._page_host_layout.addWidget(page)
+        self._reset_page_interaction_state()
+        self._update_toolbar_state()
+        self._hide_empty_state()
 
     def _create_page(self, spec: ChartSpec) -> QWidget:
         if spec.chart_type == ChartType.BODE_OVERLAY:
             return BodeOverlayChartPage()
         return ChartPage()
 
-    def _current_page(self) -> Optional[QWidget]:
-        return self._pages[0] if self._pages else None
-
-    def _build_chart_specs(
+    def _resolve_chart_spec(
         self,
         result: SimulationResult,
-    ) -> List[ChartSpec]:
+    ) -> Optional[ChartSpec]:
         if result is None or not result.success or result.data is None:
-            return []
+            return None
 
-        resolved_chart_types = self._get_chart_types_for_result(result)
-        if not resolved_chart_types:
-            return []
+        chart_type = self._get_chart_type_for_result(result)
+        if chart_type is None:
+            return None
 
-        specs: List[ChartSpec] = []
         analysis = (result.analysis_type or "").lower()
-        for chart_type in resolved_chart_types:
-            spec = self._build_chart_spec(result, analysis, chart_type)
-            if spec is not None:
-                spec.series = self._deduplicate_series(spec.series)
-            if spec is not None and spec.series:
-                specs.append(spec)
-        return specs
+        spec = self._build_chart_spec(result, analysis, chart_type)
+        if spec is None:
+            return None
+        spec.series = self._deduplicate_series(spec.series)
+        if not spec.series:
+            return None
+        return spec
 
-    def _get_chart_types_for_result(self, result: SimulationResult) -> List[ChartType]:
+    def _get_chart_type_for_result(self, result: SimulationResult) -> Optional[ChartType]:
         analysis = (result.analysis_type or "").lower()
         if analysis == "tran":
-            return [ChartType.WAVEFORM_TIME]
+            return ChartType.WAVEFORM_TIME
         if analysis == "ac":
-            return [ChartType.BODE_OVERLAY]
+            return ChartType.BODE_OVERLAY
         if analysis == "dc":
-            return [ChartType.DC_SWEEP]
+            return ChartType.DC_SWEEP
         if analysis == "noise":
-            return [ChartType.NOISE_SPECTRUM]
-        return []
+            return ChartType.NOISE_SPECTRUM
+        return None
 
     def _deduplicate_series(self, series_list: List[ChartSeries]) -> List[ChartSeries]:
         deduplicated: List[ChartSeries] = []
@@ -526,30 +532,31 @@ class ChartViewer(QWidget):
     def _reset_page_interaction_state(self):
         self._action_measure.setChecked(False)
         self._action_cursor.setChecked(False)
-        for page in self._pages:
+        page = self._chart_page
+        if page is not None:
             page.set_measurement_enabled(False)
             page.set_data_cursor_enabled(False)
         self._update_toolbar_state()
 
     def _on_fit_to_view(self):
-        page = self._current_page()
+        page = self._chart_page
         if page is not None:
             page.fit_to_view()
 
     def _on_toggle_measurement(self, checked: bool):
-        page = self._current_page()
+        page = self._chart_page
         if page is not None:
             page.set_measurement_enabled(checked)
 
     def _on_toggle_cursor(self, checked: bool):
-        page = self._current_page()
+        page = self._chart_page
         if page is None:
             self._action_cursor.setChecked(False)
             return
         page.set_data_cursor_enabled(checked)
 
     def _update_toolbar_state(self):
-        page = self._current_page()
+        page = self._chart_page
         supports_cursor = bool(page is not None and page.supports_data_cursor())
         has_chart = bool(page is not None and page.has_chart())
         self._action_cursor.setEnabled(supports_cursor)

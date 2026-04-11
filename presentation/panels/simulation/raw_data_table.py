@@ -22,7 +22,7 @@
 
 import logging
 import os
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 
@@ -604,6 +604,52 @@ class RawDataTable(QWidget):
                 return True
         
         return False
+    
+    def get_web_snapshot(self, *, max_rows: int = 400) -> Dict[str, Any]:
+        snapshot = self._model.snapshot
+        headers = [self._model.x_label, *self._model.signal_names] if snapshot is not None else []
+        selection_model = self._table_view.selectionModel()
+        selected_rows = []
+        if selection_model is not None:
+            selected_rows = sorted(index.row() for index in selection_model.selectedRows())
+        selected_row = selected_rows[0] if selected_rows else None
+        total_rows = self._model.total_rows
+        if total_rows <= max_rows:
+            window_start = 0
+            window_end = total_rows
+        elif selected_row is not None:
+            half_window = max_rows // 2
+            window_start = max(0, min(selected_row - half_window, total_rows - max_rows))
+            window_end = min(total_rows, window_start + max_rows)
+        else:
+            window_start = 0
+            window_end = min(total_rows, max_rows)
+        selected_row_set = set(selected_rows)
+        rows = []
+        for row_index in range(window_start, window_end):
+            values = []
+            for column_index in range(len(headers)):
+                cell_value = self._model._get_cell_value(row_index, column_index)
+                values.append(self._model._format_value(cell_value) if cell_value is not None else "--")
+            rows.append({
+                "row_number": row_index + 1,
+                "values": values,
+                "selected": row_index in selected_row_set,
+            })
+        return {
+            "has_data": bool(snapshot is not None and total_rows > 0),
+            "row_count": total_rows,
+            "signal_count": len(self._model.signal_names),
+            "x_axis_label": self._model.x_label,
+            "columns": headers,
+            "rows": rows,
+            "window_start": window_start + 1 if rows else 0,
+            "window_end": window_end,
+            "has_more_before": window_start > 0,
+            "has_more_after": window_end < total_rows,
+            "selected_row_numbers": [row + 1 for row in selected_rows],
+            "selection_count": len(selected_rows),
+        }
     
     def retranslate_ui(self):
         """重新翻译 UI 文本"""

@@ -51,6 +51,10 @@ class SimulationFrontendStateSerializer:
         history_results: Optional[Sequence[Dict[str, Any]]] = None,
         latest_project_export_root: str = "",
         awaiting_confirmation: bool = False,
+        analysis_chart_snapshot: Optional[Dict[str, Any]] = None,
+        waveform_snapshot: Optional[Dict[str, Any]] = None,
+        raw_data_snapshot: Optional[Dict[str, Any]] = None,
+        output_log_snapshot: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         result = current_result if isinstance(current_result, SimulationResult) else None
         normalized_metrics = [
@@ -82,6 +86,40 @@ class SimulationFrontendStateSerializer:
             if export_type != "op_result" or has_op_result
         ]
 
+        analysis_chart_view = {
+            "has_chart": has_chart,
+            "chart_count": 1 if has_chart else 0,
+            "can_export": has_chart,
+            "can_add_to_conversation": has_chart,
+        }
+        waveform_view = {
+            "has_waveform": has_waveform,
+            "signal_count": len(self._signal_names(result)),
+            "signal_names": self._signal_names(result),
+            "can_export": has_waveform,
+            "can_add_to_conversation": has_waveform,
+        }
+        raw_data_view = {
+            "has_data": bool(result is not None and getattr(result, "data", None) is not None),
+            "row_count": self._row_count(result),
+            "signal_count": len(self._signal_names(result)),
+            "x_axis_label": str(getattr(result, "x_axis_label", "") or ""),
+        }
+        output_log_view = {
+            "has_log": has_output_log,
+            "line_count": self._line_count(getattr(result, "raw_output", "") if result is not None else ""),
+            "can_refresh": bool(project_root and normalized_result_path),
+            "can_add_to_conversation": has_output_log,
+        }
+        if isinstance(analysis_chart_snapshot, dict):
+            analysis_chart_view.update(analysis_chart_snapshot)
+        if isinstance(waveform_snapshot, dict):
+            waveform_view.update(waveform_snapshot)
+        if isinstance(raw_data_snapshot, dict):
+            raw_data_view.update(raw_data_snapshot)
+        if isinstance(output_log_snapshot, dict):
+            output_log_view.update(output_log_snapshot)
+
         return {
             "simulation_runtime": {
                 "status": status_phase,
@@ -109,32 +147,11 @@ class SimulationFrontendStateSerializer:
                 "has_goals": bool(has_goals),
                 "can_add_to_conversation": has_result,
             },
-            "analysis_chart_view": {
-                "has_chart": has_chart,
-                "chart_count": 1 if has_chart else 0,
-                "can_export": has_chart,
-                "can_add_to_conversation": has_chart,
-            },
-            "waveform_view": {
-                "has_waveform": has_waveform,
-                "signal_count": len(self._signal_names(result)),
-                "signal_names": self._signal_names(result),
-                "can_export": has_waveform,
-                "can_add_to_conversation": has_waveform,
-            },
+            "analysis_chart_view": analysis_chart_view,
+            "waveform_view": waveform_view,
             "analysis_info_view": self.serialize_analysis_info(result),
-            "raw_data_view": {
-                "has_data": bool(result is not None and getattr(result, "data", None) is not None),
-                "row_count": self._row_count(result),
-                "signal_count": len(self._signal_names(result)),
-                "x_axis_label": str(getattr(result, "x_axis_label", "") or ""),
-            },
-            "output_log_view": {
-                "has_log": has_output_log,
-                "line_count": self._line_count(getattr(result, "raw_output", "") if result is not None else ""),
-                "can_refresh": bool(project_root and normalized_result_path),
-                "can_add_to_conversation": has_output_log,
-            },
+            "raw_data_view": raw_data_view,
+            "output_log_view": output_log_view,
             "export_view": {
                 "has_result": has_result,
                 "available_types": available_export_types,

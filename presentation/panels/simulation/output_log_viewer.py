@@ -19,7 +19,7 @@
 """
 
 import logging
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from PyQt6.QtCore import Qt, pyqtSignal, QRegularExpression
 from PyQt6.QtGui import (
@@ -605,6 +605,52 @@ class OutputLogViewer(QWidget):
         """获取总行数"""
         return self._summary.total_lines if self._summary else 0
     
+    def get_web_snapshot(self, *, max_lines: int = 1000) -> Dict[str, Any]:
+        total_filtered_lines = len(self._filtered_lines)
+        selected_line_number = self._current_selected_line_number()
+        if total_filtered_lines <= max_lines:
+            window_start = 0
+            window_end = total_filtered_lines
+        elif selected_line_number is not None:
+            selected_index = next(
+                (index for index, line in enumerate(self._filtered_lines) if line.line_number == selected_line_number),
+                0,
+            )
+            half_window = max_lines // 2
+            window_start = max(0, min(selected_index - half_window, total_filtered_lines - max_lines))
+            window_end = min(total_filtered_lines, window_start + max_lines)
+        else:
+            window_start = 0
+            window_end = max_lines
+        visible_lines = self._filtered_lines[window_start:window_end]
+        summary = self._summary.to_dict() if self._summary is not None else {
+            "total_lines": 0,
+            "error_count": 0,
+            "warning_count": 0,
+            "info_count": 0,
+            "analysis_type": "",
+            "duration_seconds": 0.0,
+            "success": True,
+            "first_error": None,
+            "timestamp": "",
+        }
+        return {
+            "has_log": bool(self._log_lines),
+            "line_count": len(self._log_lines),
+            "filtered_line_count": total_filtered_lines,
+            "can_refresh": bool(self._sim_result_path and self._project_root),
+            "can_add_to_conversation": bool(self._log_lines),
+            "current_filter": str(self._current_filter or "all"),
+            "search_keyword": self._search_edit.text().strip(),
+            "summary": summary,
+            "lines": [line.to_dict() for line in visible_lines],
+            "window_start": window_start + 1 if visible_lines else 0,
+            "window_end": window_end,
+            "has_more_before": window_start > 0,
+            "has_more_after": window_end < total_filtered_lines,
+            "selected_line_number": selected_line_number,
+        }
+    
     def retranslate_ui(self):
         """重新翻译 UI 文本"""
         self._search_label.setText(self._tr("Search:"))
@@ -681,6 +727,13 @@ class OutputLogViewer(QWidget):
             self._warning_label.setText(self._tr("Warnings: 0"))
             self._error_label.setStyleSheet("")
             self._warning_label.setStyleSheet("")
+
+    def _current_selected_line_number(self) -> Optional[int]:
+        cursor = self._log_view.textCursor()
+        block_number = max(0, cursor.blockNumber())
+        if block_number >= len(self._filtered_lines):
+            return None
+        return int(self._filtered_lines[block_number].line_number)
     
     def _jump_to_line(self, line_number: int):
         """跳转到指定行"""

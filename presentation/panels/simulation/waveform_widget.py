@@ -29,7 +29,7 @@
 """
 
 import logging
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QPixmap
@@ -741,6 +741,79 @@ class WaveformWidget(QWidget):
 
     def get_displayed_signal_names(self) -> List[str]:
         return list(self._plot_items.keys())
+
+    def get_web_snapshot(self, *, max_points: int = 1000) -> Dict[str, Any]:
+        available_signal_names: List[str] = []
+        if self._current_result is not None:
+            try:
+                available_signal_names = self._data_service.get_resolved_signal_names(self._current_result)
+            except Exception:
+                available_signal_names = []
+        displayed_signal_names = self.get_displayed_signal_names()
+        displayed_signal_set = set(displayed_signal_names)
+        measurement = self.get_measurement()
+        visible_series = []
+        for signal_name, plot_item in self._plot_items.items():
+            waveform_data = plot_item.waveform_data
+            if waveform_data is None:
+                continue
+            x_data = waveform_data.x_data
+            y_data = waveform_data.y_data
+            total_points = min(len(x_data), len(y_data))
+            if total_points <= 0:
+                x_values: List[float] = []
+                y_values: List[float] = []
+            else:
+                if max_points > 0 and total_points > max_points:
+                    sample_indexes = np.linspace(0, total_points - 1, num=max_points, dtype=int)
+                    x_sample = x_data[sample_indexes]
+                    y_sample = y_data[sample_indexes]
+                else:
+                    x_sample = x_data[:total_points]
+                    y_sample = y_data[:total_points]
+                x_values = [float(value) for value in x_sample]
+                y_values = [float(value) for value in y_sample]
+            visible_series.append({
+                "name": signal_name,
+                "color": plot_item.color,
+                "axis": plot_item.axis,
+                "x": x_values,
+                "y": y_values,
+                "point_count": total_points,
+                "sampled_point_count": len(y_values),
+            })
+        signal_catalog = [
+            {
+                "name": signal_name,
+                "visible": signal_name in displayed_signal_set,
+                "signal_type": WaveformDataService.get_signal_type(signal_name, self._signal_types),
+            }
+            for signal_name in available_signal_names
+        ]
+        return {
+            "has_waveform": bool(available_signal_names),
+            "signal_count": len(available_signal_names),
+            "signal_names": available_signal_names,
+            "displayed_signal_names": displayed_signal_names,
+            "signal_catalog": signal_catalog,
+            "visible_series": visible_series,
+            "x_axis_label": self._get_x_axis_label(),
+            "log_x": self._is_log_x_enabled(),
+            "cursor_a_visible": self._cursor_a is not None,
+            "cursor_b_visible": self._cursor_b is not None,
+            "measurement": {
+                "cursor_a_x": float(measurement.cursor_a_x) if measurement.cursor_a_x is not None else None,
+                "cursor_b_x": float(measurement.cursor_b_x) if measurement.cursor_b_x is not None else None,
+                "delta_x": float(measurement.delta_x) if measurement.delta_x is not None else None,
+                "delta_y": float(measurement.delta_y) if measurement.delta_y is not None else None,
+                "slope": float(measurement.slope) if measurement.slope is not None else None,
+                "frequency": float(measurement.frequency) if measurement.frequency is not None else None,
+                "values_a": {name: float(value) for name, value in (measurement.signal_values_a or {}).items()},
+                "values_b": {name: float(value) for name, value in (measurement.signal_values_b or {}).items()},
+            },
+            "can_export": bool(self._current_result is not None and self._plot_items),
+            "can_add_to_conversation": bool(self._plot_items),
+        }
 
     def _get_x_axis_label(self) -> str:
         if self._current_result is None:

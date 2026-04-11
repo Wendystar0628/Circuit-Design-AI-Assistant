@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, List
 
 from PyQt6.QtCore import QObject, QJsonValue, pyqtSignal, pyqtSlot
 
 
 class SimulationWebBridge(QObject):
     ready = pyqtSignal()
-    load_result_requested = pyqtSignal(str)
     activate_tab_requested = pyqtSignal(str)
     load_history_result_requested = pyqtSignal(str)
     signal_visibility_toggled = pyqtSignal(str, bool)
@@ -29,10 +28,6 @@ class SimulationWebBridge(QObject):
     @pyqtSlot()
     def markReady(self) -> None:
         self.ready.emit()
-
-    @pyqtSlot(str)
-    def loadResult(self, result_path: str) -> None:
-        self.load_result_requested.emit(str(result_path or ""))
 
     @pyqtSlot(str)
     def activateTab(self, tab_id: str) -> None:

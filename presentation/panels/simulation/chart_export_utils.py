@@ -1,5 +1,6 @@
 import csv
 from typing import Any, Dict, List, Sequence
+import numpy as np
 
 from presentation.panels.simulation.chart_view_types import ChartSeries, ChartSpec
 
@@ -18,6 +19,40 @@ def serialize_chart_series(series: ChartSeries) -> Dict[str, Any]:
     }
 
 
+def serialize_chart_series_for_web(
+    series: ChartSeries,
+    *,
+    max_points: int = 800,
+) -> Dict[str, Any]:
+    x_data = np.asarray(series.x_data, dtype=float)
+    y_data = np.asarray(series.y_data, dtype=float)
+    total_points = min(len(x_data), len(y_data))
+    if total_points <= 0:
+        x_values: List[float] = []
+        y_values: List[float] = []
+    else:
+        if max_points > 0 and total_points > max_points:
+            sample_indexes = np.linspace(0, total_points - 1, num=max_points, dtype=int)
+            x_data = x_data[sample_indexes]
+            y_data = y_data[sample_indexes]
+        else:
+            x_data = x_data[:total_points]
+            y_data = y_data[:total_points]
+        x_values = [float(value) for value in x_data]
+        y_values = [float(value) for value in y_data]
+    return {
+        "name": series.name,
+        "color": series.color,
+        "axis_key": series.axis_key,
+        "line_style": series.line_style,
+        "group_key": series.group_key,
+        "component": series.component,
+        "x": x_values,
+        "y": y_values,
+        "point_count": total_points,
+        "sampled_point_count": len(y_values),
+    }
+
 
 def build_chart_data_rows(x_label: str, series_list: Sequence[ChartSeries]) -> List[Dict[str, float]]:
     if not series_list:
@@ -31,7 +66,6 @@ def build_chart_data_rows(x_label: str, series_list: Sequence[ChartSeries]) -> L
                 row[series.name] = float(series.y_data[index])
         rows.append(row)
     return rows
-
 
 
 def build_chart_export_payload(spec: ChartSpec, visible_series: Sequence[ChartSeries]) -> Dict[str, Any]:
@@ -49,7 +83,6 @@ def build_chart_export_payload(spec: ChartSpec, visible_series: Sequence[ChartSe
     }
 
 
-
 def write_chart_csv(path: str, export_payload: Dict[str, Any]) -> bool:
     rows = export_payload.get("rows", [])
     headers = [export_payload["x_label"]] + [series["name"] for series in export_payload.get("series", [])]
@@ -65,5 +98,6 @@ __all__ = [
     "build_chart_data_rows",
     "build_chart_export_payload",
     "serialize_chart_series",
+    "serialize_chart_series_for_web",
     "write_chart_csv",
 ]

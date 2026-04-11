@@ -2,7 +2,6 @@ import type { SimulationMainState, SimulationTabId } from '../types/state'
 
 export interface SimulationBridge {
   markReady(): void
-  loadResult(resultPath: string): void
   activateTab(tabId: SimulationTabId): void
   loadHistoryResult(resultPath: string): void
   setSignalVisible(signalName: string, visible: boolean): void

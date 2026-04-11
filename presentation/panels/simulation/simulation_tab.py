@@ -166,6 +166,10 @@ class SimulationTab(QWidget):
             history_results=history_results,
             latest_project_export_root=self._get_latest_project_export_root() or "",
             awaiting_confirmation=self._awaiting_confirmation,
+            analysis_chart_snapshot=self._backend_runtime.chart_viewer.get_web_snapshot(),
+            waveform_snapshot=self._backend_runtime.waveform_widget.get_web_snapshot(),
+            raw_data_snapshot=self._backend_runtime.raw_data_table.get_web_snapshot(),
+            output_log_snapshot=self._backend_runtime.output_log_viewer.get_web_snapshot(),
         )
 
     def _update_authoritative_frontend_state(self):
@@ -439,23 +443,26 @@ class SimulationTab(QWidget):
             return
         self._bound_web_bridge = bridge
         bridge.activate_tab_requested.connect(self.activate_result_tab)
-        bridge.load_result_requested.connect(self.load_history_result)
         bridge.load_history_result_requested.connect(self.load_history_result)
         bridge.signal_visibility_toggled.connect(self._on_waveform_signal_visibility_toggled)
-        bridge.clear_all_signals_requested.connect(self._backend_runtime.waveform_widget.clear_displayed_signals)
+        bridge.clear_all_signals_requested.connect(self._on_waveform_clear_all_requested)
         bridge.cursor_visibility_toggled.connect(self._on_waveform_cursor_visibility_toggled)
         bridge.cursor_move_requested.connect(self._on_waveform_cursor_move_requested)
-        bridge.fit_requested.connect(self._backend_runtime.waveform_widget.fit_to_view)
-        bridge.zoom_to_range_requested.connect(self._backend_runtime.waveform_widget.zoom_to_x_range)
-        bridge.raw_data_jump_to_row_requested.connect(self._backend_runtime.raw_data_table.jump_to_row)
-        bridge.raw_data_jump_to_x_requested.connect(self._backend_runtime.raw_data_table.jump_to_x_value)
-        bridge.raw_data_value_search_requested.connect(self._backend_runtime.raw_data_table.search_value)
-        bridge.output_log_search_requested.connect(self._backend_runtime.output_log_viewer.search)
-        bridge.output_log_filter_requested.connect(self._backend_runtime.output_log_viewer.filter_by_level)
-        bridge.output_log_jump_to_error_requested.connect(self._backend_runtime.output_log_viewer.jump_to_error)
-        bridge.output_log_refresh_requested.connect(self._backend_runtime.output_log_viewer.refresh_log)
+        bridge.fit_requested.connect(self._on_waveform_fit_requested)
+        bridge.zoom_to_range_requested.connect(self._on_waveform_zoom_requested)
+        bridge.raw_data_jump_to_row_requested.connect(self._on_raw_data_jump_to_row_requested)
+        bridge.raw_data_jump_to_x_requested.connect(self._on_raw_data_jump_to_x_requested)
+        bridge.raw_data_value_search_requested.connect(self._on_raw_data_value_search_requested)
+        bridge.output_log_search_requested.connect(self._on_output_log_search_requested)
+        bridge.output_log_filter_requested.connect(self._on_output_log_filter_requested)
+        bridge.output_log_jump_to_error_requested.connect(self._on_output_log_jump_to_error_requested)
+        bridge.output_log_refresh_requested.connect(self._on_output_log_refresh_requested)
         bridge.export_requested.connect(self._backend_runtime.export_panel.export_selected_types)
         bridge.add_to_conversation_requested.connect(self._on_bridge_add_to_conversation_requested)
+
+    def _on_waveform_clear_all_requested(self):
+        self._backend_runtime.waveform_widget.clear_displayed_signals()
+        self._update_authoritative_frontend_state()
 
     def _on_waveform_signal_visibility_toggled(self, signal_name: str, visible: bool):
         self._backend_runtime.waveform_widget.set_signal_visible(signal_name, visible)
@@ -475,6 +482,42 @@ class SimulationTab(QWidget):
             waveform_widget.set_cursor_b(position)
         else:
             waveform_widget.set_cursor_a(position)
+        self._update_authoritative_frontend_state()
+
+    def _on_waveform_fit_requested(self):
+        self._backend_runtime.waveform_widget.fit_to_view()
+        self._update_authoritative_frontend_state()
+
+    def _on_waveform_zoom_requested(self, start: float, end: float):
+        self._backend_runtime.waveform_widget.zoom_to_x_range(start, end)
+        self._update_authoritative_frontend_state()
+
+    def _on_raw_data_jump_to_row_requested(self, row_number: int):
+        self._backend_runtime.raw_data_table.jump_to_row(row_number)
+        self._update_authoritative_frontend_state()
+
+    def _on_raw_data_jump_to_x_requested(self, x_value: float):
+        self._backend_runtime.raw_data_table.jump_to_x_value(x_value)
+        self._update_authoritative_frontend_state()
+
+    def _on_raw_data_value_search_requested(self, column: int, value: float, tolerance: float):
+        self._backend_runtime.raw_data_table.search_value(column, value, tolerance)
+        self._update_authoritative_frontend_state()
+
+    def _on_output_log_search_requested(self, keyword: str):
+        self._backend_runtime.output_log_viewer.search(keyword)
+        self._update_authoritative_frontend_state()
+
+    def _on_output_log_filter_requested(self, level: str):
+        self._backend_runtime.output_log_viewer.filter_by_level(level)
+        self._update_authoritative_frontend_state()
+
+    def _on_output_log_jump_to_error_requested(self):
+        self._backend_runtime.output_log_viewer.jump_to_error()
+        self._update_authoritative_frontend_state()
+
+    def _on_output_log_refresh_requested(self):
+        self._backend_runtime.output_log_viewer.refresh_log()
         self._update_authoritative_frontend_state()
 
     def _on_bridge_add_to_conversation_requested(self, target: str):

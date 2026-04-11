@@ -115,10 +115,22 @@ function HistorySessionRow({
     >
       <div className="conversation-session-row__top">
         <div className="conversation-session-row__summary">
-          <span className="conversation-session-row__title">{session.name || session.session_id}</span>
+          <span
+            className="conversation-session-row__title"
+            title={session.name || session.session_id}
+          >
+            {session.name || session.session_id}
+          </span>
           <div className="conversation-session-row__meta">
-            <span>{session.message_count} 条消息</span>
-            <span>{session.updated_at || session.created_at || ''}</span>
+            <span className="conversation-session-row__meta-item conversation-session-row__meta-item--count">
+              {session.message_count} 条消息
+            </span>
+            <span
+              className="conversation-session-row__meta-item conversation-session-row__meta-item--timestamp"
+              title={session.updated_at || session.created_at || ''}
+            >
+              {session.updated_at || session.created_at || ''}
+            </span>
           </div>
         </div>
         {isCurrentSession ? (

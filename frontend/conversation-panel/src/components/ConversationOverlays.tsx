@@ -197,7 +197,7 @@ function HistoryExportDialog({
   )
 }
 
-function HistoryDetailPanel({
+function HistoryHeaderActions({
   history,
   selectedSession,
   bridge,
@@ -205,6 +205,52 @@ function HistoryDetailPanel({
   history: ConversationHistoryOverlayState
   selectedSession: ConversationSessionInfoState | null
   bridge: ConversationBridge | null
+}) {
+  const selectedSessionId = selectedSession?.session_id ?? ''
+  const hasSelectedSession = Boolean(selectedSessionId)
+
+  return (
+    <div className="conversation-drawer__header-controls">
+      <div className="conversation-history-header-actions">
+        <button
+          type="button"
+          className="secondary-button"
+          disabled={!hasSelectedSession}
+          onClick={() => bridge?.openHistorySession?.(selectedSessionId)}
+        >
+          打开
+        </button>
+        <button
+          type="button"
+          className="secondary-button secondary-button--danger"
+          disabled={!hasSelectedSession}
+          onClick={() => bridge?.requestDeleteHistorySession?.(selectedSessionId)}
+        >
+          删除
+        </button>
+        <button
+          type="button"
+          className="secondary-button"
+          disabled={!hasSelectedSession}
+          onClick={() => bridge?.openHistoryExportDialog?.(selectedSessionId)}
+        >
+          导出
+        </button>
+        {selectedSession ? <HistoryExportDialog history={history} selectedSession={selectedSession} bridge={bridge} /> : null}
+      </div>
+      <button type="button" className="ghost-button" onClick={() => bridge?.closeHistory?.()}>
+        关闭
+      </button>
+    </div>
+  )
+}
+
+function HistoryDetailPanel({
+  history,
+  selectedSession,
+}: {
+  history: ConversationHistoryOverlayState
+  selectedSession: ConversationSessionInfoState | null
 }) {
   if (!selectedSession) {
     return (
@@ -221,32 +267,6 @@ function HistoryDetailPanel({
 
   return (
     <div className="conversation-history-detail">
-      <section className="conversation-history-toolbar">
-        <div className="conversation-history-toolbar__actions">
-          <button
-            type="button"
-            className="secondary-button"
-            onClick={() => bridge?.openHistorySession?.(selectedSession.session_id)}
-          >
-            打开
-          </button>
-          <button
-            type="button"
-            className="secondary-button secondary-button--danger"
-            onClick={() => bridge?.requestDeleteHistorySession?.(selectedSession.session_id)}
-          >
-            删除
-          </button>
-          <button
-            type="button"
-            className="secondary-button"
-            onClick={() => bridge?.openHistoryExportDialog?.(selectedSession.session_id)}
-          >
-            导出
-          </button>
-        </div>
-        <HistoryExportDialog history={history} selectedSession={selectedSession} bridge={bridge} />
-      </section>
 
       <section className="conversation-history-preview">
         <div className="conversation-history-section__header">
@@ -300,15 +320,13 @@ function HistoryOverlay({
       />
       <div className="conversation-drawer" role="dialog" aria-modal="true" aria-label="会话历史">
         <div className="conversation-drawer__header">
-          <div>
+          <div className="conversation-drawer__header-info">
             <div className="conversation-drawer__title">会话历史</div>
             <div className="conversation-drawer__subtitle">
               {history.sessions.length > 0 ? `共 ${history.sessions.length} 个会话` : '暂无历史会话'}
             </div>
           </div>
-          <button type="button" className="ghost-button" onClick={() => bridge?.closeHistory?.()}>
-            关闭
-          </button>
+          <HistoryHeaderActions history={history} selectedSession={selectedSession} bridge={bridge} />
         </div>
         <div className="conversation-drawer__content">
           <div className="conversation-drawer__list">
@@ -325,7 +343,7 @@ function HistoryOverlay({
               <div className="conversation-overlay-empty">暂无历史会话。</div>
             )}
           </div>
-          <HistoryDetailPanel history={history} selectedSession={selectedSession} bridge={bridge} />
+          <HistoryDetailPanel history={history} selectedSession={selectedSession} />
         </div>
       </div>
     </div>

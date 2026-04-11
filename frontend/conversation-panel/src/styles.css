@@ -1515,18 +1515,19 @@
   padding: 12px 14px;
 }
 
-.conversation-history-preview,
-.conversation-history-header-actions {
-  min-width: 0;
-}
-
 .conversation-history-preview {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   border: 1px solid var(--surface-border);
   border-radius: var(--radius-md);
   background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+  overflow: hidden;
 }
 
 .conversation-history-header-actions {
+  min-width: 0;
   position: relative;
   display: inline-flex;
   align-items: center;
@@ -1605,13 +1606,6 @@
   color: #1d4ed8;
 }
 
-.conversation-history-preview {
-  min-height: 0;
-  display: grid;
-   grid-template-rows: auto minmax(0, 1fr);
-   overflow: hidden;
- }
-
  .conversation-history-section__header {
    display: flex;
    align-items: flex-start;
@@ -1623,14 +1617,20 @@
  .conversation-history-preview__body {
   min-height: 0;
   padding: 12px;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
- .conversation-history-preview__list,
- .conversation-overlay-card-list {
-   display: grid;
-   gap: 10px;
- }
+.conversation-history-preview__list,
+.conversation-overlay-card-list {
+  display: grid;
+  gap: 10px;
+}
+
+.conversation-history-preview__list {
+  align-content: start;
+}
 
  .conversation-session-row {
   display: grid;

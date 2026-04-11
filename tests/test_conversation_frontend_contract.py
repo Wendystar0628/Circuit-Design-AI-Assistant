@@ -438,8 +438,17 @@ def test_conversation_state_serializer_serializes_history_and_rollback_payloads(
         preview_messages=[
             {
                 "type": "user",
-                "content": "继续优化对话面板",
+                "content": "继续优化对话面板 [[attachment:ref-1|diagram.png]]",
                 "additional_kwargs": {
+                    "attachments": [
+                        Attachment(
+                            type="file",
+                            path="E:/demo/diagram.png",
+                            name="diagram.png",
+                            placement="inline",
+                            reference_id="ref-1",
+                        ).to_dict()
+                    ],
                     "metadata": {
                         "timestamp": "2026-04-10T12:00:00",
                         "id": "user-2",
@@ -470,8 +479,17 @@ def test_conversation_state_serializer_serializes_history_and_rollback_payloads(
             "preview_messages": [
                 {
                     "type": "user",
-                    "content": "继续优化对话面板",
+                    "content": "继续优化对话面板 [[attachment:ref-1|diagram.png]]",
                     "additional_kwargs": {
+                        "attachments": [
+                            Attachment(
+                                type="file",
+                                path="E:/demo/diagram.png",
+                                name="diagram.png",
+                                placement="inline",
+                                reference_id="ref-1",
+                            ).to_dict()
+                        ],
                         "metadata": {
                             "timestamp": "2026-04-10T12:00:00",
                             "id": "user-2",
@@ -519,6 +537,8 @@ def test_conversation_state_serializer_serializes_history_and_rollback_payloads(
 
     assert history_state["sessions"][0]["session_id"] == "session-rollback"
     assert history_state["preview_messages"][0]["message_id"] == "user-2"
+    assert history_state["preview_messages"][0]["content_html"]
+    assert 'data-cai-action="open-file"' in history_state["preview_messages"][0]["content_html"]
     assert rollback_state["anchor_message_id"] == "user-2"
     assert rollback_state["changed_files"][0]["relative_path"] == "src/app.py"
     assert rollback_state["total_added_lines"] == 7

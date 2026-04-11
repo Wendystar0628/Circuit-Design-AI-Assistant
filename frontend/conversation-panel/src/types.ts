@@ -100,6 +100,7 @@ export interface ConversationSessionInfoState {
 export interface ConversationSessionMessageState {
   role: string
   content: string
+  content_html: string
   timestamp: string
   message_id: string
   attachments: ConversationAttachmentState[]
@@ -434,6 +435,7 @@ function normalizeSessionMessageState(value: unknown): ConversationSessionMessag
   return {
     role: asString(message.role),
     content: asString(message.content),
+    content_html: asString(message.content_html),
     timestamp: asString(message.timestamp),
     message_id: asString(message.message_id),
     attachments: normalizeAttachmentList(message.attachments),

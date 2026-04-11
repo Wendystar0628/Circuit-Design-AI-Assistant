@@ -414,17 +414,62 @@ class ConversationStateSerializer:
             if isinstance(metadata.get("metadata", {}), dict)
             else {}
         )
-        attachments = data.get("attachments", [])
+        role = str(data.get("type", data.get("role", "")) or "")
+        content = self._serialize_session_message_content(data.get("content", ""))
+        attachments = self._normalize_session_message_attachments(data)
+        if role == "user":
+            content_html = ConversationRichTextSupport.render_user_content_html(
+                content,
+                attachments,
+            )
+        else:
+            content_html = ConversationRichTextSupport.render_markdown_html(content)
         return {
-            "role": str(data.get("type", data.get("role", "")) or ""),
-            "content": str(data.get("content", "") or ""),
+            "role": role,
+            "content": content,
+            "content_html": content_html,
             "timestamp": str(message_metadata.get("timestamp", "") or ""),
             "message_id": str(message_metadata.get("id", "") or ""),
             "attachments": [
                 self.serialize_attachment(attachment)
-                for attachment in (attachments if isinstance(attachments, list) else [])
+                for attachment in attachments
             ],
         }
+
+    @staticmethod
+    def _serialize_session_message_content(content: Any) -> str:
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            return "\n".join(
+                item.get("text", "") if isinstance(item, dict) else str(item)
+                for item in content
+            )
+        return str(content or "")
+
+    @staticmethod
+    def _normalize_session_message_attachments(data: Dict[str, Any]) -> List[Attachment]:
+        raw_attachments = data.get("attachments", [])
+        if not isinstance(raw_attachments, list):
+            raw_attachments = []
+
+        if not raw_attachments:
+            additional_kwargs = (
+                data.get("additional_kwargs", {})
+                if isinstance(data.get("additional_kwargs", {}), dict)
+                else {}
+            )
+            attachments_from_kwargs = additional_kwargs.get("attachments", [])
+            raw_attachments = attachments_from_kwargs if isinstance(attachments_from_kwargs, list) else []
+
+        normalized_candidates: List[Attachment] = []
+        for attachment in raw_attachments:
+            if isinstance(attachment, Attachment):
+                normalized_candidates.append(attachment)
+            elif isinstance(attachment, dict):
+                normalized_candidates.append(Attachment.from_dict(attachment))
+
+        return normalize_attachments(normalized_candidates)
 
     def serialize_rollback_preview(
         self,

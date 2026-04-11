@@ -1,5 +1,6 @@
 import type { ConversationBridge } from '../bridge'
 import { ModelConfigApp } from '../ModelConfigApp'
+import { RichHtml } from './RichHtml'
 import type {
   ConversationHistoryOverlayState,
   ConversationMainState,
@@ -22,28 +23,34 @@ const EXPORT_FORMATS = [
   { value: 'md', label: 'Markdown' },
 ] as const
 
- function roleLabel(role: string): string {
-   return {
-     user: '用户',
-     assistant: '助手',
-     system: '系统',
-   }[role] ?? '消息'
- }
+function roleLabel(role: string): string {
+  return {
+    user: '用户',
+    assistant: '助手',
+    system: '系统',
+  }[role] ?? '消息'
+}
 
 function findSelectedSession(history: ConversationHistoryOverlayState): ConversationSessionInfoState | null {
   return history.sessions.find((session) => session.session_id === history.selected_session_id) ?? null
 }
 
-function renderSessionPreviewMessage(message: ConversationSessionMessageState) {
+function renderSessionPreviewMessage(message: ConversationSessionMessageState, bridge: ConversationBridge | null) {
   return (
     <div key={message.message_id || `${message.role}-${message.timestamp}`} className="conversation-overlay-card">
       <div className="conversation-overlay-card__header">
         <span className="conversation-overlay-card__title">{roleLabel(message.role)}</span>
         <span className="conversation-overlay-card__subtitle">{message.timestamp || '未知时间'}</span>
       </div>
-      <div className="conversation-overlay-card__body conversation-overlay-card__body--text">
-        {message.content || '（空消息）'}
-      </div>
+      {message.content_html ? (
+        <RichHtml
+          html={message.content_html}
+          bridge={bridge}
+          className="conversation-overlay-card__body conversation-overlay-card__body--text"
+        />
+      ) : (
+        <div className="conversation-overlay-card__body conversation-overlay-card__body--text">（空消息）</div>
+      )}
       {message.attachments.length > 0 ? (
         <div className="conversation-overlay-chip-list">
           {message.attachments.map((attachment) => (
@@ -308,7 +315,7 @@ function HistoryOverlay({
               <div className="conversation-overlay-empty">暂无历史会话。</div>
             )}
           </div>
-          <HistoryDetailPanel history={history} selectedSession={selectedSession} />
+          <HistoryDetailPanel history={history} selectedSession={selectedSession} bridge={bridge} />
         </div>
       </div>
     </div>
@@ -318,9 +325,11 @@ function HistoryOverlay({
 function HistoryDetailPanel({
   history,
   selectedSession,
+  bridge,
 }: {
   history: ConversationHistoryOverlayState
   selectedSession: ConversationSessionInfoState | null
+  bridge: ConversationBridge | null
 }) {
   if (!selectedSession) {
     return (
@@ -354,7 +363,7 @@ function HistoryDetailPanel({
             <div className="conversation-overlay-empty">正在加载会话预览。</div>
           ) : history.preview_messages.length > 0 ? (
             <div className="conversation-history-preview__list">
-              {history.preview_messages.map((message) => renderSessionPreviewMessage(message))}
+              {history.preview_messages.map((message) => renderSessionPreviewMessage(message, bridge))}
             </div>
           ) : (
             <div className="conversation-overlay-empty">暂无消息预览。</div>

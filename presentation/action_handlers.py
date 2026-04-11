@@ -17,7 +17,7 @@
 import os
 from typing import Optional, Dict, Any, Callable
 
-from PyQt6.QtWidgets import QMainWindow, QFileDialog, QMessageBox
+from PyQt6.QtWidgets import QApplication, QMainWindow, QFileDialog, QMessageBox, QWidget
 
 
 class ActionHandlers:
@@ -105,6 +105,41 @@ class ActionHandlers:
 
     def _get_right_panel(self):
         return self._main_window.get_right_panel()
+
+    @staticmethod
+    def _get_focus_widget() -> Optional[QWidget]:
+        return QApplication.focusWidget()
+
+    def _panel_contains_focus(self, panel: Optional[QWidget]) -> bool:
+        if panel is None:
+            return False
+        focus_widget = self._get_focus_widget()
+        if focus_widget is None:
+            return False
+        return focus_widget is panel or panel.isAncestorOf(focus_widget)
+
+    def _dispatch_copy_like_action(self, method_name: str) -> None:
+        code_editor = self._get_panel("code_editor")
+        right_panel = self._get_right_panel()
+
+        if self._panel_contains_focus(code_editor) and code_editor is not None:
+            handler = getattr(code_editor, method_name, None)
+            if callable(handler):
+                handler()
+                return
+
+        if self._panel_contains_focus(right_panel) and right_panel is not None:
+            getattr(right_panel, method_name)()
+            return
+
+        if code_editor is not None:
+            handler = getattr(code_editor, method_name, None)
+            if callable(handler):
+                handler()
+                return
+
+        if right_panel is not None:
+            getattr(right_panel, method_name)()
 
     def _activate_right_panel(self, panel_id: str) -> None:
         self._main_window.activate_right_panel(panel_id)
@@ -328,9 +363,7 @@ class ActionHandlers:
             panel.cut()
 
     def on_edit_copy(self):
-        panel = self._get_panel("code_editor")
-        if panel is not None and hasattr(panel, "copy"):
-            panel.copy()
+        self._dispatch_copy_like_action("copy")
 
     def on_edit_paste(self):
         panel = self._get_panel("code_editor")
@@ -338,9 +371,7 @@ class ActionHandlers:
             panel.paste()
 
     def on_edit_select_all(self):
-        panel = self._get_panel("code_editor")
-        if panel is not None and hasattr(panel, "select_all"):
-            panel.select_all()
+        self._dispatch_copy_like_action("select_all")
 
     def on_show_conversation(self):
         self._activate_right_panel("conversation")

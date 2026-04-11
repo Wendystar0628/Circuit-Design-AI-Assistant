@@ -336,7 +336,16 @@ class ConversationPanel(QWidget):
         
         # React 消息区与输入区
         self._react_host = ReactConversationHost(self)
+        self.setFocusProxy(self._react_host)
         main_layout.addWidget(self._react_host, 1)
+
+    def copy(self) -> None:
+        if self._react_host is not None:
+            self._react_host.copy()
+
+    def select_all(self) -> None:
+        if self._react_host is not None:
+            self._react_host.select_all()
 
     def _setup_model_config_controller(self) -> None:
         try:

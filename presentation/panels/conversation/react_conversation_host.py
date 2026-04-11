@@ -11,9 +11,11 @@ from presentation.core.web_resource_host import app_resource_url, configure_app_
 from presentation.panels.conversation.conversation_web_bridge import ConversationWebBridge
 
 try:
+    from PyQt6.QtWebEngineCore import QWebEnginePage
     from PyQt6.QtWebEngineWidgets import QWebEngineView
     WEBENGINE_AVAILABLE = True
 except ImportError:
+    QWebEnginePage = None
     QWebEngineView = None
     WEBENGINE_AVAILABLE = False
 
@@ -89,11 +91,12 @@ class ReactConversationHost(QWidget):
         self._web_view = _ConversationReactWebView(self)
         self._web_view.page().setWebChannel(self._channel)
         configure_app_web_view(self._web_view)
-        self._web_view.setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
+        self._web_view.setContextMenuPolicy(Qt.ContextMenuPolicy.DefaultContextMenu)
         self._web_view.setAcceptDrops(True)
         self._web_view.loadFinished.connect(self._on_load_finished)
         self._web_view.files_dropped.connect(self.files_dropped)
         self._web_view.setUrl(app_resource_url(self._resolve_entry_resource_path()))
+        self.setFocusProxy(self._web_view)
         layout.addWidget(self._web_view)
 
     def _resolve_entry_resource_path(self) -> str:
@@ -136,6 +139,16 @@ class ReactConversationHost(QWidget):
             "window.conversationApp.clearDraftAttachments();"
         )
 
+    def copy(self) -> None:
+        if QWebEnginePage is None:
+            return
+        self._trigger_web_action(QWebEnginePage.WebAction.Copy)
+
+    def select_all(self) -> None:
+        if QWebEnginePage is None:
+            return
+        self._trigger_web_action(QWebEnginePage.WebAction.SelectAll)
+
     def cleanup(self) -> None:
         self._pending_app_calls.clear()
         if self._web_view is not None:
@@ -166,6 +179,12 @@ class ReactConversationHost(QWidget):
             self._pending_app_calls.append(script)
             return
         self._web_view.page().runJavaScript(script)
+
+    def _trigger_web_action(self, action) -> None:
+        if self._web_view is None:
+            return
+        self._web_view.setFocus(Qt.FocusReason.ShortcutFocusReason)
+        self._web_view.page().triggerAction(action)
 
     def _flush_pending_app_calls(self) -> None:
         if self._web_view is None or not self._page_loaded or not self._pending_app_calls:

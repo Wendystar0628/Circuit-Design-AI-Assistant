@@ -632,15 +632,17 @@ class MainWindow(QMainWindow):
         has_active_editor = bool(payload.get("has_active_editor", False))
         has_active_editable = bool(payload.get("has_active_editable", False))
         has_any_dirty = bool(payload.get("has_any_dirty", False))
+        has_right_surface = self.get_right_panel() is not None
+        has_copy_target = has_active_editor or has_right_surface
 
         self._menu_manager.set_action_enabled("file_save", has_active_editable)
         self._menu_manager.set_action_enabled("file_save_all", has_any_dirty)
         self._menu_manager.set_action_enabled("edit_undo", has_active_editable)
         self._menu_manager.set_action_enabled("edit_redo", has_active_editable)
         self._menu_manager.set_action_enabled("edit_cut", has_active_editable)
-        self._menu_manager.set_action_enabled("edit_copy", has_active_editor)
+        self._menu_manager.set_action_enabled("edit_copy", has_copy_target)
         self._menu_manager.set_action_enabled("edit_paste", has_active_editable)
-        self._menu_manager.set_action_enabled("edit_select_all", has_active_editor)
+        self._menu_manager.set_action_enabled("edit_select_all", has_copy_target)
 
     def _on_editable_file_state_changed(self, has_editable: bool) -> None:
         del has_editable

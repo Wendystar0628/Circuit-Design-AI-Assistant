@@ -493,7 +493,9 @@ class SimulationTab(QWidget):
         bridge.clear_all_chart_series_requested.connect(self._on_chart_clear_all_requested)
         bridge.chart_measurement_enabled_changed.connect(self._on_chart_measurement_enabled_changed)
         bridge.chart_measurement_cursor_move_requested.connect(self._on_chart_measurement_cursor_move_requested)
-        bridge.chart_data_cursor_enabled_changed.connect(self._on_chart_data_cursor_enabled_changed)
+        bridge.chart_measurement_point_enabled_changed.connect(self._on_chart_measurement_point_enabled_changed)
+        bridge.chart_measurement_point_target_changed.connect(self._on_chart_measurement_point_target_changed)
+        bridge.chart_measurement_point_move_requested.connect(self._on_chart_measurement_point_move_requested)
         bridge.chart_fit_requested.connect(self._on_chart_fit_requested)
         bridge.signal_visibility_toggled.connect(self._on_waveform_signal_visibility_toggled)
         bridge.clear_all_signals_requested.connect(self._on_waveform_clear_all_requested)
@@ -519,7 +521,7 @@ class SimulationTab(QWidget):
     def _on_chart_series_visibility_toggled(self, series_name: str, visible: bool):
         chart_viewer = self._backend_runtime.chart_viewer
         chart_viewer.set_series_visible(series_name, visible)
-        self._sync_chart_data_cursor_target(chart_viewer)
+        self._sync_chart_measurement_point_target(chart_viewer)
         self._update_authoritative_frontend_state()
 
     def _on_chart_measurement_enabled_changed(self, enabled: bool):
@@ -530,31 +532,41 @@ class SimulationTab(QWidget):
         self._backend_runtime.chart_viewer.set_measurement_cursor(cursor_id, position)
         self._update_authoritative_frontend_state()
 
-    def _on_chart_data_cursor_enabled_changed(self, enabled: bool):
+    def _on_chart_measurement_point_enabled_changed(self, enabled: bool):
         chart_viewer = self._backend_runtime.chart_viewer
-        chart_viewer.set_data_cursor_enabled(enabled)
+        chart_viewer.set_measurement_point_enabled(enabled)
         if enabled:
-            self._sync_chart_data_cursor_target(chart_viewer)
+            self._sync_chart_measurement_point_target(chart_viewer)
         self._update_authoritative_frontend_state()
 
-    def _sync_chart_data_cursor_target(self, chart_viewer):
+    def _on_chart_measurement_point_target_changed(self, target_id: str):
+        chart_viewer = self._backend_runtime.chart_viewer
+        chart_viewer.set_measurement_point_target(target_id)
+        self._sync_chart_measurement_point_target(chart_viewer)
+        self._update_authoritative_frontend_state()
+
+    def _on_chart_measurement_point_move_requested(self, position: float):
+        self._backend_runtime.chart_viewer.set_measurement_point_position(position)
+        self._update_authoritative_frontend_state()
+
+    def _sync_chart_measurement_point_target(self, chart_viewer):
         snapshot = chart_viewer.get_web_snapshot()
         available_series = snapshot.get("available_series", []) if isinstance(snapshot, dict) else []
-        visible_series_names = []
+        visible_target_ids = []
         for item in available_series:
             if not isinstance(item, dict) or not bool(item.get("visible")):
                 continue
-            name = str(item.get("name") or "")
-            if name:
-                visible_series_names.append(name)
-        if not visible_series_names:
-            if chart_viewer.data_cursor_target():
-                chart_viewer.set_data_cursor_target("")
+            target_id = str(item.get("group_key") or item.get("name") or "")
+            if target_id and target_id not in visible_target_ids:
+                visible_target_ids.append(target_id)
+        if not visible_target_ids:
+            if chart_viewer.measurement_point_target():
+                chart_viewer.set_measurement_point_target("")
             return
-        current_target = str(chart_viewer.data_cursor_target() or "")
-        if current_target in visible_series_names:
+        current_target = str(chart_viewer.measurement_point_target() or "")
+        if current_target in visible_target_ids:
             return
-        chart_viewer.set_data_cursor_target(visible_series_names[0])
+        chart_viewer.set_measurement_point_target(visible_target_ids[0])
 
     def _on_chart_fit_requested(self):
         self._backend_runtime.chart_viewer.fit_to_view()

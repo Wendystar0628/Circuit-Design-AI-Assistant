@@ -5,26 +5,14 @@ import type { SimulationMainState } from '../../types/state'
 import { ResizableStack } from '../layout/ResizableStack'
 import { ResponsivePane } from '../layout/ResponsivePane'
 import { MeasurementFloatingPanel } from '../shared/MeasurementFloatingPanel'
-import { SeriesSvgChart } from '../shared/SeriesSvgChart'
+import { MeasurementPointFloatingPanel } from '../shared/MeasurementPointFloatingPanel'
+import { SeriesSvgChart, type SeriesSvgChartFloatingPanel } from '../shared/SeriesSvgChart'
+import { buildChartMeasurementPresentationGroups } from '../shared/chartMeasurementPresentation'
 import { formatMeasurementNumber } from '../shared/chartValueFormatting'
 
 interface ChartTabProps {
   state: SimulationMainState
   bridge: SimulationBridge | null
-}
-
-interface ChartMeasurementGroupRow {
-  id: string
-  label: string
-  color: string
-  valueA: number | null
-  valueB: number | null
-}
-
-interface ChartMeasurementGroup {
-  id: string
-  label: string
-  rows: ChartMeasurementGroupRow[]
 }
 
 function formatMeasurementDelta(valueA: number | null, valueB: number | null): string {
@@ -34,22 +22,14 @@ function formatMeasurementDelta(valueA: number | null, valueB: number | null): s
   return formatMeasurementNumber(valueB - valueA)
 }
 
-function toChartMeasurementRowLabel(component: string | undefined, fallbackLabel: string): string {
-  const normalizedComponent = component?.trim().toLowerCase() ?? ''
-  if (normalizedComponent === 'magnitude') {
-    return 'Mag'
-  }
-  if (normalizedComponent === 'phase') {
-    return 'Phase'
-  }
-  return fallbackLabel
-}
-
 export function ChartTab({ state, bridge }: ChartTabProps) {
   const chart = state.analysis_chart_view
   const [selectedMeasurementSignalId, setSelectedMeasurementSignalId] = useState('')
-  const supportsDataCursor = chart.available_series.length > 0
   const chartDisplayName = chart.chart_type_display_name || chart.title || chart.chart_type || '图表'
+  const measurementGroups = useMemo(() => buildChartMeasurementPresentationGroups(chart), [chart])
+  const measurementSignalOptions = useMemo(() => measurementGroups.map((group) => ({ id: group.id, label: group.label })), [measurementGroups])
+  const supportsMeasurementPoint = measurementSignalOptions.length > 0
+  const canToggleMeasurementPoint = supportsMeasurementPoint || chart.measurement_point.enabled
   const chartHeaderActions = chart.has_chart ? (
     <>
       <button
@@ -71,10 +51,10 @@ export function ChartTab({ state, bridge }: ChartTabProps) {
       <button
         type="button"
         className="chart-header-button"
-        disabled={!supportsDataCursor}
-        onClick={() => bridge?.setChartDataCursorEnabled(!chart.data_cursor_enabled)}
+        disabled={!canToggleMeasurementPoint}
+        onClick={() => bridge?.setChartMeasurementPointEnabled(!chart.measurement_point.enabled)}
       >
-        {chart.data_cursor_enabled ? '关闭光标' : '开启光标'}
+        {chart.measurement_point.enabled ? '关闭测量点' : '开启测量点'}
       </button>
       <button
         type="button"
@@ -82,15 +62,7 @@ export function ChartTab({ state, bridge }: ChartTabProps) {
         disabled={!chart.available_series.length}
         onClick={() => bridge?.clearAllChartSeries()}
       >
-        清空序列
-      </button>
-      <button
-        type="button"
-        className="chart-header-button"
-        disabled={!chart.can_export}
-        onClick={() => bridge?.requestExport(['charts'])}
-      >
-        导出图表
+        清空信号
       </button>
       <button
         type="button"
@@ -103,69 +75,12 @@ export function ChartTab({ state, bridge }: ChartTabProps) {
     </>
   ) : undefined
   const visibleLegendSeries = useMemo(() => chart.available_series.filter((series) => series.visible), [chart.available_series])
-  const measurementGroups = useMemo<ChartMeasurementGroup[]>(() => {
-    const groups = new Map<string, { label: string; rows: Array<ChartMeasurementGroupRow & { shortLabel: string }> }>()
-    const availableSeriesByName = new Map(chart.available_series.map((series) => [series.name, series]))
-    const visibleSeriesByName = new Map(chart.visible_series.map((series) => [series.name, series]))
-
-    for (const series of chart.visible_series) {
-      const groupId = series.group_key?.trim() || series.name
-      const groupMeta = availableSeriesByName.get(groupId)
-      const groupLabel = groupMeta?.name || groupId
-      const currentGroup = groups.get(groupId) ?? { label: groupLabel, rows: [] }
-      currentGroup.rows.push({
-        id: series.name,
-        label: series.name,
-        shortLabel: toChartMeasurementRowLabel(series.component, series.name),
-        color: series.color,
-        valueA: chart.measurement.values_a[series.name] ?? null,
-        valueB: chart.measurement.values_b[series.name] ?? null,
-      })
-      groups.set(groupId, currentGroup)
-    }
-
-    const measuredNames = new Set([
-      ...Object.keys(chart.measurement.values_a),
-      ...Object.keys(chart.measurement.values_b),
-    ])
-
-    for (const measuredName of measuredNames) {
-      if (visibleSeriesByName.has(measuredName)) {
-        continue
-      }
-      const visibleMeta = chart.visible_series.find((series) => series.name === measuredName)
-      const groupId = visibleMeta?.group_key?.trim() || measuredName
-      const currentGroup = groups.get(groupId) ?? { label: groupId, rows: [] }
-      currentGroup.rows.push({
-        id: measuredName,
-        label: measuredName,
-        shortLabel: measuredName,
-        color: visibleMeta?.color ?? availableSeriesByName.get(groupId)?.color ?? '#1f77b4',
-        valueA: chart.measurement.values_a[measuredName] ?? null,
-        valueB: chart.measurement.values_b[measuredName] ?? null,
-      })
-      groups.set(groupId, currentGroup)
-    }
-
-    return Array.from(groups.entries()).map(([groupId, group]) => ({
-      id: groupId,
-      label: group.label,
-      rows: group.rows.map((row) => ({
-        id: row.id,
-        label: group.rows.length > 1 ? row.shortLabel : row.label,
-        color: row.color,
-        valueA: row.valueA,
-        valueB: row.valueB,
-      })),
-    }))
-  }, [chart.measurement.values_a, chart.measurement.values_b, chart.available_series, chart.visible_series])
-  const measurementSignalOptions = useMemo(() => measurementGroups.map((group) => ({ id: group.id, label: group.label })), [measurementGroups])
   const preferredMeasurementSignalId = useMemo(() => {
-    if (chart.data_cursor_target && measurementSignalOptions.some((option) => option.id === chart.data_cursor_target)) {
-      return chart.data_cursor_target
+    if (chart.measurement_point.target_id && measurementSignalOptions.some((option) => option.id === chart.measurement_point.target_id)) {
+      return chart.measurement_point.target_id
     }
     return measurementSignalOptions[0]?.id ?? ''
-  }, [chart.data_cursor_target, measurementSignalOptions])
+  }, [chart.measurement_point.target_id, measurementSignalOptions])
 
   useEffect(() => {
     setSelectedMeasurementSignalId((current) => {
@@ -175,6 +90,16 @@ export function ChartTab({ state, bridge }: ChartTabProps) {
       return preferredMeasurementSignalId
     })
   }, [measurementSignalOptions, preferredMeasurementSignalId])
+
+  useEffect(() => {
+    if (!selectedMeasurementSignalId) {
+      return
+    }
+    if (selectedMeasurementSignalId === chart.measurement_point.target_id) {
+      return
+    }
+    bridge?.setChartMeasurementPointTarget(selectedMeasurementSignalId)
+  }, [bridge, chart.measurement_point.target_id, selectedMeasurementSignalId])
 
   const activeMeasurementGroup = useMemo(() => {
     if (!measurementGroups.length) {
@@ -191,6 +116,51 @@ export function ChartTab({ state, bridge }: ChartTabProps) {
     valueB: formatMeasurementNumber(row.valueB),
     delta: formatMeasurementDelta(row.valueA, row.valueB),
   })), [activeMeasurementGroup])
+
+  const measurementPointPanelRows = useMemo(() => chart.measurement_point.values.map((value, index) => ({
+    id: `${value.label}-${index}`,
+    label: value.label,
+    valueText: value.value_text,
+  })), [chart.measurement_point.values])
+
+  const floatingPanels = useMemo(() => {
+    const panels: SeriesSvgChartFloatingPanel[] = []
+    if (chart.measurement_point.enabled) {
+      panels.push({
+        id: 'measurement-point',
+        defaultTop: 16,
+        defaultRight: 16,
+        content: (
+          <MeasurementPointFloatingPanel
+            title="测量点"
+            signalOptions={measurementSignalOptions}
+            selectedSignalId={selectedMeasurementSignalId}
+            onSelectedSignalChange={setSelectedMeasurementSignalId}
+            rows={measurementPointPanelRows}
+            emptyMessage="当前测量点没有可展示的采样值。"
+          />
+        ),
+      })
+    }
+    if (chart.measurement_enabled) {
+      panels.push({
+        id: 'measurement',
+        defaultTop: chart.measurement_point.enabled ? 204 : 16,
+        defaultRight: 16,
+        content: (
+          <MeasurementFloatingPanel
+            title="测量"
+            signalOptions={measurementSignalOptions}
+            selectedSignalId={activeMeasurementGroup?.id ?? ''}
+            onSelectedSignalChange={setSelectedMeasurementSignalId}
+            rows={measurementPanelRows}
+            emptyMessage="当前所选信号没有可展示的测量值。"
+          />
+        ),
+      })
+    }
+    return panels
+  }, [activeMeasurementGroup?.id, chart.measurement_enabled, chart.measurement_point.enabled, measurementPanelRows, measurementPointPanelRows, measurementSignalOptions, selectedMeasurementSignalId])
 
   return (
     <div className="tab-surface">
@@ -252,22 +222,20 @@ export function ChartTab({ state, bridge }: ChartTabProps) {
             <SeriesSvgChart
               title={chart.has_chart ? chartDisplayName : ''}
               headerActions={chartHeaderActions}
-              floatingPanel={chart.measurement_enabled ? (
-                <MeasurementFloatingPanel
-                  title="测量"
-                  signalOptions={measurementSignalOptions}
-                  selectedSignalId={activeMeasurementGroup?.id ?? ''}
-                  onSelectedSignalChange={setSelectedMeasurementSignalId}
-                  rows={measurementPanelRows}
-                  emptyMessage="当前所选信号没有可展示的测量值。"
-                />
-              ) : undefined}
+              floatingPanels={floatingPanels}
               measurementCursors={{
                 cursorAVisible: chart.measurement_enabled,
                 cursorBVisible: chart.measurement_enabled,
                 cursorAX: chart.measurement.cursor_a_x,
                 cursorBX: chart.measurement.cursor_b_x,
                 onCursorMove: (cursorId, position) => bridge?.moveChartMeasurementCursor(cursorId, position),
+              }}
+              measurementPoint={{
+                visible: chart.measurement_point.enabled,
+                displayX: chart.measurement_point.point_x,
+                valueY: chart.measurement_point.plot_y,
+                axisKey: chart.measurement_point.plot_axis_key,
+                onMove: (position) => bridge?.moveChartMeasurementPoint(position),
               }}
               series={chart.visible_series}
               xLabel={chart.x_label}

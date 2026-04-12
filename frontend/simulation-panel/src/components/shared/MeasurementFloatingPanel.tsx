@@ -33,10 +33,13 @@ export function MeasurementFloatingPanel({
 
   return (
     <div className="measurement-floating-panel">
-      <div className="measurement-floating-panel__header">
+      <div className="measurement-floating-panel__drag-bar" data-floating-panel-drag-handle="true">
         <div className="measurement-floating-panel__title">{title}</div>
+        <div className="measurement-floating-panel__drag-hint">拖拽移动</div>
+      </div>
+      <div className="measurement-floating-panel__header">
         {signalOptions.length > 1 ? (
-          <label className="measurement-floating-panel__selector" aria-label="选择测量信号">
+          <label className="measurement-floating-panel__selector" aria-label="选择测量信号" data-floating-panel-no-drag="true">
             <span className="measurement-floating-panel__selector-label">信号</span>
             <select
               className="measurement-floating-panel__select"

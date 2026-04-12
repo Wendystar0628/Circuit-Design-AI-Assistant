@@ -32,7 +32,6 @@ import logging
 from typing import Any, Dict, List, Optional, Tuple
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -47,6 +46,7 @@ from domain.simulation.data.waveform_data_service import (
     waveform_data_service,
 )
 from domain.simulation.models.simulation_result import SimulationResult
+from presentation.panels.simulation.qt_surface_export import export_widget_image
 from presentation.panels.simulation.waveform_export_bundle_builder import waveform_export_bundle_builder
 from presentation.panels.simulation.waveform_measurement_support import waveform_measurement_support
 from presentation.panels.simulation.waveform_plot_types import (
@@ -434,18 +434,7 @@ class WaveformWidget(QWidget):
     def export_image(self, path: str) -> bool:
         if self._current_result is None or not self._plot_items:
             return False
-        self.resize(max(self.width(), 1280), max(self.height(), 840))
-        layout = self.layout()
-        if layout is not None:
-            layout.activate()
-        render_width = max(self._plot_widget.width(), 960)
-        render_height = max(self._plot_widget.height(), 640)
-        pixmap = QPixmap(render_width, render_height)
-        pixmap.fill(Qt.GlobalColor.transparent)
-        self._plot_widget.render(pixmap)
-        if pixmap.isNull():
-            return False
-        return pixmap.save(path)
+        return export_widget_image(self, self._plot_widget, path)
 
     def export_bundle(self, output_dir: str) -> List[str]:
         if self._current_result is None:

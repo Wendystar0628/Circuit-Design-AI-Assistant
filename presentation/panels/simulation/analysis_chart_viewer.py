@@ -100,6 +100,33 @@ class ChartViewer(QWidget):
             "chart_count": 1 if spec is not None else 0,
             "can_export": bool(page is not None and page.has_chart()),
             "can_add_to_conversation": bool(page is not None and page.has_chart()),
+            "title": str(spec.title or "") if spec is not None else "",
+            "chart_type": str(spec.chart_type.value) if spec is not None else "",
+            "x_label": str(spec.x_label or "") if spec is not None else "",
+            "y_label": str(spec.y_label or "") if spec is not None else "",
+            "secondary_y_label": str(spec.secondary_y_label or "") if spec is not None and spec.secondary_y_label else "",
+            "log_x": bool(spec.log_x) if spec is not None else False,
+            "log_y": bool(spec.log_y) if spec is not None else False,
+            "available_series": [],
+            "visible_series": [],
+            "visible_series_count": 0,
+            "measurement_point": {
+                "enabled": False,
+                "target_id": "",
+                "point_x": None,
+                "title": "",
+                "plot_series_name": "",
+                "plot_axis_key": "left",
+                "plot_y": None,
+                "values": [],
+            },
+            "measurement_enabled": False,
+            "measurement": {
+                "cursor_a_x": None,
+                "cursor_b_x": None,
+                "values_a": {},
+                "values_b": {},
+            },
             **page_snapshot,
             "chart_type_display_name": ChartType.get_display_name(spec.chart_type) if spec is not None else "",
         }
@@ -169,10 +196,10 @@ class ChartViewer(QWidget):
             "files": file_map,
         })
 
-        manifest_path = target_dir / "manifest.json"
+        manifest_path = target_dir / "charts.json"
         manifest_payload = simulation_artifact_exporter.build_artifact_payload(
             self._result,
-            "chart_bundle",
+            "charts",
             summary={
                 "chart_count": len(chart_entries),
             },
@@ -204,26 +231,32 @@ class ChartViewer(QWidget):
             return False
         return bool(page.set_measurement_cursor(cursor_id, x_value))
 
-    def supports_data_cursor(self) -> bool:
+    def supports_measurement_point(self) -> bool:
         page = self._chart_page
-        return bool(page is not None and page.supports_data_cursor())
+        return bool(page is not None and page.supports_measurement_point())
 
-    def set_data_cursor_enabled(self, enabled: bool) -> None:
+    def set_measurement_point_enabled(self, enabled: bool) -> None:
         page = self._chart_page
         if page is not None:
-            page.set_data_cursor_enabled(enabled)
+            page.set_measurement_point_enabled(enabled)
 
-    def data_cursor_target(self) -> str:
+    def measurement_point_target(self) -> str:
         page = self._chart_page
         if page is None:
             return ""
-        return str(page.data_cursor_target())
+        return str(page.measurement_point_target())
 
-    def set_data_cursor_target(self, target_id: str) -> bool:
+    def set_measurement_point_target(self, target_id: str) -> bool:
         page = self._chart_page
         if page is None:
             return False
-        return bool(page.set_data_cursor_target(target_id))
+        return bool(page.set_measurement_point_target(target_id))
+
+    def set_measurement_point_position(self, x_value: float) -> bool:
+        page = self._chart_page
+        if page is None:
+            return False
+        return bool(page.set_measurement_point_position(x_value))
 
     def set_series_visible(self, series_name: str, visible: bool) -> bool:
         page = self._chart_page
@@ -257,7 +290,7 @@ class ChartViewer(QWidget):
         page.set_chart(spec)
         page.retranslate_ui()
         page.set_measurement_enabled(False)
-        page.set_data_cursor_enabled(False)
+        page.set_measurement_point_enabled(False)
         self._chart_page = page
         self._page_host_layout.addWidget(page)
         self._hide_empty_state()

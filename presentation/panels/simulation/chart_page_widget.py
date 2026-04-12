@@ -3,13 +3,13 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import pyqtgraph as pg
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QSplitter, QTreeWidgetItem, QVBoxLayout, QWidget
 
-from presentation.panels.simulation.chart_data_cursor import ChartDataCursorController, DataCursorSample, DataCursorValue
+from presentation.panels.simulation.chart_measurement_point import MeasurementPointSample, MeasurementPointValue, clamp_to_bounds, midpoint_of_bounds, serialize_measurement_point_sample
 from presentation.panels.simulation.chart_export_utils import build_chart_export_payload, serialize_chart_series_for_web
 from presentation.panels.simulation.chart_signal_tree import SignalTreeWidget
 from presentation.panels.simulation.chart_view_types import ChartSeries, ChartSpec
+from presentation.panels.simulation.qt_surface_export import export_widget_image
 from presentation.panels.simulation.ltspice_plot_interaction import (
     LTSpiceViewBox,
     apply_dynamic_tick_spacing,
@@ -35,6 +35,9 @@ class ChartPage(QWidget):
         super().__init__(parent)
         self._spec: Optional[ChartSpec] = None
         self._measurement_enabled = False
+        self._measurement_point_enabled = False
+        self._measurement_point_target_id = ""
+        self._measurement_point_x: Optional[float] = None
         self._cursor_a_pos: Optional[float] = None
         self._cursor_b_pos: Optional[float] = None
         self._plot_items: Dict[str, pg.PlotDataItem] = {}
@@ -98,12 +101,6 @@ class ChartPage(QWidget):
             view_box.rect_selected.connect(self._on_rect_selected)
         self._legend = plot_item.addLegend()
         right_layout.addWidget(self._plot_widget, 1)
-        self._data_cursor = ChartDataCursorController(
-            plot_widget=self._plot_widget,
-            sample_at=self._sample_cursor_target,
-            x_bounds=self._data_cursor_x_bounds,
-            parent=self,
-        )
 
         self._main_splitter.addWidget(right_panel)
         self._main_splitter.setSizes([180, 620])
@@ -159,8 +156,10 @@ class ChartPage(QWidget):
         plot_item.disableAutoRange()
         self._legend = plot_item.addLegend()
         self._measurement_enabled = False
+        self._measurement_point_enabled = False
+        self._measurement_point_target_id = ""
+        self._measurement_point_x = None
         self._clear_measurement_positions()
-        self._data_cursor.clear()
         self._spec = None
         self._plot_items = {}
         self._series_items = {}
@@ -205,21 +204,22 @@ class ChartPage(QWidget):
     def fit_to_view(self):
         self._rebuild_plot()
 
-    def supports_data_cursor(self) -> bool:
+    def supports_measurement_point(self) -> bool:
         return bool(self._spec is not None and self._spec.series)
 
-    def is_data_cursor_enabled(self) -> bool:
-        return bool(self._data_cursor.is_enabled())
+    def is_measurement_point_enabled(self) -> bool:
+        return bool(self._measurement_point_enabled)
 
-    def data_cursor_target(self) -> str:
-        return str(self._data_cursor.target_id() or "")
+    def measurement_point_target(self) -> str:
+        return str(self._measurement_point_target_id or "")
 
-    def set_data_cursor_target(self, target_id: str) -> bool:
+    def set_measurement_point_target(self, target_id: str) -> bool:
         normalized_target_id = str(target_id or "")
         if not normalized_target_id:
-            self._data_cursor.set_target("")
+            self._measurement_point_target_id = ""
+            self._measurement_point_x = None
             return True
-        return self._activate_cursor_target(normalized_target_id)
+        return self._activate_measurement_point_target(normalized_target_id)
 
     def set_series_visible(self, series_name: str, visible: bool) -> bool:
         if self._spec is None or not series_name or series_name not in self._series_items:
@@ -231,15 +231,16 @@ class ChartPage(QWidget):
         self._updating_tree = True
         item.setCheckState(0, desired_state)
         self._updating_tree = False
-        if desired_state != Qt.CheckState.Checked and series_name == self._data_cursor.target_id():
-            self._data_cursor.set_target("")
+        if desired_state != Qt.CheckState.Checked and series_name == self._measurement_point_target_id:
+            self._measurement_point_target_id = ""
+            self._measurement_point_x = None
         self._rebuild_plot()
         return True
 
     def clear_all_series(self):
         self._on_clear_all_series()
 
-    def _activate_cursor_target(self, target_id: str) -> bool:
+    def _activate_measurement_point_target(self, target_id: str) -> bool:
         if not target_id or target_id not in self._series_items:
             return False
         item = self._series_items[target_id]
@@ -249,11 +250,22 @@ class ChartPage(QWidget):
             item.setCheckState(0, Qt.CheckState.Checked)
             self._updating_tree = False
             self._rebuild_plot()
-        self._data_cursor.set_target(target_id)
+        self._measurement_point_target_id = target_id
         return True
 
-    def set_data_cursor_enabled(self, enabled: bool):
-        self._data_cursor.set_enabled(enabled)
+    def set_measurement_point_enabled(self, enabled: bool):
+        self._measurement_point_enabled = bool(enabled)
+        if not self._measurement_point_enabled:
+            self._measurement_point_x = None
+
+    def set_measurement_point_position(self, x_value: float) -> bool:
+        if not self._measurement_point_enabled or not self._measurement_point_target_id or self._x_domain is None:
+            return False
+        axis_x = self._to_axis_x(x_value)
+        if axis_x is None:
+            return False
+        self._measurement_point_x = clamp_to_bounds(axis_x, self._x_domain)
+        return self._measurement_point_x is not None
 
     def set_measurement_enabled(self, enabled: bool):
         self._measurement_enabled = bool(enabled)
@@ -279,18 +291,7 @@ class ChartPage(QWidget):
         return True
 
     def export_image(self, path: str) -> bool:
-        self.resize(max(self.width(), 1280), max(self.height(), 840))
-        layout = self.layout()
-        if layout is not None:
-            layout.activate()
-        render_width = max(self._plot_widget.width(), 960)
-        render_height = max(self._plot_widget.height(), 640)
-        pixmap = QPixmap(render_width, render_height)
-        pixmap.fill(Qt.GlobalColor.transparent)
-        self._plot_widget.render(pixmap)
-        if pixmap.isNull():
-            return False
-        return pixmap.save(path)
+        return export_widget_image(self, self._plot_widget, path)
 
     def build_export_payload(self) -> Optional[Dict[str, Any]]:
         if self._spec is None or not self._spec.series:
@@ -327,10 +328,40 @@ class ChartPage(QWidget):
             "available_series": available_series,
             "visible_series": [serialize_chart_series_for_web(series) for series in visible_series],
             "visible_series_count": len(visible_series),
-            "data_cursor_enabled": self.is_data_cursor_enabled(),
-            "data_cursor_target": self.data_cursor_target(),
+            "measurement_point": self._build_measurement_point_snapshot(),
             "measurement_enabled": self.is_measurement_enabled(),
             "measurement": self._build_measurement_snapshot(),
+        }
+
+    def _build_measurement_point_snapshot(self) -> Dict[str, Any]:
+        if not self._measurement_point_enabled or not self._measurement_point_target_id or self._x_domain is None:
+            return {
+                "enabled": bool(self._measurement_point_enabled),
+                "target_id": self.measurement_point_target(),
+                "point_x": None,
+                "title": "",
+                "plot_series_name": "",
+                "plot_axis_key": "left",
+                "plot_y": None,
+                "values": [],
+            }
+        next_axis_x = clamp_to_bounds(self._measurement_point_x, self._x_domain)
+        if next_axis_x is None:
+            next_axis_x = midpoint_of_bounds(self._x_domain)
+        self._measurement_point_x = next_axis_x
+        sample = self._sample_measurement_point_target(self._measurement_point_target_id, next_axis_x) if next_axis_x is not None else None
+        serialized_sample = serialize_measurement_point_sample(sample) if sample is not None else {
+            "title": "",
+            "plot_series_name": "",
+            "plot_axis_key": "left",
+            "plot_y": None,
+            "values": [],
+        }
+        return {
+            "enabled": True,
+            "target_id": self.measurement_point_target(),
+            "point_x": self._to_display_x(next_axis_x),
+            **serialized_sample,
         }
 
     def _build_measurement_snapshot(self) -> Dict[str, Any]:
@@ -413,15 +444,6 @@ class ChartPage(QWidget):
             return float(10 ** x_position)
         return float(x_position)
 
-    def _to_plot_y_value(self, y_value: float) -> float:
-        if self._spec is None:
-            return float(y_value)
-        transformed = self._to_view_axis_data(np.asarray([y_value], dtype=float), log_enabled=self._spec.log_y)
-        return float(transformed[0])
-
-    def _data_cursor_x_bounds(self) -> Optional[Tuple[float, float]]:
-        return self._x_domain
-
     def _find_series_by_name(self, series_name: str) -> Optional[ChartSeries]:
         if self._spec is None:
             return None
@@ -430,7 +452,7 @@ class ChartPage(QWidget):
                 return series
         return None
 
-    def _sample_cursor_target(self, target_id: str, x_position: float) -> Optional[DataCursorSample]:
+    def _sample_measurement_point_target(self, target_id: str, x_position: float) -> Optional[MeasurementPointSample]:
         series = self._find_series_by_name(target_id)
         if series is None or target_id not in self._plot_items:
             return None
@@ -441,12 +463,14 @@ class ChartPage(QWidget):
         if target_id not in sampled_values:
             return None
         y_value = float(sampled_values[target_id])
-        return DataCursorSample(
+        return MeasurementPointSample(
             title=target_id,
-            plot_y_value=self._to_plot_y_value(y_value),
+            plot_series_name=series.name,
+            plot_axis_key=str(series.axis_key or "left"),
+            plot_y_value=y_value,
             values=[
-                DataCursorValue(label=f"{self._spec.x_label}:", value_text=f"{x_display:.6g}"),
-                DataCursorValue(label=f"{self._spec.y_label}:", value_text=f"{y_value:.6g}"),
+                MeasurementPointValue(label=f"{self._spec.x_label}:", value_text=f"{x_display:.6g}"),
+                MeasurementPointValue(label=f"{self._spec.y_label}:", value_text=f"{y_value:.6g}"),
             ],
         )
 
@@ -501,8 +525,6 @@ class ChartPage(QWidget):
             self._legend.addItem(item, series.name)
 
         if not visible_series:
-            if self._data_cursor.is_enabled():
-                self._data_cursor.refresh()
             self._x_domain = None
             self._y_domain = None
             return
@@ -512,8 +534,6 @@ class ChartPage(QWidget):
 
         if self.is_measurement_enabled():
             self._ensure_measurement_positions()
-        if self._data_cursor.is_enabled():
-            self._data_cursor.refresh()
 
     def _rebuild_domains(self):
         if self._spec is None:
@@ -570,23 +590,25 @@ class ChartPage(QWidget):
     def _on_signal_item_changed(self, item: QTreeWidgetItem, column: int):
         if self._updating_tree or self._spec is None:
             return
-        if item.checkState(0) != Qt.CheckState.Checked and item.text(0) == self._data_cursor.target_id():
-            self._data_cursor.set_target("")
+        if item.checkState(0) != Qt.CheckState.Checked and item.text(0) == self._measurement_point_target_id:
+            self._measurement_point_target_id = ""
+            self._measurement_point_x = None
         self._rebuild_plot()
 
     def _on_signal_label_clicked(self, item: QTreeWidgetItem):
         if self._spec is None or self._updating_tree or item is None:
             return
-        if not self._data_cursor.is_enabled():
+        if not self._measurement_point_enabled:
             return
-        self._activate_cursor_target(item.text(0))
+        self._activate_measurement_point_target(item.text(0))
 
     def _on_clear_all_series(self):
         self._updating_tree = True
         for item in self._series_items.values():
             item.setCheckState(0, Qt.CheckState.Unchecked)
         self._updating_tree = False
-        self._data_cursor.set_target("")
+        self._measurement_point_target_id = ""
+        self._measurement_point_x = None
         self._rebuild_plot()
 
     def _on_rect_selected(
@@ -612,8 +634,6 @@ class ChartPage(QWidget):
         self._apply_viewport(clamped_x_range, clamped_y_range)
         if self.is_measurement_enabled():
             self._ensure_measurement_positions()
-        if self._data_cursor.is_enabled():
-            self._data_cursor.refresh()
 
     def _to_view_axis_data(self, values: np.ndarray, *, log_enabled: bool) -> np.ndarray:
         array = np.asarray(values, dtype=float)

@@ -23,6 +23,7 @@ except ImportError:
 class SimulationWebHost(QWidget):
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
+        self._page_loaded = False
         self._frontend_ready = False
         self._state: Dict[str, Any] = {}
         self._bridge: Optional[SimulationWebBridge] = None
@@ -55,6 +56,8 @@ class SimulationWebHost(QWidget):
         self._web_view.page().setWebChannel(self._channel)
         configure_app_web_view(self._web_view)
         self._web_view.setContextMenuPolicy(Qt.ContextMenuPolicy.DefaultContextMenu)
+        self._web_view.loadStarted.connect(self._on_load_started)
+        self._web_view.loadFinished.connect(self._on_load_finished)
         self._web_view.setUrl(app_resource_url(self._react_entry_resource_path()))
         self.setFocusProxy(self._web_view)
         layout.addWidget(self._web_view)
@@ -66,7 +69,18 @@ class SimulationWebHost(QWidget):
             raise FileNotFoundError(f"Missing simulation React entry: {react_entry}")
         return "simulation/react-dist/index.html"
 
+    def _on_load_started(self) -> None:
+        self._page_loaded = False
+        self._frontend_ready = False
+
+    def _on_load_finished(self, ok: bool) -> None:
+        if not ok:
+            return
+        self._page_loaded = True
+        self._dispatch_state()
+
     def _on_ready(self) -> None:
+        self._page_loaded = True
         self._frontend_ready = True
         self._dispatch_state()
 
@@ -92,6 +106,15 @@ class SimulationWebHost(QWidget):
         self.set_state(self._simulation_tab.get_authoritative_frontend_state())
 
     def cleanup(self) -> None:
+        if self._web_view is not None:
+            try:
+                self._web_view.loadStarted.disconnect(self._on_load_started)
+            except Exception:
+                pass
+            try:
+                self._web_view.loadFinished.disconnect(self._on_load_finished)
+            except Exception:
+                pass
         if self._bridge is not None:
             try:
                 self._bridge.ready.disconnect(self._on_ready)
@@ -104,12 +127,12 @@ class SimulationWebHost(QWidget):
                 pass
 
     def _dispatch_state(self) -> None:
-        if self._web_view is None or not self._frontend_ready:
+        if self._web_view is None or not self._page_loaded or not self._frontend_ready:
             if self._fallback_label is not None:
                 runtime = self._state.get("simulation_runtime", {}) if isinstance(self._state, dict) else {}
                 self._fallback_label.setText(str(runtime.get("project_root", "Simulation")))
             return
-        script = "window.simulationApp.setState(%s);" % json.dumps(
+        script = "window.simulationApp && window.simulationApp.setState(%s);" % json.dumps(
             self._state,
             ensure_ascii=False,
         )

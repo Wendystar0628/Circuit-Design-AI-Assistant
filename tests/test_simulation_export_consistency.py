@@ -251,10 +251,11 @@ def test_export_panel_auto_exports_current_result_into_project_results_tree(qapp
 def test_ac_chart_exports_single_bode_overlay_with_dual_axis_metadata(qapp, sample_ac_result: SimulationResult, tmp_path: Path):
     chart_viewer = ChartViewer()
     chart_viewer.load_result(sample_ac_result)
+    snapshot = chart_viewer.get_web_snapshot()
 
-    assert len(chart_viewer._chart_specs) == 1
-    assert chart_viewer._chart_specs[0].chart_type.value == "bode_overlay"
-    assert chart_viewer._pages[0].supports_data_cursor() is True
+    assert snapshot["has_chart"] is True
+    assert snapshot["chart_type"] == "bode_overlay"
+    assert chart_viewer.supports_measurement_point() is True
 
     charts_dir = tmp_path / "ac_charts"
     chart_viewer.export_bundle(str(charts_dir))
@@ -282,9 +283,11 @@ def test_ac_chart_exports_single_bode_overlay_with_dual_axis_metadata(qapp, samp
 def test_ac_chart_rejects_legacy_derived_only_bode_signals(qapp, sample_legacy_ac_result: SimulationResult):
     chart_viewer = ChartViewer()
     chart_viewer.load_result(sample_legacy_ac_result)
+    snapshot = chart_viewer.get_web_snapshot()
 
-    assert chart_viewer._chart_specs == []
-    assert chart_viewer._pages == []
+    assert snapshot["has_chart"] is False
+    assert snapshot["chart_type"] == ""
+    assert chart_viewer.supports_measurement_point() is False
 
 
 class _FakeEventBus:

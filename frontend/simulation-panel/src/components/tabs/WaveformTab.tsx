@@ -122,16 +122,23 @@ export function WaveformTab({ state, bridge }: WaveformTabProps) {
         main={
           <div className="content-card content-card--canvas">
             <SeriesSvgChart
-              floatingPanel={waveform.cursor_a_visible || waveform.cursor_b_visible ? (
-                <MeasurementFloatingPanel
-                  title="测量"
-                  signalOptions={measurementSignals.map((signal) => ({ id: signal.id, label: signal.label }))}
-                  selectedSignalId={activeMeasurementSignal?.id ?? ''}
-                  onSelectedSignalChange={setSelectedMeasurementSignalId}
-                  rows={measurementPanelRows}
-                  emptyMessage="当前所选信号没有可展示的测量值。"
-                />
-              ) : undefined}
+              floatingPanels={waveform.cursor_a_visible || waveform.cursor_b_visible ? [
+                {
+                  id: 'waveform-measurement',
+                  defaultTop: 16,
+                  defaultRight: 16,
+                  content: (
+                    <MeasurementFloatingPanel
+                      title="测量"
+                      signalOptions={measurementSignals.map((signal) => ({ id: signal.id, label: signal.label }))}
+                      selectedSignalId={activeMeasurementSignal?.id ?? ''}
+                      onSelectedSignalChange={setSelectedMeasurementSignalId}
+                      rows={measurementPanelRows}
+                      emptyMessage="当前所选信号没有可展示的测量值。"
+                    />
+                  ),
+                },
+              ] : []}
               measurementCursors={{
                 cursorAVisible: waveform.cursor_a_visible,
                 cursorBVisible: waveform.cursor_b_visible,

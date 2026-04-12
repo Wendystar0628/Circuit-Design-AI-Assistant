@@ -43,6 +43,8 @@ export interface SeriesSvgChartRenderedSeries {
 export interface SeriesSvgChartModel {
   viewport: SeriesSvgChartViewport
   xDomain: SeriesSvgChartAxisDomain
+  leftDomain: SeriesSvgChartAxisDomain
+  rightDomain: SeriesSvgChartAxisDomain | null
   xLabel: string
   leftAxisLabel: string
   rightAxisLabel: string
@@ -337,6 +339,8 @@ export function buildSeriesSvgChartModel({
   return {
     viewport,
     xDomain,
+    leftDomain,
+    rightDomain,
     xLabel: xLabel || 'X',
     leftAxisLabel: yLabel || (hasRightAxis ? 'Left axis' : 'Y'),
     rightAxisLabel: hasRightAxis ? (secondaryYLabel || 'Right axis') : '',

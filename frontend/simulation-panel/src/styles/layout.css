@@ -841,6 +841,10 @@
   pointer-events: none;
 }
 
+.svg-chart__floating-panel-shell--dragging {
+  z-index: 3;
+}
+
 .svg-chart__plot-bg {
   fill: #fbfdff;
 }
@@ -873,12 +877,8 @@
 }
 
 .svg-chart__measurement-cursor {
-  color: #ff6b6b;
+  color: #111111;
   cursor: ew-resize;
-}
-
-.svg-chart__measurement-cursor--b {
-  color: #2ecc71;
 }
 
 .svg-chart__measurement-cursor-line {
@@ -905,6 +905,35 @@
   pointer-events: none;
 }
 
+.svg-chart__measurement-point {
+  color: #0f172a;
+  cursor: ew-resize;
+}
+
+.svg-chart__measurement-point-line {
+  stroke: currentColor;
+  stroke-width: 1.2;
+  stroke-dasharray: 4 4;
+  opacity: 0.72;
+  vector-effect: non-scaling-stroke;
+}
+
+.svg-chart__measurement-point-hitbox-line {
+  stroke: transparent;
+  stroke-width: 14;
+  vector-effect: non-scaling-stroke;
+}
+
+.svg-chart__measurement-point-hitbox-marker {
+  fill: transparent;
+}
+
+.svg-chart__measurement-point-marker {
+  fill: #ffffff;
+  stroke: currentColor;
+  stroke-width: 2;
+}
+
 .measurement-floating-panel {
   display: flex;
   flex-direction: column;
@@ -919,6 +948,26 @@
   backdrop-filter: blur(10px);
   box-shadow: 0 10px 28px rgba(15, 23, 42, 0.14);
   pointer-events: auto;
+}
+
+.measurement-floating-panel__drag-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: -2px -2px 0;
+  padding: 2px 2px 0;
+  cursor: move;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.measurement-floating-panel__drag-hint {
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--sim-text-secondary);
+  letter-spacing: 0.04em;
 }
 
 .measurement-floating-panel__header {
@@ -1036,6 +1085,40 @@
 
 .measurement-floating-panel__empty {
   padding: 6px 2px 2px;
+}
+
+.measurement-point-floating-panel__rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.measurement-point-floating-panel__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  padding: 8px 10px;
+  border: 1px solid rgba(203, 213, 225, 0.95);
+  border-radius: 10px;
+  background: rgba(248, 250, 252, 0.96);
+}
+
+.measurement-point-floating-panel__label,
+.measurement-point-floating-panel__value {
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.measurement-point-floating-panel__label {
+  color: var(--sim-text-secondary);
+  font-weight: 600;
+}
+
+.measurement-point-floating-panel__value {
+  color: var(--sim-text-primary);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
 }
 
 .svg-chart__series {

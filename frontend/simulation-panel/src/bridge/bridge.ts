@@ -8,7 +8,9 @@ export interface SimulationBridge {
   clearAllChartSeries(): void
   setChartMeasurementEnabled(enabled: boolean): void
   moveChartMeasurementCursor(cursorId: 'a' | 'b', position: number): void
-  setChartDataCursorEnabled(enabled: boolean): void
+  setChartMeasurementPointEnabled(enabled: boolean): void
+  setChartMeasurementPointTarget(targetId: string): void
+  moveChartMeasurementPoint(position: number): void
   fitChart(): void
   setSignalVisible(signalName: string, visible: boolean): void
   clearAllSignals(): void

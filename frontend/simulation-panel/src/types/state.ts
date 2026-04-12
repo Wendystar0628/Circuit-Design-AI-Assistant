@@ -89,8 +89,7 @@ export interface AnalysisChartViewState {
   available_series: ChartSeriesMetaState[]
   visible_series: ChartSeriesSnapshotState[]
   visible_series_count: number
-  data_cursor_enabled: boolean
-  data_cursor_target: string
+  measurement_point: ChartMeasurementPointState
   measurement_enabled: boolean
   measurement: ChartMeasurementState
 }
@@ -124,6 +123,22 @@ export interface ChartMeasurementState {
   cursor_b_x: number | null
   values_a: Record<string, number>
   values_b: Record<string, number>
+}
+
+export interface ChartMeasurementPointValueState {
+  label: string
+  value_text: string
+}
+
+export interface ChartMeasurementPointState {
+  enabled: boolean
+  target_id: string
+  point_x: number | null
+  title: string
+  plot_series_name: string
+  plot_axis_key: string
+  plot_y: number | null
+  values: ChartMeasurementPointValueState[]
 }
 
 export interface WaveformViewState {
@@ -331,6 +346,17 @@ const EMPTY_CHART_MEASUREMENT: ChartMeasurementState = {
   values_b: {},
 }
 
+const EMPTY_CHART_MEASUREMENT_POINT: ChartMeasurementPointState = {
+  enabled: false,
+  target_id: '',
+  point_x: null,
+  title: '',
+  plot_series_name: '',
+  plot_axis_key: 'left',
+  plot_y: null,
+  values: [],
+}
+
 const EMPTY_WAVEFORM_MEASUREMENT: WaveformMeasurementState = {
   cursor_a_x: null,
   cursor_b_x: null,
@@ -393,8 +419,7 @@ export const EMPTY_SIMULATION_STATE: SimulationMainState = {
     available_series: [],
     visible_series: [],
     visible_series_count: 0,
-    data_cursor_enabled: false,
-    data_cursor_target: '',
+    measurement_point: EMPTY_CHART_MEASUREMENT_POINT,
     measurement_enabled: false,
     measurement: EMPTY_CHART_MEASUREMENT,
   },
@@ -584,6 +609,29 @@ function normalizeChartMeasurement(value: unknown): ChartMeasurementState {
   }
 }
 
+function normalizeChartMeasurementPoint(value: unknown): ChartMeasurementPointState {
+  const record = asRecord(value)
+  const values = Array.isArray(record.values)
+    ? record.values.map((item) => {
+      const entry = asRecord(item)
+      return {
+        label: asString(entry.label),
+        value_text: asString(entry.value_text),
+      }
+    })
+    : []
+  return {
+    enabled: asBoolean(record.enabled),
+    target_id: asString(record.target_id),
+    point_x: asNullableNumber(record.point_x),
+    title: asString(record.title),
+    plot_series_name: asString(record.plot_series_name),
+    plot_axis_key: asString(record.plot_axis_key) || 'left',
+    plot_y: asNullableNumber(record.plot_y),
+    values,
+  }
+}
+
 function normalizeWaveformSignalCatalog(value: unknown): WaveformSignalCatalogItemState[] {
   if (!Array.isArray(value)) {
     return []
@@ -770,8 +818,7 @@ export function normalizeSimulationState(input: unknown): SimulationMainState {
       available_series: normalizeChartSeriesMeta(analysisChartView.available_series),
       visible_series: normalizeChartSeriesSnapshots(analysisChartView.visible_series),
       visible_series_count: asNumber(analysisChartView.visible_series_count),
-      data_cursor_enabled: asBoolean(analysisChartView.data_cursor_enabled),
-      data_cursor_target: asString(analysisChartView.data_cursor_target),
+      measurement_point: normalizeChartMeasurementPoint(analysisChartView.measurement_point),
       measurement_enabled: asBoolean(analysisChartView.measurement_enabled),
       measurement: normalizeChartMeasurement(analysisChartView.measurement),
     },

@@ -13,7 +13,9 @@ class SimulationWebBridge(QObject):
     clear_all_chart_series_requested = pyqtSignal()
     chart_measurement_enabled_changed = pyqtSignal(bool)
     chart_measurement_cursor_move_requested = pyqtSignal(str, float)
-    chart_data_cursor_enabled_changed = pyqtSignal(bool)
+    chart_measurement_point_enabled_changed = pyqtSignal(bool)
+    chart_measurement_point_target_changed = pyqtSignal(str)
+    chart_measurement_point_move_requested = pyqtSignal(float)
     chart_fit_requested = pyqtSignal()
     signal_visibility_toggled = pyqtSignal(str, bool)
     clear_all_signals_requested = pyqtSignal()
@@ -61,8 +63,16 @@ class SimulationWebBridge(QObject):
         self.chart_measurement_cursor_move_requested.emit(self._normalize_cursor_id(cursor_id), float(position or 0.0))
 
     @pyqtSlot(bool)
-    def setChartDataCursorEnabled(self, enabled: bool) -> None:
-        self.chart_data_cursor_enabled_changed.emit(bool(enabled))
+    def setChartMeasurementPointEnabled(self, enabled: bool) -> None:
+        self.chart_measurement_point_enabled_changed.emit(bool(enabled))
+
+    @pyqtSlot(str)
+    def setChartMeasurementPointTarget(self, target_id: str) -> None:
+        self.chart_measurement_point_target_changed.emit(str(target_id or ""))
+
+    @pyqtSlot(float)
+    def moveChartMeasurementPoint(self, position: float) -> None:
+        self.chart_measurement_point_move_requested.emit(float(position or 0.0))
 
     @pyqtSlot()
     def fitChart(self) -> None:

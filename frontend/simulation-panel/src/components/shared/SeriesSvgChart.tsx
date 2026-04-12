@@ -1,10 +1,11 @@
-import { useMemo } from 'react'
+import { useMemo, type ReactNode } from 'react'
 
 import { useElementSize } from '../../hooks/useElementSize'
 import { buildSeriesSvgChartModel, type SeriesSvgChartDatum } from './seriesSvgChartModel'
 
 interface SeriesSvgChartProps {
   title?: string
+  headerActions?: ReactNode
   series: SeriesSvgChartDatum[]
   xLabel: string
   yLabel: string
@@ -23,6 +24,7 @@ const SIDE_AXIS_TITLE_OFFSET = 32
 
 export function SeriesSvgChart({
   title,
+  headerActions,
   series,
   xLabel,
   yLabel,
@@ -44,13 +46,15 @@ export function SeriesSvgChart({
   }), [chartHeight, chartWidth, logX, logY, secondaryYLabel, series, xLabel, yLabel])
 
   const normalizedTitle = title?.trim() ?? ''
+  const hasHeader = normalizedTitle.length > 0 || headerActions !== undefined
 
   if (!chartModel) {
     return (
       <div className="svg-chart-shell">
-        {normalizedTitle ? (
+        {hasHeader ? (
           <div className="svg-chart-header">
-            <div className="svg-chart-title">{normalizedTitle}</div>
+            {normalizedTitle ? <div className="svg-chart-title">{normalizedTitle}</div> : <div className="svg-chart-header__spacer" />}
+            {headerActions ? <div className="svg-chart-header__actions">{headerActions}</div> : null}
           </div>
         ) : null}
         <div className="svg-chart-empty muted-text">{emptyMessage}</div>
@@ -77,9 +81,10 @@ export function SeriesSvgChart({
 
   return (
     <div className="svg-chart-shell">
-      {normalizedTitle ? (
+      {hasHeader ? (
         <div className="svg-chart-header">
-          <div className="svg-chart-title">{normalizedTitle}</div>
+          {normalizedTitle ? <div className="svg-chart-title">{normalizedTitle}</div> : <div className="svg-chart-header__spacer" />}
+          {headerActions ? <div className="svg-chart-header__actions">{headerActions}</div> : null}
         </div>
       ) : null}
       <div ref={chartFrameRef} className="svg-chart-frame">

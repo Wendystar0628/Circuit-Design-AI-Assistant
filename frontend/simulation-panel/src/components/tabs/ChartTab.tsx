@@ -2,7 +2,6 @@ import { useMemo } from 'react'
 
 import type { SimulationBridge } from '../../bridge/bridge'
 import type { SimulationMainState } from '../../types/state'
-import { CompactToolbar } from '../layout/CompactToolbar'
 import { ResizableStack } from '../layout/ResizableStack'
 import { ResponsivePane } from '../layout/ResponsivePane'
 import { SeriesSvgChart } from '../shared/SeriesSvgChart'
@@ -23,6 +22,58 @@ export function ChartTab({ state, bridge }: ChartTabProps) {
   const chart = state.analysis_chart_view
   const supportsDataCursor = chart.available_series.length > 0
   const chartDisplayName = chart.chart_type_display_name || chart.title || chart.chart_type || '图表'
+  const chartHeaderActions = chart.has_chart ? (
+    <>
+      <button
+        type="button"
+        className="chart-header-button"
+        disabled={!chart.has_chart}
+        onClick={() => bridge?.fitChart()}
+      >
+        Fit
+      </button>
+      <button
+        type="button"
+        className="chart-header-button"
+        disabled={!chart.has_chart}
+        onClick={() => bridge?.setChartMeasurementEnabled(!chart.measurement_enabled)}
+      >
+        {chart.measurement_enabled ? '关闭测量' : '开启测量'}
+      </button>
+      <button
+        type="button"
+        className="chart-header-button"
+        disabled={!supportsDataCursor}
+        onClick={() => bridge?.setChartDataCursorEnabled(!chart.data_cursor_enabled)}
+      >
+        {chart.data_cursor_enabled ? '关闭光标' : '开启光标'}
+      </button>
+      <button
+        type="button"
+        className="chart-header-button"
+        disabled={!chart.available_series.length}
+        onClick={() => bridge?.clearAllChartSeries()}
+      >
+        清空序列
+      </button>
+      <button
+        type="button"
+        className="chart-header-button"
+        disabled={!chart.can_export}
+        onClick={() => bridge?.requestExport(['charts'])}
+      >
+        导出图表
+      </button>
+      <button
+        type="button"
+        className="chart-header-button chart-header-button--accent"
+        disabled={!chart.can_add_to_conversation}
+        onClick={() => bridge?.addToConversation('chart')}
+      >
+        添加至对话
+      </button>
+    </>
+  ) : undefined
   const visibleLegendSeries = useMemo(() => chart.available_series.filter((series) => series.visible), [chart.available_series])
   const measurementRows = useMemo(() => {
     const names = Array.from(new Set([
@@ -38,62 +89,6 @@ export function ChartTab({ state, bridge }: ChartTabProps) {
 
   return (
     <div className="tab-surface">
-      <CompactToolbar
-        title="图表"
-        description={chart.has_chart ? `当前图表：${chartDisplayName}` : '统一前端图表显示层，直接消费后端权威 snapshot。'}
-        actions={
-          <>
-            <button
-              type="button"
-              className="toolbar-button-secondary"
-              disabled={!chart.has_chart}
-              onClick={() => bridge?.fitChart()}
-            >
-              Fit
-            </button>
-            <button
-              type="button"
-              className="toolbar-button-secondary"
-              disabled={!chart.has_chart}
-              onClick={() => bridge?.setChartMeasurementEnabled(!chart.measurement_enabled)}
-            >
-              {chart.measurement_enabled ? '关闭测量' : '开启测量'}
-            </button>
-            <button
-              type="button"
-              className="toolbar-button-secondary"
-              disabled={!supportsDataCursor}
-              onClick={() => bridge?.setChartDataCursorEnabled(!chart.data_cursor_enabled)}
-            >
-              {chart.data_cursor_enabled ? '关闭光标' : '开启光标'}
-            </button>
-            <button
-              type="button"
-              className="toolbar-button-secondary"
-              disabled={!chart.available_series.length}
-              onClick={() => bridge?.clearAllChartSeries()}
-            >
-              清空序列
-            </button>
-            <button
-              type="button"
-              className="toolbar-button-secondary"
-              disabled={!chart.can_export}
-              onClick={() => bridge?.requestExport(['charts'])}
-            >
-              导出图表
-            </button>
-            <button
-              type="button"
-              className="toolbar-button"
-              disabled={!chart.can_add_to_conversation}
-              onClick={() => bridge?.addToConversation('chart')}
-            >
-              添加至对话
-            </button>
-          </>
-        }
-      />
       <ResponsivePane
         sidebarConfig={{
           defaultSize: 176,
@@ -151,6 +146,7 @@ export function ChartTab({ state, bridge }: ChartTabProps) {
           <div className="content-card content-card--canvas">
             <SeriesSvgChart
               title={chart.has_chart ? chartDisplayName : ''}
+              headerActions={chartHeaderActions}
               series={chart.visible_series}
               xLabel={chart.x_label}
               yLabel={chart.y_label}

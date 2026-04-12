@@ -23,8 +23,9 @@ export function SimulationApp({ state, bridge, bridgeConnected, onTabSelect }: S
     <SimulationLayoutShell
       state={state}
       bridgeConnected={bridgeConnected}
-      activeTabContent={activeTabNode}
       onTabSelect={onTabSelect}
-    />
+    >
+      {activeTabNode}
+    </SimulationLayoutShell>
   )
 }

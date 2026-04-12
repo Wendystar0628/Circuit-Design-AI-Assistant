@@ -1,7 +1,8 @@
-import type { SimulationMainState, SimulationTabId } from '../../types/state'
+import type { SimulationTabId } from '../../types/state'
 
 interface SimulationTabBarProps {
-  state: SimulationMainState
+  activeTab: SimulationTabId
+  availableTabs: SimulationTabId[]
   onTabSelect(tabId: SimulationTabId): void
 }
 
@@ -17,25 +18,26 @@ const TAB_LABELS: Record<SimulationTabId, string> = {
   op_result: '工作点结果',
 }
 
-export function SimulationTabBar({ state, onTabSelect }: SimulationTabBarProps) {
-  const activeTab = state.surface_tabs.active_tab
-  const availableTabs = state.surface_tabs.available_tabs
-
+export function SimulationTabBar({ activeTab, availableTabs, onTabSelect }: SimulationTabBarProps) {
   return (
-    <div className="simulation-tab-bar" aria-label="Simulation Result Tabs">
-      {availableTabs.map((tabId) => {
-        const active = tabId === activeTab
-        return (
-          <button
-            key={tabId}
-            type="button"
-            className={active ? 'simulation-tab-chip simulation-tab-chip--active' : 'simulation-tab-chip'}
-            onClick={() => onTabSelect(tabId)}
-          >
-            {TAB_LABELS[tabId] ?? tabId}
-          </button>
-        )
-      })}
-    </div>
+    <nav className="simulation-tab-bar-shell" aria-label="Simulation Result Tabs">
+      <div className="simulation-tab-bar" role="tablist" aria-orientation="horizontal">
+        {availableTabs.map((tabId) => {
+          const active = tabId === activeTab
+          return (
+            <button
+              key={tabId}
+              type="button"
+              role="tab"
+              aria-selected={active ? 'true' : 'false'}
+              className={active ? 'simulation-tab-chip simulation-tab-chip--active' : 'simulation-tab-chip'}
+              onClick={() => onTabSelect(tabId)}
+            >
+              {TAB_LABELS[tabId] ?? tabId}
+            </button>
+          )
+        })}
+      </div>
+    </nav>
   )
 }

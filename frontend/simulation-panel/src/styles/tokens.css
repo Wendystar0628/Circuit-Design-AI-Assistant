@@ -25,6 +25,13 @@
   --sim-pad-inner: 8px;
   --sim-pad-tight: 6px;
   --sim-control-height: 28px;
+  --sim-tab-bar-height: 40px;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
 }
 
 @media (max-width: 1080px) {
@@ -39,6 +46,7 @@
     --sim-pad-outer: 6px;
     --sim-pad-inner: 6px;
     --sim-control-height: 26px;
+    --sim-tab-bar-height: 38px;
   }
 }
 
@@ -54,10 +62,6 @@ body,
 body {
   overflow: hidden;
   color: var(--sim-text-primary);
-}
-
-* {
-  box-sizing: border-box;
 }
 
 button,

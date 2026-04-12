@@ -9,6 +9,12 @@ class SimulationWebBridge(QObject):
     ready = pyqtSignal()
     activate_tab_requested = pyqtSignal(str)
     load_history_result_requested = pyqtSignal(str)
+    chart_series_visibility_toggled = pyqtSignal(str, bool)
+    clear_all_chart_series_requested = pyqtSignal()
+    chart_measurement_enabled_changed = pyqtSignal(bool)
+    chart_data_cursor_enabled_changed = pyqtSignal(bool)
+    chart_data_cursor_target_changed = pyqtSignal(str)
+    chart_fit_requested = pyqtSignal()
     signal_visibility_toggled = pyqtSignal(str, bool)
     clear_all_signals_requested = pyqtSignal()
     cursor_visibility_toggled = pyqtSignal(str, bool)
@@ -18,6 +24,7 @@ class SimulationWebBridge(QObject):
     raw_data_jump_to_row_requested = pyqtSignal(int)
     raw_data_jump_to_x_requested = pyqtSignal(float)
     raw_data_value_search_requested = pyqtSignal(int, float, float)
+    raw_data_shift_signal_window_requested = pyqtSignal(int)
     output_log_search_requested = pyqtSignal(str)
     output_log_filter_requested = pyqtSignal(str)
     output_log_jump_to_error_requested = pyqtSignal()
@@ -36,6 +43,30 @@ class SimulationWebBridge(QObject):
     @pyqtSlot(str)
     def loadHistoryResult(self, result_path: str) -> None:
         self.load_history_result_requested.emit(str(result_path or ""))
+
+    @pyqtSlot(str, bool)
+    def setChartSeriesVisible(self, series_name: str, visible: bool) -> None:
+        self.chart_series_visibility_toggled.emit(str(series_name or ""), bool(visible))
+
+    @pyqtSlot()
+    def clearAllChartSeries(self) -> None:
+        self.clear_all_chart_series_requested.emit()
+
+    @pyqtSlot(bool)
+    def setChartMeasurementEnabled(self, enabled: bool) -> None:
+        self.chart_measurement_enabled_changed.emit(bool(enabled))
+
+    @pyqtSlot(bool)
+    def setChartDataCursorEnabled(self, enabled: bool) -> None:
+        self.chart_data_cursor_enabled_changed.emit(bool(enabled))
+
+    @pyqtSlot(str)
+    def setChartDataCursorTarget(self, target_id: str) -> None:
+        self.chart_data_cursor_target_changed.emit(str(target_id or ""))
+
+    @pyqtSlot()
+    def fitChart(self) -> None:
+        self.chart_fit_requested.emit()
 
     @pyqtSlot(str, bool)
     def setSignalVisible(self, signal_name: str, visible: bool) -> None:
@@ -63,7 +94,8 @@ class SimulationWebBridge(QObject):
 
     @pyqtSlot(int)
     def jumpRawDataToRow(self, row: int) -> None:
-        self.raw_data_jump_to_row_requested.emit(max(0, int(row or 0)))
+        normalized_row = max(1, int(row or 0)) - 1
+        self.raw_data_jump_to_row_requested.emit(normalized_row)
 
     @pyqtSlot(float)
     def jumpRawDataToX(self, x_value: float) -> None:
@@ -76,6 +108,13 @@ class SimulationWebBridge(QObject):
             float(value or 0.0),
             max(0.0, float(tolerance or 0.0)),
         )
+
+    @pyqtSlot(int)
+    def shiftRawDataSignalWindow(self, page_delta: int) -> None:
+        normalized_delta = int(page_delta or 0)
+        if normalized_delta == 0:
+            return
+        self.raw_data_shift_signal_window_requested.emit(1 if normalized_delta > 0 else -1)
 
     @pyqtSlot(str)
     def searchOutputLog(self, keyword: str) -> None:

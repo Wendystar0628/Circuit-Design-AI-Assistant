@@ -18,15 +18,6 @@ function Root() {
       setState(nextState) {
         setState(normalizeSimulationState(nextState))
       },
-      activateTab(tabId) {
-        setState((previous: SimulationMainState) => ({
-          ...previous,
-          surface_tabs: {
-            ...previous.surface_tabs,
-            active_tab: tabId,
-          },
-        }))
-      },
     }
     window.simulationApp = api
     return () => {
@@ -56,13 +47,6 @@ function Root() {
   }, [])
 
   const handleTabSelect = (tabId: SimulationTabId) => {
-    setState((previous: SimulationMainState) => ({
-      ...previous,
-      surface_tabs: {
-        ...previous.surface_tabs,
-        active_tab: tabId,
-      },
-    }))
     bridge?.activateTab(tabId)
   }
 

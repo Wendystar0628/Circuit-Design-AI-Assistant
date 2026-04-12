@@ -21,25 +21,8 @@
 import logging
 from typing import Any, Dict, List, Optional
 
-from PyQt6.QtCore import Qt, pyqtSignal, QRegularExpression
-from PyQt6.QtGui import (
-    QTextCharFormat,
-    QColor,
-    QFont,
-    QTextCursor,
-    QSyntaxHighlighter,
-    QTextDocument,
-)
 from PyQt6.QtWidgets import (
     QWidget,
-    QVBoxLayout,
-    QHBoxLayout,
-    QPlainTextEdit,
-    QFrame,
-    QLabel,
-    QLineEdit,
-    QPushButton,
-    QComboBox,
     QSizePolicy,
 )
 
@@ -47,175 +30,8 @@ from domain.simulation.data.simulation_output_reader import (
     SimulationOutputReader,
     simulation_output_reader,
     LogLine,
-    LogLevel,
     SimulationSummary,
 )
-from resources.theme import (
-    COLOR_BG_PRIMARY,
-    COLOR_BG_SECONDARY,
-    COLOR_BG_TERTIARY,
-    COLOR_TEXT_PRIMARY,
-    COLOR_TEXT_SECONDARY,
-    COLOR_BORDER,
-    COLOR_ACCENT,
-    COLOR_ACCENT_LIGHT,
-    COLOR_ERROR,
-    COLOR_WARNING,
-    FONT_SIZE_SMALL,
-    FONT_SIZE_NORMAL,
-    SPACING_SMALL,
-    SPACING_NORMAL,
-    BORDER_RADIUS_NORMAL,
-)
-
-
-# ============================================================
-# 常量定义
-# ============================================================
-
-# 错误行背景色
-ERROR_BG_COLOR = "#ffebee"
-# 警告行背景色
-WARNING_BG_COLOR = "#fff8e1"
-# 关键信息文字色
-INFO_TEXT_COLOR = "#1976d2"
-# 搜索高亮背景色
-SEARCH_HIGHLIGHT_COLOR = "#ffff00"
-
-
-# ============================================================
-# LogHighlighter - 日志语法高亮器
-# ============================================================
-
-class LogHighlighter(QSyntaxHighlighter):
-    """
-    日志语法高亮器
-    
-    为不同级别的日志行应用不同的样式：
-    - 错误行：红色背景
-    - 警告行：黄色背景
-    - 关键信息：蓝色文字
-    """
-    
-    def __init__(self, parent: QTextDocument = None):
-        super().__init__(parent)
-        
-        # 错误格式
-        self._error_format = QTextCharFormat()
-        self._error_format.setBackground(QColor(ERROR_BG_COLOR))
-        self._error_format.setForeground(QColor(COLOR_ERROR))
-        
-        # 警告格式
-        self._warning_format = QTextCharFormat()
-        self._warning_format.setBackground(QColor(WARNING_BG_COLOR))
-        self._warning_format.setForeground(QColor("#f57c00"))
-        
-        # 信息格式
-        self._info_format = QTextCharFormat()
-        self._info_format.setForeground(QColor(INFO_TEXT_COLOR))
-        
-        # 搜索高亮格式
-        self._search_format = QTextCharFormat()
-        self._search_format.setBackground(QColor(SEARCH_HIGHLIGHT_COLOR))
-        
-        # 错误关键词正则
-        self._error_pattern = QRegularExpression(
-            r'\b(error|fatal|failed|failure|exception|abort|cannot|unable|'
-            r'invalid|illegal|undefined|no convergence|singular matrix)\b',
-            QRegularExpression.PatternOption.CaseInsensitiveOption
-        )
-        
-        # 警告关键词正则
-        self._warning_pattern = QRegularExpression(
-            r'\b(warning|warn|caution|deprecated|notice|attention|'
-            r'floating|missing)\b',
-            QRegularExpression.PatternOption.CaseInsensitiveOption
-        )
-        
-        # 信息关键词正则
-        self._info_pattern = QRegularExpression(
-            r'\b(analysis|simulation|circuit|temperature|completed|'
-            r'finished|starting|loading|parsing)\b',
-            QRegularExpression.PatternOption.CaseInsensitiveOption
-        )
-        
-        # 搜索关键词
-        self._search_keyword: str = ""
-    
-    def set_search_keyword(self, keyword: str):
-        """设置搜索关键词"""
-        self._search_keyword = keyword
-        self.rehighlight()
-    
-    def clear_search(self):
-        """清除搜索高亮"""
-        self._search_keyword = ""
-        self.rehighlight()
-    
-    def highlightBlock(self, text: str):
-        """高亮文本块"""
-        if not text:
-            return
-        
-        # 检查错误关键词
-        match_iter = self._error_pattern.globalMatch(text)
-        has_error = False
-        while match_iter.hasNext():
-            match = match_iter.next()
-            has_error = True
-            self.setFormat(match.capturedStart(), match.capturedLength(), self._error_format)
-        
-        # 如果整行包含错误，设置整行背景
-        if has_error:
-            block_format = QTextCharFormat()
-            block_format.setBackground(QColor(ERROR_BG_COLOR))
-            self.setFormat(0, len(text), block_format)
-            # 重新应用错误关键词高亮
-            match_iter = self._error_pattern.globalMatch(text)
-            while match_iter.hasNext():
-                match = match_iter.next()
-                self.setFormat(match.capturedStart(), match.capturedLength(), self._error_format)
-            return
-        
-        # 检查警告关键词
-        match_iter = self._warning_pattern.globalMatch(text)
-        has_warning = False
-        while match_iter.hasNext():
-            match = match_iter.next()
-            has_warning = True
-            self.setFormat(match.capturedStart(), match.capturedLength(), self._warning_format)
-        
-        # 如果整行包含警告，设置整行背景
-        if has_warning:
-            block_format = QTextCharFormat()
-            block_format.setBackground(QColor(WARNING_BG_COLOR))
-            self.setFormat(0, len(text), block_format)
-            # 重新应用警告关键词高亮
-            match_iter = self._warning_pattern.globalMatch(text)
-            while match_iter.hasNext():
-                match = match_iter.next()
-                self.setFormat(match.capturedStart(), match.capturedLength(), self._warning_format)
-            return
-        
-        # 检查信息关键词
-        match_iter = self._info_pattern.globalMatch(text)
-        while match_iter.hasNext():
-            match = match_iter.next()
-            self.setFormat(match.capturedStart(), match.capturedLength(), self._info_format)
-        
-        # 搜索高亮
-        if self._search_keyword:
-            keyword_lower = self._search_keyword.lower()
-            text_lower = text.lower()
-            start = 0
-            while True:
-                idx = text_lower.find(keyword_lower, start)
-                if idx == -1:
-                    break
-                self.setFormat(idx, len(self._search_keyword), self._search_format)
-                start = idx + 1
-
-
 # ============================================================
 # OutputLogViewer - 仿真输出日志查看器
 # ============================================================
@@ -228,13 +44,7 @@ class OutputLogViewer(QWidget):
     - 搜索关键词并高亮
     - 按日志级别过滤
     - 跳转到第一个错误行
-    
-    Signals:
-        error_clicked: 点击错误行时发出，携带行号
     """
-    
-    error_clicked = pyqtSignal(int)
-    add_to_conversation_clicked = pyqtSignal()
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -248,6 +58,8 @@ class OutputLogViewer(QWidget):
         self._log_lines: List[LogLine] = []
         self._filtered_lines: List[LogLine] = []
         self._current_filter: str = "all"
+        self._search_keyword: str = ""
+        self._selected_line_number: Optional[int] = None
         
         # 项目和结果路径
         self._project_root: Optional[str] = None
@@ -255,204 +67,13 @@ class OutputLogViewer(QWidget):
         
         # 摘要信息
         self._summary: Optional[SimulationSummary] = None
-        
-        # 初始化 UI
-        self._setup_ui()
-        self._apply_style()
-        self._connect_signals()
-        
-        # 初始化文本
-        self.retranslate_ui()
-    
-    def _setup_ui(self):
-        """初始化 UI 组件"""
+
         self.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Expanding
         )
-        
-        main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.setSpacing(0)
-        
-        # 工具栏
-        self._toolbar = QFrame()
-        self._toolbar.setObjectName("logToolbar")
-        toolbar_layout = QHBoxLayout(self._toolbar)
-        toolbar_layout.setContentsMargins(
-            SPACING_SMALL, SPACING_SMALL, SPACING_SMALL, SPACING_SMALL
-        )
-        toolbar_layout.setSpacing(SPACING_SMALL)
-        
-        # 搜索框
-        self._search_label = QLabel()
-        self._search_edit = QLineEdit()
-        self._search_edit.setObjectName("searchEdit")
-        self._search_edit.setFixedWidth(200)
-        self._search_edit.setClearButtonEnabled(True)
-        self._search_btn = QPushButton()
-        self._search_btn.setObjectName("searchBtn")
-        
-        toolbar_layout.addWidget(self._search_label)
-        toolbar_layout.addWidget(self._search_edit)
-        toolbar_layout.addWidget(self._search_btn)
-        
-        toolbar_layout.addSpacing(SPACING_NORMAL)
-        
-        # 过滤下拉框
-        self._filter_label = QLabel()
-        self._filter_combo = QComboBox()
-        self._filter_combo.setObjectName("filterCombo")
-        self._filter_combo.setFixedWidth(120)
-        
-        toolbar_layout.addWidget(self._filter_label)
-        toolbar_layout.addWidget(self._filter_combo)
-        
-        toolbar_layout.addSpacing(SPACING_NORMAL)
-        
-        # 跳转到错误按钮
-        self._jump_error_btn = QPushButton()
-        self._jump_error_btn.setObjectName("jumpErrorBtn")
-        toolbar_layout.addWidget(self._jump_error_btn)
-        
-        toolbar_layout.addStretch()
-        
-        # 刷新按钮
-        self._refresh_btn = QPushButton()
-        self._refresh_btn.setObjectName("refreshBtn")
-        toolbar_layout.addWidget(self._refresh_btn)
-
-        self._add_to_conversation_btn = QPushButton()
-        self._add_to_conversation_btn.setObjectName("refreshBtn")
-        self._add_to_conversation_btn.setEnabled(False)
-        toolbar_layout.addWidget(self._add_to_conversation_btn)
-        
-        main_layout.addWidget(self._toolbar)
-        
-        # 日志显示区
-        self._log_view = QPlainTextEdit()
-        self._log_view.setObjectName("logView")
-        self._log_view.setReadOnly(True)
-        self._log_view.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
-        
-        # 设置等宽字体
-        font = QFont("Consolas", 10)
-        font.setStyleHint(QFont.StyleHint.Monospace)
-        self._log_view.setFont(font)
-        
-        # 语法高亮器
-        self._highlighter = LogHighlighter(self._log_view.document())
-        
-        main_layout.addWidget(self._log_view, 1)
-        
-        # 状态栏
-        self._status_bar = QFrame()
-        self._status_bar.setObjectName("logStatusBar")
-        status_layout = QHBoxLayout(self._status_bar)
-        status_layout.setContentsMargins(
-            SPACING_SMALL, SPACING_SMALL, SPACING_SMALL, SPACING_SMALL
-        )
-        status_layout.setSpacing(SPACING_NORMAL)
-        
-        self._total_label = QLabel()
-        self._error_label = QLabel()
-        self._warning_label = QLabel()
-        
-        status_layout.addWidget(self._total_label)
-        status_layout.addWidget(self._error_label)
-        status_layout.addWidget(self._warning_label)
-        status_layout.addStretch()
-        
-        main_layout.addWidget(self._status_bar)
-
-    def _apply_style(self):
-        """应用样式"""
-        self.setStyleSheet(f"""
-            #logToolbar {{
-                background-color: {COLOR_BG_TERTIARY};
-                border-bottom: 1px solid {COLOR_BORDER};
-            }}
-            
-            #logToolbar QLabel {{
-                color: {COLOR_TEXT_PRIMARY};
-                font-size: {FONT_SIZE_SMALL}px;
-            }}
-            
-            #searchEdit {{
-                background-color: {COLOR_BG_SECONDARY};
-                color: {COLOR_TEXT_PRIMARY};
-                border: 1px solid {COLOR_BORDER};
-                border-radius: {BORDER_RADIUS_NORMAL}px;
-                padding: 4px 8px;
-            }}
-            
-            #searchEdit:focus {{
-                border-color: {COLOR_ACCENT};
-            }}
-            
-            #filterCombo {{
-                background-color: {COLOR_BG_SECONDARY};
-                color: {COLOR_TEXT_PRIMARY};
-                border: 1px solid {COLOR_BORDER};
-                border-radius: {BORDER_RADIUS_NORMAL}px;
-                padding: 4px 8px;
-            }}
-            
-            #searchBtn, #jumpErrorBtn, #refreshBtn {{
-                background-color: {COLOR_BG_SECONDARY};
-                color: {COLOR_TEXT_PRIMARY};
-                border: 1px solid {COLOR_BORDER};
-                border-radius: {BORDER_RADIUS_NORMAL}px;
-                padding: 4px 12px;
-                min-height: 24px;
-            }}
-            
-            #searchBtn:hover, #jumpErrorBtn:hover, #refreshBtn:hover {{
-                background-color: {COLOR_ACCENT_LIGHT};
-                border-color: {COLOR_ACCENT};
-            }}
-            
-            #searchBtn:pressed, #jumpErrorBtn:pressed, #refreshBtn:pressed {{
-                background-color: {COLOR_ACCENT};
-                color: white;
-            }}
-            
-            #jumpErrorBtn {{
-                color: {COLOR_ERROR};
-                border-color: {COLOR_ERROR};
-            }}
-            
-            #jumpErrorBtn:hover {{
-                background-color: #ffebee;
-            }}
-            
-            #logView {{
-                background-color: {COLOR_BG_PRIMARY};
-                color: {COLOR_TEXT_PRIMARY};
-                border: none;
-                selection-background-color: {COLOR_ACCENT_LIGHT};
-            }}
-            
-            #logStatusBar {{
-                background-color: {COLOR_BG_TERTIARY};
-                border-top: 1px solid {COLOR_BORDER};
-            }}
-            
-            #logStatusBar QLabel {{
-                color: {COLOR_TEXT_SECONDARY};
-                font-size: {FONT_SIZE_SMALL}px;
-            }}
-        """)
-    
-    def _connect_signals(self):
-        """连接信号"""
-        self._search_btn.clicked.connect(self._on_search)
-        self._search_edit.returnPressed.connect(self._on_search)
-        self._search_edit.textChanged.connect(self._on_search_text_changed)
-        self._filter_combo.currentIndexChanged.connect(self._on_filter_changed)
-        self._jump_error_btn.clicked.connect(self._on_jump_to_error)
-        self._refresh_btn.clicked.connect(self._on_refresh)
-        self._add_to_conversation_btn.clicked.connect(self.add_to_conversation_clicked.emit)
+        self.setStyleSheet("")
+        self.retranslate_ui()
     
     # ============================================================
     # 公共方法
@@ -473,22 +94,11 @@ class OutputLogViewer(QWidget):
         self._sim_result_path = sim_result_path
         self._project_root = project_root
         
-        # 读取日志
-        self._log_lines = self._reader.get_output_log(
-            sim_result_path, project_root
+        self._store_log_state(
+            self._reader.get_output_log(sim_result_path, project_root),
+            self._reader.get_simulation_summary(sim_result_path, project_root),
+            reset_view_state=True,
         )
-        
-        # 获取摘要
-        self._summary = self._reader.get_simulation_summary(
-            sim_result_path, project_root
-        )
-        
-        # 应用当前过滤器
-        self._apply_filter()
-        
-        # 更新状态栏
-        self._update_status()
-        self._add_to_conversation_btn.setEnabled(bool(self._log_lines))
         
         self._logger.info(
             f"Loaded log: {len(self._log_lines)} lines, "
@@ -505,39 +115,30 @@ class OutputLogViewer(QWidget):
         self._sim_result_path = None
         self._project_root = None
         
-        # 解析日志
-        self._log_lines = self._reader.get_output_log_from_text(raw_output)
+        log_lines = self._reader.get_output_log_from_text(raw_output)
         
         # 计算摘要
-        error_count = sum(1 for line in self._log_lines if line.is_error())
-        warning_count = sum(1 for line in self._log_lines if line.is_warning())
+        error_count = sum(1 for line in log_lines if line.is_error())
+        warning_count = sum(1 for line in log_lines if line.is_warning())
         
-        self._summary = SimulationSummary(
-            total_lines=len(self._log_lines),
+        summary = SimulationSummary(
+            total_lines=len(log_lines),
             error_count=error_count,
             warning_count=warning_count,
-            info_count=len(self._log_lines) - error_count - warning_count,
+            info_count=len(log_lines) - error_count - warning_count,
         )
-        
-        # 应用当前过滤器
-        self._apply_filter()
-        
-        # 更新状态栏
-        self._update_status()
-        self._add_to_conversation_btn.setEnabled(bool(self._log_lines))
+        self._store_log_state(log_lines, summary, reset_view_state=True)
 
     def clear(self):
         """清空日志"""
         self._log_lines = []
         self._filtered_lines = []
         self._summary = None
+        self._current_filter = "all"
+        self._search_keyword = ""
+        self._selected_line_number = None
         self._sim_result_path = None
         self._project_root = None
-        
-        self._log_view.clear()
-        self._highlighter.clear_search()
-        self._update_status()
-        self._add_to_conversation_btn.setEnabled(False)
     
     def search(self, keyword: str):
         """
@@ -546,14 +147,12 @@ class OutputLogViewer(QWidget):
         Args:
             keyword: 搜索关键词
         """
-        if not keyword:
-            self._highlighter.clear_search()
+        self._search_keyword = str(keyword or "").strip()
+        if not self._search_keyword:
+            if not self._is_line_visible(self._selected_line_number):
+                self._selected_line_number = None
             return
-        
-        self._highlighter.set_search_keyword(keyword)
-        
-        # 跳转到第一个匹配
-        self._find_next(keyword, from_start=True)
+        self._selected_line_number = self._find_matching_line_number(self._search_keyword)
     
     def filter_by_level(self, level: str):
         """
@@ -562,7 +161,10 @@ class OutputLogViewer(QWidget):
         Args:
             level: 日志级别（all/error/warning/info）
         """
-        self._current_filter = level
+        normalized_level = str(level or "all").strip().lower()
+        if normalized_level not in {"all", "error", "warning", "info"}:
+            normalized_level = "all"
+        self._current_filter = normalized_level
         self._apply_filter()
     
     def jump_to_error(self) -> bool:
@@ -574,8 +176,7 @@ class OutputLogViewer(QWidget):
         """
         for line in self._filtered_lines:
             if line.is_error():
-                self._jump_to_line(line.line_number)
-                self.error_clicked.emit(line.line_number)
+                self._selected_line_number = int(line.line_number)
                 return True
         return False
     
@@ -591,7 +192,11 @@ class OutputLogViewer(QWidget):
     def refresh_log(self):
         """重新加载当前日志文件"""
         if self._sim_result_path and self._project_root:
-            self.load_log(self._sim_result_path, self._project_root)
+            self._store_log_state(
+                self._reader.get_output_log(self._sim_result_path, self._project_root),
+                self._reader.get_simulation_summary(self._sim_result_path, self._project_root),
+                reset_view_state=False,
+            )
     
     def get_error_count(self) -> int:
         """获取错误数"""
@@ -608,6 +213,34 @@ class OutputLogViewer(QWidget):
     def get_web_snapshot(self, *, max_lines: int = 1000) -> Dict[str, Any]:
         total_filtered_lines = len(self._filtered_lines)
         selected_line_number = self._current_selected_line_number()
+        summary = self._summary.to_dict() if self._summary is not None else {
+            "total_lines": 0,
+            "error_count": 0,
+            "warning_count": 0,
+            "info_count": 0,
+            "analysis_type": "",
+            "duration_seconds": 0.0,
+            "success": True,
+            "first_error": None,
+            "timestamp": "",
+        }
+        if max_lines <= 0:
+            return {
+                "has_log": bool(self._log_lines),
+                "line_count": len(self._log_lines),
+                "filtered_line_count": total_filtered_lines,
+                "can_refresh": bool(self._sim_result_path and self._project_root),
+                "can_add_to_conversation": bool(self._log_lines),
+                "current_filter": str(self._current_filter or "all"),
+                "search_keyword": self._search_keyword,
+                "summary": summary,
+                "lines": [],
+                "window_start": 0,
+                "window_end": 0,
+                "has_more_before": False,
+                "has_more_after": total_filtered_lines > 0,
+                "selected_line_number": selected_line_number,
+            }
         if total_filtered_lines <= max_lines:
             window_start = 0
             window_end = total_filtered_lines
@@ -623,17 +256,6 @@ class OutputLogViewer(QWidget):
             window_start = 0
             window_end = max_lines
         visible_lines = self._filtered_lines[window_start:window_end]
-        summary = self._summary.to_dict() if self._summary is not None else {
-            "total_lines": 0,
-            "error_count": 0,
-            "warning_count": 0,
-            "info_count": 0,
-            "analysis_type": "",
-            "duration_seconds": 0.0,
-            "success": True,
-            "first_error": None,
-            "timestamp": "",
-        }
         return {
             "has_log": bool(self._log_lines),
             "line_count": len(self._log_lines),
@@ -641,7 +263,7 @@ class OutputLogViewer(QWidget):
             "can_refresh": bool(self._sim_result_path and self._project_root),
             "can_add_to_conversation": bool(self._log_lines),
             "current_filter": str(self._current_filter or "all"),
-            "search_keyword": self._search_edit.text().strip(),
+            "search_keyword": self._search_keyword,
             "summary": summary,
             "lines": [line.to_dict() for line in visible_lines],
             "window_start": window_start + 1 if visible_lines else 0,
@@ -653,167 +275,72 @@ class OutputLogViewer(QWidget):
     
     def retranslate_ui(self):
         """重新翻译 UI 文本"""
-        self._search_label.setText(self._tr("Search:"))
-        self._search_edit.setPlaceholderText(self._tr("Enter keyword..."))
-        self._search_btn.setText(self._tr("Find"))
-        self._filter_label.setText(self._tr("Filter:"))
-        self._jump_error_btn.setText(self._tr("Jump to Error"))
-        self._refresh_btn.setText(self._tr("Refresh"))
-        self._add_to_conversation_btn.setText(self._tr("Add to Conversation"))
-        
-        # 更新过滤下拉框
-        current_index = self._filter_combo.currentIndex()
-        self._filter_combo.clear()
-        self._filter_combo.addItem(self._tr("All"), "all")
-        self._filter_combo.addItem(self._tr("Errors"), "error")
-        self._filter_combo.addItem(self._tr("Warnings"), "warning")
-        self._filter_combo.addItem(self._tr("Info"), "info")
-        self._filter_combo.setCurrentIndex(max(0, current_index))
-        
-        # 更新状态栏
-        self._update_status()
-    
+        return
+
     # ============================================================
     # 内部方法
     # ============================================================
-    
+
     def _apply_filter(self):
         """应用过滤器"""
         if self._current_filter == "all":
-            self._filtered_lines = self._log_lines
+            self._filtered_lines = list(self._log_lines)
         else:
             self._filtered_lines = self._reader.filter_by_level(
                 self._log_lines, self._current_filter
             )
-        
-        # 更新显示
-        self._update_display()
-    
-    def _update_display(self):
-        """更新日志显示"""
-        # 构建显示文本
-        lines = [line.content for line in self._filtered_lines]
-        text = "\n".join(lines)
-        
-        self._log_view.setPlainText(text)
-    
-    def _update_status(self):
-        """更新状态栏"""
-        if self._summary:
-            self._total_label.setText(
-                self._tr("Total: {count} lines").format(count=self._summary.total_lines)
-            )
-            self._error_label.setText(
-                self._tr("Errors: {count}").format(count=self._summary.error_count)
-            )
-            self._warning_label.setText(
-                self._tr("Warnings: {count}").format(count=self._summary.warning_count)
-            )
-            
-            # 错误数大于 0 时高亮显示
-            if self._summary.error_count > 0:
-                self._error_label.setStyleSheet(f"color: {COLOR_ERROR}; font-weight: bold;")
-            else:
-                self._error_label.setStyleSheet("")
-            
-            # 警告数大于 0 时高亮显示
-            if self._summary.warning_count > 0:
-                self._warning_label.setStyleSheet(f"color: {COLOR_WARNING}; font-weight: bold;")
-            else:
-                self._warning_label.setStyleSheet("")
-        else:
-            self._total_label.setText(self._tr("Total: 0 lines"))
-            self._error_label.setText(self._tr("Errors: 0"))
-            self._warning_label.setText(self._tr("Warnings: 0"))
-            self._error_label.setStyleSheet("")
-            self._warning_label.setStyleSheet("")
+        self._selected_line_number = self._resolve_selected_line_number()
 
     def _current_selected_line_number(self) -> Optional[int]:
-        cursor = self._log_view.textCursor()
-        block_number = max(0, cursor.blockNumber())
-        if block_number >= len(self._filtered_lines):
-            return None
-        return int(self._filtered_lines[block_number].line_number)
+        if self._is_line_visible(self._selected_line_number):
+            return self._selected_line_number
+        return None
     
     def _jump_to_line(self, line_number: int):
         """跳转到指定行"""
-        if line_number < 1:
+        normalized_line_number = int(line_number)
+        if normalized_line_number < 1:
             return
-        
-        # 在过滤后的行中查找
-        target_index = -1
-        for i, line in enumerate(self._filtered_lines):
-            if line.line_number == line_number:
-                target_index = i
-                break
-        
-        if target_index < 0:
+
+        if not self._is_line_visible(normalized_line_number):
             return
-        
-        # 移动光标到目标行
-        cursor = self._log_view.textCursor()
-        cursor.movePosition(QTextCursor.MoveOperation.Start)
-        
-        for _ in range(target_index):
-            cursor.movePosition(QTextCursor.MoveOperation.Down)
-        
-        cursor.select(QTextCursor.SelectionType.LineUnderCursor)
-        self._log_view.setTextCursor(cursor)
-        self._log_view.centerCursor()
-    
-    def _find_next(self, keyword: str, from_start: bool = False):
-        """查找下一个匹配"""
-        if not keyword:
-            return
-        
-        if from_start:
-            cursor = self._log_view.textCursor()
-            cursor.movePosition(QTextCursor.MoveOperation.Start)
-            self._log_view.setTextCursor(cursor)
-        
-        # 使用 QPlainTextEdit 的查找功能
-        found = self._log_view.find(keyword)
-        
-        if not found and not from_start:
-            # 从头开始查找
-            cursor = self._log_view.textCursor()
-            cursor.movePosition(QTextCursor.MoveOperation.Start)
-            self._log_view.setTextCursor(cursor)
-            self._log_view.find(keyword)
-    
-    def _on_search(self):
-        """搜索按钮点击"""
-        keyword = self._search_edit.text().strip()
-        self.search(keyword)
-    
-    def _on_search_text_changed(self, text: str):
-        """搜索文本变化"""
-        if not text:
-            self._highlighter.clear_search()
-    
-    def _on_filter_changed(self, index: int):
-        """过滤器变化"""
-        level = self._filter_combo.itemData(index)
-        if level:
-            self.filter_by_level(level)
-    
-    def _on_jump_to_error(self):
-        """跳转到错误按钮点击"""
-        if not self.jump_to_error():
-            self._logger.info("No errors found in log")
-    
-    def _on_refresh(self):
-        """刷新按钮点击"""
-        self.refresh_log()
-    
-    def _tr(self, text: str) -> str:
-        """获取国际化文本"""
-        try:
-            from shared.i18n_manager import I18nManager
-            i18n = I18nManager()
-            return i18n.get_text(f"log_viewer.{text.lower().replace(' ', '_').replace(':', '')}", text)
-        except (ImportError, Exception):
-            return text
+        self._selected_line_number = normalized_line_number
+
+    def _store_log_state(
+        self,
+        log_lines: List[LogLine],
+        summary: Optional[SimulationSummary],
+        *,
+        reset_view_state: bool,
+    ):
+        self._log_lines = list(log_lines)
+        self._summary = summary
+        if reset_view_state:
+            self._current_filter = "all"
+            self._search_keyword = ""
+            self._selected_line_number = None
+        self._apply_filter()
+
+    def _resolve_selected_line_number(self) -> Optional[int]:
+        if self._is_line_visible(self._selected_line_number):
+            return self._selected_line_number
+        if not self._search_keyword:
+            return None
+        return self._find_matching_line_number(self._search_keyword)
+
+    def _is_line_visible(self, line_number: Optional[int]) -> bool:
+        if line_number is None:
+            return False
+        return any(int(line.line_number) == int(line_number) for line in self._filtered_lines)
+
+    def _find_matching_line_number(self, keyword: str) -> Optional[int]:
+        normalized_keyword = str(keyword or "").strip().lower()
+        if not normalized_keyword:
+            return None
+        for line in self._filtered_lines:
+            if normalized_keyword in str(line.content or "").lower():
+                return int(line.line_number)
+        return None
 
 
 # ============================================================
@@ -822,5 +349,4 @@ class OutputLogViewer(QWidget):
 
 __all__ = [
     "OutputLogViewer",
-    "LogHighlighter",
 ]

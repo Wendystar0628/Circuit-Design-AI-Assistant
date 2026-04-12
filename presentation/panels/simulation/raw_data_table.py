@@ -22,7 +22,7 @@
 
 import logging
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -33,20 +33,7 @@ from PyQt6.QtCore import (
 )
 from PyQt6.QtWidgets import (
     QWidget,
-    QVBoxLayout,
-    QHBoxLayout,
-    QTableView,
-    QHeaderView,
-    QFrame,
-    QLabel,
-    QLineEdit,
-    QPushButton,
-    QComboBox,
-    QSpinBox,
-    QDoubleSpinBox,
-    QMessageBox,
     QSizePolicy,
-    QAbstractItemView,
 )
 
 from domain.simulation.data.waveform_data_service import (
@@ -55,22 +42,6 @@ from domain.simulation.data.waveform_data_service import (
     waveform_data_service,
 )
 from domain.simulation.models.simulation_result import SimulationResult
-
-from resources.theme import (
-    COLOR_BG_PRIMARY,
-    COLOR_BG_SECONDARY,
-    COLOR_BG_TERTIARY,
-    COLOR_TEXT_PRIMARY,
-    COLOR_TEXT_SECONDARY,
-    COLOR_BORDER,
-    COLOR_ACCENT,
-    COLOR_ACCENT_LIGHT,
-    FONT_SIZE_SMALL,
-    SPACING_SMALL,
-    SPACING_NORMAL,
-    BORDER_RADIUS_NORMAL,
-)
-
 
 # ============================================================
 # 常量定义
@@ -81,6 +52,9 @@ VALUE_PRECISION = 6
 
 # 搜索容差默认值
 DEFAULT_TOLERANCE = 1e-9
+
+WEB_SNAPSHOT_MAX_ROWS = 80
+WEB_SNAPSHOT_MAX_SIGNAL_COLUMNS = 8
 
 
 # ============================================================
@@ -289,225 +263,17 @@ class RawDataTable(QWidget):
         super().__init__(parent)
         
         self._logger = logging.getLogger(__name__)
+        self._selected_rows: List[int] = []
+        self._visible_signal_window_start = 0
         
         # 数据模型
         self._model = RawDataTableModel()
-        
-        # 初始化 UI
-        self._setup_ui()
-        self._apply_style()
-        self._connect_signals()
-        
-        # 初始化文本
-        self.retranslate_ui()
-    
-    def _setup_ui(self):
-        """初始化 UI 组件"""
         self.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Expanding
         )
-        
-        main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.setSpacing(0)
-        
-        # 工具栏
-        self._toolbar = QFrame()
-        self._toolbar.setObjectName("rawDataToolbar")
-        toolbar_layout = QHBoxLayout(self._toolbar)
-        toolbar_layout.setContentsMargins(
-            SPACING_SMALL, SPACING_SMALL, SPACING_SMALL, SPACING_SMALL
-        )
-        toolbar_layout.setSpacing(SPACING_SMALL)
-        
-        # 跳转到行
-        self._jump_row_label = QLabel()
-        self._jump_row_spin = QSpinBox()
-        self._jump_row_spin.setRange(0, 0)
-        self._jump_row_spin.setFixedWidth(80)
-        self._jump_row_btn = QPushButton()
-        self._jump_row_btn.setObjectName("jumpBtn")
-        self._jump_row_btn.clicked.connect(self._on_jump_to_row)
-        
-        toolbar_layout.addWidget(self._jump_row_label)
-        toolbar_layout.addWidget(self._jump_row_spin)
-        toolbar_layout.addWidget(self._jump_row_btn)
-        
-        toolbar_layout.addSpacing(SPACING_NORMAL)
-        
-        # 跳转到 X 轴值
-        self._jump_x_label = QLabel()
-        self._jump_x_spin = QDoubleSpinBox()
-        self._jump_x_spin.setDecimals(9)
-        self._jump_x_spin.setMinimum(0.0)
-        self._jump_x_spin.setMaximum(1e9)
-        self._jump_x_spin.setFixedWidth(120)
-        self._jump_x_btn = QPushButton()
-        self._jump_x_btn.setObjectName("jumpBtn")
-        self._jump_x_btn.clicked.connect(self._on_jump_to_x_value)
-        
-        toolbar_layout.addWidget(self._jump_x_label)
-        toolbar_layout.addWidget(self._jump_x_spin)
-        toolbar_layout.addWidget(self._jump_x_btn)
-        
-        toolbar_layout.addSpacing(SPACING_NORMAL)
-        
-        # 搜索
-        self._search_label = QLabel()
-        self._search_column_combo = QComboBox()
-        self._search_column_combo.setFixedWidth(100)
-        self._search_value_edit = QLineEdit()
-        self._search_value_edit.setFixedWidth(100)
-        self._search_value_edit.setPlaceholderText("Value")
-        self._search_btn = QPushButton()
-        self._search_btn.setObjectName("searchBtn")
-        self._search_btn.clicked.connect(self._on_search)
-        
-        toolbar_layout.addWidget(self._search_label)
-        toolbar_layout.addWidget(self._search_column_combo)
-        toolbar_layout.addWidget(self._search_value_edit)
-        toolbar_layout.addWidget(self._search_btn)
-        
-        toolbar_layout.addStretch()
-        
-        main_layout.addWidget(self._toolbar)
-        
-        # 表格视图
-        self._table_view = QTableView()
-        self._table_view.setObjectName("rawDataTableView")
-        self._table_view.setModel(self._model)
-        self._table_view.setSelectionBehavior(
-            QAbstractItemView.SelectionBehavior.SelectRows
-        )
-        self._table_view.setSelectionMode(
-            QAbstractItemView.SelectionMode.ExtendedSelection
-        )
-        self._table_view.setAlternatingRowColors(True)
-        self._table_view.setSortingEnabled(False)
-        self._table_view.setShowGrid(True)
-        
-        # 表头设置
-        h_header = self._table_view.horizontalHeader()
-        h_header.setStretchLastSection(True)
-        h_header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        h_header.setDefaultSectionSize(100)
-        
-        v_header = self._table_view.verticalHeader()
-        v_header.setDefaultSectionSize(24)
-        v_header.setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
-        
-        main_layout.addWidget(self._table_view, 1)
-        
-        # 状态栏
-        self._status_bar = QFrame()
-        self._status_bar.setObjectName("rawDataStatusBar")
-        status_layout = QHBoxLayout(self._status_bar)
-        status_layout.setContentsMargins(
-            SPACING_SMALL, SPACING_SMALL, SPACING_SMALL, SPACING_SMALL
-        )
-        status_layout.setSpacing(SPACING_NORMAL)
-        
-        self._row_count_label = QLabel()
-        self._result_binding_label = QLabel()
-        self._selection_label = QLabel()
-        
-        status_layout.addWidget(self._row_count_label)
-        status_layout.addWidget(self._result_binding_label)
-        status_layout.addStretch()
-        status_layout.addWidget(self._selection_label)
-        
-        main_layout.addWidget(self._status_bar)
-    
-    def _apply_style(self):
-        """应用样式"""
-        self.setStyleSheet(f"""
-            #rawDataToolbar {{
-                background-color: {COLOR_BG_TERTIARY};
-                border-bottom: 1px solid {COLOR_BORDER};
-            }}
-            
-            #rawDataToolbar QLabel {{
-                color: {COLOR_TEXT_PRIMARY};
-                font-size: {FONT_SIZE_SMALL}px;
-            }}
-            
-            #rawDataToolbar QSpinBox,
-            #rawDataToolbar QDoubleSpinBox,
-            #rawDataToolbar QLineEdit,
-            #rawDataToolbar QComboBox {{
-                background-color: {COLOR_BG_SECONDARY};
-                color: {COLOR_TEXT_PRIMARY};
-                border: 1px solid {COLOR_BORDER};
-                padding: 2px 4px;
-                min-height: 20px;
-            }}
-            
-            #jumpBtn, #searchBtn {{
-                background-color: {COLOR_BG_SECONDARY};
-                color: {COLOR_TEXT_PRIMARY};
-                border: 1px solid {COLOR_BORDER};
-                border-radius: {BORDER_RADIUS_NORMAL}px;
-                padding: 2px 8px;
-                min-height: 20px;
-            }}
-            
-            #jumpBtn:hover, #searchBtn:hover {{
-                background-color: {COLOR_ACCENT_LIGHT};
-                border-color: {COLOR_ACCENT};
-            }}
-            
-            #jumpBtn:pressed, #searchBtn:pressed {{
-                background-color: {COLOR_ACCENT};
-                color: white;
-            }}
-            
-            #rawDataTableView {{
-                background-color: {COLOR_BG_PRIMARY};
-                alternate-background-color: {COLOR_BG_SECONDARY};
-                color: {COLOR_TEXT_PRIMARY};
-                gridline-color: {COLOR_BORDER};
-                border: none;
-                font-family: monospace;
-                font-size: {FONT_SIZE_SMALL}px;
-            }}
-            
-            #rawDataTableView::item {{
-                padding: 2px 4px;
-            }}
-            
-            #rawDataTableView::item:selected {{
-                background-color: {COLOR_ACCENT_LIGHT};
-                color: {COLOR_TEXT_PRIMARY};
-            }}
-            
-            #rawDataTableView QHeaderView::section {{
-                background-color: {COLOR_BG_TERTIARY};
-                color: {COLOR_TEXT_PRIMARY};
-                border: none;
-                border-right: 1px solid {COLOR_BORDER};
-                border-bottom: 1px solid {COLOR_BORDER};
-                padding: 4px;
-                font-size: {FONT_SIZE_SMALL}px;
-            }}
-            
-            #rawDataStatusBar {{
-                background-color: {COLOR_BG_TERTIARY};
-                border-top: 1px solid {COLOR_BORDER};
-            }}
-            
-            #rawDataStatusBar QLabel {{
-                color: {COLOR_TEXT_SECONDARY};
-                font-size: {FONT_SIZE_SMALL}px;
-            }}
-        """)
-    
-    def _connect_signals(self):
-        """连接信号"""
-        self._table_view.selectionModel().selectionChanged.connect(
-            self._on_selection_changed
-        )
-        self._table_view.doubleClicked.connect(self._on_double_clicked)
+        self.setStyleSheet("")
+        self.retranslate_ui()
     
     # ============================================================
     # 公共方法
@@ -521,12 +287,8 @@ class RawDataTable(QWidget):
             result: 仿真结果对象
         """
         self._model.load_result(result)
-        self._table_view.clearSelection()
-        self._table_view.scrollToTop()
-        
-        # 更新 UI
-        self._update_controls()
-        self._update_status()
+        self._selected_rows = []
+        self._visible_signal_window_start = 0
         
         self._logger.info(
             f"Loaded data: {self._model.total_rows} rows, "
@@ -536,10 +298,8 @@ class RawDataTable(QWidget):
     def clear(self):
         """清空数据"""
         self._model.clear()
-        self._table_view.clearSelection()
-        self._table_view.scrollToTop()
-        self._update_controls()
-        self._update_status()
+        self._selected_rows = []
+        self._visible_signal_window_start = 0
     
     def jump_to_row(self, row_number: int):
         """
@@ -551,9 +311,7 @@ class RawDataTable(QWidget):
         if row_number < 0 or row_number >= self._model.total_rows:
             return
         
-        index = self._model.index(row_number, 0)
-        self._table_view.scrollTo(index, QAbstractItemView.ScrollHint.PositionAtCenter)
-        self._table_view.selectRow(row_number)
+        self._selected_rows = [row_number]
     
     def jump_to_x_value(self, x_value: float):
         """
@@ -584,11 +342,12 @@ class RawDataTable(QWidget):
         Returns:
             bool: 是否找到
         """
+        self._ensure_signal_column_visible(column)
         # 从当前选中行的下一行开始搜索
-        selection = self._table_view.selectionModel().selectedRows()
+        selection = list(self._selected_rows)
         start_row = 0
         if selection:
-            start_row = selection[-1].row() + 1
+            start_row = selection[-1] + 1
         
         row = self._model.search_value(column, value, tolerance, start_row)
         
@@ -604,16 +363,58 @@ class RawDataTable(QWidget):
                 return True
         
         return False
+
+    def shift_signal_window(self, page_delta: int) -> bool:
+        total_signal_columns = len(self._model.signal_names)
+        window_size = max(1, WEB_SNAPSHOT_MAX_SIGNAL_COLUMNS)
+        if total_signal_columns <= 0 or page_delta == 0:
+            return False
+        max_start = max(0, total_signal_columns - window_size)
+        next_start = min(
+            max(0, self._visible_signal_window_start + int(page_delta) * window_size),
+            max_start,
+        )
+        if next_start == self._visible_signal_window_start:
+            return False
+        self._visible_signal_window_start = next_start
+        return True
     
-    def get_web_snapshot(self, *, max_rows: int = 400) -> Dict[str, Any]:
+    def get_web_snapshot(
+        self,
+        *,
+        max_rows: int = WEB_SNAPSHOT_MAX_ROWS,
+        max_signal_columns: int = WEB_SNAPSHOT_MAX_SIGNAL_COLUMNS,
+    ) -> Dict[str, Any]:
         snapshot = self._model.snapshot
-        headers = [self._model.x_label, *self._model.signal_names] if snapshot is not None else []
-        selection_model = self._table_view.selectionModel()
-        selected_rows = []
-        if selection_model is not None:
-            selected_rows = sorted(index.row() for index in selection_model.selectedRows())
-        selected_row = selected_rows[0] if selected_rows else None
+        signal_names = self._model.signal_names
+        total_signal_columns = len(signal_names)
+        search_columns = [self._model.x_label, *signal_names] if snapshot is not None else []
         total_rows = self._model.total_rows
+        selected_rows = [row for row in self._selected_rows if 0 <= row < total_rows]
+        self._selected_rows = list(selected_rows)
+        selected_row = selected_rows[0] if selected_rows else None
+        if max_rows <= 0 or max_signal_columns <= 0:
+            return {
+                "has_data": bool(snapshot is not None and total_rows > 0),
+                "row_count": total_rows,
+                "signal_count": total_signal_columns,
+                "x_axis_label": self._model.x_label,
+                "result_binding_text": self._build_result_binding_text(),
+                "search_columns": [],
+                "visible_columns": [],
+                "rows": [],
+                "window_start": 0,
+                "window_end": 0,
+                "has_more_before": False,
+                "has_more_after": total_rows > 0,
+                "selected_row_numbers": [row + 1 for row in selected_rows],
+                "selection_count": len(selected_rows),
+                "visible_signal_start": 0,
+                "visible_signal_end": 0,
+                "visible_signal_count": 0,
+                "has_more_signal_columns_before": False,
+                "has_more_signal_columns_after": total_signal_columns > 0,
+            }
         if total_rows <= max_rows:
             window_start = 0
             window_end = total_rows
@@ -624,13 +425,23 @@ class RawDataTable(QWidget):
         else:
             window_start = 0
             window_end = min(total_rows, max_rows)
+        signal_window_start, signal_window_end = self._resolve_signal_window_bounds(
+            total_signal_columns,
+            max_signal_columns,
+        )
+        visible_signal_names = signal_names[signal_window_start:signal_window_end]
+        visible_columns = [self._model.x_label, *visible_signal_names] if snapshot is not None else []
+        visible_column_arrays = []
+        if snapshot is not None:
+            visible_column_arrays.append(snapshot.x_values)
+            visible_column_arrays.extend(snapshot.signal_columns.get(signal_name) for signal_name in visible_signal_names)
         selected_row_set = set(selected_rows)
         rows = []
         for row_index in range(window_start, window_end):
-            values = []
-            for column_index in range(len(headers)):
-                cell_value = self._model._get_cell_value(row_index, column_index)
-                values.append(self._model._format_value(cell_value) if cell_value is not None else "--")
+            values = [
+                self._format_web_value(column_values, row_index)
+                for column_values in visible_column_arrays
+            ]
             rows.append({
                 "row_number": row_index + 1,
                 "values": values,
@@ -639,9 +450,11 @@ class RawDataTable(QWidget):
         return {
             "has_data": bool(snapshot is not None and total_rows > 0),
             "row_count": total_rows,
-            "signal_count": len(self._model.signal_names),
+            "signal_count": total_signal_columns,
             "x_axis_label": self._model.x_label,
-            "columns": headers,
+            "result_binding_text": self._build_result_binding_text(),
+            "search_columns": search_columns,
+            "visible_columns": visible_columns,
             "rows": rows,
             "window_start": window_start + 1 if rows else 0,
             "window_end": window_end,
@@ -649,124 +462,56 @@ class RawDataTable(QWidget):
             "has_more_after": window_end < total_rows,
             "selected_row_numbers": [row + 1 for row in selected_rows],
             "selection_count": len(selected_rows),
+            "visible_signal_start": signal_window_start + 1 if visible_signal_names else 0,
+            "visible_signal_end": signal_window_end,
+            "visible_signal_count": len(visible_signal_names),
+            "has_more_signal_columns_before": signal_window_start > 0,
+            "has_more_signal_columns_after": signal_window_end < total_signal_columns,
         }
     
     def retranslate_ui(self):
         """重新翻译 UI 文本"""
-        self._jump_row_label.setText(self._tr("Row:"))
-        self._jump_row_btn.setText(self._tr("Go"))
-        self._jump_x_btn.setText(self._tr("Go"))
-        self._search_label.setText(self._tr("Search:"))
-        self._search_btn.setText(self._tr("Find"))
-        
-        self._update_axis_labels()
-        self._update_status()
-    
+        return
+
     # ============================================================
     # 内部方法
     # ============================================================
-    
-    def _update_controls(self):
-        """更新控件状态"""
-        total_rows = self._model.total_rows
-        self._update_axis_labels()
-        
-        # 更新行号范围
-        if total_rows > 0:
-            self._jump_row_spin.setRange(1, total_rows)
-            if self._jump_row_spin.value() <= 0:
-                self._jump_row_spin.setValue(1)
-        else:
-            self._jump_row_spin.setRange(0, 0)
-        
-        # 更新搜索列下拉框
-        self._search_column_combo.clear()
-        self._search_column_combo.addItem(self._model.x_label)
-        for signal in self._model.signal_names:
-            self._search_column_combo.addItem(signal)
-        
-        # 启用/禁用控件
-        has_data = total_rows > 0
-        self._jump_row_spin.setEnabled(has_data)
-        self._jump_row_btn.setEnabled(has_data)
-        self._jump_x_spin.setEnabled(has_data)
-        self._jump_x_btn.setEnabled(has_data)
-        self._search_column_combo.setEnabled(has_data)
-        self._search_value_edit.setEnabled(has_data)
-        self._search_btn.setEnabled(has_data)
 
-    def _update_axis_labels(self):
-        axis_name = self._get_x_axis_name()
-        self._jump_x_label.setText(f"{axis_name}:")
+    def _resolve_signal_window_bounds(
+        self,
+        total_signal_columns: int,
+        max_signal_columns: int,
+    ) -> Tuple[int, int]:
+        if total_signal_columns <= 0:
+            self._visible_signal_window_start = 0
+            return 0, 0
+        window_size = max(1, int(max_signal_columns or 0))
+        if total_signal_columns <= window_size:
+            self._visible_signal_window_start = 0
+            return 0, total_signal_columns
+        max_start = max(0, total_signal_columns - window_size)
+        window_start = min(max(0, self._visible_signal_window_start), max_start)
+        self._visible_signal_window_start = window_start
+        return window_start, min(total_signal_columns, window_start + window_size)
 
-    def _get_x_axis_name(self) -> str:
-        label = self._model.x_label or "X"
-        if " (" in label:
-            return label.split(" (", 1)[0]
-        return label
-    
-    def _update_status(self):
-        """更新状态栏"""
-        total_rows = self._model.total_rows
-        
-        self._row_count_label.setText(
-            self._tr("Total: {count} rows").format(count=total_rows)
-        )
-        self._result_binding_label.setText(self._build_result_binding_text())
-        
-        selection = self._table_view.selectionModel().selectedRows()
-        if selection:
-            self._selection_label.setText(
-                self._tr("Selected: {count} rows").format(count=len(selection))
-            )
-        else:
-            self._selection_label.setText("")
-    
-    def _on_jump_to_row(self):
-        """跳转到行按钮点击"""
-        row = max(0, self._jump_row_spin.value() - 1)
-        self.jump_to_row(row)
-    
-    def _on_jump_to_x_value(self):
-        """跳转到 X 轴值按钮点击"""
-        x_value = self._jump_x_spin.value()
-        self.jump_to_x_value(x_value)
-    
-    def _on_search(self):
-        """搜索按钮点击"""
-        column = self._search_column_combo.currentIndex()
-        value_text = self._search_value_edit.text().strip()
-        
-        if not value_text:
+    def _ensure_signal_column_visible(self, column: int):
+        signal_index = int(column) - 1
+        total_signal_columns = len(self._model.signal_names)
+        if signal_index < 0 or signal_index >= total_signal_columns:
             return
-        
-        try:
-            value = float(value_text)
-        except ValueError:
-            QMessageBox.warning(
-                self,
-                self._tr("Invalid Value"),
-                self._tr("Please enter a valid number.")
-            )
+        window_size = max(1, WEB_SNAPSHOT_MAX_SIGNAL_COLUMNS)
+        max_start = max(0, total_signal_columns - window_size)
+        if self._visible_signal_window_start <= signal_index < self._visible_signal_window_start + window_size:
             return
-        
-        found = self.search_value(column, value)
-        
-        if not found:
-            QMessageBox.information(
-                self,
-                self._tr("Not Found"),
-                self._tr("Value not found in the selected column.")
-            )
-    
-    def _on_selection_changed(self, selected, deselected):
-        """选择变化"""
-        self._update_status()
-    
-    def _on_double_clicked(self, index: QModelIndex):
-        """双击行"""
-        row = index.row()
-        self.jump_to_row(row)
+        self._visible_signal_window_start = max(0, min(signal_index - window_size // 2, max_start))
+
+    def _format_web_value(self, column_values: Optional[np.ndarray], row_index: int) -> str:
+        if column_values is None or row_index < 0 or row_index >= len(column_values):
+            return "--"
+        value = float(column_values[row_index])
+        if not np.isfinite(value):
+            return "--"
+        return self._model._format_value(value)
 
     def _build_result_binding_text(self) -> str:
         snapshot = self._model.snapshot
@@ -781,15 +526,6 @@ class RawDataTable(QWidget):
             result_name,
         ]
         return " | ".join(part for part in parts if part)
-    
-    def _tr(self, text: str) -> str:
-        """翻译文本"""
-        try:
-            from shared.i18n_manager import I18nManager
-            i18n = I18nManager()
-            return i18n.get_text(f"raw_data_table.{text}", default=text)
-        except ImportError:
-            return text
 
 
 # ============================================================

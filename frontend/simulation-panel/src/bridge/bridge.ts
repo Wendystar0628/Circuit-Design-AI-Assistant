@@ -4,6 +4,12 @@ export interface SimulationBridge {
   markReady(): void
   activateTab(tabId: SimulationTabId): void
   loadHistoryResult(resultPath: string): void
+  setChartSeriesVisible(seriesName: string, visible: boolean): void
+  clearAllChartSeries(): void
+  setChartMeasurementEnabled(enabled: boolean): void
+  setChartDataCursorEnabled(enabled: boolean): void
+  setChartDataCursorTarget(targetId: string): void
+  fitChart(): void
   setSignalVisible(signalName: string, visible: boolean): void
   clearAllSignals(): void
   setCursorVisible(cursorId: 'a' | 'b', visible: boolean): void
@@ -13,6 +19,7 @@ export interface SimulationBridge {
   jumpRawDataToRow(row: number): void
   jumpRawDataToX(xValue: number): void
   searchRawDataValue(column: number, value: number, tolerance: number): void
+  shiftRawDataSignalWindow(pageDelta: number): void
   searchOutputLog(keyword: string): void
   filterOutputLog(level: string): void
   jumpToOutputLogError(): void
@@ -23,7 +30,6 @@ export interface SimulationBridge {
 
 export interface SimulationAppApi {
   setState(state: SimulationMainState | Record<string, unknown>): void
-  activateTab(tabId: SimulationTabId): void
 }
 
 interface QtTransport {

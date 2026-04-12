@@ -241,6 +241,15 @@ class BodeOverlayChartPage(QWidget):
     def supports_data_cursor(self) -> bool:
         return bool(self._spec is not None and self._series_items)
 
+    def is_data_cursor_enabled(self) -> bool:
+        return bool(self._data_cursor.is_enabled())
+
+    def data_cursor_target(self) -> str:
+        return str(self._data_cursor.target_id() or "")
+
+    def set_data_cursor_target(self, target_id: str) -> bool:
+        return self._activate_cursor_target(str(target_id or ""))
+
     def _activate_cursor_target(self, target_id: str) -> bool:
         if not target_id or target_id not in self._series_items:
             return False
@@ -256,6 +265,34 @@ class BodeOverlayChartPage(QWidget):
 
     def fit_to_view(self):
         self._rebuild_plot()
+
+    def set_series_visible(self, series_name: str, visible: bool) -> bool:
+        if self._spec is None or not series_name:
+            return False
+        resolved_group_key = None
+        if series_name in self._series_items:
+            resolved_group_key = series_name
+        else:
+            for series in self._spec.series:
+                if series.name == series_name:
+                    resolved_group_key = series.group_key or series.name
+                    break
+        if resolved_group_key is None or resolved_group_key not in self._series_items:
+            return False
+        item = self._series_items[resolved_group_key]
+        desired_state = Qt.CheckState.Checked if visible else Qt.CheckState.Unchecked
+        if item.checkState(0) == desired_state:
+            return True
+        self._updating_tree = True
+        item.setCheckState(0, desired_state)
+        self._updating_tree = False
+        if desired_state != Qt.CheckState.Checked and resolved_group_key == self._data_cursor.target_id():
+            self._data_cursor.set_target("")
+        self._rebuild_plot()
+        return True
+
+    def clear_all_series(self):
+        self._on_clear_all_series()
 
     def set_measurement_enabled(self, enabled: bool):
         self._measurement_enabled = bool(enabled)
@@ -288,19 +325,20 @@ class BodeOverlayChartPage(QWidget):
         visible_groups = set(self._visible_group_keys())
         available_series = []
         if spec is not None:
-            available_series = [
-                {
-                    "name": series.name,
-                    "color": series.color,
-                    "axis_key": series.axis_key,
-                    "line_style": series.line_style,
-                    "group_key": series.group_key,
-                    "component": series.component,
-                    "visible": (series.group_key or series.name) in visible_groups,
-                    "point_count": int(len(series.y_data)),
-                }
-                for series in spec.series
-            ]
+            for group_key, bucket in self._series_groups.items():
+                first_series = next(iter(bucket.values()), None)
+                if first_series is None:
+                    continue
+                available_series.append({
+                    "name": group_key,
+                    "color": self._group_colors.get(group_key, first_series.color),
+                    "axis_key": first_series.axis_key,
+                    "line_style": first_series.line_style,
+                    "group_key": group_key,
+                    "component": "/".join(sorted(bucket.keys())),
+                    "visible": group_key in visible_groups,
+                    "point_count": int(len(first_series.y_data)),
+                })
         return {
             "title": str(spec.title or "") if spec is not None else "",
             "chart_type": str(spec.chart_type.value) if spec is not None else "",
@@ -311,6 +349,9 @@ class BodeOverlayChartPage(QWidget):
             "log_y": bool(spec.log_y) if spec is not None else False,
             "available_series": available_series,
             "visible_series": [serialize_chart_series_for_web(series) for series in visible_series],
+            "visible_series_count": len(visible_series),
+            "data_cursor_enabled": self.is_data_cursor_enabled(),
+            "data_cursor_target": self.data_cursor_target(),
             "measurement_enabled": bool(self._measurement_enabled),
             "measurement": self._build_measurement_snapshot(),
         }

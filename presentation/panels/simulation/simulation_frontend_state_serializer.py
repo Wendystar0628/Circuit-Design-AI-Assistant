@@ -74,9 +74,12 @@ class SimulationFrontendStateSerializer:
             if isinstance(item, dict)
         ]
         has_result = result is not None
-        has_waveform = self._has_waveform(result)
+        signal_names = self._signal_names(result)
+        has_waveform = bool(signal_names)
         has_chart = self._has_chart(result)
-        has_output_log = bool(str(getattr(result, "raw_output", "") or "").strip())
+        raw_data_snapshot_payload = raw_data_snapshot if isinstance(raw_data_snapshot, dict) else None
+        output_log_snapshot_payload = output_log_snapshot if isinstance(output_log_snapshot, dict) else None
+        has_output_log = bool(output_log_snapshot_payload.get("has_log")) if output_log_snapshot_payload is not None else bool(getattr(result, "raw_output", None))
         has_op_result = self._has_op_result(result)
         result_summary = self.serialize_result(result, normalized_result_path)
         op_result_view = self.serialize_op_result(result)
@@ -94,22 +97,37 @@ class SimulationFrontendStateSerializer:
         }
         waveform_view = {
             "has_waveform": has_waveform,
-            "signal_count": len(self._signal_names(result)),
-            "signal_names": self._signal_names(result),
+            "signal_count": len(signal_names),
+            "signal_names": signal_names,
             "can_export": has_waveform,
             "can_add_to_conversation": has_waveform,
         }
         raw_data_view = {
-            "has_data": bool(result is not None and getattr(result, "data", None) is not None),
-            "row_count": self._row_count(result),
-            "signal_count": len(self._signal_names(result)),
-            "x_axis_label": str(getattr(result, "x_axis_label", "") or ""),
+            "has_data": bool(raw_data_snapshot_payload.get("has_data")) if raw_data_snapshot_payload is not None else bool(result is not None and getattr(result, "data", None) is not None),
+            "row_count": int(raw_data_snapshot_payload.get("row_count") or 0) if raw_data_snapshot_payload is not None else self._row_count(result),
+            "signal_count": int(raw_data_snapshot_payload.get("signal_count") or 0) if raw_data_snapshot_payload is not None else len(signal_names),
+            "x_axis_label": str(raw_data_snapshot_payload.get("x_axis_label") or "") if raw_data_snapshot_payload is not None else str(getattr(result, "x_axis_label", "") or ""),
+            "result_binding_text": str(raw_data_snapshot_payload.get("result_binding_text") or "") if raw_data_snapshot_payload is not None else "",
+            "search_columns": [],
+            "visible_columns": [],
+            "rows": [],
+            "window_start": 0,
+            "window_end": 0,
+            "has_more_before": False,
+            "has_more_after": False,
+            "selected_row_numbers": [],
+            "selection_count": 0,
+            "visible_signal_start": 0,
+            "visible_signal_end": 0,
+            "visible_signal_count": 0,
+            "has_more_signal_columns_before": False,
+            "has_more_signal_columns_after": False,
         }
         output_log_view = {
-            "has_log": has_output_log,
-            "line_count": self._line_count(getattr(result, "raw_output", "") if result is not None else ""),
-            "can_refresh": bool(project_root and normalized_result_path),
-            "can_add_to_conversation": has_output_log,
+            "has_log": bool(output_log_snapshot_payload.get("has_log")) if output_log_snapshot_payload is not None else has_output_log,
+            "line_count": int(output_log_snapshot_payload.get("line_count") or 0) if output_log_snapshot_payload is not None else self._line_count(getattr(result, "raw_output", "") if result is not None else ""),
+            "can_refresh": bool(output_log_snapshot_payload.get("can_refresh")) if output_log_snapshot_payload is not None else bool(project_root and normalized_result_path),
+            "can_add_to_conversation": bool(output_log_snapshot_payload.get("can_add_to_conversation")) if output_log_snapshot_payload is not None else has_output_log,
         }
         if isinstance(analysis_chart_snapshot, dict):
             analysis_chart_view.update(analysis_chart_snapshot)
@@ -224,7 +242,7 @@ class SimulationFrontendStateSerializer:
             "x_axis_scale": str(result.x_axis_scale or ""),
             "requested_x_range": self._range_to_list(result.requested_x_range),
             "actual_x_range": self._range_to_list(result.actual_x_range),
-            "has_raw_output": bool(str(result.raw_output or "").strip()),
+            "has_raw_output": bool(getattr(result, "raw_output", None)),
         }
 
     def serialize_analysis_info(self, result: Optional[SimulationResult]) -> Dict[str, Any]:

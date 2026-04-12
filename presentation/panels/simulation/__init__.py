@@ -24,7 +24,7 @@ from presentation.panels.simulation.analysis_chart_viewer import ChartViewer
 from presentation.panels.simulation.waveform_widget import WaveformWidget
 from presentation.panels.simulation.waveform_plot_types import WaveformMeasurement
 from presentation.panels.simulation.raw_data_table import RawDataTable, RawDataTableModel
-from presentation.panels.simulation.output_log_viewer import OutputLogViewer, LogHighlighter
+from presentation.panels.simulation.output_log_viewer import OutputLogViewer
 from presentation.panels.simulation.simulation_export_panel import SimulationExportPanel
 from presentation.panels.simulation.simulation_frontend_state_serializer import SimulationFrontendStateSerializer
 from presentation.panels.simulation.simulation_tab import (
@@ -45,7 +45,6 @@ __all__ = [
     "RawDataTable",
     "RawDataTableModel",
     "OutputLogViewer",
-    "LogHighlighter",
     "SimulationExportPanel",
     "SimulationFrontendStateSerializer",
     "SimulationTab",

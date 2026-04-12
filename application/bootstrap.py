@@ -1181,8 +1181,10 @@ def run() -> int:
             print(f"[Phase 2.0.1] WebEngine 预导入失败: {e}")
 
     # 2.1 创建 QApplication 实例
+
     from PyQt6.QtWidgets import QApplication
     from PyQt6.QtGui import QFont
+
     app = QApplication(sys.argv)
 
     try:

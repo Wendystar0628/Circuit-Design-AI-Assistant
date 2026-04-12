@@ -86,6 +86,7 @@ class SimulationTab(QWidget):
         self._runtime_status_message = ""
         self._state_serializer = SimulationFrontendStateSerializer()
         self._authoritative_frontend_state = self._state_serializer.serialize_main_state()
+        self._history_results_cache: List[dict] = []
         self._bound_web_bridge: Optional[SimulationWebBridge] = None
         
         # EventBus 引用
@@ -145,16 +146,67 @@ class SimulationTab(QWidget):
     def get_authoritative_frontend_state(self):
         return copy.deepcopy(self._authoritative_frontend_state)
 
+    def _normalize_frontend_tab_id(self, tab_id: str) -> str:
+        return str(tab_id or "metrics")
+
+    def _is_allowed_frontend_tab(self, tab_id: str) -> bool:
+        return tab_id in {
+            "metrics",
+            "chart",
+            "waveform",
+            "analysis_info",
+            "raw_data",
+            "output_log",
+            "export",
+            "history",
+            "op_result",
+        }
+
+    def _set_active_frontend_tab(self, tab_id: str) -> bool:
+        normalized_tab_id = self._normalize_frontend_tab_id(tab_id)
+        if not self._is_allowed_frontend_tab(normalized_tab_id):
+            return False
+        self._active_frontend_tab = normalized_tab_id
+        return True
+
+    def _refresh_history_results_cache(self) -> None:
+        if not self._project_root:
+            self._history_results_cache = []
+            return
+        try:
+            self._history_results_cache = simulation_result_repository.list(self._project_root, limit=20)
+        except Exception as exc:
+            self._history_results_cache = []
+            self._logger.warning(f"Failed to list simulation result history: {exc}")
+
+    def _build_frontend_runtime_snapshots(self):
+        active_tab = self._normalize_frontend_tab_id(self._active_frontend_tab)
+        current_result = self._view_model.current_result
+        analysis_chart_snapshot = self._backend_runtime.chart_viewer.get_web_snapshot() if active_tab == "chart" else None
+        waveform_snapshot = self._backend_runtime.waveform_widget.get_web_snapshot() if active_tab == "waveform" else None
+        raw_data_snapshot = None
+        output_log_snapshot = None
+        if current_result is not None:
+            if active_tab == "raw_data":
+                raw_data_snapshot = self._backend_runtime.raw_data_table.get_web_snapshot()
+            else:
+                raw_data_snapshot = self._backend_runtime.raw_data_table.get_web_snapshot(max_rows=0)
+            if active_tab == "output_log":
+                output_log_snapshot = self._backend_runtime.output_log_viewer.get_web_snapshot()
+            else:
+                output_log_snapshot = self._backend_runtime.output_log_viewer.get_web_snapshot(max_lines=0)
+        return {
+            "analysis_chart_snapshot": analysis_chart_snapshot,
+            "waveform_snapshot": waveform_snapshot,
+            "raw_data_snapshot": raw_data_snapshot,
+            "output_log_snapshot": output_log_snapshot,
+        }
+     
     def _build_authoritative_frontend_state(self):
-        history_results = []
-        if self._project_root:
-            try:
-                history_results = simulation_result_repository.list(self._project_root, limit=20)
-            except Exception as exc:
-                self._logger.warning(f"Failed to list simulation result history: {exc}")
+        snapshot_payloads = self._build_frontend_runtime_snapshots()
         return self._state_serializer.serialize_main_state(
             project_root=self._project_root or "",
-            active_tab=self._active_frontend_tab,
+            active_tab=self._normalize_frontend_tab_id(self._active_frontend_tab),
             current_result=self._view_model.current_result,
             current_result_path=self._last_loaded_result_path or "",
             metrics=self._view_model.metrics_list,
@@ -163,29 +215,25 @@ class SimulationTab(QWidget):
             simulation_status=self._view_model.simulation_status,
             status_message=self._runtime_status_message,
             error_message=self._view_model.error_message,
-            history_results=history_results,
+            history_results=list(self._history_results_cache),
             latest_project_export_root=self._get_latest_project_export_root() or "",
             awaiting_confirmation=self._awaiting_confirmation,
-            analysis_chart_snapshot=self._backend_runtime.chart_viewer.get_web_snapshot(),
-            waveform_snapshot=self._backend_runtime.waveform_widget.get_web_snapshot(),
-            raw_data_snapshot=self._backend_runtime.raw_data_table.get_web_snapshot(),
-            output_log_snapshot=self._backend_runtime.output_log_viewer.get_web_snapshot(),
+            analysis_chart_snapshot=snapshot_payloads["analysis_chart_snapshot"],
+            waveform_snapshot=snapshot_payloads["waveform_snapshot"],
+            raw_data_snapshot=snapshot_payloads["raw_data_snapshot"],
+            output_log_snapshot=snapshot_payloads["output_log_snapshot"],
         )
 
     def _update_authoritative_frontend_state(self):
         self._authoritative_frontend_state = self._build_authoritative_frontend_state()
         self.authoritative_frontend_state_changed.emit(copy.deepcopy(self._authoritative_frontend_state))
 
-    def _on_active_tab_changed(self, tab_id: str):
-        self._active_frontend_tab = tab_id or "metrics"
-        self._update_authoritative_frontend_state()
-    
     def _subscribe_events(self):
         """订阅事件"""
         event_bus = self._get_event_bus()
         if not event_bus:
             return
-        
+
         subscriptions = [
             (EVENT_STATE_PROJECT_OPENED, self._on_project_opened),
             (EVENT_STATE_PROJECT_CLOSED, self._on_project_closed),
@@ -197,25 +245,25 @@ class SimulationTab(QWidget):
             (EVENT_ITERATION_USER_CONFIRMED, self._on_user_confirmed),
             (EVENT_SIM_RESULT_FILE_CREATED, self._on_sim_result_file_created),
         ]
-        
+
         for event_type, handler in subscriptions:
             event_bus.subscribe(event_type, handler)
             self._subscriptions.append((event_type, handler))
-    
+
     def _unsubscribe_events(self):
         """取消事件订阅"""
         event_bus = self._get_event_bus()
         if not event_bus:
             return
-        
+
         for event_type, handler in self._subscriptions:
             try:
                 event_bus.unsubscribe(event_type, handler)
             except Exception:
                 pass
-        
+
         self._subscriptions.clear()
-    
+
     def _get_event_bus(self):
         """获取 EventBus"""
         if self._event_bus is None:
@@ -226,10 +274,6 @@ class SimulationTab(QWidget):
             except Exception:
                 pass
         return self._event_bus
-    
-    # ============================================================
-    # 事件处理
-    # ============================================================
     
     def _on_property_changed(self, name: str, value):
         """处理 ViewModel 属性变更"""
@@ -252,7 +296,8 @@ class SimulationTab(QWidget):
         self._awaiting_confirmation = False
         self._runtime_status_message = ""
         self._logger.info(f"Project opened: {self._project_root}")
-        
+        self._refresh_history_results_cache()
+         
         # 清空当前显示
         self.clear()
 
@@ -263,8 +308,8 @@ class SimulationTab(QWidget):
         self._project_root = None
         self._awaiting_confirmation = False
         self._runtime_status_message = ""
+        self._refresh_history_results_cache()
         self.clear()
-        self._update_authoritative_frontend_state()
 
     def _on_simulation_started(self, event_data: dict):
         """处理仿真开始事件"""
@@ -444,6 +489,12 @@ class SimulationTab(QWidget):
         self._bound_web_bridge = bridge
         bridge.activate_tab_requested.connect(self.activate_result_tab)
         bridge.load_history_result_requested.connect(self.load_history_result)
+        bridge.chart_series_visibility_toggled.connect(self._on_chart_series_visibility_toggled)
+        bridge.clear_all_chart_series_requested.connect(self._on_chart_clear_all_requested)
+        bridge.chart_measurement_enabled_changed.connect(self._on_chart_measurement_enabled_changed)
+        bridge.chart_data_cursor_enabled_changed.connect(self._on_chart_data_cursor_enabled_changed)
+        bridge.chart_data_cursor_target_changed.connect(self._on_chart_data_cursor_target_changed)
+        bridge.chart_fit_requested.connect(self._on_chart_fit_requested)
         bridge.signal_visibility_toggled.connect(self._on_waveform_signal_visibility_toggled)
         bridge.clear_all_signals_requested.connect(self._on_waveform_clear_all_requested)
         bridge.cursor_visibility_toggled.connect(self._on_waveform_cursor_visibility_toggled)
@@ -453,12 +504,45 @@ class SimulationTab(QWidget):
         bridge.raw_data_jump_to_row_requested.connect(self._on_raw_data_jump_to_row_requested)
         bridge.raw_data_jump_to_x_requested.connect(self._on_raw_data_jump_to_x_requested)
         bridge.raw_data_value_search_requested.connect(self._on_raw_data_value_search_requested)
+        bridge.raw_data_shift_signal_window_requested.connect(self._on_raw_data_shift_signal_window_requested)
         bridge.output_log_search_requested.connect(self._on_output_log_search_requested)
         bridge.output_log_filter_requested.connect(self._on_output_log_filter_requested)
         bridge.output_log_jump_to_error_requested.connect(self._on_output_log_jump_to_error_requested)
         bridge.output_log_refresh_requested.connect(self._on_output_log_refresh_requested)
         bridge.export_requested.connect(self._backend_runtime.export_panel.export_selected_types)
         bridge.add_to_conversation_requested.connect(self._on_bridge_add_to_conversation_requested)
+
+    def _on_chart_clear_all_requested(self):
+        self._backend_runtime.chart_viewer.clear_all_series()
+        self._update_authoritative_frontend_state()
+
+    def _on_chart_series_visibility_toggled(self, series_name: str, visible: bool):
+        self._backend_runtime.chart_viewer.set_series_visible(series_name, visible)
+        self._update_authoritative_frontend_state()
+
+    def _on_chart_measurement_enabled_changed(self, enabled: bool):
+        self._backend_runtime.chart_viewer.set_measurement_enabled(enabled)
+        self._update_authoritative_frontend_state()
+
+    def _on_chart_data_cursor_enabled_changed(self, enabled: bool):
+        chart_viewer = self._backend_runtime.chart_viewer
+        if enabled and not chart_viewer.data_cursor_target():
+            snapshot = chart_viewer.get_web_snapshot()
+            available_series = snapshot.get("available_series", []) if isinstance(snapshot, dict) else []
+            if available_series:
+                first_series = available_series[0]
+                if isinstance(first_series, dict):
+                    chart_viewer.set_data_cursor_target(str(first_series.get("name") or ""))
+        chart_viewer.set_data_cursor_enabled(enabled)
+        self._update_authoritative_frontend_state()
+
+    def _on_chart_data_cursor_target_changed(self, target_id: str):
+        self._backend_runtime.chart_viewer.set_data_cursor_target(target_id)
+        self._update_authoritative_frontend_state()
+
+    def _on_chart_fit_requested(self):
+        self._backend_runtime.chart_viewer.fit_to_view()
+        self._update_authoritative_frontend_state()
 
     def _on_waveform_clear_all_requested(self):
         self._backend_runtime.waveform_widget.clear_displayed_signals()
@@ -503,6 +587,11 @@ class SimulationTab(QWidget):
     def _on_raw_data_value_search_requested(self, column: int, value: float, tolerance: float):
         self._backend_runtime.raw_data_table.search_value(column, value, tolerance)
         self._update_authoritative_frontend_state()
+
+    def _on_raw_data_shift_signal_window_requested(self, page_delta: int):
+        changed = self._backend_runtime.raw_data_table.shift_signal_window(page_delta)
+        if changed:
+            self._update_authoritative_frontend_state()
 
     def _on_output_log_search_requested(self, keyword: str):
         self._backend_runtime.output_log_viewer.search(keyword)
@@ -559,13 +648,15 @@ class SimulationTab(QWidget):
         if raw_output:
             self._backend_runtime.output_log_viewer.load_log_from_text(raw_output)
 
+        next_active_tab = self._active_frontend_tab
         if not getattr(result, 'success', False):
-            self.activate_result_tab("output_log")
-
-        if activate_op_tab:
+            next_active_tab = "output_log"
+        elif activate_op_tab:
             analysis_type = str(getattr(result, 'analysis_type', '') or '').lower()
             if analysis_type == 'op' and getattr(result, 'success', False) and getattr(result, 'data', None) is not None:
-                self.activate_result_tab("op_result")
+                next_active_tab = "op_result"
+        self._set_active_frontend_tab(next_active_tab)
+        self._refresh_history_results_cache()
         self._update_authoritative_frontend_state()
 
     def _restore_project_result_after_project_opened(self):
@@ -644,32 +735,19 @@ class SimulationTab(QWidget):
         """刷新显示"""
         if self._project_root:
             self._load_project_simulation_result()
-        self._update_authoritative_frontend_state()
 
     def activate_result_tab(self, tab_id: str) -> bool:
-        normalized_tab_id = str(tab_id or "metrics")
-        allowed_tabs = {
-            "metrics",
-            "chart",
-            "waveform",
-            "analysis_info",
-            "raw_data",
-            "output_log",
-            "export",
-            "history",
-            "op_result",
-        }
-        if normalized_tab_id not in allowed_tabs:
+        normalized_tab_id = self._normalize_frontend_tab_id(tab_id)
+        if not self._is_allowed_frontend_tab(normalized_tab_id):
             return False
+        if normalized_tab_id == self._active_frontend_tab:
+            return True
         self._active_frontend_tab = normalized_tab_id
         self._update_authoritative_frontend_state()
         return True
 
     def load_history_result(self, result_path: str) -> bool:
-        loaded = self._load_simulation_result(result_path, activate_op_tab=False)
-        if loaded:
-            self._update_authoritative_frontend_state()
-        return loaded
+        return self._load_simulation_result(result_path, activate_op_tab=False)
     
     def retranslate_ui(self):
         """重新翻译 UI 文本"""

@@ -78,6 +78,53 @@ export interface AnalysisChartViewState {
   chart_count: number
   can_export: boolean
   can_add_to_conversation: boolean
+  title: string
+  chart_type: string
+  x_label: string
+  y_label: string
+  secondary_y_label: string
+  log_x: boolean
+  log_y: boolean
+  available_series: ChartSeriesMetaState[]
+  visible_series: ChartSeriesSnapshotState[]
+  visible_series_count: number
+  data_cursor_enabled: boolean
+  data_cursor_target: string
+  measurement_enabled: boolean
+  measurement: ChartMeasurementState
+}
+
+export interface ChartSeriesMetaState {
+  name: string
+  color: string
+  axis_key: string
+  line_style: string
+  group_key: string
+  component: string
+  visible: boolean
+  point_count: number
+}
+
+export interface ChartSeriesSnapshotState {
+  name: string
+  color: string
+  axis_key: string
+  line_style: string
+  group_key: string
+  component: string
+  x: number[]
+  y: number[]
+  point_count: number
+  sampled_point_count: number
+}
+
+export interface ChartMeasurementState {
+  cursor_a_x: number | null
+  cursor_b_x: number | null
+  delta_x: number | null
+  frequency: number | null
+  values_a: Record<string, number>
+  values_b: Record<string, number>
 }
 
 export interface WaveformViewState {
@@ -86,6 +133,41 @@ export interface WaveformViewState {
   signal_names: string[]
   can_export: boolean
   can_add_to_conversation: boolean
+  displayed_signal_names: string[]
+  signal_catalog: WaveformSignalCatalogItemState[]
+  visible_series: WaveformSeriesSnapshotState[]
+  x_axis_label: string
+  log_x: boolean
+  cursor_a_visible: boolean
+  cursor_b_visible: boolean
+  measurement: WaveformMeasurementState
+}
+
+export interface WaveformSignalCatalogItemState {
+  name: string
+  visible: boolean
+  signal_type: string
+}
+
+export interface WaveformSeriesSnapshotState {
+  name: string
+  color: string
+  axis: string
+  x: number[]
+  y: number[]
+  point_count: number
+  sampled_point_count: number
+}
+
+export interface WaveformMeasurementState {
+  cursor_a_x: number | null
+  cursor_b_x: number | null
+  delta_x: number | null
+  delta_y: number | null
+  slope: number | null
+  frequency: number | null
+  values_a: Record<string, number>
+  values_b: Record<string, number>
 }
 
 export interface AnalysisInfoViewState {
@@ -106,6 +188,27 @@ export interface RawDataViewState {
   row_count: number
   signal_count: number
   x_axis_label: string
+  result_binding_text: string
+  search_columns: string[]
+  visible_columns: string[]
+  rows: RawDataRowState[]
+  window_start: number
+  window_end: number
+  has_more_before: boolean
+  has_more_after: boolean
+  selected_row_numbers: number[]
+  selection_count: number
+  visible_signal_start: number
+  visible_signal_end: number
+  visible_signal_count: number
+  has_more_signal_columns_before: boolean
+  has_more_signal_columns_after: boolean
+}
+
+export interface RawDataRowState {
+  row_number: number
+  values: string[]
+  selected: boolean
 }
 
 export interface OutputLogViewState {
@@ -113,6 +216,34 @@ export interface OutputLogViewState {
   line_count: number
   can_refresh: boolean
   can_add_to_conversation: boolean
+  filtered_line_count: number
+  current_filter: string
+  search_keyword: string
+  summary: OutputLogSummaryState
+  lines: OutputLogLineState[]
+  window_start: number
+  window_end: number
+  has_more_before: boolean
+  has_more_after: boolean
+  selected_line_number: number | null
+}
+
+export interface OutputLogSummaryState {
+  total_lines: number
+  error_count: number
+  warning_count: number
+  info_count: number
+  analysis_type: string
+  duration_seconds: number
+  success: boolean
+  first_error: string | null
+  timestamp: string
+}
+
+export interface OutputLogLineState {
+  line_number: number
+  content: string
+  level: string
 }
 
 export interface ExportViewState {
@@ -198,6 +329,38 @@ const EMPTY_RESULT: SimulationResultSummary = {
   has_raw_output: false,
 }
 
+const EMPTY_CHART_MEASUREMENT: ChartMeasurementState = {
+  cursor_a_x: null,
+  cursor_b_x: null,
+  delta_x: null,
+  frequency: null,
+  values_a: {},
+  values_b: {},
+}
+
+const EMPTY_WAVEFORM_MEASUREMENT: WaveformMeasurementState = {
+  cursor_a_x: null,
+  cursor_b_x: null,
+  delta_x: null,
+  delta_y: null,
+  slope: null,
+  frequency: null,
+  values_a: {},
+  values_b: {},
+}
+
+const EMPTY_OUTPUT_LOG_SUMMARY: OutputLogSummaryState = {
+  total_lines: 0,
+  error_count: 0,
+  warning_count: 0,
+  info_count: 0,
+  analysis_type: '',
+  duration_seconds: 0,
+  success: true,
+  first_error: null,
+  timestamp: '',
+}
+
 export const EMPTY_SIMULATION_STATE: SimulationMainState = {
   simulation_runtime: {
     status: 'idle',
@@ -230,6 +393,20 @@ export const EMPTY_SIMULATION_STATE: SimulationMainState = {
     chart_count: 0,
     can_export: false,
     can_add_to_conversation: false,
+    title: '',
+    chart_type: '',
+    x_label: '',
+    y_label: '',
+    secondary_y_label: '',
+    log_x: false,
+    log_y: false,
+    available_series: [],
+    visible_series: [],
+    visible_series_count: 0,
+    data_cursor_enabled: false,
+    data_cursor_target: '',
+    measurement_enabled: false,
+    measurement: EMPTY_CHART_MEASUREMENT,
   },
   waveform_view: {
     has_waveform: false,
@@ -237,6 +414,14 @@ export const EMPTY_SIMULATION_STATE: SimulationMainState = {
     signal_names: [],
     can_export: false,
     can_add_to_conversation: false,
+    displayed_signal_names: [],
+    signal_catalog: [],
+    visible_series: [],
+    x_axis_label: '',
+    log_x: false,
+    cursor_a_visible: false,
+    cursor_b_visible: false,
+    measurement: EMPTY_WAVEFORM_MEASUREMENT,
   },
   analysis_info_view: {
     analysis_type: '',
@@ -255,12 +440,37 @@ export const EMPTY_SIMULATION_STATE: SimulationMainState = {
     row_count: 0,
     signal_count: 0,
     x_axis_label: '',
+    result_binding_text: '',
+    search_columns: [],
+    visible_columns: [],
+    rows: [],
+    window_start: 0,
+    window_end: 0,
+    has_more_before: false,
+    has_more_after: false,
+    selected_row_numbers: [],
+    selection_count: 0,
+    visible_signal_start: 0,
+    visible_signal_end: 0,
+    visible_signal_count: 0,
+    has_more_signal_columns_before: false,
+    has_more_signal_columns_after: false,
   },
   output_log_view: {
     has_log: false,
     line_count: 0,
     can_refresh: false,
     can_add_to_conversation: false,
+    filtered_line_count: 0,
+    current_filter: 'all',
+    search_keyword: '',
+    summary: EMPTY_OUTPUT_LOG_SUMMARY,
+    lines: [],
+    window_start: 0,
+    window_end: 0,
+    has_more_before: false,
+    has_more_after: false,
+    selected_line_number: null,
   },
   export_view: {
     has_result: false,
@@ -316,6 +526,163 @@ function asRange(value: unknown): number[] | null {
   }
   const [start, end] = value
   return [asNumber(start), asNumber(end)]
+}
+
+function asNullableString(value: unknown): string | null {
+  return typeof value === 'string' ? value : null
+}
+
+function asNumberArray(value: unknown): number[] {
+  if (!Array.isArray(value)) {
+    return []
+  }
+  return value.map((item) => asNumber(item))
+}
+
+function asNumberRecord(value: unknown): Record<string, number> {
+  const record = asRecord(value)
+  return Object.fromEntries(Object.entries(record).map(([key, item]) => [key, asNumber(item)]))
+}
+
+function normalizeChartSeriesMeta(value: unknown): ChartSeriesMetaState[] {
+  if (!Array.isArray(value)) {
+    return []
+  }
+  return value.map((item) => {
+    const record = asRecord(item)
+    return {
+      name: asString(record.name),
+      color: asString(record.color),
+      axis_key: asString(record.axis_key),
+      line_style: asString(record.line_style),
+      group_key: asString(record.group_key),
+      component: asString(record.component),
+      visible: asBoolean(record.visible),
+      point_count: asNumber(record.point_count),
+    }
+  })
+}
+
+function normalizeChartSeriesSnapshots(value: unknown): ChartSeriesSnapshotState[] {
+  if (!Array.isArray(value)) {
+    return []
+  }
+  return value.map((item) => {
+    const record = asRecord(item)
+    return {
+      name: asString(record.name),
+      color: asString(record.color),
+      axis_key: asString(record.axis_key),
+      line_style: asString(record.line_style),
+      group_key: asString(record.group_key),
+      component: asString(record.component),
+      x: asNumberArray(record.x),
+      y: asNumberArray(record.y),
+      point_count: asNumber(record.point_count),
+      sampled_point_count: asNumber(record.sampled_point_count),
+    }
+  })
+}
+
+function normalizeChartMeasurement(value: unknown): ChartMeasurementState {
+  const record = asRecord(value)
+  return {
+    cursor_a_x: asNullableNumber(record.cursor_a_x),
+    cursor_b_x: asNullableNumber(record.cursor_b_x),
+    delta_x: asNullableNumber(record.delta_x),
+    frequency: asNullableNumber(record.frequency),
+    values_a: asNumberRecord(record.values_a),
+    values_b: asNumberRecord(record.values_b),
+  }
+}
+
+function normalizeWaveformSignalCatalog(value: unknown): WaveformSignalCatalogItemState[] {
+  if (!Array.isArray(value)) {
+    return []
+  }
+  return value.map((item) => {
+    const record = asRecord(item)
+    return {
+      name: asString(record.name),
+      visible: asBoolean(record.visible),
+      signal_type: asString(record.signal_type),
+    }
+  })
+}
+
+function normalizeWaveformSeriesSnapshots(value: unknown): WaveformSeriesSnapshotState[] {
+  if (!Array.isArray(value)) {
+    return []
+  }
+  return value.map((item) => {
+    const record = asRecord(item)
+    return {
+      name: asString(record.name),
+      color: asString(record.color),
+      axis: asString(record.axis),
+      x: asNumberArray(record.x),
+      y: asNumberArray(record.y),
+      point_count: asNumber(record.point_count),
+      sampled_point_count: asNumber(record.sampled_point_count),
+    }
+  })
+}
+
+function normalizeWaveformMeasurement(value: unknown): WaveformMeasurementState {
+  const record = asRecord(value)
+  return {
+    cursor_a_x: asNullableNumber(record.cursor_a_x),
+    cursor_b_x: asNullableNumber(record.cursor_b_x),
+    delta_x: asNullableNumber(record.delta_x),
+    delta_y: asNullableNumber(record.delta_y),
+    slope: asNullableNumber(record.slope),
+    frequency: asNullableNumber(record.frequency),
+    values_a: asNumberRecord(record.values_a),
+    values_b: asNumberRecord(record.values_b),
+  }
+}
+
+function normalizeRawDataRows(value: unknown): RawDataRowState[] {
+  if (!Array.isArray(value)) {
+    return []
+  }
+  return value.map((item) => {
+    const record = asRecord(item)
+    return {
+      row_number: asNumber(record.row_number),
+      values: asStringArray(record.values),
+      selected: asBoolean(record.selected),
+    }
+  })
+}
+
+function normalizeOutputLogSummary(value: unknown): OutputLogSummaryState {
+  const record = asRecord(value)
+  return {
+    total_lines: asNumber(record.total_lines),
+    error_count: asNumber(record.error_count),
+    warning_count: asNumber(record.warning_count),
+    info_count: asNumber(record.info_count),
+    analysis_type: asString(record.analysis_type),
+    duration_seconds: asNumber(record.duration_seconds),
+    success: !('success' in record) || asBoolean(record.success),
+    first_error: asNullableString(record.first_error),
+    timestamp: asString(record.timestamp),
+  }
+}
+
+function normalizeOutputLogLines(value: unknown): OutputLogLineState[] {
+  if (!Array.isArray(value)) {
+    return []
+  }
+  return value.map((item) => {
+    const record = asRecord(item)
+    return {
+      line_number: asNumber(record.line_number),
+      content: asString(record.content),
+      level: asString(record.level),
+    }
+  })
 }
 
 function normalizeOpResultSections(value: unknown): OpResultSectionState[] {
@@ -408,6 +775,20 @@ export function normalizeSimulationState(input: unknown): SimulationMainState {
       chart_count: asNumber(analysisChartView.chart_count),
       can_export: asBoolean(analysisChartView.can_export),
       can_add_to_conversation: asBoolean(analysisChartView.can_add_to_conversation),
+      title: asString(analysisChartView.title),
+      chart_type: asString(analysisChartView.chart_type),
+      x_label: asString(analysisChartView.x_label),
+      y_label: asString(analysisChartView.y_label),
+      secondary_y_label: asString(analysisChartView.secondary_y_label),
+      log_x: asBoolean(analysisChartView.log_x),
+      log_y: asBoolean(analysisChartView.log_y),
+      available_series: normalizeChartSeriesMeta(analysisChartView.available_series),
+      visible_series: normalizeChartSeriesSnapshots(analysisChartView.visible_series),
+      visible_series_count: asNumber(analysisChartView.visible_series_count),
+      data_cursor_enabled: asBoolean(analysisChartView.data_cursor_enabled),
+      data_cursor_target: asString(analysisChartView.data_cursor_target),
+      measurement_enabled: asBoolean(analysisChartView.measurement_enabled),
+      measurement: normalizeChartMeasurement(analysisChartView.measurement),
     },
     waveform_view: {
       has_waveform: asBoolean(waveformView.has_waveform),
@@ -415,6 +796,14 @@ export function normalizeSimulationState(input: unknown): SimulationMainState {
       signal_names: asStringArray(waveformView.signal_names),
       can_export: asBoolean(waveformView.can_export),
       can_add_to_conversation: asBoolean(waveformView.can_add_to_conversation),
+      displayed_signal_names: asStringArray(waveformView.displayed_signal_names),
+      signal_catalog: normalizeWaveformSignalCatalog(waveformView.signal_catalog),
+      visible_series: normalizeWaveformSeriesSnapshots(waveformView.visible_series),
+      x_axis_label: asString(waveformView.x_axis_label),
+      log_x: asBoolean(waveformView.log_x),
+      cursor_a_visible: asBoolean(waveformView.cursor_a_visible),
+      cursor_b_visible: asBoolean(waveformView.cursor_b_visible),
+      measurement: normalizeWaveformMeasurement(waveformView.measurement),
     },
     analysis_info_view: {
       analysis_type: asString(analysisInfoView.analysis_type),
@@ -433,12 +822,37 @@ export function normalizeSimulationState(input: unknown): SimulationMainState {
       row_count: asNumber(rawDataView.row_count),
       signal_count: asNumber(rawDataView.signal_count),
       x_axis_label: asString(rawDataView.x_axis_label),
+      result_binding_text: asString(rawDataView.result_binding_text),
+      search_columns: asStringArray(rawDataView.search_columns),
+      visible_columns: asStringArray(rawDataView.visible_columns),
+      rows: normalizeRawDataRows(rawDataView.rows),
+      window_start: asNumber(rawDataView.window_start),
+      window_end: asNumber(rawDataView.window_end),
+      has_more_before: asBoolean(rawDataView.has_more_before),
+      has_more_after: asBoolean(rawDataView.has_more_after),
+      selected_row_numbers: asNumberArray(rawDataView.selected_row_numbers),
+      selection_count: asNumber(rawDataView.selection_count),
+      visible_signal_start: asNumber(rawDataView.visible_signal_start),
+      visible_signal_end: asNumber(rawDataView.visible_signal_end),
+      visible_signal_count: asNumber(rawDataView.visible_signal_count),
+      has_more_signal_columns_before: asBoolean(rawDataView.has_more_signal_columns_before),
+      has_more_signal_columns_after: asBoolean(rawDataView.has_more_signal_columns_after),
     },
     output_log_view: {
       has_log: asBoolean(outputLogView.has_log),
       line_count: asNumber(outputLogView.line_count),
       can_refresh: asBoolean(outputLogView.can_refresh),
       can_add_to_conversation: asBoolean(outputLogView.can_add_to_conversation),
+      filtered_line_count: asNumber(outputLogView.filtered_line_count),
+      current_filter: asString(outputLogView.current_filter) || 'all',
+      search_keyword: asString(outputLogView.search_keyword),
+      summary: normalizeOutputLogSummary(outputLogView.summary),
+      lines: normalizeOutputLogLines(outputLogView.lines),
+      window_start: asNumber(outputLogView.window_start),
+      window_end: asNumber(outputLogView.window_end),
+      has_more_before: asBoolean(outputLogView.has_more_before),
+      has_more_after: asBoolean(outputLogView.has_more_after),
+      selected_line_number: asNullableNumber(outputLogView.selected_line_number),
     },
     export_view: {
       has_result: asBoolean(exportView.has_result),

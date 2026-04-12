@@ -31,21 +31,12 @@
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import (
     QWidget,
     QVBoxLayout,
-    QHBoxLayout,
-    QToolButton,
-    QLabel,
-    QCheckBox,
-    QFrame,
     QSizePolicy,
-    QSplitter,
-    QTreeWidget,
-    QTreeWidgetItem,
-    QPushButton,
 )
 
 import numpy as np
@@ -73,18 +64,7 @@ from presentation.panels.simulation.ltspice_plot_interaction import (
     clamp_range,
 )
 
-from resources.theme import (
-    COLOR_BG_PRIMARY,
-    COLOR_BG_SECONDARY,
-    COLOR_BG_TERTIARY,
-    COLOR_TEXT_PRIMARY,
-    COLOR_TEXT_SECONDARY,
-    COLOR_BORDER,
-    COLOR_ACCENT,
-    FONT_SIZE_SMALL,
-    SPACING_SMALL,
-    SPACING_NORMAL,
-)
+from resources.theme import COLOR_BG_PRIMARY
 
 
 # ============================================================
@@ -112,8 +92,6 @@ class WaveformWidget(QWidget):
     - 多信号叠加显示
     - 动态分辨率加载
     """
-
-    add_to_conversation_clicked = pyqtSignal()
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -149,9 +127,7 @@ class WaveformWidget(QWidget):
         
         # 信号类型缓存
         self._signal_types: Dict[str, str] = {}
-        
-        # 信号树更新锁（防止递归触发）
-        self._updating_tree = False
+        self._measurement_cache: Optional[WaveformMeasurement] = None
         
         # 初始化 UI
         self._setup_ui()
@@ -165,150 +141,13 @@ class WaveformWidget(QWidget):
             QSizePolicy.Policy.Expanding
         )
         
-        main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.setSpacing(0)
-        
-        # 主分栏：左侧信号树 + 右侧图表
-        self._main_splitter = QSplitter(Qt.Orientation.Horizontal)
-        self._main_splitter.setHandleWidth(1)
-        self._main_splitter.setChildrenCollapsible(True)
-        
-        # ---- 左侧：信号选择树 ----
-        self._signal_panel = QFrame()
-        self._signal_panel.setObjectName("signalPanel")
-        signal_panel_layout = QVBoxLayout(self._signal_panel)
-        signal_panel_layout.setContentsMargins(0, 0, 0, 0)
-        signal_panel_layout.setSpacing(0)
-        
-        # 信号树标题栏
-        signal_header = QFrame()
-        signal_header.setObjectName("signalHeader")
-        header_layout = QHBoxLayout(signal_header)
-        header_layout.setContentsMargins(SPACING_SMALL, SPACING_SMALL, SPACING_SMALL, SPACING_SMALL)
-        self._signal_title_label = QLabel("Signals")
-        self._signal_title_label.setObjectName("signalTitle")
-        header_layout.addWidget(self._signal_title_label)
-        header_layout.addStretch()
-        
-        self._clear_all_btn = QPushButton("Clear")
-        self._clear_all_btn.setObjectName("clearAllBtn")
-        self._clear_all_btn.setFixedHeight(22)
-        self._clear_all_btn.setToolTip("Remove all signals from chart")
-        self._clear_all_btn.clicked.connect(self._on_clear_all_signals)
-        header_layout.addWidget(self._clear_all_btn)
-        signal_panel_layout.addWidget(signal_header)
-        
-        # 信号树（分类 + 复选框）
-        self._signal_tree = QTreeWidget()
-        self._signal_tree.setObjectName("signalTree")
-        self._signal_tree.setHeaderHidden(True)
-        self._signal_tree.setRootIsDecorated(True)
-        self._signal_tree.setIndentation(16)
-        self._signal_tree.itemChanged.connect(self._on_signal_item_changed)
-        signal_panel_layout.addWidget(self._signal_tree)
-        
-        self._main_splitter.addWidget(self._signal_panel)
-        
-        # ---- 右侧：工具栏 + 图表 + 测量栏 ----
-        right_panel = QFrame()
-        right_layout = QVBoxLayout(right_panel)
-        right_layout.setContentsMargins(0, 0, 0, 0)
-        right_layout.setSpacing(0)
-        
-        # 工具栏
-        self._toolbar = QFrame()
-        self._toolbar.setObjectName("waveformToolbar")
-        toolbar_layout = QHBoxLayout(self._toolbar)
-        toolbar_layout.setContentsMargins(SPACING_SMALL, SPACING_SMALL, SPACING_SMALL, SPACING_SMALL)
-        toolbar_layout.setSpacing(SPACING_SMALL)
-        
-        # 显示选项
-        self._grid_checkbox = QCheckBox("Grid")
-        self._grid_checkbox.setChecked(True)
-        self._grid_checkbox.stateChanged.connect(self._on_grid_changed)
-        toolbar_layout.addWidget(self._grid_checkbox)
-        
-        self._legend_checkbox = QCheckBox("Legend")
-        self._legend_checkbox.setChecked(True)
-        self._legend_checkbox.stateChanged.connect(self._on_legend_changed)
-        toolbar_layout.addWidget(self._legend_checkbox)
-        
-        toolbar_layout.addSpacing(SPACING_NORMAL)
-        
-        # 光标按钮
-        self._cursor_a_btn = QToolButton()
-        self._cursor_a_btn.setText("A")
-        self._cursor_a_btn.setCheckable(True)
-        self._cursor_a_btn.setToolTip("Toggle Cursor A")
-        self._cursor_a_btn.clicked.connect(self._on_toggle_cursor_a)
-        toolbar_layout.addWidget(self._cursor_a_btn)
-        
-        self._cursor_b_btn = QToolButton()
-        self._cursor_b_btn.setText("B")
-        self._cursor_b_btn.setCheckable(True)
-        self._cursor_b_btn.setToolTip("Toggle Cursor B")
-        self._cursor_b_btn.clicked.connect(self._on_toggle_cursor_b)
-        toolbar_layout.addWidget(self._cursor_b_btn)
-        
-        toolbar_layout.addSpacing(SPACING_NORMAL)
-        
-        # Fit 按钮
-        self._fit_btn = QToolButton()
-        self._fit_btn.setText("Fit")
-        self._fit_btn.setToolTip("Fit")
-        self._fit_btn.clicked.connect(self._on_fit_view)
-        toolbar_layout.addWidget(self._fit_btn)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
-        self._add_to_conversation_btn = QToolButton()
-        self._add_to_conversation_btn.setEnabled(False)
-        self._add_to_conversation_btn.clicked.connect(self.add_to_conversation_clicked.emit)
-        toolbar_layout.addWidget(self._add_to_conversation_btn)
-        
-        toolbar_layout.addStretch()
-        
-        right_layout.addWidget(self._toolbar)
-        
-        # 图表区域
         self._plot_widget = pg.PlotWidget(viewBox=LTSpiceViewBox())
         self._plot_widget.setBackground(COLOR_BG_PRIMARY)
-        right_layout.addWidget(self._plot_widget, 1)
-        
-        # 测量信息栏
-        self._measurement_bar = QFrame()
-        self._measurement_bar.setObjectName("measurementBar")
-        measurement_layout = QVBoxLayout(self._measurement_bar)
-        measurement_layout.setContentsMargins(SPACING_SMALL, SPACING_SMALL, SPACING_SMALL, SPACING_SMALL)
-        measurement_layout.setSpacing(2)
-        
-        # 第一行：光标位置和差值
-        cursor_row = QHBoxLayout()
-        self._cursor_a_label = QLabel("A: --")
-        self._cursor_b_label = QLabel("B: --")
-        self._delta_label = QLabel("Δ: --")
-        self._freq_label = QLabel("f: --")
-        cursor_row.addWidget(self._cursor_a_label)
-        cursor_row.addWidget(self._cursor_b_label)
-        cursor_row.addWidget(self._delta_label)
-        cursor_row.addWidget(self._freq_label)
-        cursor_row.addStretch()
-        measurement_layout.addLayout(cursor_row)
-        
-        # 第二行：各信号在光标处的 Y 值
-        self._signal_values_label = QLabel("")
-        self._signal_values_label.setObjectName("signalValuesLabel")
-        self._signal_values_label.setWordWrap(True)
-        measurement_layout.addWidget(self._signal_values_label)
-        
-        right_layout.addWidget(self._measurement_bar)
-        self._measurement_bar.hide()
-        
-        self._main_splitter.addWidget(right_panel)
-        
-        # 设置初始比例：信号树 20% / 图表 80%
-        self._main_splitter.setSizes([160, 640])
-        
-        main_layout.addWidget(self._main_splitter, 1)
+        layout.addWidget(self._plot_widget, 1)
     
     def _setup_plot(self):
         """设置图表（双 Y 轴：左=电压，右=电流）"""
@@ -353,101 +192,7 @@ class WaveformWidget(QWidget):
     
     def _apply_style(self):
         """应用样式"""
-        self.setStyleSheet(f"""
-            #signalPanel {{
-                background-color: {COLOR_BG_SECONDARY};
-                border-right: 1px solid {COLOR_BORDER};
-            }}
-            
-            #signalHeader {{
-                background-color: {COLOR_BG_TERTIARY};
-                border-bottom: 1px solid {COLOR_BORDER};
-            }}
-            
-            #signalTitle {{
-                color: {COLOR_TEXT_PRIMARY};
-                font-size: {FONT_SIZE_SMALL}px;
-                font-weight: bold;
-            }}
-            
-            #clearAllBtn {{
-                background-color: transparent;
-                color: {COLOR_TEXT_SECONDARY};
-                border: 1px solid {COLOR_BORDER};
-                border-radius: 3px;
-                padding: 1px 6px;
-                font-size: {FONT_SIZE_SMALL}px;
-            }}
-            
-            #clearAllBtn:hover {{
-                background-color: {COLOR_BG_PRIMARY};
-                color: {COLOR_TEXT_PRIMARY};
-            }}
-            
-            #signalTree {{
-                background-color: {COLOR_BG_SECONDARY};
-                color: {COLOR_TEXT_PRIMARY};
-                border: none;
-                font-size: {FONT_SIZE_SMALL}px;
-            }}
-            
-            #signalTree::item {{
-                padding: 2px 0px;
-            }}
-            
-            #signalTree::item:hover {{
-                background-color: {COLOR_BG_TERTIARY};
-            }}
-            
-            #waveformToolbar {{
-                background-color: {COLOR_BG_TERTIARY};
-                border-bottom: 1px solid {COLOR_BORDER};
-            }}
-            
-            #waveformToolbar QLabel {{
-                color: {COLOR_TEXT_PRIMARY};
-                font-size: {FONT_SIZE_SMALL}px;
-            }}
-            
-            #waveformToolbar QCheckBox {{
-                color: {COLOR_TEXT_PRIMARY};
-                font-size: {FONT_SIZE_SMALL}px;
-            }}
-            
-            #waveformToolbar QToolButton {{
-                background-color: {COLOR_BG_SECONDARY};
-                color: {COLOR_TEXT_PRIMARY};
-                border: 1px solid {COLOR_BORDER};
-                padding: 2px 8px;
-                min-width: 24px;
-            }}
-            
-            #waveformToolbar QToolButton:checked {{
-                background-color: {COLOR_ACCENT};
-                color: white;
-            }}
-            
-            #waveformToolbar QToolButton:hover {{
-                background-color: {COLOR_BG_PRIMARY};
-            }}
-            
-            #measurementBar {{
-                background-color: {COLOR_BG_TERTIARY};
-                border-top: 1px solid {COLOR_BORDER};
-            }}
-            
-            #measurementBar QLabel {{
-                color: {COLOR_TEXT_PRIMARY};
-                font-size: {FONT_SIZE_SMALL}px;
-                font-family: monospace;
-            }}
-            
-            #signalValuesLabel {{
-                color: {COLOR_TEXT_SECONDARY};
-                font-size: {FONT_SIZE_SMALL}px;
-                font-family: monospace;
-            }}
-        """)
+        self.setStyleSheet("")
     
     # ============================================================
     # 公共方法
@@ -517,7 +262,6 @@ class WaveformWidget(QWidget):
         resolved_signal_name = waveform_data.signal_name
         if resolved_signal_name in self._plot_items:
             self._logger.debug(f"Signal already displayed: {resolved_signal_name}")
-            self._update_add_to_conversation_enabled()
             return True
         
         # 选择颜色
@@ -550,9 +294,8 @@ class WaveformWidget(QWidget):
             waveform_data=waveform_data,
             axis=axis_label
         )
-        
-        # 同步信号树复选框状态
-        self._set_signal_tree_checked(resolved_signal_name, True)
+
+        self._measurement_cache = None
         self._refresh_legend()
         self.fit_to_view()
         
@@ -560,7 +303,6 @@ class WaveformWidget(QWidget):
             f"Waveform added: {resolved_signal_name} [{axis_label}], "
             f"points={waveform_data.point_count}"
         )
-        self._update_add_to_conversation_enabled()
         return True
     
     def remove_waveform(self, signal_name: str) -> bool:
@@ -591,9 +333,8 @@ class WaveformWidget(QWidget):
             self._right_vb.removeItem(plot_item.plot_data_item)
         else:
             self._plot_widget.getPlotItem().removeItem(plot_item.plot_data_item)
-        
-        # 同步信号树复选框状态
-        self._set_signal_tree_checked(signal_name, False)
+
+        self._measurement_cache = None
         self._refresh_legend()
         if not self._plot_items:
             self._color_index = 0
@@ -605,18 +346,15 @@ class WaveformWidget(QWidget):
             self.fit_to_view()
         
         self._logger.debug(f"Waveform removed: {signal_name}")
-        self._update_add_to_conversation_enabled()
         return True
     
     def clear_displayed_signals(self):
         """清空当前已显示信号，但保留当前结果上下文与信号目录"""
         self._clear_displayed_waveforms(preserve_result_context=True)
-        self._update_add_to_conversation_enabled()
 
     def reset(self):
         """清空波形结果上下文与所有显示状态"""
         self._clear_displayed_waveforms(preserve_result_context=False)
-        self._update_add_to_conversation_enabled()
 
     def set_signal_visible(self, signal_name: str, visible: bool) -> bool:
         if visible:
@@ -639,7 +377,6 @@ class WaveformWidget(QWidget):
         
         self._cursor_a.setValue(x_position)
         self._cursor_a_pos = x_position
-        self._cursor_a_btn.setChecked(True)
         self._update_measurement()
 
     def set_cursor_a_visible(self, visible: bool):
@@ -652,7 +389,6 @@ class WaveformWidget(QWidget):
                 self.set_cursor_a(x_position)
             return
         self._remove_cursor_a()
-        self._cursor_a_btn.setChecked(False)
     
     def set_cursor_b(self, x_position: float):
         """
@@ -668,7 +404,6 @@ class WaveformWidget(QWidget):
         
         self._cursor_b.setValue(x_position)
         self._cursor_b_pos = x_position
-        self._cursor_b_btn.setChecked(True)
         self._update_measurement()
 
     def set_cursor_b_visible(self, visible: bool):
@@ -682,7 +417,6 @@ class WaveformWidget(QWidget):
                 self.set_cursor_b(x_position)
             return
         self._remove_cursor_b()
-        self._cursor_b_btn.setChecked(False)
     
     def get_measurement(self) -> WaveformMeasurement:
         """
@@ -691,13 +425,15 @@ class WaveformWidget(QWidget):
         Returns:
             WaveformMeasurement: 测量结果
         """
-        return self._measurement_support.build_measurement(
-            self._current_result,
-            self._plot_items,
-            self._cursor_a_pos,
-            self._cursor_b_pos,
-            self._from_view_x_value,
-        )
+        if self._measurement_cache is None:
+            self._measurement_cache = self._measurement_support.build_measurement(
+                self._current_result,
+                self._plot_items,
+                self._cursor_a_pos,
+                self._cursor_b_pos,
+                self._from_view_x_value,
+            )
+        return self._measurement_cache
 
     def export_image(self, path: str) -> bool:
         if self._current_result is None or not self._plot_items:
@@ -874,15 +610,14 @@ class WaveformWidget(QWidget):
         self._current_result = result
         self._current_result_signature = self._get_result_signature(result)
         self._signal_types = getattr(result.data, 'signal_types', {}) if result.data is not None else {}
+        self._measurement_cache = None
         self._x_domain = None
         self._left_y_domain = None
         self._right_y_domain = None
-        self._update_signal_tree(result)
         x_label = result.get_x_axis_label()
         plot_item = self._plot_widget.getPlotItem()
         plot_item.setLabel('bottom', x_label)
         plot_item.setLogMode(x=result.is_x_axis_log(), y=False)
-        self._update_add_to_conversation_enabled()
 
     def _clear_displayed_waveforms(self, preserve_result_context: bool):
         for plot_item in list(self._plot_items.values()):
@@ -893,23 +628,19 @@ class WaveformWidget(QWidget):
 
         self._plot_items.clear()
         self._color_index = 0
+        self._measurement_cache = None
         self._x_domain = None
         self._left_y_domain = None
         self._right_y_domain = None
         self._refresh_legend()
-        self._signal_values_label.setText("")
         self._remove_cursor_a()
         self._remove_cursor_b()
 
-        if preserve_result_context and self._current_result is not None:
-            self._update_signal_tree(self._current_result)
-        else:
+        if not preserve_result_context or self._current_result is None:
             self._current_result = None
             self._current_result_signature = None
             self._signal_types = {}
-            self._signal_tree.clear()
             self._plot_widget.getPlotItem().setLogMode(x=False, y=False)
-        self._update_add_to_conversation_enabled()
 
     def _is_log_x_enabled(self) -> bool:
         return self._current_result is not None and self._current_result.is_x_axis_log()
@@ -935,9 +666,6 @@ class WaveformWidget(QWidget):
         try:
             self._legend.clear()
         except Exception:
-            return
-
-        if not self._legend_checkbox.isChecked():
             return
 
         for signal_name, plot_item in self._plot_items.items():
@@ -1045,8 +773,7 @@ class WaveformWidget(QWidget):
         )
         self._cursor_a.sigPositionChanged.connect(self._on_cursor_a_moved)
         self._plot_widget.addItem(self._cursor_a)
-        self._measurement_bar.show()
-    
+
     def _create_cursor_b(self):
         """创建光标 B"""
         if self._cursor_b is not None:
@@ -1063,33 +790,23 @@ class WaveformWidget(QWidget):
         )
         self._cursor_b.sigPositionChanged.connect(self._on_cursor_b_moved)
         self._plot_widget.addItem(self._cursor_b)
-        self._measurement_bar.show()
-    
+
     def _remove_cursor_a(self):
         """移除光标 A"""
         if self._cursor_a is not None:
             self._plot_widget.removeItem(self._cursor_a)
             self._cursor_a = None
             self._cursor_a_pos = None
-            self._cursor_a_btn.setChecked(False)
             self._update_measurement()
-            self._check_hide_measurement_bar()
-    
+
     def _remove_cursor_b(self):
         """移除光标 B"""
         if self._cursor_b is not None:
             self._plot_widget.removeItem(self._cursor_b)
             self._cursor_b = None
             self._cursor_b_pos = None
-            self._cursor_b_btn.setChecked(False)
             self._update_measurement()
-            self._check_hide_measurement_bar()
-    
-    def _check_hide_measurement_bar(self):
-        """检查是否需要隐藏测量栏"""
-        if self._cursor_a is None and self._cursor_b is None:
-            self._measurement_bar.hide()
-    
+
     def _on_cursor_a_moved(self, line):
         """光标 A 移动事件"""
         self._cursor_a_pos = line.value()
@@ -1102,152 +819,17 @@ class WaveformWidget(QWidget):
     
     def _update_measurement(self):
         """更新测量显示（包括所有信号在光标处的 Y 值）"""
-        measurement = self.get_measurement()
-        
-        # 更新第一行：光标位置和差值
-        if measurement.cursor_a_x is not None:
-            y_str = f"{measurement.cursor_a_y:.4g}" if measurement.cursor_a_y is not None else "--"
-            self._cursor_a_label.setText(f"A: {measurement.cursor_a_x:.4g}, {y_str}")
-        else:
-            self._cursor_a_label.setText("A: --")
-        
-        if measurement.cursor_b_x is not None:
-            y_str = f"{measurement.cursor_b_y:.4g}" if measurement.cursor_b_y is not None else "--"
-            self._cursor_b_label.setText(f"B: {measurement.cursor_b_x:.4g}, {y_str}")
-        else:
-            self._cursor_b_label.setText("B: --")
-        
-        if measurement.delta_x is not None:
-            delta_y_str = f"{measurement.delta_y:.4g}" if measurement.delta_y is not None else "--"
-            self._delta_label.setText(f"Δ: {measurement.delta_x:.4g}, {delta_y_str}")
-        else:
-            self._delta_label.setText("Δ: --")
-        
-        if measurement.frequency is not None:
-            self._freq_label.setText(f"f: {measurement.frequency:.4g} Hz")
-        else:
-            self._freq_label.setText("f: --")
-
-        # 更新第二行：各信号在光标处的 Y 值
-        value_parts = self._measurement_support.build_value_parts(measurement, self._plot_items)
-        self._signal_values_label.setText("  |  ".join(value_parts))
+        self._measurement_cache = self._measurement_support.build_measurement(
+            self._current_result,
+            self._plot_items,
+            self._cursor_a_pos,
+            self._cursor_b_pos,
+            self._from_view_x_value,
+        )
 
     # ============================================================
     # 内部方法 - 事件处理
     # ============================================================
-
-    def _on_signal_item_changed(self, item: QTreeWidgetItem, column: int):
-        """信号树复选框变化 —— 勾选添加信号，取消勾选移除信号"""
-        if self._updating_tree:
-            return
-        if item.childCount() > 0:
-            return
-
-        signal_name = item.text(0)
-        if self._current_result is None:
-            return
-
-        checked = item.checkState(0) == Qt.CheckState.Checked
-        if checked:
-            if signal_name not in self._plot_items:
-                self.add_waveform(self._current_result, signal_name)
-        else:
-            if signal_name in self._plot_items:
-                self.remove_waveform(signal_name)
-
-    def _on_clear_all_signals(self):
-        """清除所有已显示的信号（保留信号树）"""
-        self.clear_displayed_signals()
-
-    def _update_add_to_conversation_enabled(self):
-        self._add_to_conversation_btn.setEnabled(bool(self._current_result is not None and self._plot_items))
-
-    def _on_grid_changed(self, state: int):
-        """网格显示变化"""
-        show = state == Qt.CheckState.Checked.value
-        self._plot_widget.getPlotItem().showGrid(x=show, y=show, alpha=0.3)
-
-    def _on_legend_changed(self, state: int):
-        """图例显示变化"""
-        if state == Qt.CheckState.Checked.value:
-            if self._legend is None:
-                self._legend = self._plot_widget.getPlotItem().addLegend()
-            self._refresh_legend()
-        else:
-            if self._legend is not None:
-                self._legend.clear()
-
-    def _on_toggle_cursor_a(self, checked: bool):
-        """切换光标 A"""
-        if checked:
-            view_range = self._plot_widget.getPlotItem().viewRange()
-            x_center = (view_range[0][0] + view_range[0][1]) / 2
-            self.set_cursor_a(x_center)
-        else:
-            self._remove_cursor_a()
-
-    def _on_toggle_cursor_b(self, checked: bool):
-        """切换光标 B"""
-        if checked:
-            view_range = self._plot_widget.getPlotItem().viewRange()
-            x_center = (view_range[0][0] + view_range[0][1]) / 2
-            x_offset = (view_range[0][1] - view_range[0][0]) * 0.1
-            self.set_cursor_b(x_center + x_offset)
-        else:
-            self._remove_cursor_b()
-
-    def _on_fit_view(self):
-        """Fit 按钮"""
-        self.fit_to_view()
-
-    def _update_signal_tree(self, result: SimulationResult):
-        """更新信号树（分类显示：电压 / 电流 / 其他）"""
-        self._updating_tree = True
-        self._signal_tree.clear()
-
-        classified = self._data_service.get_classified_signals(result)
-        category_labels = {
-            "voltage": "⚡ Voltage",
-            "current": "🔌 Current",
-            "other": "⚙ Other",
-        }
-
-        for cat_key in ("voltage", "current", "other"):
-            signals = classified.get(cat_key, [])
-            if not signals:
-                continue
-
-            root = QTreeWidgetItem(self._signal_tree, [category_labels[cat_key]])
-            root.setFlags(root.flags() & ~Qt.ItemFlag.ItemIsUserCheckable)
-            root.setExpanded(True)
-
-            for sig_name in signals:
-                child = QTreeWidgetItem(root, [sig_name])
-                child.setFlags(child.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-                is_displayed = sig_name in self._plot_items
-                child.setCheckState(
-                    0,
-                    Qt.CheckState.Checked if is_displayed else Qt.CheckState.Unchecked,
-                )
-
-        self._updating_tree = False
-
-    def _set_signal_tree_checked(self, signal_name: str, checked: bool):
-        """同步信号树中某个信号的复选框状态"""
-        self._updating_tree = True
-        root = self._signal_tree.invisibleRootItem()
-        for i in range(root.childCount()):
-            category = root.child(i)
-            for j in range(category.childCount()):
-                child = category.child(j)
-                if child.text(0) == signal_name:
-                    child.setCheckState(
-                        0,
-                        Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked,
-                    )
-                    self._updating_tree = False
-                    return
-        self._updating_tree = False
 
     # ============================================================
     # 国际化支持
@@ -1255,16 +837,7 @@ class WaveformWidget(QWidget):
 
     def retranslate_ui(self):
         """重新翻译 UI 文本"""
-        self._signal_title_label.setText(self._tr("Signals"))
-        self._clear_all_btn.setText(self._tr("Clear"))
-        self._grid_checkbox.setText(self._tr("Grid"))
-        self._legend_checkbox.setText(self._tr("Legend"))
-        self._cursor_a_btn.setToolTip(self._tr("Toggle Cursor A"))
-        self._cursor_b_btn.setToolTip(self._tr("Toggle Cursor B"))
-        self._fit_btn.setText(self._tr("Fit"))
-        self._fit_btn.setToolTip(self._tr("Fit"))
-        self._add_to_conversation_btn.setText(self._tr("Add to Conversation"))
-        self._add_to_conversation_btn.setToolTip(self._tr("Add to Conversation"))
+        return
 
     def _tr(self, text: str) -> str:
         """翻译文本"""

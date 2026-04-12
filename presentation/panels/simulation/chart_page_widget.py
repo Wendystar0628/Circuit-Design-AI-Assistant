@@ -306,6 +306,33 @@ class ChartPage(QWidget):
     def supports_data_cursor(self) -> bool:
         return bool(self._spec is not None and self._spec.series)
 
+    def is_data_cursor_enabled(self) -> bool:
+        return bool(self._data_cursor.is_enabled())
+
+    def data_cursor_target(self) -> str:
+        return str(self._data_cursor.target_id() or "")
+
+    def set_data_cursor_target(self, target_id: str) -> bool:
+        return self._activate_cursor_target(str(target_id or ""))
+
+    def set_series_visible(self, series_name: str, visible: bool) -> bool:
+        if self._spec is None or not series_name or series_name not in self._series_items:
+            return False
+        item = self._series_items[series_name]
+        desired_state = Qt.CheckState.Checked if visible else Qt.CheckState.Unchecked
+        if item.checkState(0) == desired_state:
+            return True
+        self._updating_tree = True
+        item.setCheckState(0, desired_state)
+        self._updating_tree = False
+        if desired_state != Qt.CheckState.Checked and series_name == self._data_cursor.target_id():
+            self._data_cursor.set_target("")
+        self._rebuild_plot()
+        return True
+
+    def clear_all_series(self):
+        self._on_clear_all_series()
+
     def _activate_cursor_target(self, target_id: str) -> bool:
         if not target_id or target_id not in self._series_items:
             return False
@@ -357,9 +384,9 @@ class ChartPage(QWidget):
     def get_web_snapshot(self) -> Dict[str, Any]:
         spec = self._spec
         visible_series = self._visible_series()
+        visible_series_names = {series.name for series in visible_series}
         available_series = []
         if spec is not None:
-            visible_names = {series.name for series in visible_series}
             available_series = [
                 {
                     "name": series.name,
@@ -368,7 +395,7 @@ class ChartPage(QWidget):
                     "line_style": series.line_style,
                     "group_key": series.group_key,
                     "component": series.component,
-                    "visible": series.name in visible_names,
+                    "visible": series.name in visible_series_names,
                     "point_count": int(len(series.y_data)),
                 }
                 for series in spec.series
@@ -383,6 +410,9 @@ class ChartPage(QWidget):
             "log_y": bool(spec.log_y) if spec is not None else False,
             "available_series": available_series,
             "visible_series": [serialize_chart_series_for_web(series) for series in visible_series],
+            "visible_series_count": len(visible_series),
+            "data_cursor_enabled": self.is_data_cursor_enabled(),
+            "data_cursor_target": self.data_cursor_target(),
             "measurement_enabled": self.is_measurement_enabled(),
             "measurement": self._build_measurement_snapshot(),
         }

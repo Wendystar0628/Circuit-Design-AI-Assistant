@@ -3,12 +3,10 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
-from PyQt6.QtCore import Qt, QSize, pyqtSignal
-from PyQt6.QtGui import QAction
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QLabel,
     QSizePolicy,
-    QToolBar,
     QVBoxLayout,
     QWidget,
 )
@@ -22,16 +20,9 @@ from presentation.panels.simulation.chart_page_widget import ChartPage
 from presentation.panels.simulation.chart_view_types import ChartSeries, ChartSpec
 from presentation.panels.simulation.ltspice_plot_interaction import finite_range
 from resources.theme import (
-    BORDER_RADIUS_NORMAL,
-    COLOR_ACCENT,
-    COLOR_ACCENT_LIGHT,
     COLOR_BG_SECONDARY,
-    COLOR_BG_TERTIARY,
-    COLOR_BORDER,
-    COLOR_TEXT_PRIMARY,
     COLOR_TEXT_SECONDARY,
     FONT_SIZE_SMALL,
-    SPACING_SMALL,
 )
 
 
@@ -46,8 +37,6 @@ SERIES_COLORS = [
     "#e84393",
 ]
 class ChartViewer(QWidget):
-    add_to_conversation_clicked = pyqtSignal()
-
     def __init__(self, parent=None):
         super().__init__(parent)
         self._result: Optional[SimulationResult] = None
@@ -75,62 +64,10 @@ class ChartViewer(QWidget):
         layout.addWidget(self._empty_label, 1)
         self._empty_label.hide()
 
-        self._toolbar = QToolBar()
-        self._toolbar.setObjectName("chartToolbar")
-        self._toolbar.setIconSize(QSize(16, 16))
-        self._toolbar.setMovable(False)
-        self._setup_toolbar()
-        layout.addWidget(self._toolbar)
-
-    def _setup_toolbar(self):
-        self._action_fit = QAction("Fit", self)
-        self._action_fit.triggered.connect(self._on_fit_to_view)
-        self._toolbar.addAction(self._action_fit)
-
-        self._toolbar.addSeparator()
-
-        self._action_measure = QAction("Measure", self)
-        self._action_measure.setCheckable(True)
-        self._action_measure.triggered.connect(self._on_toggle_measurement)
-        self._toolbar.addAction(self._action_measure)
-
-        self._action_cursor = QAction("Cursor", self)
-        self._action_cursor.setCheckable(True)
-        self._action_cursor.setEnabled(False)
-        self._action_cursor.triggered.connect(self._on_toggle_cursor)
-        self._toolbar.addAction(self._action_cursor)
-
-        self._toolbar.addSeparator()
-
-        self._action_add_to_conversation = QAction("Add to Conversation", self)
-        self._action_add_to_conversation.setEnabled(False)
-        self._action_add_to_conversation.triggered.connect(self.add_to_conversation_clicked.emit)
-        self._toolbar.addAction(self._action_add_to_conversation)
-
     def _apply_style(self):
         self.setStyleSheet(f"""
             ChartViewer {{
                 background-color: {COLOR_BG_SECONDARY};
-            }}
-            #chartToolbar {{
-                background-color: {COLOR_BG_TERTIARY};
-                border-top: 1px solid {COLOR_BORDER};
-                spacing: {SPACING_SMALL}px;
-                padding: {SPACING_SMALL}px;
-            }}
-            #chartToolbar QToolButton {{
-                background-color: transparent;
-                color: {COLOR_TEXT_PRIMARY};
-                border: none;
-                padding: 4px 8px;
-                border-radius: {BORDER_RADIUS_NORMAL}px;
-            }}
-            #chartToolbar QToolButton:hover {{
-                background-color: {COLOR_ACCENT_LIGHT};
-            }}
-            #chartToolbar QToolButton:checked {{
-                background-color: {COLOR_ACCENT};
-                color: white;
             }}
             #emptyLabel {{
                 color: {COLOR_TEXT_SECONDARY};
@@ -140,27 +77,16 @@ class ChartViewer(QWidget):
 
     def load_result(self, result: SimulationResult):
         self._result = result
-        self._action_measure.setChecked(False)
-        self._action_cursor.setChecked(False)
-        self._action_cursor.setEnabled(False)
         self._chart_spec = self._resolve_chart_spec(result)
         self._rebuild_page()
 
     def clear(self):
         self._result = None
         self._chart_spec = None
-        self._action_measure.setChecked(False)
-        self._action_cursor.setChecked(False)
-        self._action_cursor.setEnabled(False)
-        self._action_add_to_conversation.setEnabled(False)
         self._clear_chart_page()
         self._show_empty_state()
 
     def retranslate_ui(self):
-        self._action_fit.setText(self._tr("Fit"))
-        self._action_measure.setText(self._tr("Measure"))
-        self._action_cursor.setText(self._tr("Cursor"))
-        self._action_add_to_conversation.setText(self._tr("Add to Conversation"))
         self._empty_label.setText(self._tr("No interactive chart available for the current result."))
         if self._chart_page is not None:
             self._chart_page.retranslate_ui()
@@ -172,7 +98,7 @@ class ChartViewer(QWidget):
             "has_chart": bool(page is not None and page.has_chart()),
             "chart_count": 1 if self._chart_spec is not None else 0,
             "can_export": bool(page is not None and page.has_chart()),
-            "can_add_to_conversation": bool(self._action_add_to_conversation.isEnabled()),
+            "can_add_to_conversation": bool(page is not None and page.has_chart()),
             **page_snapshot,
         }
 
@@ -238,15 +164,13 @@ class ChartViewer(QWidget):
             "chart_index": chart_index,
             "chart_type": spec.chart_type.value,
             "title": spec.title,
-            "series_count": len(chart_payload["series"]),
-            "row_count": len(chart_payload["rows"]),
             "files": file_map,
         })
 
-        manifest_path = target_dir / "charts.json"
+        manifest_path = target_dir / "manifest.json"
         manifest_payload = simulation_artifact_exporter.build_artifact_payload(
             self._result,
-            "charts",
+            "chart_bundle",
             summary={
                 "chart_count": len(chart_entries),
             },
@@ -262,6 +186,48 @@ class ChartViewer(QWidget):
 
         return exported_files
 
+    def fit_to_view(self) -> None:
+        page = self._chart_page
+        if page is not None:
+            page.fit_to_view()
+
+    def set_measurement_enabled(self, enabled: bool) -> None:
+        page = self._chart_page
+        if page is not None:
+            page.set_measurement_enabled(enabled)
+
+    def supports_data_cursor(self) -> bool:
+        page = self._chart_page
+        return bool(page is not None and page.supports_data_cursor())
+
+    def set_data_cursor_enabled(self, enabled: bool) -> None:
+        page = self._chart_page
+        if page is not None:
+            page.set_data_cursor_enabled(enabled)
+
+    def data_cursor_target(self) -> str:
+        page = self._chart_page
+        if page is None:
+            return ""
+        return str(page.data_cursor_target())
+
+    def set_data_cursor_target(self, target_id: str) -> bool:
+        page = self._chart_page
+        if page is None:
+            return False
+        return bool(page.set_data_cursor_target(target_id))
+
+    def set_series_visible(self, series_name: str, visible: bool) -> bool:
+        page = self._chart_page
+        if page is None:
+            return False
+        return bool(page.set_series_visible(series_name, visible))
+
+    def clear_all_series(self) -> None:
+        page = self._chart_page
+        if page is not None:
+            page.clear_all_series()
+
     def _clear_chart_page(self):
         while self._page_host_layout.count() > 0:
             item = self._page_host_layout.takeAt(0)
@@ -276,19 +242,16 @@ class ChartViewer(QWidget):
 
         spec = self._chart_spec
         if spec is None:
-            self._action_cursor.setChecked(False)
-            self._action_cursor.setEnabled(False)
-            self._action_add_to_conversation.setEnabled(False)
             self._show_empty_state()
             return
 
         page = self._create_page(spec)
         page.set_chart(spec)
         page.retranslate_ui()
+        page.set_measurement_enabled(False)
+        page.set_data_cursor_enabled(False)
         self._chart_page = page
         self._page_host_layout.addWidget(page)
-        self._reset_page_interaction_state()
-        self._update_toolbar_state()
         self._hide_empty_state()
 
     def _create_page(self, spec: ChartSpec) -> QWidget:
@@ -528,41 +491,6 @@ class ChartViewer(QWidget):
         signal_type = signal_types.get(name, "")
         type_rank = {"voltage": 0, "current": 1, "other": 2}.get(signal_type, 2)
         return (role_rank, type_rank, name_lower)
-
-    def _reset_page_interaction_state(self):
-        self._action_measure.setChecked(False)
-        self._action_cursor.setChecked(False)
-        page = self._chart_page
-        if page is not None:
-            page.set_measurement_enabled(False)
-            page.set_data_cursor_enabled(False)
-        self._update_toolbar_state()
-
-    def _on_fit_to_view(self):
-        page = self._chart_page
-        if page is not None:
-            page.fit_to_view()
-
-    def _on_toggle_measurement(self, checked: bool):
-        page = self._chart_page
-        if page is not None:
-            page.set_measurement_enabled(checked)
-
-    def _on_toggle_cursor(self, checked: bool):
-        page = self._chart_page
-        if page is None:
-            self._action_cursor.setChecked(False)
-            return
-        page.set_data_cursor_enabled(checked)
-
-    def _update_toolbar_state(self):
-        page = self._chart_page
-        supports_cursor = bool(page is not None and page.supports_data_cursor())
-        has_chart = bool(page is not None and page.has_chart())
-        self._action_cursor.setEnabled(supports_cursor)
-        self._action_add_to_conversation.setEnabled(has_chart)
-        if not supports_cursor:
-            self._action_cursor.setChecked(False)
 
     def _show_empty_state(self):
         self._page_host.hide()

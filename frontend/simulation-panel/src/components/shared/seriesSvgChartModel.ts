@@ -1,3 +1,5 @@
+import { formatCompactNumber, normalizeZero } from './chartValueFormatting'
+
 export interface SeriesSvgChartDatum {
   name: string
   color: string
@@ -88,68 +90,6 @@ const DEFAULT_STROKE_DASHARRAY = '8 6'
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max)
-}
-
-function normalizeZero(value: number): number {
-  return Math.abs(value) <= ZERO_EPSILON ? 0 : value
-}
-
-function trimTrailingZeros(value: string): string {
-  return value
-    .replace(/(\.\d*?[1-9])0+$/u, '$1')
-    .replace(/\.0+$/u, '')
-    .replace(/^-0$/u, '0')
-}
-
-function formatScaledNumber(value: number): string {
-  const normalized = normalizeZero(value)
-  const absolute = Math.abs(normalized)
-  if (absolute >= 100) {
-    return trimTrailingZeros(normalized.toFixed(0))
-  }
-  if (absolute >= 10) {
-    return trimTrailingZeros(normalized.toFixed(1))
-  }
-  if (absolute >= 1) {
-    return trimTrailingZeros(normalized.toFixed(2))
-  }
-  if (absolute >= 0.01) {
-    return trimTrailingZeros(normalized.toFixed(3))
-  }
-  return trimTrailingZeros(normalized.toExponential(2).replace('e+', 'e'))
-}
-
-function formatCompactNumber(value: number): string {
-  const normalized = normalizeZero(value)
-  if (!Number.isFinite(normalized)) {
-    return '--'
-  }
-  const absolute = Math.abs(normalized)
-  if (absolute === 0) {
-    return '0'
-  }
-  if (absolute >= 1e9) {
-    return `${formatScaledNumber(normalized / 1e9)}G`
-  }
-  if (absolute >= 1e6) {
-    return `${formatScaledNumber(normalized / 1e6)}M`
-  }
-  if (absolute >= 1e3) {
-    return `${formatScaledNumber(normalized / 1e3)}k`
-  }
-  if (absolute >= 0.01) {
-    return formatScaledNumber(normalized)
-  }
-  if (absolute >= 1e-3) {
-    return `${formatScaledNumber(normalized / 1e-3)}m`
-  }
-  if (absolute >= 1e-6) {
-    return `${formatScaledNumber(normalized / 1e-6)}u`
-  }
-  if (absolute >= 1e-9) {
-    return `${formatScaledNumber(normalized / 1e-9)}n`
-  }
-  return trimTrailingZeros(normalized.toExponential(2).replace('e+', 'e'))
 }
 
 function niceTickSpacing(span: number, targetTicks: number): number {

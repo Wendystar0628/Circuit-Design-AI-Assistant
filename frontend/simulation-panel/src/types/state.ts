@@ -122,8 +122,6 @@ export interface ChartSeriesSnapshotState {
 export interface ChartMeasurementState {
   cursor_a_x: number | null
   cursor_b_x: number | null
-  delta_x: number | null
-  frequency: number | null
   values_a: Record<string, number>
   values_b: Record<string, number>
 }
@@ -163,10 +161,6 @@ export interface WaveformSeriesSnapshotState {
 export interface WaveformMeasurementState {
   cursor_a_x: number | null
   cursor_b_x: number | null
-  delta_x: number | null
-  delta_y: number | null
-  slope: number | null
-  frequency: number | null
   values_a: Record<string, number>
   values_b: Record<string, number>
 }
@@ -333,8 +327,6 @@ const EMPTY_RESULT: SimulationResultSummary = {
 const EMPTY_CHART_MEASUREMENT: ChartMeasurementState = {
   cursor_a_x: null,
   cursor_b_x: null,
-  delta_x: null,
-  frequency: null,
   values_a: {},
   values_b: {},
 }
@@ -342,10 +334,6 @@ const EMPTY_CHART_MEASUREMENT: ChartMeasurementState = {
 const EMPTY_WAVEFORM_MEASUREMENT: WaveformMeasurementState = {
   cursor_a_x: null,
   cursor_b_x: null,
-  delta_x: null,
-  delta_y: null,
-  slope: null,
-  frequency: null,
   values_a: {},
   values_b: {},
 }
@@ -591,8 +579,6 @@ function normalizeChartMeasurement(value: unknown): ChartMeasurementState {
   return {
     cursor_a_x: asNullableNumber(record.cursor_a_x),
     cursor_b_x: asNullableNumber(record.cursor_b_x),
-    delta_x: asNullableNumber(record.delta_x),
-    frequency: asNullableNumber(record.frequency),
     values_a: asNumberRecord(record.values_a),
     values_b: asNumberRecord(record.values_b),
   }
@@ -635,10 +621,6 @@ function normalizeWaveformMeasurement(value: unknown): WaveformMeasurementState 
   return {
     cursor_a_x: asNullableNumber(record.cursor_a_x),
     cursor_b_x: asNullableNumber(record.cursor_b_x),
-    delta_x: asNullableNumber(record.delta_x),
-    delta_y: asNullableNumber(record.delta_y),
-    slope: asNullableNumber(record.slope),
-    frequency: asNullableNumber(record.frequency),
     values_a: asNumberRecord(record.values_a),
     values_b: asNumberRecord(record.values_b),
   }

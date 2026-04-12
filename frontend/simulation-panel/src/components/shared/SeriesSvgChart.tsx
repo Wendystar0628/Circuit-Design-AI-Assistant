@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 
 import { useElementSize } from '../../hooks/useElementSize'
+import { formatMeasurementNumber } from './chartValueFormatting'
 import { buildSeriesSvgChartModel, type SeriesSvgChartDatum } from './seriesSvgChartModel'
 
 type MeasurementCursorId = 'a' | 'b'
@@ -16,6 +17,7 @@ interface SeriesSvgChartMeasurementCursors {
 interface SeriesSvgChartProps {
   title?: string
   headerActions?: ReactNode
+  floatingPanel?: ReactNode
   measurementCursors?: SeriesSvgChartMeasurementCursors
   series: SeriesSvgChartDatum[]
   xLabel: string
@@ -33,8 +35,9 @@ const X_TICK_LABEL_OFFSET = 19
 const X_AXIS_TITLE_OFFSET = 34
 const SIDE_AXIS_TITLE_OFFSET = 32
 const MEASUREMENT_CURSOR_LABEL_Y_OFFSET = 14
-const MEASUREMENT_CURSOR_LABEL_WIDTH = 16
-const MEASUREMENT_CURSOR_LABEL_HEIGHT = 14
+const MEASUREMENT_CURSOR_LABEL_MIN_WIDTH = 24
+const MEASUREMENT_CURSOR_LABEL_HEIGHT = 16
+const MEASUREMENT_CURSOR_LABEL_HORIZONTAL_PADDING = 12
 
 function toAxisXValue(value: number, logX: boolean): number | null {
   if (!Number.isFinite(value)) {
@@ -57,6 +60,7 @@ function toDisplayXValue(value: number, logX: boolean): number {
 export function SeriesSvgChart({
   title,
   headerActions,
+  floatingPanel,
   measurementCursors,
   series,
   xLabel,
@@ -216,6 +220,7 @@ export function SeriesSvgChart({
   ].map((cursor) => ({
     ...cursor,
     plotX: cursor.visible ? projectMeasurementCursorX(cursor.displayX) : null,
+    badgeText: `${cursor.label} ${formatMeasurementNumber(cursor.displayX)}`,
   })).filter((cursor) => cursor.visible && cursor.plotX !== null)
 
   return (
@@ -252,27 +257,36 @@ export function SeriesSvgChart({
             />
           ))}
           {measurementCursorItems.map((cursor) => (
-            <g
-              key={`measurement-cursor-${cursor.id}`}
-              className={`svg-chart__measurement-cursor svg-chart__measurement-cursor--${cursor.id}`}
-              onPointerDown={cursorMoveHandlerRef.current ? (event) => {
-                event.preventDefault()
-                startMeasurementCursorDrag(cursor.id, event.clientX)
-              } : undefined}
-            >
-              <line x1={cursor.plotX ?? 0} x2={cursor.plotX ?? 0} y1={plotTop} y2={plotBottom} className="svg-chart__measurement-cursor-line" />
-              <line x1={cursor.plotX ?? 0} x2={cursor.plotX ?? 0} y1={plotTop} y2={plotBottom} className="svg-chart__measurement-cursor-hitbox" />
-              <rect
-                x={(cursor.plotX ?? 0) - MEASUREMENT_CURSOR_LABEL_WIDTH / 2}
-                y={plotTop + 2}
-                rx={MEASUREMENT_CURSOR_LABEL_HEIGHT / 2}
-                ry={MEASUREMENT_CURSOR_LABEL_HEIGHT / 2}
-                width={MEASUREMENT_CURSOR_LABEL_WIDTH}
-                height={MEASUREMENT_CURSOR_LABEL_HEIGHT}
-                className="svg-chart__measurement-cursor-badge"
-              />
-              <text x={cursor.plotX ?? 0} y={plotTop + MEASUREMENT_CURSOR_LABEL_Y_OFFSET} textAnchor="middle" className="svg-chart__measurement-cursor-label">{cursor.label}</text>
-            </g>
+            (() => {
+              const badgeWidth = Math.max(MEASUREMENT_CURSOR_LABEL_MIN_WIDTH, cursor.badgeText.length * 6.7 + MEASUREMENT_CURSOR_LABEL_HORIZONTAL_PADDING)
+              const badgeCenterX = Math.min(
+                Math.max(cursor.plotX ?? 0, plotLeft + badgeWidth / 2 + 2),
+                plotRight - badgeWidth / 2 - 2,
+              )
+              return (
+                <g
+                  key={`measurement-cursor-${cursor.id}`}
+                  className={`svg-chart__measurement-cursor svg-chart__measurement-cursor--${cursor.id}`}
+                  onPointerDown={cursorMoveHandlerRef.current ? (event) => {
+                    event.preventDefault()
+                    startMeasurementCursorDrag(cursor.id, event.clientX)
+                  } : undefined}
+                >
+                  <line x1={cursor.plotX ?? 0} x2={cursor.plotX ?? 0} y1={plotTop} y2={plotBottom} className="svg-chart__measurement-cursor-line" />
+                  <line x1={cursor.plotX ?? 0} x2={cursor.plotX ?? 0} y1={plotTop} y2={plotBottom} className="svg-chart__measurement-cursor-hitbox" />
+                  <rect
+                    x={badgeCenterX - badgeWidth / 2}
+                    y={plotTop + 2}
+                    rx={MEASUREMENT_CURSOR_LABEL_HEIGHT / 2}
+                    ry={MEASUREMENT_CURSOR_LABEL_HEIGHT / 2}
+                    width={badgeWidth}
+                    height={MEASUREMENT_CURSOR_LABEL_HEIGHT}
+                    className="svg-chart__measurement-cursor-badge"
+                  />
+                  <text x={badgeCenterX} y={plotTop + MEASUREMENT_CURSOR_LABEL_Y_OFFSET} textAnchor="middle" className="svg-chart__measurement-cursor-label">{cursor.badgeText}</text>
+                </g>
+              )
+            })()
           ))}
           {leftTicks.map((tick) => (
             <g key={`left-tick-${tick.value}`}>
@@ -298,6 +312,7 @@ export function SeriesSvgChart({
             <text x={rightAxisTitleX} y={yAxisCenter} textAnchor="middle" transform={`rotate(90 ${rightAxisTitleX} ${yAxisCenter})`} className="svg-chart__axis-title">{rightAxisLabel}</text>
           ) : null}
         </svg>
+        {floatingPanel ? <div className="svg-chart__floating-panel-shell">{floatingPanel}</div> : null}
       </div>
     </div>
   )

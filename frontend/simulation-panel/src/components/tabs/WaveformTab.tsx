@@ -4,44 +4,73 @@ import type { SimulationBridge } from '../../bridge/bridge'
 import type { SimulationMainState } from '../../types/state'
 import { CompactToolbar } from '../layout/CompactToolbar'
 import { ResponsivePane } from '../layout/ResponsivePane'
+import { MeasurementFloatingPanel } from '../shared/MeasurementFloatingPanel'
 import { SeriesSvgChart } from '../shared/SeriesSvgChart'
+import { formatMeasurementNumber } from '../shared/chartValueFormatting'
 
 interface WaveformTabProps {
   state: SimulationMainState
   bridge: SimulationBridge | null
 }
 
-function formatNumber(value: number | null): string {
-  if (value === null || !Number.isFinite(value)) {
+function formatMeasurementDelta(valueA: number | null, valueB: number | null): string {
+  if (valueA === null || valueB === null) {
     return '--'
   }
-  return Number(value).toPrecision(6)
+  return formatMeasurementNumber(valueB - valueA)
 }
 
 export function WaveformTab({ state, bridge }: WaveformTabProps) {
   const waveform = state.waveform_view
-  const [cursorAInput, setCursorAInput] = useState('')
-  const [cursorBInput, setCursorBInput] = useState('')
+  const [selectedMeasurementSignalId, setSelectedMeasurementSignalId] = useState('')
 
-  useEffect(() => {
-    setCursorAInput(waveform.measurement.cursor_a_x === null ? '' : String(waveform.measurement.cursor_a_x))
-  }, [waveform.measurement.cursor_a_x])
-
-  useEffect(() => {
-    setCursorBInput(waveform.measurement.cursor_b_x === null ? '' : String(waveform.measurement.cursor_b_x))
-  }, [waveform.measurement.cursor_b_x])
-
-  const measurementRows = useMemo(() => {
-    const names = Array.from(new Set([
+  const measurementSignals = useMemo(() => {
+    const orderedNames = Array.from(new Set([
+      ...waveform.visible_series.map((series) => series.name),
       ...Object.keys(waveform.measurement.values_a),
       ...Object.keys(waveform.measurement.values_b),
     ]))
-    return names.map((name) => ({
-      name,
+    const visibleSeriesByName = new Map(waveform.visible_series.map((series) => [series.name, series]))
+    return orderedNames.map((name) => ({
+      id: name,
+      label: name,
+      color: visibleSeriesByName.get(name)?.color ?? '#1f77b4',
       valueA: waveform.measurement.values_a[name] ?? null,
       valueB: waveform.measurement.values_b[name] ?? null,
     }))
-  }, [waveform.measurement.values_a, waveform.measurement.values_b])
+  }, [waveform.measurement.values_a, waveform.measurement.values_b, waveform.visible_series])
+
+  const preferredMeasurementSignalId = measurementSignals[0]?.id ?? ''
+
+  useEffect(() => {
+    setSelectedMeasurementSignalId((current) => {
+      if (measurementSignals.some((signal) => signal.id === current)) {
+        return current
+      }
+      return preferredMeasurementSignalId
+    })
+  }, [measurementSignals, preferredMeasurementSignalId])
+
+  const activeMeasurementSignal = useMemo(() => {
+    if (!measurementSignals.length) {
+      return null
+    }
+    return measurementSignals.find((signal) => signal.id === selectedMeasurementSignalId) ?? measurementSignals[0]
+  }, [measurementSignals, selectedMeasurementSignalId])
+
+  const measurementPanelRows = useMemo(() => {
+    if (activeMeasurementSignal === null) {
+      return []
+    }
+    return [{
+      id: activeMeasurementSignal.id,
+      label: activeMeasurementSignal.label,
+      color: activeMeasurementSignal.color,
+      valueA: formatMeasurementNumber(activeMeasurementSignal.valueA),
+      valueB: formatMeasurementNumber(activeMeasurementSignal.valueB),
+      delta: formatMeasurementDelta(activeMeasurementSignal.valueA, activeMeasurementSignal.valueB),
+    }]
+  }, [activeMeasurementSignal])
 
   return (
     <div className="tab-surface">
@@ -52,6 +81,12 @@ export function WaveformTab({ state, bridge }: WaveformTabProps) {
           <>
             <button type="button" className="toolbar-button-secondary" onClick={() => bridge?.requestFit()}>
               Fit
+            </button>
+            <button type="button" className="toolbar-button-secondary" disabled={!waveform.has_waveform} onClick={() => bridge?.setCursorVisible('a', !waveform.cursor_a_visible)}>
+              {waveform.cursor_a_visible ? '隐藏 A' : '显示 A'}
+            </button>
+            <button type="button" className="toolbar-button-secondary" disabled={!waveform.has_waveform} onClick={() => bridge?.setCursorVisible('b', !waveform.cursor_b_visible)}>
+              {waveform.cursor_b_visible ? '隐藏 B' : '显示 B'}
             </button>
             <button type="button" className="toolbar-button-secondary" disabled={!waveform.signal_catalog.length} onClick={() => bridge?.clearAllSignals()}>
               清空信号
@@ -85,84 +120,31 @@ export function WaveformTab({ state, bridge }: WaveformTabProps) {
           </div>
         }
         main={
-          <div className="content-card">
-            <div className="canvas-stage canvas-stage--chart">
-              <div className="card-title">波形画布区</div>
-              <div className="card-subtitle">显示序列：{waveform.visible_series.length}</div>
-              <SeriesSvgChart
-                measurementCursors={{
-                  cursorAVisible: waveform.cursor_a_visible,
-                  cursorBVisible: waveform.cursor_b_visible,
-                  cursorAX: waveform.measurement.cursor_a_x,
-                  cursorBX: waveform.measurement.cursor_b_x,
-                  onCursorMove: (cursorId, position) => bridge?.moveCursor(cursorId, position),
-                }}
-                series={waveform.visible_series}
-                xLabel={waveform.x_axis_label}
-                yLabel="Waveform"
-                logX={waveform.log_x}
-                emptyMessage={waveform.has_waveform ? '当前未显示任何波形，请在左侧勾选信号。' : '当前结果没有可用波形。'}
-              />
-            </div>
-          </div>
-        }
-        footer={
-          <div className="content-card content-card--scrollable">
-            <div className="waveform-control-row">
-              <label className="field-row">
-                <span className="field-row__label">Cursor A</span>
-                <input className="field-input" value={cursorAInput} onChange={(event: { target: { value: string } }) => setCursorAInput(event.target.value)} placeholder="X 值" />
-              </label>
-              <button type="button" className="toolbar-button-secondary" onClick={() => bridge?.setCursorVisible('a', !waveform.cursor_a_visible)}>
-                {waveform.cursor_a_visible ? '隐藏 A' : '显示 A'}
-              </button>
-              <button
-                type="button"
-                className="toolbar-button-secondary"
-                onClick={() => {
-                  const value = Number(cursorAInput)
-                  if (Number.isFinite(value)) {
-                    bridge?.moveCursor('a', value)
-                  }
-                }}
-              >
-                设置 A
-              </button>
-              <label className="field-row">
-                <span className="field-row__label">Cursor B</span>
-                <input className="field-input" value={cursorBInput} onChange={(event: { target: { value: string } }) => setCursorBInput(event.target.value)} placeholder="X 值" />
-              </label>
-              <button type="button" className="toolbar-button-secondary" onClick={() => bridge?.setCursorVisible('b', !waveform.cursor_b_visible)}>
-                {waveform.cursor_b_visible ? '隐藏 B' : '显示 B'}
-              </button>
-              <button
-                type="button"
-                className="toolbar-button-secondary"
-                onClick={() => {
-                  const value = Number(cursorBInput)
-                  if (Number.isFinite(value)) {
-                    bridge?.moveCursor('b', value)
-                  }
-                }}
-              >
-                设置 B
-              </button>
-            </div>
-            <div className="info-grid info-grid--compact">
-              <div className="info-row"><div className="card-title">A / B</div><div className="info-row__value">{`${formatNumber(waveform.measurement.cursor_a_x)} / ${formatNumber(waveform.measurement.cursor_b_x)}`}</div></div>
-              <div className="info-row"><div className="card-title">ΔX / ΔY</div><div className="info-row__value">{`${formatNumber(waveform.measurement.delta_x)} / ${formatNumber(waveform.measurement.delta_y)}`}</div></div>
-              <div className="info-row"><div className="card-title">Slope</div><div className="info-row__value">{formatNumber(waveform.measurement.slope)}</div></div>
-              <div className="info-row"><div className="card-title">Frequency</div><div className="info-row__value">{formatNumber(waveform.measurement.frequency)}</div></div>
-            </div>
-            <div className="measurement-value-list">
-              {measurementRows.length ? measurementRows.map((row) => (
-                <div key={row.name} className="measurement-value-row">
-                  <div className="measurement-value-row__name">{row.name}</div>
-                  <div className="measurement-value-row__value">A: {formatNumber(row.valueA)}</div>
-                  <div className="measurement-value-row__value">B: {formatNumber(row.valueB)}</div>
-                </div>
-              )) : <div className="muted-text">当前没有可展示的测量结果。</div>}
-            </div>
+          <div className="content-card content-card--canvas">
+            <SeriesSvgChart
+              floatingPanel={waveform.cursor_a_visible || waveform.cursor_b_visible ? (
+                <MeasurementFloatingPanel
+                  title="测量"
+                  signalOptions={measurementSignals.map((signal) => ({ id: signal.id, label: signal.label }))}
+                  selectedSignalId={activeMeasurementSignal?.id ?? ''}
+                  onSelectedSignalChange={setSelectedMeasurementSignalId}
+                  rows={measurementPanelRows}
+                  emptyMessage="当前所选信号没有可展示的测量值。"
+                />
+              ) : undefined}
+              measurementCursors={{
+                cursorAVisible: waveform.cursor_a_visible,
+                cursorBVisible: waveform.cursor_b_visible,
+                cursorAX: waveform.measurement.cursor_a_x,
+                cursorBX: waveform.measurement.cursor_b_x,
+                onCursorMove: (cursorId, position) => bridge?.moveCursor(cursorId, position),
+              }}
+              series={waveform.visible_series}
+              xLabel={waveform.x_axis_label}
+              yLabel="Waveform"
+              logX={waveform.log_x}
+              emptyMessage={waveform.has_waveform ? '当前未显示任何波形，请在左侧勾选信号。' : '当前结果没有可用波形。'}
+            />
           </div>
         }
       />

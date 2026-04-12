@@ -110,6 +110,15 @@ class ChartViewer(QWidget):
             "available_series": [],
             "visible_series": [],
             "visible_series_count": 0,
+            "viewport": {
+                "active": False,
+                "x_min": None,
+                "x_max": None,
+                "left_y_min": None,
+                "left_y_max": None,
+                "right_y_min": None,
+                "right_y_max": None,
+            },
             "measurement_point": {
                 "enabled": False,
                 "target_id": "",
@@ -215,10 +224,16 @@ class ChartViewer(QWidget):
 
         return exported_files
 
-    def fit_to_view(self) -> None:
+    def reset_viewport(self) -> None:
         page = self._chart_page
         if page is not None:
-            page.fit_to_view()
+            page.reset_viewport()
+
+    def set_viewport(self, viewport: Dict[str, Any]) -> bool:
+        page = self._chart_page
+        if page is None:
+            return False
+        return bool(page.set_viewport(viewport))
 
     def set_measurement_enabled(self, enabled: bool) -> None:
         page = self._chart_page

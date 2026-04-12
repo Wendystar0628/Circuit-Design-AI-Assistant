@@ -23,6 +23,15 @@ function formatMeasurementDelta(valueA: number | null, valueB: number | null): s
 export function WaveformTab({ state, bridge }: WaveformTabProps) {
   const waveform = state.waveform_view
   const [selectedMeasurementSignalId, setSelectedMeasurementSignalId] = useState('')
+  const viewWindow = useMemo(() => ({
+    active: waveform.viewport.active,
+    xMin: waveform.viewport.x_min,
+    xMax: waveform.viewport.x_max,
+    leftYMin: waveform.viewport.left_y_min,
+    leftYMax: waveform.viewport.left_y_max,
+    rightYMin: waveform.viewport.right_y_min,
+    rightYMax: waveform.viewport.right_y_max,
+  }), [waveform.viewport.active, waveform.viewport.left_y_max, waveform.viewport.left_y_min, waveform.viewport.right_y_max, waveform.viewport.right_y_min, waveform.viewport.x_max, waveform.viewport.x_min])
 
   const measurementSignals = useMemo(() => {
     const orderedNames = Array.from(new Set([
@@ -79,7 +88,7 @@ export function WaveformTab({ state, bridge }: WaveformTabProps) {
         description={waveform.x_axis_label ? `X 轴：${waveform.x_axis_label}` : '统一前端波形显示层，直接消费后端权威 snapshot。'}
         actions={
           <>
-            <button type="button" className="toolbar-button-secondary" onClick={() => bridge?.requestFit()}>
+            <button type="button" className="toolbar-button-secondary" onClick={() => bridge?.resetWaveformViewport()}>
               Fit
             </button>
             <button type="button" className="toolbar-button-secondary" disabled={!waveform.has_waveform} onClick={() => bridge?.setCursorVisible('a', !waveform.cursor_a_visible)}>
@@ -146,9 +155,12 @@ export function WaveformTab({ state, bridge }: WaveformTabProps) {
                 cursorBX: waveform.measurement.cursor_b_x,
                 onCursorMove: (cursorId, position) => bridge?.moveCursor(cursorId, position),
               }}
+              viewWindow={viewWindow}
+              onViewportChange={(nextViewWindow) => bridge?.setWaveformViewport(nextViewWindow)}
               series={waveform.visible_series}
               xLabel={waveform.x_axis_label}
-              yLabel="Waveform"
+              yLabel={waveform.y_label || 'Waveform'}
+              secondaryYLabel={waveform.secondary_y_label}
               logX={waveform.log_x}
               emptyMessage={waveform.has_waveform ? '当前未显示任何波形，请在左侧勾选信号。' : '当前结果没有可用波形。'}
             />

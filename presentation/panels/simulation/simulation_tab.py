@@ -496,13 +496,14 @@ class SimulationTab(QWidget):
         bridge.chart_measurement_point_enabled_changed.connect(self._on_chart_measurement_point_enabled_changed)
         bridge.chart_measurement_point_target_changed.connect(self._on_chart_measurement_point_target_changed)
         bridge.chart_measurement_point_move_requested.connect(self._on_chart_measurement_point_move_requested)
-        bridge.chart_fit_requested.connect(self._on_chart_fit_requested)
+        bridge.chart_viewport_changed.connect(self._on_chart_viewport_changed)
+        bridge.chart_viewport_reset_requested.connect(self._on_chart_viewport_reset_requested)
         bridge.signal_visibility_toggled.connect(self._on_waveform_signal_visibility_toggled)
         bridge.clear_all_signals_requested.connect(self._on_waveform_clear_all_requested)
         bridge.cursor_visibility_toggled.connect(self._on_waveform_cursor_visibility_toggled)
         bridge.cursor_move_requested.connect(self._on_waveform_cursor_move_requested)
-        bridge.fit_requested.connect(self._on_waveform_fit_requested)
-        bridge.zoom_to_range_requested.connect(self._on_waveform_zoom_requested)
+        bridge.waveform_viewport_changed.connect(self._on_waveform_viewport_changed)
+        bridge.waveform_viewport_reset_requested.connect(self._on_waveform_viewport_reset_requested)
         bridge.raw_data_jump_to_row_requested.connect(self._on_raw_data_jump_to_row_requested)
         bridge.raw_data_jump_to_x_requested.connect(self._on_raw_data_jump_to_x_requested)
         bridge.raw_data_value_search_requested.connect(self._on_raw_data_value_search_requested)
@@ -568,8 +569,12 @@ class SimulationTab(QWidget):
             return
         chart_viewer.set_measurement_point_target(visible_target_ids[0])
 
-    def _on_chart_fit_requested(self):
-        self._backend_runtime.chart_viewer.fit_to_view()
+    def _on_chart_viewport_changed(self, viewport: dict):
+        self._backend_runtime.chart_viewer.set_viewport(viewport)
+        self._update_authoritative_frontend_state()
+
+    def _on_chart_viewport_reset_requested(self):
+        self._backend_runtime.chart_viewer.reset_viewport()
         self._update_authoritative_frontend_state()
 
     def _on_waveform_clear_all_requested(self):
@@ -596,12 +601,12 @@ class SimulationTab(QWidget):
             waveform_widget.set_cursor_a(position)
         self._update_authoritative_frontend_state()
 
-    def _on_waveform_fit_requested(self):
-        self._backend_runtime.waveform_widget.fit_to_view()
+    def _on_waveform_viewport_changed(self, viewport: dict):
+        self._backend_runtime.waveform_widget.set_viewport(viewport)
         self._update_authoritative_frontend_state()
 
-    def _on_waveform_zoom_requested(self, start: float, end: float):
-        self._backend_runtime.waveform_widget.zoom_to_x_range(start, end)
+    def _on_waveform_viewport_reset_requested(self):
+        self._backend_runtime.waveform_widget.reset_viewport()
         self._update_authoritative_frontend_state()
 
     def _on_raw_data_jump_to_row_requested(self, row_number: int):

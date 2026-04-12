@@ -9,7 +9,6 @@ from presentation.panels.simulation.ltspice_plot_interaction import (
     apply_dynamic_tick_spacing,
     finite_range,
     merge_ranges,
-    normalize_range,
 )
 from presentation.panels.simulation.waveform_plot_types import PlotItem
 
@@ -127,55 +126,6 @@ class WaveformViewportManager:
         apply_dynamic_tick_spacing(plot_item.getAxis('left'), base_y_range, log_enabled=False)
         if right_vb is not None:
             apply_dynamic_tick_spacing(plot_item.getAxis('right'), right_y_range or base_y_range, log_enabled=False)
-
-    def get_current_view_x_range(self, plot_widget: pg.PlotWidget) -> Optional[Tuple[float, float]]:
-        try:
-            view_range = plot_widget.getPlotItem().viewRange()
-        except Exception:
-            return None
-        if not view_range or not view_range[0]:
-            return None
-        return normalize_range((view_range[0][0], view_range[0][1]))
-
-    def get_current_left_view_range(self, plot_widget: pg.PlotWidget) -> Optional[Tuple[float, float]]:
-        try:
-            view_range = plot_widget.getPlotItem().viewRange()
-        except Exception:
-            return None
-        if not view_range or not view_range[1]:
-            return None
-        return normalize_range((view_range[1][0], view_range[1][1]))
-
-    def get_current_right_view_range(self, right_vb: Optional[pg.ViewBox]) -> Optional[Tuple[float, float]]:
-        if right_vb is None:
-            return None
-        try:
-            view_range = right_vb.viewRange()
-        except Exception:
-            return None
-        if not view_range or not view_range[1]:
-            return None
-        return normalize_range((view_range[1][0], view_range[1][1]))
-
-    def map_parallel_y_range(
-        self,
-        source_range: Tuple[float, float],
-        target_range: Tuple[float, float],
-        requested_source_range: Tuple[float, float],
-    ) -> Tuple[float, float]:
-        source_span = source_range[1] - source_range[0]
-        target_span = target_range[1] - target_range[0]
-        if source_span <= 0 or target_span <= 0:
-            return target_range
-
-        start_ratio = (requested_source_range[0] - source_range[0]) / source_span
-        end_ratio = (requested_source_range[1] - source_range[0]) / source_span
-        mapped_range = (
-            target_range[0] + start_ratio * target_span,
-            target_range[0] + end_ratio * target_span,
-        )
-        normalized_mapped = normalize_range(mapped_range)
-        return normalized_mapped if normalized_mapped is not None else target_range
 
     def reload_viewport_data(
         self,

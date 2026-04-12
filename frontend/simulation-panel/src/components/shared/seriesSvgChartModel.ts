@@ -40,6 +40,16 @@ export interface SeriesSvgChartRenderedSeries {
   strokeDasharray?: string
 }
 
+export interface SeriesSvgChartViewWindow {
+  active: boolean
+  xMin: number | null
+  xMax: number | null
+  leftYMin: number | null
+  leftYMax: number | null
+  rightYMin: number | null
+  rightYMax: number | null
+}
+
 export interface SeriesSvgChartModel {
   viewport: SeriesSvgChartViewport
   xDomain: SeriesSvgChartAxisDomain
@@ -83,6 +93,7 @@ interface BuildSeriesSvgChartModelOptions {
   logY: boolean
   width: number
   height: number
+  viewWindow?: SeriesSvgChartViewWindow | null
 }
 
 const DEFAULT_VIEW_WIDTH = 900
@@ -138,6 +149,32 @@ function normalizeAxisKey(value: string | undefined): 'left' | 'right' {
 
 function normalizeLineStyle(value: string | undefined): 'solid' | 'dash' {
   return value === 'dash' ? 'dash' : 'solid'
+}
+
+function normalizeRequestedRange(minValue: number | null, maxValue: number | null, logEnabled: boolean): AxisDomain | null {
+  if (minValue === null || maxValue === null || !Number.isFinite(minValue) || !Number.isFinite(maxValue)) {
+    return null
+  }
+  const minAxisValue = toAxisValue(minValue, logEnabled)
+  const maxAxisValue = toAxisValue(maxValue, logEnabled)
+  if (minAxisValue === null || maxAxisValue === null) {
+    return null
+  }
+  return minAxisValue <= maxAxisValue
+    ? { min: minAxisValue, max: maxAxisValue }
+    : { min: maxAxisValue, max: minAxisValue }
+}
+
+function clampRequestedDomain(requested: AxisDomain | null, allowed: AxisDomain | null): AxisDomain | null {
+  if (requested === null || allowed === null) {
+    return null
+  }
+  const min = Math.max(requested.min, allowed.min)
+  const max = Math.min(requested.max, allowed.max)
+  if (!Number.isFinite(min) || !Number.isFinite(max) || max <= min) {
+    return null
+  }
+  return { min, max }
 }
 
 function buildPointPairs(series: SeriesSvgChartDatum, logX: boolean, logY: boolean): PointPair[] {
@@ -283,6 +320,7 @@ export function buildSeriesSvgChartModel({
   logY,
   width,
   height,
+  viewWindow,
 }: BuildSeriesSvgChartModelOptions): SeriesSvgChartModel | null {
   const normalizedSeries: NormalizedSeries[] = series.map((item) => {
     const axisKey = normalizeAxisKey(item.axis_key)
@@ -317,30 +355,40 @@ export function buildSeriesSvgChartModel({
     return null
   }
 
-  const xTargetTicks = clamp(Math.round((viewport.plotRight - viewport.plotLeft) / 120), 4, 9)
-  const yTargetTicks = clamp(Math.round((viewport.plotBottom - viewport.plotTop) / 52), 4, 9)
-  const xTicks = buildTicks(xDomain, viewport, xTargetTicks, 'horizontal', logX)
-  const leftTicks = buildTicks(leftDomain, viewport, yTargetTicks, 'vertical', logY)
-  const rightTicks = rightDomain === null ? [] : buildTicks(rightDomain, viewport, yTargetTicks, 'vertical', false)
+  const requestedXDomain = viewWindow?.active ? clampRequestedDomain(normalizeRequestedRange(viewWindow.xMin, viewWindow.xMax, logX), xDomain) : null
+  const requestedLeftDomain = viewWindow?.active ? clampRequestedDomain(normalizeRequestedRange(viewWindow.leftYMin, viewWindow.leftYMax, logY), leftDomain) : null
+  const requestedRightDomain = viewWindow?.active && rightDomain !== null
+    ? clampRequestedDomain(normalizeRequestedRange(viewWindow.rightYMin, viewWindow.rightYMax, false), rightDomain)
+    : null
+
+  const effectiveXDomain = requestedXDomain ?? xDomain
+  const effectiveLeftDomain = requestedLeftDomain ?? leftDomain
+  const effectiveRightDomain = rightDomain === null ? null : (requestedRightDomain ?? rightDomain)
+
+  const xTargetTicks = clamp(Math.round((viewport.plotRight - viewport.plotLeft) / 82), 6, 14)
+  const yTargetTicks = clamp(Math.round((viewport.plotBottom - viewport.plotTop) / 40), 6, 12)
+  const xTicks = buildTicks(effectiveXDomain, viewport, xTargetTicks, 'horizontal', logX)
+  const leftTicks = buildTicks(effectiveLeftDomain, viewport, yTargetTicks, 'vertical', logY)
+  const rightTicks = effectiveRightDomain === null ? [] : buildTicks(effectiveRightDomain, viewport, yTargetTicks, 'vertical', false)
 
   const renderedSeries = normalizedSeries.map((item) => {
-    const yDomain = item.axisKey === 'right' && rightDomain !== null ? rightDomain : leftDomain
+    const yDomain = item.axisKey === 'right' && effectiveRightDomain !== null ? effectiveRightDomain : effectiveLeftDomain
     return {
       name: item.name,
       color: item.color,
       axisKey: item.axisKey,
       lineStyle: item.lineStyle,
       component: item.component,
-      polylinePoints: buildPath(item.points, xDomain, yDomain, viewport),
+      polylinePoints: buildPath(item.points, effectiveXDomain, yDomain, viewport),
       strokeDasharray: strokeDasharrayForStyle(item.lineStyle),
     }
   })
 
   return {
     viewport,
-    xDomain,
-    leftDomain,
-    rightDomain,
+    xDomain: effectiveXDomain,
+    leftDomain: effectiveLeftDomain,
+    rightDomain: effectiveRightDomain,
     xLabel: xLabel || 'X',
     leftAxisLabel: yLabel || (hasRightAxis ? 'Left axis' : 'Y'),
     rightAxisLabel: hasRightAxis ? (secondaryYLabel || 'Right axis') : '',

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, List
+from typing import Any, Dict, List, Optional
 
 from PyQt6.QtCore import QObject, QJsonValue, pyqtSignal, pyqtSlot
 
@@ -16,13 +16,14 @@ class SimulationWebBridge(QObject):
     chart_measurement_point_enabled_changed = pyqtSignal(bool)
     chart_measurement_point_target_changed = pyqtSignal(str)
     chart_measurement_point_move_requested = pyqtSignal(float)
-    chart_fit_requested = pyqtSignal()
+    chart_viewport_changed = pyqtSignal(dict)
+    chart_viewport_reset_requested = pyqtSignal()
     signal_visibility_toggled = pyqtSignal(str, bool)
     clear_all_signals_requested = pyqtSignal()
     cursor_visibility_toggled = pyqtSignal(str, bool)
     cursor_move_requested = pyqtSignal(str, float)
-    fit_requested = pyqtSignal()
-    zoom_to_range_requested = pyqtSignal(float, float)
+    waveform_viewport_changed = pyqtSignal(dict)
+    waveform_viewport_reset_requested = pyqtSignal()
     raw_data_jump_to_row_requested = pyqtSignal(int)
     raw_data_jump_to_x_requested = pyqtSignal(float)
     raw_data_value_search_requested = pyqtSignal(int, float, float)
@@ -74,9 +75,16 @@ class SimulationWebBridge(QObject):
     def moveChartMeasurementPoint(self, position: float) -> None:
         self.chart_measurement_point_move_requested.emit(float(position or 0.0))
 
+    @pyqtSlot(QJsonValue)
+    @pyqtSlot(dict)
+    def setChartViewport(self, viewport: Any) -> None:
+        normalized = self._normalize_viewport_payload(viewport)
+        if normalized is not None:
+            self.chart_viewport_changed.emit(normalized)
+
     @pyqtSlot()
-    def fitChart(self) -> None:
-        self.chart_fit_requested.emit()
+    def resetChartViewport(self) -> None:
+        self.chart_viewport_reset_requested.emit()
 
     @pyqtSlot(str, bool)
     def setSignalVisible(self, signal_name: str, visible: bool) -> None:
@@ -94,13 +102,16 @@ class SimulationWebBridge(QObject):
     def moveCursor(self, cursor_id: str, position: float) -> None:
         self.cursor_move_requested.emit(self._normalize_cursor_id(cursor_id), float(position or 0.0))
 
-    @pyqtSlot()
-    def requestFit(self) -> None:
-        self.fit_requested.emit()
+    @pyqtSlot(QJsonValue)
+    @pyqtSlot(dict)
+    def setWaveformViewport(self, viewport: Any) -> None:
+        normalized = self._normalize_viewport_payload(viewport)
+        if normalized is not None:
+            self.waveform_viewport_changed.emit(normalized)
 
-    @pyqtSlot(float, float)
-    def zoomToRange(self, start: float, end: float) -> None:
-        self.zoom_to_range_requested.emit(float(start or 0.0), float(end or 0.0))
+    @pyqtSlot()
+    def resetWaveformViewport(self) -> None:
+        self.waveform_viewport_reset_requested.emit()
 
     @pyqtSlot(int)
     def jumpRawDataToRow(self, row: int) -> None:
@@ -187,6 +198,29 @@ class SimulationWebBridge(QObject):
         normalized = str(target or "metrics").strip().lower()
         allowed = {"metrics", "chart", "waveform", "output_log", "op_result"}
         return normalized if normalized in allowed else "metrics"
+
+    def _normalize_viewport_payload(self, payload: Any) -> Optional[Dict[str, Optional[float]]]:
+        if isinstance(payload, QJsonValue):
+            payload = payload.toVariant()
+        if not isinstance(payload, dict):
+            return None
+        try:
+            x_min = float(payload.get("xMin"))
+            x_max = float(payload.get("xMax"))
+            left_y_min = float(payload.get("leftYMin"))
+            left_y_max = float(payload.get("leftYMax"))
+        except (TypeError, ValueError):
+            return None
+        right_y_min = payload.get("rightYMin")
+        right_y_max = payload.get("rightYMax")
+        return {
+            "x_min": x_min,
+            "x_max": x_max,
+            "left_y_min": left_y_min,
+            "left_y_max": left_y_max,
+            "right_y_min": float(right_y_min) if right_y_min is not None else None,
+            "right_y_max": float(right_y_max) if right_y_max is not None else None,
+        }
 
 
 __all__ = ["SimulationWebBridge"]

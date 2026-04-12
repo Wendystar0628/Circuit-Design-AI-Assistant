@@ -1,15 +1,32 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 
 import { useElementSize } from '../../hooks/useElementSize'
 import { DraggableFloatingPanel } from './DraggableFloatingPanel'
 import { formatMeasurementNumber } from './chartValueFormatting'
-import { buildSeriesSvgChartModel, type SeriesSvgChartDatum } from './seriesSvgChartModel'
+import { buildSeriesSvgChartModel, type SeriesSvgChartDatum, type SeriesSvgChartViewWindow } from './seriesSvgChartModel'
 
 type MeasurementCursorId = 'a' | 'b'
 
 type ActiveChartDragHandle =
   | { kind: 'measurement-cursor'; cursorId: MeasurementCursorId }
   | { kind: 'measurement-point' }
+
+interface ActiveViewportSelection {
+  anchorSvgX: number
+  anchorSvgY: number
+  currentSvgX: number
+  currentSvgY: number
+}
+
+export interface SeriesSvgChartViewportSelection {
+  active: true
+  xMin: number
+  xMax: number
+  leftYMin: number
+  leftYMax: number
+  rightYMin?: number | null
+  rightYMax?: number | null
+}
 
 interface SeriesSvgChartMeasurementCursors {
   cursorAVisible: boolean
@@ -46,6 +63,8 @@ interface SeriesSvgChartProps {
   secondaryYLabel?: string
   logX?: boolean
   logY?: boolean
+  viewWindow?: SeriesSvgChartViewWindow | null
+  onViewportChange?: (viewWindow: SeriesSvgChartViewportSelection) => void
   emptyMessage: string
 }
 
@@ -59,6 +78,7 @@ const MEASUREMENT_CURSOR_LABEL_Y_OFFSET = 14
 const MEASUREMENT_CURSOR_LABEL_MIN_WIDTH = 24
 const MEASUREMENT_CURSOR_LABEL_HEIGHT = 16
 const MEASUREMENT_CURSOR_LABEL_HORIZONTAL_PADDING = 12
+const VIEWPORT_SELECTION_MIN_SIZE = 8
 
 function toAxisXValue(value: number, logX: boolean): number | null {
   if (!Number.isFinite(value)) {
@@ -92,6 +112,13 @@ function toDisplayXValue(value: number, logX: boolean): number {
   return logX ? 10 ** value : value
 }
 
+function toDisplayYValue(value: number, axisKey: string, logY: boolean): number {
+  if (axisKey === 'right' || !logY) {
+    return value
+  }
+  return 10 ** value
+}
+
 export function SeriesSvgChart({
   title,
   headerActions,
@@ -104,15 +131,21 @@ export function SeriesSvgChart({
   secondaryYLabel,
   logX = false,
   logY = false,
+  viewWindow,
+  onViewportChange,
   emptyMessage,
 }: SeriesSvgChartProps) {
   const { ref: chartFrameRef, width: chartWidth, height: chartHeight } = useElementSize<HTMLDivElement>()
   const svgElementRef = useRef<SVGSVGElement | null>(null)
   const cursorMoveHandlerRef = useRef<SeriesSvgChartMeasurementCursors['onCursorMove']>(measurementCursors?.onCursorMove)
   const measurementPointMoveHandlerRef = useRef<SeriesSvgChartMeasurementPoint['onMove']>(measurementPoint?.onMove)
+  const viewportChangeHandlerRef = useRef<SeriesSvgChartProps['onViewportChange']>(onViewportChange)
   const activeDragHandleRef = useRef<ActiveChartDragHandle | null>(null)
+  const activeViewportSelectionRef = useRef<ActiveViewportSelection | null>(null)
   const [activeDragHandle, setActiveDragHandle] = useState<ActiveChartDragHandle | null>(null)
   const [dragDisplayX, setDragDisplayX] = useState<number | null>(null)
+  const [activeViewportSelection, setActiveViewportSelection] = useState<ActiveViewportSelection | null>(null)
+  const plotClipPathId = useId().replace(/[:]/g, '')
   const chartModel = useMemo(() => buildSeriesSvgChartModel({
     series,
     xLabel,
@@ -122,7 +155,8 @@ export function SeriesSvgChart({
     logY,
     width: chartWidth,
     height: chartHeight,
-  }), [chartHeight, chartWidth, logX, logY, secondaryYLabel, series, xLabel, yLabel])
+    viewWindow,
+  }), [chartHeight, chartWidth, logX, logY, secondaryYLabel, series, viewWindow, xLabel, yLabel])
 
   const normalizedTitle = title?.trim() ?? ''
   const hasHeader = normalizedTitle.length > 0 || headerActions !== undefined
@@ -158,8 +192,16 @@ export function SeriesSvgChart({
   }, [measurementPoint?.onMove])
 
   useEffect(() => {
+    viewportChangeHandlerRef.current = onViewportChange
+  }, [onViewportChange])
+
+  useEffect(() => {
     activeDragHandleRef.current = activeDragHandle
   }, [activeDragHandle])
+
+  useEffect(() => {
+    activeViewportSelectionRef.current = activeViewportSelection
+  }, [activeViewportSelection])
 
   const resolveDisplayXFromClientX = (clientX: number): number | null => {
     if (xDomain === null) {
@@ -213,6 +255,42 @@ export function SeriesSvgChart({
     return plotBottom - ((clampedAxisY - domain.min) / domainSpan) * (plotBottom - plotTop)
   }
 
+  const resolvePlotSelectionPointFromSvg = (svgX: number, svgY: number) => {
+    if (xDomain === null || leftDomain === null) {
+      return null
+    }
+    const clampedSvgX = Math.min(Math.max(svgX, plotLeft), plotRight)
+    const clampedSvgY = Math.min(Math.max(svgY, plotTop), plotBottom)
+    const plotWidth = Math.max(plotRight - plotLeft, 1e-12)
+    const plotHeight = Math.max(plotBottom - plotTop, 1e-12)
+    const xAxisValue = xDomain.min + ((clampedSvgX - plotLeft) / plotWidth) * (xDomain.max - xDomain.min)
+    const leftAxisValue = leftDomain.min + ((plotBottom - clampedSvgY) / plotHeight) * (leftDomain.max - leftDomain.min)
+    const rightAxisValue = rightDomain === null
+      ? null
+      : rightDomain.min + ((plotBottom - clampedSvgY) / plotHeight) * (rightDomain.max - rightDomain.min)
+    return {
+      svgX: clampedSvgX,
+      svgY: clampedSvgY,
+      displayX: toDisplayXValue(xAxisValue, logX),
+      leftDisplayY: toDisplayYValue(leftAxisValue, 'left', logY),
+      rightDisplayY: rightAxisValue === null ? null : toDisplayYValue(rightAxisValue, 'right', logY),
+    }
+  }
+
+  const resolvePlotSelectionPointFromClient = (clientX: number, clientY: number) => {
+    const svgElement = svgElementRef.current
+    if (svgElement === null) {
+      return null
+    }
+    const rect = svgElement.getBoundingClientRect()
+    if (rect.width <= 0 || rect.height <= 0) {
+      return null
+    }
+    const svgX = ((clientX - rect.left) / rect.width) * svgWidth
+    const svgY = ((clientY - rect.top) / rect.height) * svgHeight
+    return resolvePlotSelectionPointFromSvg(svgX, svgY)
+  }
+
   const startDrag = (nextHandle: ActiveChartDragHandle, clientX: number) => {
     const nextDisplayX = resolveDisplayXFromClientX(clientX)
     if (nextDisplayX === null) {
@@ -225,6 +303,22 @@ export function SeriesSvgChart({
       return
     }
     measurementPointMoveHandlerRef.current?.(nextDisplayX)
+  }
+
+  const startViewportSelection = (clientX: number, clientY: number) => {
+    if (viewportChangeHandlerRef.current === undefined || activeDragHandleRef.current !== null) {
+      return
+    }
+    const startPoint = resolvePlotSelectionPointFromClient(clientX, clientY)
+    if (startPoint === null) {
+      return
+    }
+    setActiveViewportSelection({
+      anchorSvgX: startPoint.svgX,
+      anchorSvgY: startPoint.svgY,
+      currentSvgX: startPoint.svgX,
+      currentSvgY: startPoint.svgY,
+    })
   }
 
   useEffect(() => {
@@ -266,6 +360,75 @@ export function SeriesSvgChart({
     }
   }, [activeDragHandle, chartModel, logX, plotLeft, plotRight, svgWidth, xDomain?.max, xDomain?.min])
 
+  useEffect(() => {
+    if (chartModel === null || activeViewportSelection === null) {
+      return undefined
+    }
+
+    const handlePointerMove = (event: PointerEvent) => {
+      const currentSelection = activeViewportSelectionRef.current
+      if (currentSelection === null) {
+        return
+      }
+      const nextPoint = resolvePlotSelectionPointFromClient(event.clientX, event.clientY)
+      if (nextPoint === null) {
+        return
+      }
+      setActiveViewportSelection({
+        ...currentSelection,
+        currentSvgX: nextPoint.svgX,
+        currentSvgY: nextPoint.svgY,
+      })
+    }
+
+    const handlePointerUp = () => {
+      const currentSelection = activeViewportSelectionRef.current
+      setActiveViewportSelection(null)
+      if (currentSelection === null) {
+        return
+      }
+      const selectionWidth = Math.abs(currentSelection.currentSvgX - currentSelection.anchorSvgX)
+      const selectionHeight = Math.abs(currentSelection.currentSvgY - currentSelection.anchorSvgY)
+      if (selectionWidth < VIEWPORT_SELECTION_MIN_SIZE || selectionHeight < VIEWPORT_SELECTION_MIN_SIZE) {
+        return
+      }
+      const topLeft = resolvePlotSelectionPointFromSvg(
+        Math.min(currentSelection.anchorSvgX, currentSelection.currentSvgX),
+        Math.min(currentSelection.anchorSvgY, currentSelection.currentSvgY),
+      )
+      const bottomRight = resolvePlotSelectionPointFromSvg(
+        Math.max(currentSelection.anchorSvgX, currentSelection.currentSvgX),
+        Math.max(currentSelection.anchorSvgY, currentSelection.currentSvgY),
+      )
+      if (topLeft === null || bottomRight === null) {
+        return
+      }
+      viewportChangeHandlerRef.current?.({
+        active: true,
+        xMin: Math.min(topLeft.displayX, bottomRight.displayX),
+        xMax: Math.max(topLeft.displayX, bottomRight.displayX),
+        leftYMin: Math.min(topLeft.leftDisplayY, bottomRight.leftDisplayY),
+        leftYMax: Math.max(topLeft.leftDisplayY, bottomRight.leftDisplayY),
+        rightYMin: topLeft.rightDisplayY === null || bottomRight.rightDisplayY === null
+          ? null
+          : Math.min(topLeft.rightDisplayY, bottomRight.rightDisplayY),
+        rightYMax: topLeft.rightDisplayY === null || bottomRight.rightDisplayY === null
+          ? null
+          : Math.max(topLeft.rightDisplayY, bottomRight.rightDisplayY),
+      })
+    }
+
+    window.addEventListener('pointermove', handlePointerMove)
+    window.addEventListener('pointerup', handlePointerUp)
+    window.addEventListener('pointercancel', handlePointerUp)
+
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove)
+      window.removeEventListener('pointerup', handlePointerUp)
+      window.removeEventListener('pointercancel', handlePointerUp)
+    }
+  }, [activeViewportSelection, chartModel, leftDomain?.max, leftDomain?.min, logX, logY, plotBottom, plotLeft, plotRight, plotTop, rightDomain?.max, rightDomain?.min, svgHeight, svgWidth, xDomain?.max, xDomain?.min])
+
   const measurementCursorItems = [
     {
       id: 'a' as const,
@@ -298,6 +461,14 @@ export function SeriesSvgChart({
       plotY: projectYValue(measurementPoint.valueY, measurementPoint.axisKey ?? 'left'),
     }
     : null
+  const viewportSelectionRect = activeViewportSelection === null
+    ? null
+    : {
+      x: Math.min(activeViewportSelection.anchorSvgX, activeViewportSelection.currentSvgX),
+      y: Math.min(activeViewportSelection.anchorSvgY, activeViewportSelection.currentSvgY),
+      width: Math.abs(activeViewportSelection.currentSvgX - activeViewportSelection.anchorSvgX),
+      height: Math.abs(activeViewportSelection.currentSvgY - activeViewportSelection.anchorSvgY),
+    }
 
   return (
     <div className="svg-chart-shell">
@@ -312,6 +483,11 @@ export function SeriesSvgChart({
       ) : (
         <div ref={chartFrameRef} className="svg-chart-frame">
           <svg ref={svgElementRef} viewBox={`0 0 ${svgWidth} ${svgHeight}`} className="svg-chart" aria-label="Simulation series chart">
+            <defs>
+              <clipPath id={plotClipPathId}>
+                <rect x={plotLeft} y={plotTop} width={plotRight - plotLeft} height={plotBottom - plotTop} />
+              </clipPath>
+            </defs>
             <rect x={plotLeft} y={plotTop} width={plotRight - plotLeft} height={plotBottom - plotTop} className="svg-chart__plot-bg" />
             {leftTicks.map((tick) => (
               <line key={`grid-y-${tick.value}`} x1={plotLeft} x2={plotRight} y1={tick.position} y2={tick.position} className="svg-chart__grid" />
@@ -322,24 +498,38 @@ export function SeriesSvgChart({
             <line x1={plotLeft} x2={plotRight} y1={plotBottom} y2={plotBottom} className="svg-chart__axis" />
             <line x1={plotLeft} x2={plotLeft} y1={plotTop} y2={plotBottom} className="svg-chart__axis" />
             {hasRightAxis ? <line x1={plotRight} x2={plotRight} y1={plotTop} y2={plotBottom} className="svg-chart__axis" /> : null}
-            {renderedSeries.map((item) => (
-              <polyline
-                key={item.name}
-                fill="none"
-                stroke={item.color}
-                strokeWidth={item.lineStyle === 'dash' ? '1.7' : '2'}
-                strokeDasharray={item.strokeDasharray}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                points={item.polylinePoints}
-                className="svg-chart__series"
-              />
-            ))}
+            <g clipPath={`url(#${plotClipPathId})`}>
+              {renderedSeries.map((item) => (
+                <polyline
+                  key={item.name}
+                  fill="none"
+                  stroke={item.color}
+                  strokeWidth={item.lineStyle === 'dash' ? '1.7' : '2'}
+                  strokeDasharray={item.strokeDasharray}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  points={item.polylinePoints}
+                  className="svg-chart__series"
+                />
+              ))}
+            </g>
+            <rect
+              x={plotLeft}
+              y={plotTop}
+              width={plotRight - plotLeft}
+              height={plotBottom - plotTop}
+              className="svg-chart__interaction-hitbox"
+              onPointerDown={onViewportChange ? (event) => {
+                event.preventDefault()
+                startViewportSelection(event.clientX, event.clientY)
+              } : undefined}
+            />
             {measurementPointItem && measurementPointItem.plotX !== null && measurementPointItem.plotY !== null ? (
               <g
                 className="svg-chart__measurement-point"
                 onPointerDown={measurementPointMoveHandlerRef.current ? (event) => {
                   event.preventDefault()
+                  event.stopPropagation()
                   startDrag({ kind: 'measurement-point' }, event.clientX)
                 } : undefined}
               >
@@ -362,6 +552,7 @@ export function SeriesSvgChart({
                     className="svg-chart__measurement-cursor"
                     onPointerDown={cursorMoveHandlerRef.current ? (event) => {
                       event.preventDefault()
+                      event.stopPropagation()
                       startDrag({ kind: 'measurement-cursor', cursorId: cursor.id }, event.clientX)
                     } : undefined}
                   >
@@ -403,6 +594,15 @@ export function SeriesSvgChart({
             <text x={leftAxisTitleX} y={yAxisCenter} textAnchor="middle" transform={`rotate(-90 ${leftAxisTitleX} ${yAxisCenter})`} className="svg-chart__axis-title">{leftAxisLabel}</text>
             {hasRightAxis ? (
               <text x={rightAxisTitleX} y={yAxisCenter} textAnchor="middle" transform={`rotate(90 ${rightAxisTitleX} ${yAxisCenter})`} className="svg-chart__axis-title">{rightAxisLabel}</text>
+            ) : null}
+            {viewportSelectionRect !== null ? (
+              <rect
+                x={viewportSelectionRect.x}
+                y={viewportSelectionRect.y}
+                width={viewportSelectionRect.width}
+                height={viewportSelectionRect.height}
+                className="svg-chart__viewport-selection"
+              />
             ) : null}
           </svg>
           {floatingPanels.map((panel) => (

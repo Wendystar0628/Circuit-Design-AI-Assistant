@@ -26,6 +26,15 @@ export function ChartTab({ state, bridge }: ChartTabProps) {
   const chart = state.analysis_chart_view
   const [selectedMeasurementSignalId, setSelectedMeasurementSignalId] = useState('')
   const chartDisplayName = chart.chart_type_display_name || chart.title || chart.chart_type || '图表'
+  const viewWindow = useMemo(() => ({
+    active: chart.viewport.active,
+    xMin: chart.viewport.x_min,
+    xMax: chart.viewport.x_max,
+    leftYMin: chart.viewport.left_y_min,
+    leftYMax: chart.viewport.left_y_max,
+    rightYMin: chart.viewport.right_y_min,
+    rightYMax: chart.viewport.right_y_max,
+  }), [chart.viewport.active, chart.viewport.left_y_max, chart.viewport.left_y_min, chart.viewport.right_y_max, chart.viewport.right_y_min, chart.viewport.x_max, chart.viewport.x_min])
   const measurementGroups = useMemo(() => buildChartMeasurementPresentationGroups(chart), [chart])
   const measurementSignalOptions = useMemo(() => measurementGroups.map((group) => ({ id: group.id, label: group.label })), [measurementGroups])
   const supportsMeasurementPoint = measurementSignalOptions.length > 0
@@ -36,7 +45,7 @@ export function ChartTab({ state, bridge }: ChartTabProps) {
         type="button"
         className="chart-header-button"
         disabled={!chart.has_chart}
-        onClick={() => bridge?.fitChart()}
+        onClick={() => bridge?.resetChartViewport()}
       >
         Fit
       </button>
@@ -237,6 +246,8 @@ export function ChartTab({ state, bridge }: ChartTabProps) {
                 axisKey: chart.measurement_point.plot_axis_key,
                 onMove: (position) => bridge?.moveChartMeasurementPoint(position),
               }}
+              viewWindow={viewWindow}
+              onViewportChange={(nextViewWindow) => bridge?.setChartViewport(nextViewWindow)}
               series={chart.visible_series}
               xLabel={chart.x_label}
               yLabel={chart.y_label}

@@ -1,5 +1,14 @@
 import type { SimulationMainState, SimulationTabId } from '../types/state'
 
+export interface SimulationSurfaceViewportInput {
+  xMin: number
+  xMax: number
+  leftYMin: number
+  leftYMax: number
+  rightYMin?: number | null
+  rightYMax?: number | null
+}
+
 export interface SimulationBridge {
   markReady(): void
   activateTab(tabId: SimulationTabId): void
@@ -11,13 +20,14 @@ export interface SimulationBridge {
   setChartMeasurementPointEnabled(enabled: boolean): void
   setChartMeasurementPointTarget(targetId: string): void
   moveChartMeasurementPoint(position: number): void
-  fitChart(): void
+  setChartViewport(viewport: SimulationSurfaceViewportInput): void
+  resetChartViewport(): void
   setSignalVisible(signalName: string, visible: boolean): void
   clearAllSignals(): void
   setCursorVisible(cursorId: 'a' | 'b', visible: boolean): void
   moveCursor(cursorId: 'a' | 'b', position: number): void
-  requestFit(): void
-  zoomToRange(start: number, end: number): void
+  setWaveformViewport(viewport: SimulationSurfaceViewportInput): void
+  resetWaveformViewport(): void
   jumpRawDataToRow(row: number): void
   jumpRawDataToX(xValue: number): void
   searchRawDataValue(column: number, value: number, tolerance: number): void

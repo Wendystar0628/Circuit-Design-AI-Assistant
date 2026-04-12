@@ -11,7 +11,6 @@ from presentation.panels.simulation.chart_signal_tree import SignalTreeWidget
 from presentation.panels.simulation.chart_view_types import ChartSeries, ChartSpec
 from presentation.panels.simulation.qt_surface_export import export_widget_image
 from presentation.panels.simulation.ltspice_plot_interaction import (
-    LTSpiceViewBox,
     apply_dynamic_tick_spacing,
     clamp_range,
     finite_range,
@@ -45,6 +44,9 @@ class ChartPage(QWidget):
         self._updating_tree = False
         self._x_domain: Optional[Tuple[float, float]] = None
         self._y_domain: Optional[Tuple[float, float]] = None
+        self._view_x_range: Optional[Tuple[float, float]] = None
+        self._view_y_range: Optional[Tuple[float, float]] = None
+        self._viewport_active = False
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -91,14 +93,13 @@ class ChartPage(QWidget):
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(0)
 
-        self._plot_widget = pg.PlotWidget(viewBox=LTSpiceViewBox())
+        self._plot_widget = pg.PlotWidget()
         self._plot_widget.setBackground(COLOR_BG_PRIMARY)
         plot_item = self._plot_widget.getPlotItem()
         plot_item.showGrid(x=True, y=True, alpha=0.25)
         plot_item.disableAutoRange()
-        view_box = plot_item.vb
-        if isinstance(view_box, LTSpiceViewBox):
-            view_box.rect_selected.connect(self._on_rect_selected)
+        plot_item.vb.setMenuEnabled(False)
+        plot_item.vb.setMouseEnabled(x=False, y=False)
         self._legend = plot_item.addLegend()
         right_layout.addWidget(self._plot_widget, 1)
 
@@ -154,6 +155,8 @@ class ChartPage(QWidget):
         plot_item = self._plot_widget.getPlotItem()
         plot_item.showGrid(x=True, y=True, alpha=0.25)
         plot_item.disableAutoRange()
+        plot_item.vb.setMenuEnabled(False)
+        plot_item.vb.setMouseEnabled(x=False, y=False)
         self._legend = plot_item.addLegend()
         self._measurement_enabled = False
         self._measurement_point_enabled = False
@@ -165,6 +168,9 @@ class ChartPage(QWidget):
         self._series_items = {}
         self._x_domain = None
         self._y_domain = None
+        self._view_x_range = None
+        self._view_y_range = None
+        self._viewport_active = False
         self._signal_tree.clear()
 
     def set_chart(self, spec: ChartSpec):
@@ -202,7 +208,37 @@ class ChartPage(QWidget):
         return bool(self._plot_items)
 
     def fit_to_view(self):
-        self._rebuild_plot()
+        self.reset_viewport()
+
+    def reset_viewport(self) -> None:
+        self._viewport_active = False
+        self._view_x_range = None
+        self._view_y_range = None
+        self._apply_full_viewport()
+        if self.is_measurement_enabled():
+            self._ensure_measurement_positions()
+
+    def set_viewport(self, viewport: Dict[str, Any]) -> bool:
+        if self._spec is None or self._x_domain is None or self._y_domain is None:
+            return False
+        x_min = self._to_axis_x(float(viewport.get("x_min")))
+        x_max = self._to_axis_x(float(viewport.get("x_max")))
+        y_min = self._to_axis_y(float(viewport.get("left_y_min")))
+        y_max = self._to_axis_y(float(viewport.get("left_y_max")))
+        if None in {x_min, x_max, y_min, y_max}:
+            return False
+        x_range = clamp_range((x_min, x_max), self._x_domain, positive_only=self._spec.log_x)
+        y_range = clamp_range((y_min, y_max), self._y_domain, positive_only=self._spec.log_y)
+        if x_range is None or y_range is None:
+            return False
+        self._viewport_active = True
+        self._view_x_range = x_range
+        self._view_y_range = y_range
+        self._apply_domain_limits()
+        self._apply_viewport(x_range, y_range)
+        if self.is_measurement_enabled():
+            self._ensure_measurement_positions()
+        return True
 
     def supports_measurement_point(self) -> bool:
         return bool(self._spec is not None and self._spec.series)
@@ -259,12 +295,13 @@ class ChartPage(QWidget):
             self._measurement_point_x = None
 
     def set_measurement_point_position(self, x_value: float) -> bool:
-        if not self._measurement_point_enabled or not self._measurement_point_target_id or self._x_domain is None:
+        x_view_range = self._current_x_view_range()
+        if not self._measurement_point_enabled or not self._measurement_point_target_id or x_view_range is None:
             return False
         axis_x = self._to_axis_x(x_value)
         if axis_x is None:
             return False
-        self._measurement_point_x = clamp_to_bounds(axis_x, self._x_domain)
+        self._measurement_point_x = clamp_to_bounds(axis_x, x_view_range)
         return self._measurement_point_x is not None
 
     def set_measurement_enabled(self, enabled: bool):
@@ -278,12 +315,13 @@ class ChartPage(QWidget):
         return bool(self._measurement_enabled)
 
     def set_measurement_cursor(self, cursor_id: str, x_value: float) -> bool:
-        if not self._measurement_enabled or self._x_domain is None:
+        x_view_range = self._current_x_view_range()
+        if not self._measurement_enabled or x_view_range is None:
             return False
         axis_x = self._to_axis_x(x_value)
         if axis_x is None:
             return False
-        clamped_x = min(max(axis_x, self._x_domain[0]), self._x_domain[1])
+        clamped_x = min(max(axis_x, x_view_range[0]), x_view_range[1])
         if cursor_id == "b":
             self._cursor_b_pos = clamped_x
         else:
@@ -328,9 +366,31 @@ class ChartPage(QWidget):
             "available_series": available_series,
             "visible_series": [serialize_chart_series_for_web(series) for series in visible_series],
             "visible_series_count": len(visible_series),
+            "viewport": self._build_viewport_snapshot(),
             "measurement_point": self._build_measurement_point_snapshot(),
             "measurement_enabled": self.is_measurement_enabled(),
             "measurement": self._build_measurement_snapshot(),
+        }
+
+    def _build_viewport_snapshot(self) -> Dict[str, Any]:
+        if not self._viewport_active or self._view_x_range is None or self._view_y_range is None:
+            return {
+                "active": False,
+                "x_min": None,
+                "x_max": None,
+                "left_y_min": None,
+                "left_y_max": None,
+                "right_y_min": None,
+                "right_y_max": None,
+            }
+        return {
+            "active": True,
+            "x_min": self._to_display_x(self._view_x_range[0]),
+            "x_max": self._to_display_x(self._view_x_range[1]),
+            "left_y_min": self._to_display_y(self._view_y_range[0]),
+            "left_y_max": self._to_display_y(self._view_y_range[1]),
+            "right_y_min": None,
+            "right_y_max": None,
         }
 
     def _build_measurement_point_snapshot(self) -> Dict[str, Any]:
@@ -398,17 +458,40 @@ class ChartPage(QWidget):
         }
 
     def _ensure_measurement_positions(self):
-        if self._spec is None or not self._plot_items or self._x_domain is None:
+        x_view_range = self._current_x_view_range()
+        if self._spec is None or not self._plot_items or x_view_range is None:
             return
-        x_min, x_max = self._x_domain
+        x_min, x_max = x_view_range
         center = (x_min + x_max) / 2
         offset = max((x_max - x_min) * 0.08, 1e-12)
         if self._cursor_a_pos is None:
             self._cursor_a_pos = center - offset
-        self._cursor_a_pos = min(max(self._cursor_a_pos, self._x_domain[0]), self._x_domain[1])
+        self._cursor_a_pos = min(max(self._cursor_a_pos, x_view_range[0]), x_view_range[1])
         if self._cursor_b_pos is None:
             self._cursor_b_pos = center + offset
-        self._cursor_b_pos = min(max(self._cursor_b_pos, self._x_domain[0]), self._x_domain[1])
+        self._cursor_b_pos = min(max(self._cursor_b_pos, x_view_range[0]), x_view_range[1])
+
+    def _current_x_view_range(self) -> Optional[Tuple[float, float]]:
+        return self._view_x_range or self._x_domain
+
+    def _apply_stored_or_full_viewport(self):
+        if self._x_domain is None or self._y_domain is None:
+            return
+        if not self._viewport_active or self._view_x_range is None or self._view_y_range is None or self._spec is None:
+            self._apply_full_viewport()
+            return
+        clamped_x_range = clamp_range(self._view_x_range, self._x_domain, positive_only=self._spec.log_x)
+        clamped_y_range = clamp_range(self._view_y_range, self._y_domain, positive_only=self._spec.log_y)
+        if clamped_x_range is None or clamped_y_range is None:
+            self._viewport_active = False
+            self._view_x_range = None
+            self._view_y_range = None
+            self._apply_full_viewport()
+            return
+        self._view_x_range = clamped_x_range
+        self._view_y_range = clamped_y_range
+        self._apply_domain_limits()
+        self._apply_viewport(clamped_x_range, clamped_y_range)
 
     def _clear_measurement_positions(self):
         self._cursor_a_pos = None
@@ -422,6 +505,15 @@ class ChartPage(QWidget):
                 return None
             return float(np.log10(x_value))
         return float(x_value)
+
+    def _to_axis_y(self, y_value: float) -> Optional[float]:
+        if not np.isfinite(y_value):
+            return None
+        if self._spec is not None and self._spec.log_y:
+            if y_value <= 0:
+                return None
+            return float(np.log10(y_value))
+        return float(y_value)
 
     def _sample_series(self, x_position: float) -> Dict[str, float]:
         if self._spec is None:
@@ -443,6 +535,13 @@ class ChartPage(QWidget):
         if self._spec is not None and self._spec.log_x:
             return float(10 ** x_position)
         return float(x_position)
+
+    def _to_display_y(self, y_position: Optional[float]) -> Optional[float]:
+        if y_position is None:
+            return None
+        if self._spec is not None and self._spec.log_y:
+            return float(10 ** y_position)
+        return float(y_position)
 
     def _find_series_by_name(self, series_name: str) -> Optional[ChartSeries]:
         if self._spec is None:
@@ -527,10 +626,13 @@ class ChartPage(QWidget):
         if not visible_series:
             self._x_domain = None
             self._y_domain = None
+            self._viewport_active = False
+            self._view_x_range = None
+            self._view_y_range = None
             return
 
         self._rebuild_domains()
-        self._apply_full_viewport()
+        self._apply_stored_or_full_viewport()
 
         if self.is_measurement_enabled():
             self._ensure_measurement_positions()
@@ -584,6 +686,9 @@ class ChartPage(QWidget):
     def _apply_full_viewport(self):
         if self._x_domain is None or self._y_domain is None:
             return
+        self._viewport_active = False
+        self._view_x_range = None
+        self._view_y_range = None
         self._apply_domain_limits()
         self._apply_viewport(self._x_domain, self._y_domain)
 
@@ -609,31 +714,10 @@ class ChartPage(QWidget):
         self._updating_tree = False
         self._measurement_point_target_id = ""
         self._measurement_point_x = None
+        self._viewport_active = False
+        self._view_x_range = None
+        self._view_y_range = None
         self._rebuild_plot()
-
-    def _on_rect_selected(
-        self,
-        requested_x_range: Tuple[float, float],
-        requested_y_range: Tuple[float, float],
-    ):
-        if self._spec is None or not self._plot_items:
-            return
-        clamped_x_range = clamp_range(
-            requested_x_range,
-            self._x_domain,
-            positive_only=self._spec.log_x,
-        )
-        clamped_y_range = clamp_range(
-            requested_y_range,
-            self._y_domain,
-            positive_only=self._spec.log_y,
-        )
-        if clamped_x_range is None or clamped_y_range is None:
-            return
-        self._apply_domain_limits()
-        self._apply_viewport(clamped_x_range, clamped_y_range)
-        if self.is_measurement_enabled():
-            self._ensure_measurement_positions()
 
     def _to_view_axis_data(self, values: np.ndarray, *, log_enabled: bool) -> np.ndarray:
         array = np.asarray(values, dtype=float)

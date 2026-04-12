@@ -58,7 +58,6 @@ from presentation.panels.simulation.waveform_plot_types import (
 )
 from presentation.panels.simulation.waveform_viewport_manager import WaveformViewportManager
 from presentation.panels.simulation.ltspice_plot_interaction import (
-    LTSpiceViewBox,
     clamp_range,
 )
 
@@ -122,6 +121,10 @@ class WaveformWidget(QWidget):
         self._x_domain: Optional[Tuple[float, float]] = None
         self._left_y_domain: Optional[Tuple[float, float]] = None
         self._right_y_domain: Optional[Tuple[float, float]] = None
+        self._view_x_range: Optional[Tuple[float, float]] = None
+        self._view_left_y_range: Optional[Tuple[float, float]] = None
+        self._view_right_y_range: Optional[Tuple[float, float]] = None
+        self._viewport_active: bool = False
         
         # 信号类型缓存
         self._signal_types: Dict[str, str] = {}
@@ -143,7 +146,7 @@ class WaveformWidget(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        self._plot_widget = pg.PlotWidget(viewBox=LTSpiceViewBox())
+        self._plot_widget = pg.PlotWidget()
         self._plot_widget.setBackground(COLOR_BG_PRIMARY)
         layout.addWidget(self._plot_widget, 1)
     
@@ -173,10 +176,8 @@ class WaveformWidget(QWidget):
         plot_item.showGrid(x=True, y=True, alpha=0.3)
 
         plot_item.disableAutoRange()
-
-        view_box = plot_item.vb
-        if isinstance(view_box, LTSpiceViewBox):
-            view_box.rect_selected.connect(self._on_rect_selected)
+        plot_item.vb.setMenuEnabled(False)
+        plot_item.vb.setMouseEnabled(x=False, y=False)
         
         # 创建图例
         self._legend = plot_item.addLegend()
@@ -295,7 +296,11 @@ class WaveformWidget(QWidget):
 
         self._measurement_cache = None
         self._refresh_legend()
-        self.fit_to_view()
+        if self._viewport_active and self._view_x_range is not None:
+            self._rebuild_domains()
+            self._reapply_stored_viewport()
+        else:
+            self.fit_to_view()
         
         self._logger.debug(
             f"Waveform added: {resolved_signal_name} [{axis_label}], "
@@ -341,7 +346,11 @@ class WaveformWidget(QWidget):
             self._right_y_domain = None
             self._measurement_cache = None
         else:
-            self.fit_to_view()
+            self._rebuild_domains()
+            if self._viewport_active and self._view_x_range is not None:
+                self._reapply_stored_viewport()
+            else:
+                self.fit_to_view()
         
         self._logger.debug(f"Waveform removed: {signal_name}")
         return True
@@ -378,8 +387,9 @@ class WaveformWidget(QWidget):
         self._cursor_a_visible = bool(visible)
         if self._cursor_a_visible:
             if self._cursor_a_pos is None:
-                if self._x_domain is not None:
-                    x_position = (self._x_domain[0] + self._x_domain[1]) / 2
+                x_view_range = self._current_x_view_range()
+                if x_view_range is not None:
+                    x_position = (x_view_range[0] + x_view_range[1]) / 2
                 else:
                     x_position = 0.0
                 self._set_cursor_a_view_position(x_position)
@@ -404,9 +414,10 @@ class WaveformWidget(QWidget):
         self._cursor_b_visible = bool(visible)
         if self._cursor_b_visible:
             if self._cursor_b_pos is None:
-                if self._x_domain is not None:
-                    span = self._x_domain[1] - self._x_domain[0]
-                    x_position = self._x_domain[0] + span * 0.6
+                x_view_range = self._current_x_view_range()
+                if x_view_range is not None:
+                    span = x_view_range[1] - x_view_range[0]
+                    x_position = x_view_range[0] + span * 0.6
                 else:
                     x_position = 0.0
                 self._set_cursor_b_view_position(x_position)
@@ -497,7 +508,7 @@ class WaveformWidget(QWidget):
             visible_series.append({
                 "name": signal_name,
                 "color": plot_item.color,
-                "axis": plot_item.axis,
+                "axis_key": plot_item.axis,
                 "x": x_values,
                 "y": y_values,
                 "point_count": total_points,
@@ -519,7 +530,10 @@ class WaveformWidget(QWidget):
             "signal_catalog": signal_catalog,
             "visible_series": visible_series,
             "x_axis_label": self._get_x_axis_label(),
+            "y_label": self._get_left_axis_label(),
+            "secondary_y_label": self._get_right_axis_label(),
             "log_x": self._is_log_x_enabled(),
+            "viewport": self._build_viewport_snapshot(),
             "cursor_a_visible": self._cursor_a_visible,
             "cursor_b_visible": self._cursor_b_visible,
             "measurement": {
@@ -541,6 +555,33 @@ class WaveformWidget(QWidget):
             return "X"
         return self._current_result.get_x_axis_label()
 
+    def _get_left_axis_label(self) -> str:
+        return "Voltage (V)"
+
+    def _get_right_axis_label(self) -> str:
+        return "Current (A)" if any(item.axis == "right" for item in self._plot_items.values()) else ""
+
+    def _build_viewport_snapshot(self) -> Dict[str, Any]:
+        if not self._viewport_active or self._view_x_range is None or self._view_left_y_range is None:
+            return {
+                "active": False,
+                "x_min": None,
+                "x_max": None,
+                "left_y_min": None,
+                "left_y_max": None,
+                "right_y_min": None,
+                "right_y_max": None,
+            }
+        return {
+            "active": True,
+            "x_min": self._from_view_x_value(self._view_x_range[0]),
+            "x_max": self._from_view_x_value(self._view_x_range[1]),
+            "left_y_min": float(self._view_left_y_range[0]),
+            "left_y_max": float(self._view_left_y_range[1]),
+            "right_y_min": float(self._view_right_y_range[0]) if self._view_right_y_range is not None else None,
+            "right_y_max": float(self._view_right_y_range[1]) if self._view_right_y_range is not None else None,
+        }
+
     def fit_to_view(self):
         if self._current_result is None or not self._plot_items:
             return
@@ -555,22 +596,36 @@ class WaveformWidget(QWidget):
         self._apply_full_viewport()
         self._measurement_cache = None
 
-    def zoom_to_x_range(self, start: float, end: float):
+    def reset_viewport(self) -> None:
+        self.fit_to_view()
+
+    def set_viewport(self, viewport: Dict[str, Any]) -> bool:
         if self._current_result is None or not self._plot_items or self._x_domain is None:
-            return
-        requested_range = np.asarray([min(start, end), max(start, end)], dtype=float)
-        view_range_array = self._to_view_x_data(requested_range)
-        if view_range_array.size != 2 or not np.isfinite(view_range_array).all():
-            return
+            return False
+        view_x_min = self._to_view_x_value(float(viewport.get("x_min")))
+        view_x_max = self._to_view_x_value(float(viewport.get("x_max")))
+        if view_x_min is None or view_x_max is None:
+            return False
         clamped_x_range = clamp_range(
-            (float(view_range_array[0]), float(view_range_array[1])),
+            (view_x_min, view_x_max),
             self._x_domain,
             positive_only=self._is_log_x_enabled(),
         )
-        if clamped_x_range is None:
-            return
-        current_left_y = self._viewport_manager.get_current_left_view_range(self._plot_widget) or self._left_y_domain
-        current_right_y = self._viewport_manager.get_current_right_view_range(self._right_vb) or self._right_y_domain
+        base_left_domain = self._left_y_domain or self._right_y_domain
+        if clamped_x_range is None or base_left_domain is None:
+            return False
+        left_y_range = clamp_range(
+            (float(viewport.get("left_y_min")), float(viewport.get("left_y_max"))),
+            base_left_domain,
+        )
+        if left_y_range is None:
+            return False
+        right_y_range = None
+        if self._right_y_domain is not None and viewport.get("right_y_min") is not None and viewport.get("right_y_max") is not None:
+            right_y_range = clamp_range(
+                (float(viewport.get("right_y_min")), float(viewport.get("right_y_max"))),
+                self._right_y_domain,
+            )
         self._viewport_manager.reload_viewport_data(
             self._current_result,
             self._plot_items,
@@ -578,9 +633,11 @@ class WaveformWidget(QWidget):
             self._from_view_x_value,
             VIEWPORT_POINTS,
         )
+        self._viewport_active = True
         self._apply_domain_limits()
-        self._apply_viewport(clamped_x_range, current_left_y, current_right_y)
+        self._apply_viewport(clamped_x_range, left_y_range, right_y_range)
         self._measurement_cache = None
+        return True
 
     def _get_result_signature(self, result: Optional[SimulationResult]) -> Optional[Tuple[str, str, str]]:
         if result is None:
@@ -599,6 +656,10 @@ class WaveformWidget(QWidget):
         self._x_domain = None
         self._left_y_domain = None
         self._right_y_domain = None
+        self._view_x_range = None
+        self._view_left_y_range = None
+        self._view_right_y_range = None
+        self._viewport_active = False
         x_label = result.get_x_axis_label()
         plot_item = self._plot_widget.getPlotItem()
         plot_item.setLabel('bottom', x_label)
@@ -617,6 +678,10 @@ class WaveformWidget(QWidget):
         self._x_domain = None
         self._left_y_domain = None
         self._right_y_domain = None
+        self._view_x_range = None
+        self._view_left_y_range = None
+        self._view_right_y_range = None
+        self._viewport_active = False
         self._refresh_legend()
         self._cursor_a_visible = False
         self._cursor_b_visible = False
@@ -689,6 +754,9 @@ class WaveformWidget(QWidget):
         left_y_range: Optional[Tuple[float, float]],
         right_y_range: Optional[Tuple[float, float]],
     ):
+        self._view_x_range = x_range
+        self._view_left_y_range = left_y_range
+        self._view_right_y_range = right_y_range
         self._viewport_manager.apply_viewport(
             self._plot_widget,
             self._right_vb,
@@ -702,41 +770,32 @@ class WaveformWidget(QWidget):
         if self._x_domain is None:
             return
 
+        self._viewport_active = False
         self._apply_domain_limits()
         self._apply_viewport(self._x_domain, self._left_y_domain, self._right_y_domain)
 
-    def _on_rect_selected(
-        self,
-        requested_x_range: Tuple[float, float],
-        requested_y_range: Tuple[float, float],
-    ):
-        if self._current_result is None or not self._plot_items or self._x_domain is None:
+    def _reapply_stored_viewport(self):
+        if not self._viewport_active or self._view_x_range is None or self._x_domain is None:
+            self._apply_full_viewport()
             return
-
         clamped_x_range = clamp_range(
-            requested_x_range,
+            self._view_x_range,
             self._x_domain,
             positive_only=self._is_log_x_enabled(),
         )
-        base_y_domain = self._left_y_domain or self._right_y_domain
-        if clamped_x_range is None or base_y_domain is None:
+        base_left_domain = self._left_y_domain or self._right_y_domain
+        if clamped_x_range is None or base_left_domain is None:
+            self._viewport_active = False
+            self._apply_full_viewport()
             return
-
-        clamped_left_y_range = clamp_range(requested_y_range, base_y_domain)
-        if clamped_left_y_range is None:
-            return
-
-        current_left_view = self._viewport_manager.get_current_left_view_range(self._plot_widget) or base_y_domain
-        current_right_view = self._viewport_manager.get_current_right_view_range(self._right_vb) or self._right_y_domain
-        applied_right_y_range = self._right_y_domain
-        if current_right_view is not None and self._right_y_domain is not None:
-            mapped_right = self._viewport_manager.map_parallel_y_range(
-                current_left_view,
-                current_right_view,
-                clamped_left_y_range,
-            )
-            applied_right_y_range = clamp_range(mapped_right, self._right_y_domain)
-
+        left_y_range = self._view_left_y_range
+        if left_y_range is not None:
+            left_y_range = clamp_range(left_y_range, base_left_domain)
+        if left_y_range is None:
+            left_y_range = base_left_domain
+        right_y_range = self._view_right_y_range
+        if self._right_y_domain is not None and right_y_range is not None:
+            right_y_range = clamp_range(right_y_range, self._right_y_domain)
         self._viewport_manager.reload_viewport_data(
             self._current_result,
             self._plot_items,
@@ -745,7 +804,7 @@ class WaveformWidget(QWidget):
             VIEWPORT_POINTS,
         )
         self._apply_domain_limits()
-        self._apply_viewport(clamped_x_range, clamped_left_y_range, applied_right_y_range)
+        self._apply_viewport(clamped_x_range, left_y_range, right_y_range)
         self._measurement_cache = None
 
     
@@ -754,16 +813,23 @@ class WaveformWidget(QWidget):
     # ============================================================
     
     def _set_cursor_a_view_position(self, x_position: float):
-        if self._x_domain is not None:
-            x_position = min(max(x_position, self._x_domain[0]), self._x_domain[1])
+        x_view_range = self._current_x_view_range()
+        if x_view_range is not None:
+            x_position = min(max(x_position, x_view_range[0]), x_view_range[1])
         self._cursor_a_pos = x_position
         self._measurement_cache = None
 
     def _set_cursor_b_view_position(self, x_position: float):
-        if self._x_domain is not None:
-            x_position = min(max(x_position, self._x_domain[0]), self._x_domain[1])
+        x_view_range = self._current_x_view_range()
+        if x_view_range is not None:
+            x_position = min(max(x_position, x_view_range[0]), x_view_range[1])
         self._cursor_b_pos = x_position
         self._measurement_cache = None
+
+    def _current_x_view_range(self) -> Optional[Tuple[float, float]]:
+        if self._viewport_active and self._view_x_range is not None:
+            return self._view_x_range
+        return self._x_domain
 
     # ============================================================
     # 内部方法 - 事件处理

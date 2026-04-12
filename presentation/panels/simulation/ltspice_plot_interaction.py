@@ -3,46 +3,9 @@ from typing import Iterable, Optional, Sequence, Tuple
 
 import numpy as np
 import pyqtgraph as pg
-from PyQt6.QtCore import QRectF, Qt, pyqtSignal
 
 
 RangeTuple = Tuple[float, float]
-
-
-class LTSpiceViewBox(pg.ViewBox):
-    rect_selected = pyqtSignal(tuple, tuple)
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.setMenuEnabled(False)
-        self.setMouseMode(pg.ViewBox.RectMode)
-        self.setMouseEnabled(x=False, y=False)
-
-    def wheelEvent(self, ev, axis=None):
-        ev.ignore()
-
-    def mouseDragEvent(self, ev, axis=None):
-        if ev.button() != Qt.MouseButton.LeftButton or axis is not None:
-            ev.ignore()
-            return
-
-        ev.accept()
-        if ev.isFinish():
-            self.rbScaleBox.hide()
-            selection_rect = QRectF(ev.buttonDownPos(ev.button()), ev.pos()).normalized()
-            if selection_rect.width() <= 0 or selection_rect.height() <= 0:
-                return
-            view_rect = self.childGroup.mapRectFromParent(selection_rect)
-            x_range = normalize_range((view_rect.left(), view_rect.right()))
-            y_range = normalize_range((view_rect.top(), view_rect.bottom()))
-            if x_range is not None and y_range is not None:
-                self.rect_selected.emit(x_range, y_range)
-            return
-
-        self.updateScaleBox(ev.buttonDownPos(), ev.pos())
-
-    def mouseClickEvent(self, ev):
-        ev.ignore()
 
 
 def normalize_range(range_tuple: Optional[Sequence[float]]) -> Optional[RangeTuple]:
@@ -110,7 +73,7 @@ def merge_ranges(ranges: Iterable[Optional[RangeTuple]]) -> Optional[RangeTuple]
     )
 
 
-def nice_tick_spacing(span: float, *, target_ticks: int = 10) -> float:
+def nice_tick_spacing(span: float, *, target_ticks: int = 14) -> float:
     if not np.isfinite(span) or span <= 0:
         return 1.0
 
@@ -136,7 +99,7 @@ def apply_dynamic_tick_spacing(
     range_tuple: Optional[RangeTuple],
     *,
     log_enabled: bool,
-    target_ticks: int = 10,
+    target_ticks: int = 14,
 ) -> None:
     if log_enabled or range_tuple is None:
         axis.setTickSpacing()

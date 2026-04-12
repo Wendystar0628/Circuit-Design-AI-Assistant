@@ -89,9 +89,20 @@ export interface AnalysisChartViewState {
   available_series: ChartSeriesMetaState[]
   visible_series: ChartSeriesSnapshotState[]
   visible_series_count: number
+  viewport: SimulationSurfaceViewportState
   measurement_point: ChartMeasurementPointState
   measurement_enabled: boolean
   measurement: ChartMeasurementState
+}
+
+export interface SimulationSurfaceViewportState {
+  active: boolean
+  x_min: number | null
+  x_max: number | null
+  left_y_min: number | null
+  left_y_max: number | null
+  right_y_min: number | null
+  right_y_max: number | null
 }
 
 export interface ChartSeriesMetaState {
@@ -151,7 +162,10 @@ export interface WaveformViewState {
   signal_catalog: WaveformSignalCatalogItemState[]
   visible_series: WaveformSeriesSnapshotState[]
   x_axis_label: string
+  y_label: string
+  secondary_y_label: string
   log_x: boolean
+  viewport: SimulationSurfaceViewportState
   cursor_a_visible: boolean
   cursor_b_visible: boolean
   measurement: WaveformMeasurementState
@@ -166,7 +180,7 @@ export interface WaveformSignalCatalogItemState {
 export interface WaveformSeriesSnapshotState {
   name: string
   color: string
-  axis: string
+  axis_key: string
   x: number[]
   y: number[]
   point_count: number
@@ -357,6 +371,16 @@ const EMPTY_CHART_MEASUREMENT_POINT: ChartMeasurementPointState = {
   values: [],
 }
 
+const EMPTY_SURFACE_VIEWPORT: SimulationSurfaceViewportState = {
+  active: false,
+  x_min: null,
+  x_max: null,
+  left_y_min: null,
+  left_y_max: null,
+  right_y_min: null,
+  right_y_max: null,
+}
+
 const EMPTY_WAVEFORM_MEASUREMENT: WaveformMeasurementState = {
   cursor_a_x: null,
   cursor_b_x: null,
@@ -419,6 +443,7 @@ export const EMPTY_SIMULATION_STATE: SimulationMainState = {
     available_series: [],
     visible_series: [],
     visible_series_count: 0,
+    viewport: EMPTY_SURFACE_VIEWPORT,
     measurement_point: EMPTY_CHART_MEASUREMENT_POINT,
     measurement_enabled: false,
     measurement: EMPTY_CHART_MEASUREMENT,
@@ -433,7 +458,10 @@ export const EMPTY_SIMULATION_STATE: SimulationMainState = {
     signal_catalog: [],
     visible_series: [],
     x_axis_label: '',
+    y_label: '',
+    secondary_y_label: '',
     log_x: false,
+    viewport: EMPTY_SURFACE_VIEWPORT,
     cursor_a_visible: false,
     cursor_b_visible: false,
     measurement: EMPTY_WAVEFORM_MEASUREMENT,
@@ -559,6 +587,19 @@ function asNumberRecord(value: unknown): Record<string, number> {
   return Object.fromEntries(Object.entries(record).map(([key, item]) => [key, asNumber(item)]))
 }
 
+function normalizeSurfaceViewport(value: unknown): SimulationSurfaceViewportState {
+  const record = asRecord(value)
+  return {
+    active: asBoolean(record.active),
+    x_min: asNullableNumber(record.x_min),
+    x_max: asNullableNumber(record.x_max),
+    left_y_min: asNullableNumber(record.left_y_min),
+    left_y_max: asNullableNumber(record.left_y_max),
+    right_y_min: asNullableNumber(record.right_y_min),
+    right_y_max: asNullableNumber(record.right_y_max),
+  }
+}
+
 function normalizeChartSeriesMeta(value: unknown): ChartSeriesMetaState[] {
   if (!Array.isArray(value)) {
     return []
@@ -655,7 +696,7 @@ function normalizeWaveformSeriesSnapshots(value: unknown): WaveformSeriesSnapsho
     return {
       name: asString(record.name),
       color: asString(record.color),
-      axis: asString(record.axis),
+      axis_key: asString(record.axis_key),
       x: asNumberArray(record.x),
       y: asNumberArray(record.y),
       point_count: asNumber(record.point_count),
@@ -818,6 +859,7 @@ export function normalizeSimulationState(input: unknown): SimulationMainState {
       available_series: normalizeChartSeriesMeta(analysisChartView.available_series),
       visible_series: normalizeChartSeriesSnapshots(analysisChartView.visible_series),
       visible_series_count: asNumber(analysisChartView.visible_series_count),
+      viewport: normalizeSurfaceViewport(analysisChartView.viewport),
       measurement_point: normalizeChartMeasurementPoint(analysisChartView.measurement_point),
       measurement_enabled: asBoolean(analysisChartView.measurement_enabled),
       measurement: normalizeChartMeasurement(analysisChartView.measurement),
@@ -832,7 +874,10 @@ export function normalizeSimulationState(input: unknown): SimulationMainState {
       signal_catalog: normalizeWaveformSignalCatalog(waveformView.signal_catalog),
       visible_series: normalizeWaveformSeriesSnapshots(waveformView.visible_series),
       x_axis_label: asString(waveformView.x_axis_label),
+      y_label: asString(waveformView.y_label),
+      secondary_y_label: asString(waveformView.secondary_y_label),
       log_x: asBoolean(waveformView.log_x),
+      viewport: normalizeSurfaceViewport(waveformView.viewport),
       cursor_a_visible: asBoolean(waveformView.cursor_a_visible),
       cursor_b_visible: asBoolean(waveformView.cursor_b_visible),
       measurement: normalizeWaveformMeasurement(waveformView.measurement),

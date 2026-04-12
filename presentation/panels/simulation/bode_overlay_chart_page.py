@@ -10,7 +10,7 @@ from presentation.panels.simulation.chart_export_utils import build_chart_export
 from presentation.panels.simulation.chart_signal_tree import SignalTreeWidget
 from presentation.panels.simulation.chart_view_types import ChartSeries, ChartSpec
 from presentation.panels.simulation.qt_surface_export import export_widget_image
-from presentation.panels.simulation.ltspice_plot_interaction import LTSpiceViewBox, apply_dynamic_tick_spacing, clamp_range, finite_range, merge_ranges, nice_tick_spacing
+from presentation.panels.simulation.ltspice_plot_interaction import apply_dynamic_tick_spacing, clamp_range, finite_range, merge_ranges, nice_tick_spacing
 from resources.theme import COLOR_BG_PRIMARY, COLOR_BG_SECONDARY, COLOR_BG_TERTIARY, COLOR_BORDER, COLOR_TEXT_PRIMARY, COLOR_TEXT_SECONDARY, FONT_SIZE_SMALL, SPACING_NORMAL, SPACING_SMALL
 
 
@@ -32,8 +32,10 @@ class BodeOverlayChartPage(QWidget):
         self._x_domain: Optional[Tuple[float, float]] = None
         self._mag_domain: Optional[Tuple[float, float]] = None
         self._phase_domain: Optional[Tuple[float, float]] = None
+        self._view_x_range: Optional[Tuple[float, float]] = None
         self._mag_view_range: Optional[Tuple[float, float]] = None
         self._phase_view_range: Optional[Tuple[float, float]] = None
+        self._viewport_active = False
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -80,16 +82,15 @@ class BodeOverlayChartPage(QWidget):
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(0)
 
-        self._plot_widget = pg.PlotWidget(viewBox=LTSpiceViewBox())
+        self._plot_widget = pg.PlotWidget()
         self._plot_widget.setBackground(COLOR_BG_PRIMARY)
         self._plot_item = self._plot_widget.getPlotItem()
         self._plot_item.showGrid(x=True, y=True, alpha=0.25)
         self._plot_item.disableAutoRange()
         self._plot_item.showAxis("right")
         self._plot_item.getAxis("right").setWidth(72)
-        view_box = self._plot_item.vb
-        if isinstance(view_box, LTSpiceViewBox):
-            view_box.rect_selected.connect(self._on_rect_selected)
+        self._plot_item.vb.setMenuEnabled(False)
+        self._plot_item.vb.setMouseEnabled(x=False, y=False)
         self._legend = self._plot_item.addLegend()
         right_layout.addWidget(self._plot_widget, 1)
 
@@ -147,14 +148,9 @@ class BodeOverlayChartPage(QWidget):
         self._plot_item.disableAutoRange()
         self._plot_item.showAxis("right")
         self._plot_item.getAxis("right").setWidth(72)
+        self._plot_item.vb.setMenuEnabled(False)
+        self._plot_item.vb.setMouseEnabled(x=False, y=False)
         self._legend = self._plot_item.addLegend()
-        view_box = self._plot_item.vb
-        if isinstance(view_box, LTSpiceViewBox):
-            try:
-                view_box.rect_selected.disconnect(self._on_rect_selected)
-            except Exception:
-                pass
-            view_box.rect_selected.connect(self._on_rect_selected)
         self._measurement_enabled = False
         self._measurement_point_enabled = False
         self._measurement_point_target_id = ""
@@ -168,8 +164,10 @@ class BodeOverlayChartPage(QWidget):
         self._x_domain = None
         self._mag_domain = None
         self._phase_domain = None
+        self._view_x_range = None
         self._mag_view_range = None
         self._phase_view_range = None
+        self._viewport_active = False
         self._signal_tree.clear()
 
     def set_chart(self, spec: ChartSpec):
@@ -248,7 +246,38 @@ class BodeOverlayChartPage(QWidget):
         return True
 
     def fit_to_view(self):
-        self._rebuild_plot()
+        self.reset_viewport()
+
+    def reset_viewport(self) -> None:
+        self._viewport_active = False
+        self._view_x_range = None
+        self._mag_view_range = None
+        self._phase_view_range = None
+        self._apply_full_viewport()
+        if self._measurement_enabled:
+            self._ensure_measurement_positions()
+
+    def set_viewport(self, viewport: Dict[str, float]) -> bool:
+        if self._x_domain is None or self._mag_domain is None or self._phase_domain is None:
+            return False
+        x_min = self._to_axis_x(float(viewport.get("x_min")))
+        x_max = self._to_axis_x(float(viewport.get("x_max")))
+        mag_min = float(viewport.get("left_y_min"))
+        mag_max = float(viewport.get("left_y_max"))
+        phase_min = viewport.get("right_y_min")
+        phase_max = viewport.get("right_y_max")
+        if None in {x_min, x_max, phase_min, phase_max}:
+            return False
+        x_range = clamp_range((x_min, x_max), self._x_domain, positive_only=self._is_log_x())
+        mag_range = clamp_range((mag_min, mag_max), self._mag_domain, positive_only=False)
+        phase_range = clamp_range((float(phase_min), float(phase_max)), self._phase_domain, positive_only=False)
+        if x_range is None or mag_range is None or phase_range is None:
+            return False
+        self._viewport_active = True
+        self._apply_viewport(x_range, mag_range, phase_range)
+        if self._measurement_enabled:
+            self._ensure_measurement_positions()
+        return True
 
     def set_series_visible(self, series_name: str, visible: bool) -> bool:
         if self._spec is None or not series_name:
@@ -287,12 +316,13 @@ class BodeOverlayChartPage(QWidget):
         self._clear_measurement_positions()
 
     def set_measurement_cursor(self, cursor_id: str, x_value: float) -> bool:
-        if not self._measurement_enabled or self._x_domain is None:
+        x_view_range = self._current_x_view_range()
+        if not self._measurement_enabled or x_view_range is None:
             return False
         axis_x = self._to_axis_x(x_value)
         if axis_x is None:
             return False
-        clamped_x = min(max(axis_x, self._x_domain[0]), self._x_domain[1])
+        clamped_x = min(max(axis_x, x_view_range[0]), x_view_range[1])
         if cursor_id == "b":
             self._cursor_b_pos = clamped_x
         else:
@@ -305,12 +335,13 @@ class BodeOverlayChartPage(QWidget):
             self._measurement_point_x = None
 
     def set_measurement_point_position(self, x_value: float) -> bool:
-        if not self._measurement_point_enabled or not self._measurement_point_target_id or self._x_domain is None:
+        x_view_range = self._current_x_view_range()
+        if not self._measurement_point_enabled or not self._measurement_point_target_id or x_view_range is None:
             return False
         axis_x = self._to_axis_x(x_value)
         if axis_x is None:
             return False
-        self._measurement_point_x = clamp_to_bounds(axis_x, self._x_domain)
+        self._measurement_point_x = clamp_to_bounds(axis_x, x_view_range)
         return self._measurement_point_x is not None
 
     def export_image(self, path: str) -> bool:
@@ -352,9 +383,31 @@ class BodeOverlayChartPage(QWidget):
             "available_series": available_series,
             "visible_series": [serialize_chart_series_for_web(series) for series in visible_series],
             "visible_series_count": len(visible_series),
+            "viewport": self._build_viewport_snapshot(),
             "measurement_point": self._build_measurement_point_snapshot(),
             "measurement_enabled": bool(self._measurement_enabled),
             "measurement": self._build_measurement_snapshot(),
+        }
+
+    def _build_viewport_snapshot(self) -> Dict[str, object]:
+        if not self._viewport_active or self._view_x_range is None or self._mag_view_range is None or self._phase_view_range is None:
+            return {
+                "active": False,
+                "x_min": None,
+                "x_max": None,
+                "left_y_min": None,
+                "left_y_max": None,
+                "right_y_min": None,
+                "right_y_max": None,
+            }
+        return {
+            "active": True,
+            "x_min": self._to_display_x(self._view_x_range[0]),
+            "x_max": self._to_display_x(self._view_x_range[1]),
+            "left_y_min": float(self._mag_view_range[0]),
+            "left_y_max": float(self._mag_view_range[1]),
+            "right_y_min": float(self._phase_view_range[0]),
+            "right_y_max": float(self._phase_view_range[1]),
         }
 
     def _build_measurement_point_snapshot(self) -> Dict[str, object]:
@@ -500,8 +553,6 @@ class BodeOverlayChartPage(QWidget):
             self._x_domain = merge_ranges(x_ranges)
         self._mag_domain = merge_ranges(mag_ranges)
         self._phase_domain = merge_ranges(phase_ranges)
-        self._mag_view_range = self._mag_domain
-        self._phase_view_range = self._phase_domain
 
     def _phase_to_display_value(self, phase_value: float) -> float:
         if self._mag_view_range is None or self._phase_view_range is None:
@@ -539,6 +590,8 @@ class BodeOverlayChartPage(QWidget):
             self._x_domain = None
             self._mag_domain = None
             self._phase_domain = None
+            self._viewport_active = False
+            self._view_x_range = None
             self._mag_view_range = None
             self._phase_view_range = None
             return
@@ -560,7 +613,7 @@ class BodeOverlayChartPage(QWidget):
                 self._plot_item.addItem(phase_item)
                 self._plot_items[phase_series.name] = phase_item
 
-        self._apply_full_viewport()
+        self._apply_stored_or_full_viewport()
         if self._measurement_enabled:
             self._ensure_measurement_positions()
 
@@ -596,6 +649,7 @@ class BodeOverlayChartPage(QWidget):
     ):
         if x_range is None or mag_range is None or phase_range is None:
             return
+        self._view_x_range = x_range
         self._mag_view_range = mag_range
         self._phase_view_range = phase_range
         self._apply_domain_limits()
@@ -609,7 +663,26 @@ class BodeOverlayChartPage(QWidget):
     def _apply_full_viewport(self):
         if self._x_domain is None or self._mag_domain is None or self._phase_domain is None:
             return
+        self._viewport_active = False
         self._apply_viewport(self._x_domain, self._mag_domain, self._phase_domain)
+
+    def _apply_stored_or_full_viewport(self):
+        if self._x_domain is None or self._mag_domain is None or self._phase_domain is None:
+            return
+        if not self._viewport_active or self._view_x_range is None or self._mag_view_range is None or self._phase_view_range is None:
+            self._apply_full_viewport()
+            return
+        clamped_x_range = clamp_range(self._view_x_range, self._x_domain, positive_only=self._is_log_x())
+        clamped_mag_range = clamp_range(self._mag_view_range, self._mag_domain, positive_only=False)
+        clamped_phase_range = clamp_range(self._phase_view_range, self._phase_domain, positive_only=False)
+        if clamped_x_range is None or clamped_mag_range is None or clamped_phase_range is None:
+            self._viewport_active = False
+            self._view_x_range = None
+            self._mag_view_range = None
+            self._phase_view_range = None
+            self._apply_full_viewport()
+            return
+        self._apply_viewport(clamped_x_range, clamped_mag_range, clamped_phase_range)
 
     def _refresh_phase_curves(self):
         for pair in self._series_groups.values():
@@ -645,17 +718,21 @@ class BodeOverlayChartPage(QWidget):
         return values
 
     def _ensure_measurement_positions(self):
-        if self._x_domain is None:
+        x_view_range = self._current_x_view_range()
+        if x_view_range is None:
             return
-        x_min, x_max = self._x_domain
+        x_min, x_max = x_view_range
         center = (x_min + x_max) / 2
         offset = max((x_max - x_min) * 0.08, 1e-12)
         if self._cursor_a_pos is None:
             self._cursor_a_pos = center - offset
-        self._cursor_a_pos = min(max(self._cursor_a_pos, self._x_domain[0]), self._x_domain[1])
+        self._cursor_a_pos = min(max(self._cursor_a_pos, x_view_range[0]), x_view_range[1])
         if self._cursor_b_pos is None:
             self._cursor_b_pos = center + offset
-        self._cursor_b_pos = min(max(self._cursor_b_pos, self._x_domain[0]), self._x_domain[1])
+        self._cursor_b_pos = min(max(self._cursor_b_pos, x_view_range[0]), x_view_range[1])
+
+    def _current_x_view_range(self) -> Optional[Tuple[float, float]]:
+        return self._view_x_range or self._x_domain
 
     def _clear_measurement_positions(self):
         self._cursor_a_pos = None
@@ -734,31 +811,11 @@ class BodeOverlayChartPage(QWidget):
         self._updating_tree = False
         self._measurement_point_target_id = ""
         self._measurement_point_x = None
+        self._viewport_active = False
+        self._view_x_range = None
+        self._mag_view_range = None
+        self._phase_view_range = None
         self._rebuild_plot()
-
-    def _on_rect_selected(self, requested_x_range: Tuple[float, float], requested_y_range: Tuple[float, float]):
-        if self._x_domain is None or self._mag_domain is None or self._phase_domain is None:
-            return
-        clamped_x_range = clamp_range(requested_x_range, self._x_domain, positive_only=self._is_log_x())
-        clamped_mag_range = clamp_range(requested_y_range, self._mag_domain, positive_only=False)
-        if clamped_x_range is None or clamped_mag_range is None or self._mag_view_range is None or self._phase_view_range is None:
-            return
-        current_mag_min, current_mag_max = self._mag_view_range
-        current_phase_min, current_phase_max = self._phase_view_range
-        current_mag_span = max(current_mag_max - current_mag_min, 1e-30)
-        current_phase_span = current_phase_max - current_phase_min
-        norm_start = (requested_y_range[0] - current_mag_min) / current_mag_span
-        norm_end = (requested_y_range[1] - current_mag_min) / current_mag_span
-        raw_phase_range = (
-            current_phase_min + norm_start * current_phase_span,
-            current_phase_min + norm_end * current_phase_span,
-        )
-        clamped_phase_range = clamp_range(raw_phase_range, self._phase_domain, positive_only=False)
-        if clamped_phase_range is None:
-            return
-        self._apply_viewport(clamped_x_range, clamped_mag_range, clamped_phase_range)
-        if self._measurement_enabled:
-            self._ensure_measurement_positions()
 
 
 

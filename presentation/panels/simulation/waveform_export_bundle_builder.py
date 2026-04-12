@@ -42,7 +42,7 @@ class WaveformExportBundleBuilder:
                 continue
             payloads.append({
                 "name": signal_name,
-                "axis": plot_item.axis,
+                "axis_key": plot_item.axis,
                 "x": [float(value) for value in waveform_data.x_data],
                 "y": [float(value) for value in waveform_data.y_data],
                 "point_count": len(waveform_data.y_data),

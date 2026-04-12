@@ -876,6 +876,18 @@
   font-weight: 700;
 }
 
+.svg-chart__interaction-hitbox {
+  fill: transparent;
+  cursor: crosshair;
+}
+
+.svg-chart__viewport-selection {
+  fill: rgba(59, 130, 246, 0.14);
+  stroke: #2563eb;
+  stroke-width: 1.2;
+  stroke-dasharray: 6 4;
+}
+
 .svg-chart__measurement-cursor {
   color: #111111;
   cursor: ew-resize;

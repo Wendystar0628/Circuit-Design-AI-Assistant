@@ -90,6 +90,13 @@ export function WaveformTab({ state, bridge }: WaveformTabProps) {
               <div className="card-title">波形画布区</div>
               <div className="card-subtitle">显示序列：{waveform.visible_series.length}</div>
               <SeriesSvgChart
+                measurementCursors={{
+                  cursorAVisible: waveform.cursor_a_visible,
+                  cursorBVisible: waveform.cursor_b_visible,
+                  cursorAX: waveform.measurement.cursor_a_x,
+                  cursorBX: waveform.measurement.cursor_b_x,
+                  onCursorMove: (cursorId, position) => bridge?.moveCursor(cursorId, position),
+                }}
                 series={waveform.visible_series}
                 xLabel={waveform.x_axis_label}
                 yLabel="Waveform"

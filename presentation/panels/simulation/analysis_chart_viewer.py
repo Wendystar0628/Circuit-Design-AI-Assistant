@@ -198,6 +198,12 @@ class ChartViewer(QWidget):
         if page is not None:
             page.set_measurement_enabled(enabled)
 
+    def set_measurement_cursor(self, cursor_id: str, x_value: float) -> bool:
+        page = self._chart_page
+        if page is None:
+            return False
+        return bool(page.set_measurement_cursor(cursor_id, x_value))
+
     def supports_data_cursor(self) -> bool:
         page = self._chart_page
         return bool(page is not None and page.supports_data_cursor())

@@ -19,9 +19,6 @@ SIGNAL_COLORS = [
     "#17becf",
 ]
 
-CURSOR_A_COLOR = "#ff0000"
-CURSOR_B_COLOR = "#00ff00"
-
 INITIAL_POINTS = 500
 VIEWPORT_POINTS = 1000
 
@@ -50,8 +47,6 @@ class PlotItem:
 
 __all__ = [
     "SIGNAL_COLORS",
-    "CURSOR_A_COLOR",
-    "CURSOR_B_COLOR",
     "INITIAL_POINTS",
     "VIEWPORT_POINTS",
     "WaveformMeasurement",

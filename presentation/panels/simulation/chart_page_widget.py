@@ -6,7 +6,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QSplitter, QTreeWidgetItem, QVBoxLayout, QWidget
 
-from presentation.panels.simulation.chart_data_cursor import ChartDataCursorController, DataCursorSample, DataCursorValue, build_draggable_vertical_cursor_line
+from presentation.panels.simulation.chart_data_cursor import ChartDataCursorController, DataCursorSample, DataCursorValue
 from presentation.panels.simulation.chart_export_utils import build_chart_export_payload, serialize_chart_series_for_web
 from presentation.panels.simulation.chart_signal_tree import SignalTreeWidget
 from presentation.panels.simulation.chart_view_types import ChartSeries, ChartSpec
@@ -30,92 +30,13 @@ from resources.theme import (
 )
 
 
-class MeasurementBar(QFrame):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setObjectName("measurementBar")
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(SPACING_NORMAL, SPACING_SMALL, SPACING_NORMAL, SPACING_SMALL)
-        layout.setSpacing(2)
-
-        first_row = QHBoxLayout()
-        self._cursor_a_label = QLabel("A: --")
-        self._cursor_b_label = QLabel("B: --")
-        self._delta_label = QLabel("Δ: --")
-        self._freq_label = QLabel("f: --")
-        first_row.addWidget(self._cursor_a_label)
-        first_row.addWidget(self._cursor_b_label)
-        first_row.addWidget(self._delta_label)
-        first_row.addWidget(self._freq_label)
-        first_row.addStretch()
-        layout.addLayout(first_row)
-
-        self._values_label = QLabel("")
-        self._values_label.setObjectName("signalValuesLabel")
-        self._values_label.setWordWrap(True)
-        layout.addWidget(self._values_label)
-        self.hide()
-
-    def clear_values(self):
-        self._cursor_a_label.setText("A: --")
-        self._cursor_b_label.setText("B: --")
-        self._delta_label.setText("Δ: --")
-        self._freq_label.setText("f: --")
-        self._values_label.setText("")
-
-    def update_values(
-        self,
-        cursor_a_x: Optional[float],
-        cursor_b_x: Optional[float],
-        series_values_a: Dict[str, float],
-        series_values_b: Dict[str, float],
-        colors: Dict[str, str],
-        *,
-        show_frequency: bool,
-    ):
-        if cursor_a_x is None:
-            self._cursor_a_label.setText("A: --")
-        else:
-            self._cursor_a_label.setText(f"A: {cursor_a_x:.6g}")
-
-        if cursor_b_x is None:
-            self._cursor_b_label.setText("B: --")
-        else:
-            self._cursor_b_label.setText(f"B: {cursor_b_x:.6g}")
-
-        if cursor_a_x is not None and cursor_b_x is not None:
-            delta_x = cursor_b_x - cursor_a_x
-            self._delta_label.setText(f"Δ: {delta_x:.6g}")
-            if show_frequency and delta_x != 0:
-                self._freq_label.setText(f"f: {1.0 / abs(delta_x):.6g} Hz")
-            else:
-                self._freq_label.setText("f: --")
-        else:
-            self._delta_label.setText("Δ: --")
-            self._freq_label.setText("f: --")
-
-        parts: List[str] = []
-        series_names = list(colors.keys())
-        for name in series_names:
-            a_text = f"A={series_values_a[name]:.6g}" if name in series_values_a else "A=--"
-            if cursor_b_x is not None:
-                b_text = f"B={series_values_b[name]:.6g}" if name in series_values_b else "B=--"
-                text = f"{name}: {a_text}  {b_text}"
-            else:
-                text = f"{name}: {a_text}"
-            parts.append(f'<span style="color:{colors[name]}">{text}</span>')
-        self._values_label.setText("  |  ".join(parts))
-
-
 class ChartPage(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._spec: Optional[ChartSpec] = None
-        self._cursor_a: Optional[pg.InfiniteLine] = None
-        self._cursor_b: Optional[pg.InfiniteLine] = None
+        self._measurement_enabled = False
         self._cursor_a_pos: Optional[float] = None
         self._cursor_b_pos: Optional[float] = None
-        self._series_colors: Dict[str, str] = {}
         self._plot_items: Dict[str, pg.PlotDataItem] = {}
         self._series_items: Dict[str, QTreeWidgetItem] = {}
         self._updating_tree = False
@@ -184,9 +105,6 @@ class ChartPage(QWidget):
             parent=self,
         )
 
-        self._measurement_bar = MeasurementBar()
-        right_layout.addWidget(self._measurement_bar)
-
         self._main_splitter.addWidget(right_panel)
         self._main_splitter.setSizes([180, 620])
         layout.addWidget(self._main_splitter, 1)
@@ -232,20 +150,6 @@ class ChartPage(QWidget):
             #signalTree::item:hover {{
                 background-color: {COLOR_BG_TERTIARY};
             }}
-            #measurementBar {{
-                background-color: {COLOR_BG_TERTIARY};
-                border-top: 1px solid {COLOR_BORDER};
-            }}
-            #measurementBar QLabel {{
-                color: {COLOR_TEXT_PRIMARY};
-                font-size: {FONT_SIZE_SMALL}px;
-                font-family: Consolas, monospace;
-            }}
-            #signalValuesLabel {{
-                color: {COLOR_TEXT_SECONDARY};
-                font-size: {FONT_SIZE_SMALL}px;
-                font-family: Consolas, monospace;
-            }}
         """)
 
     def clear(self):
@@ -254,12 +158,10 @@ class ChartPage(QWidget):
         plot_item.showGrid(x=True, y=True, alpha=0.25)
         plot_item.disableAutoRange()
         self._legend = plot_item.addLegend()
-        self._remove_cursors()
+        self._measurement_enabled = False
+        self._clear_measurement_positions()
         self._data_cursor.clear()
-        self._measurement_bar.clear_values()
-        self._measurement_bar.hide()
         self._spec = None
-        self._series_colors = {}
         self._plot_items = {}
         self._series_items = {}
         self._x_domain = None
@@ -354,17 +256,27 @@ class ChartPage(QWidget):
         self._data_cursor.set_enabled(enabled)
 
     def set_measurement_enabled(self, enabled: bool):
-        if enabled:
-            self._ensure_cursors()
-            self._measurement_bar.show()
-            self._update_measurement()
-        else:
-            self._remove_cursors()
-            self._measurement_bar.clear_values()
-            self._measurement_bar.hide()
+        self._measurement_enabled = bool(enabled)
+        if self._measurement_enabled:
+            self._ensure_measurement_positions()
+            return
+        self._clear_measurement_positions()
 
     def is_measurement_enabled(self) -> bool:
-        return self._cursor_a is not None or self._cursor_b is not None
+        return bool(self._measurement_enabled)
+
+    def set_measurement_cursor(self, cursor_id: str, x_value: float) -> bool:
+        if not self._measurement_enabled or self._x_domain is None:
+            return False
+        axis_x = self._to_axis_x(x_value)
+        if axis_x is None:
+            return False
+        clamped_x = min(max(axis_x, self._x_domain[0]), self._x_domain[1])
+        if cursor_id == "b":
+            self._cursor_b_pos = clamped_x
+        else:
+            self._cursor_a_pos = clamped_x
+        return True
 
     def export_image(self, path: str) -> bool:
         self.resize(max(self.width(), 1280), max(self.height(), 840))
@@ -422,6 +334,15 @@ class ChartPage(QWidget):
         }
 
     def _build_measurement_snapshot(self) -> Dict[str, Any]:
+        if not self._measurement_enabled or self._x_domain is None or not self._plot_items:
+            return {
+                "cursor_a_x": None,
+                "cursor_b_x": None,
+                "delta_x": None,
+                "frequency": None,
+                "values_a": {},
+                "values_b": {},
+            }
         values_a: Dict[str, float] = {}
         values_b: Dict[str, float] = {}
         if self._cursor_a_pos is not None:
@@ -445,75 +366,31 @@ class ChartPage(QWidget):
             "values_b": values_b,
         }
 
-    def _ensure_cursors(self):
+    def _ensure_measurement_positions(self):
         if self._spec is None or not self._plot_items or self._x_domain is None:
             return
-        if self._cursor_a is None:
-            self._cursor_a = build_draggable_vertical_cursor_line("#ff6b6b", bounds=self._x_domain)
-            self._cursor_a.sigPositionChanged.connect(self._on_cursor_a_moved)
-            self._plot_widget.addItem(self._cursor_a)
-        if self._cursor_b is None:
-            self._cursor_b = build_draggable_vertical_cursor_line("#2ecc71", bounds=self._x_domain)
-            self._cursor_b.sigPositionChanged.connect(self._on_cursor_b_moved)
-            self._plot_widget.addItem(self._cursor_b)
-
-        self._cursor_a.setBounds(self._x_domain)
-        self._cursor_b.setBounds(self._x_domain)
-
-        view_range = self._plot_widget.getPlotItem().viewRange()[0]
-        x_min, x_max = view_range[0], view_range[1]
+        x_min, x_max = self._x_domain
         center = (x_min + x_max) / 2
         offset = max((x_max - x_min) * 0.08, 1e-12)
         if self._cursor_a_pos is None:
             self._cursor_a_pos = center - offset
         self._cursor_a_pos = min(max(self._cursor_a_pos, self._x_domain[0]), self._x_domain[1])
-        self._cursor_a.setValue(self._cursor_a_pos)
         if self._cursor_b_pos is None:
             self._cursor_b_pos = center + offset
         self._cursor_b_pos = min(max(self._cursor_b_pos, self._x_domain[0]), self._x_domain[1])
-        self._cursor_b.setValue(self._cursor_b_pos)
 
-    def _remove_cursors(self):
-        if self._cursor_a is not None:
-            self._plot_widget.removeItem(self._cursor_a)
-            self._cursor_a = None
-        if self._cursor_b is not None:
-            self._plot_widget.removeItem(self._cursor_b)
-            self._cursor_b = None
+    def _clear_measurement_positions(self):
         self._cursor_a_pos = None
         self._cursor_b_pos = None
 
-    def _on_cursor_a_moved(self):
-        if self._cursor_a is None:
-            return
-        self._cursor_a_pos = float(self._cursor_a.value())
-        self._update_measurement()
-
-    def _on_cursor_b_moved(self):
-        if self._cursor_b is None:
-            return
-        self._cursor_b_pos = float(self._cursor_b.value())
-        self._update_measurement()
-
-    def _update_measurement(self):
-        if self._spec is None:
-            return
-        values_a: Dict[str, float] = {}
-        values_b: Dict[str, float] = {}
-        if self._cursor_a_pos is not None:
-            values_a = self._sample_series(self._cursor_a_pos)
-        if self._cursor_b_pos is not None:
-            values_b = self._sample_series(self._cursor_b_pos)
-        cursor_a_x = self._to_display_x(self._cursor_a_pos)
-        cursor_b_x = self._to_display_x(self._cursor_b_pos)
-        self._measurement_bar.update_values(
-            cursor_a_x,
-            cursor_b_x,
-            values_a,
-            values_b,
-            self._series_colors,
-            show_frequency=self._should_show_frequency(),
-        )
+    def _to_axis_x(self, x_value: float) -> Optional[float]:
+        if not np.isfinite(x_value):
+            return None
+        if self._spec is not None and self._spec.log_x:
+            if x_value <= 0:
+                return None
+            return float(np.log10(x_value))
+        return float(x_value)
 
     def _sample_series(self, x_position: float) -> Dict[str, float]:
         if self._spec is None:
@@ -611,7 +488,6 @@ class ChartPage(QWidget):
         except Exception:
             self._legend = plot_item.addLegend()
 
-        self._series_colors = {}
         visible_series = self._visible_series()
         for series in visible_series:
             pen = pg.mkPen(series.color, width=1.6, style=Qt.PenStyle.SolidLine)
@@ -622,15 +498,11 @@ class ChartPage(QWidget):
             )
             plot_item.addItem(item)
             self._plot_items[series.name] = item
-            self._series_colors[series.name] = series.color
             self._legend.addItem(item, series.name)
 
         if not visible_series:
-            self._measurement_bar.clear_values()
-            self._remove_cursors()
             if self._data_cursor.is_enabled():
                 self._data_cursor.refresh()
-            self._measurement_bar.hide()
             self._x_domain = None
             self._y_domain = None
             return
@@ -639,7 +511,7 @@ class ChartPage(QWidget):
         self._apply_full_viewport()
 
         if self.is_measurement_enabled():
-            self._update_measurement()
+            self._ensure_measurement_positions()
         if self._data_cursor.is_enabled():
             self._data_cursor.refresh()
 
@@ -739,7 +611,7 @@ class ChartPage(QWidget):
         self._apply_domain_limits()
         self._apply_viewport(clamped_x_range, clamped_y_range)
         if self.is_measurement_enabled():
-            self._update_measurement()
+            self._ensure_measurement_positions()
         if self._data_cursor.is_enabled():
             self._data_cursor.refresh()
 
@@ -753,4 +625,4 @@ class ChartPage(QWidget):
         return transformed
 
 
-__all__ = ["ChartPage", "MeasurementBar"]
+__all__ = ["ChartPage"]

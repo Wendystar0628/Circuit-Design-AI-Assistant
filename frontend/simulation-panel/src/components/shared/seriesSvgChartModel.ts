@@ -17,6 +17,11 @@ export interface SeriesSvgChartViewport {
   plotBottom: number
 }
 
+export interface SeriesSvgChartAxisDomain {
+  min: number
+  max: number
+}
+
 export interface SeriesSvgChartTick {
   value: number
   label: string
@@ -35,6 +40,7 @@ export interface SeriesSvgChartRenderedSeries {
 
 export interface SeriesSvgChartModel {
   viewport: SeriesSvgChartViewport
+  xDomain: SeriesSvgChartAxisDomain
   xLabel: string
   leftAxisLabel: string
   rightAxisLabel: string
@@ -390,6 +396,7 @@ export function buildSeriesSvgChartModel({
 
   return {
     viewport,
+    xDomain,
     xLabel: xLabel || 'X',
     leftAxisLabel: yLabel || (hasRightAxis ? 'Left axis' : 'Y'),
     rightAxisLabel: hasRightAxis ? (secondaryYLabel || 'Right axis') : '',

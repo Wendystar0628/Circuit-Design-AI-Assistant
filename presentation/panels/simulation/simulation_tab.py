@@ -492,6 +492,7 @@ class SimulationTab(QWidget):
         bridge.chart_series_visibility_toggled.connect(self._on_chart_series_visibility_toggled)
         bridge.clear_all_chart_series_requested.connect(self._on_chart_clear_all_requested)
         bridge.chart_measurement_enabled_changed.connect(self._on_chart_measurement_enabled_changed)
+        bridge.chart_measurement_cursor_move_requested.connect(self._on_chart_measurement_cursor_move_requested)
         bridge.chart_data_cursor_enabled_changed.connect(self._on_chart_data_cursor_enabled_changed)
         bridge.chart_fit_requested.connect(self._on_chart_fit_requested)
         bridge.signal_visibility_toggled.connect(self._on_waveform_signal_visibility_toggled)
@@ -523,6 +524,10 @@ class SimulationTab(QWidget):
 
     def _on_chart_measurement_enabled_changed(self, enabled: bool):
         self._backend_runtime.chart_viewer.set_measurement_enabled(enabled)
+        self._update_authoritative_frontend_state()
+
+    def _on_chart_measurement_cursor_move_requested(self, cursor_id: str, position: float):
+        self._backend_runtime.chart_viewer.set_measurement_cursor(cursor_id, position)
         self._update_authoritative_frontend_state()
 
     def _on_chart_data_cursor_enabled_changed(self, enabled: bool):

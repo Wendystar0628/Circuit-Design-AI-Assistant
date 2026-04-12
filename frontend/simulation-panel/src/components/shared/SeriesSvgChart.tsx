@@ -1,11 +1,22 @@
-import { useMemo, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 
 import { useElementSize } from '../../hooks/useElementSize'
 import { buildSeriesSvgChartModel, type SeriesSvgChartDatum } from './seriesSvgChartModel'
 
+type MeasurementCursorId = 'a' | 'b'
+
+interface SeriesSvgChartMeasurementCursors {
+  cursorAVisible: boolean
+  cursorBVisible: boolean
+  cursorAX: number | null
+  cursorBX: number | null
+  onCursorMove?: (cursorId: MeasurementCursorId, position: number) => void
+}
+
 interface SeriesSvgChartProps {
   title?: string
   headerActions?: ReactNode
+  measurementCursors?: SeriesSvgChartMeasurementCursors
   series: SeriesSvgChartDatum[]
   xLabel: string
   yLabel: string
@@ -21,10 +32,32 @@ const RIGHT_TICK_LABEL_OFFSET = 9
 const X_TICK_LABEL_OFFSET = 19
 const X_AXIS_TITLE_OFFSET = 34
 const SIDE_AXIS_TITLE_OFFSET = 32
+const MEASUREMENT_CURSOR_LABEL_Y_OFFSET = 14
+const MEASUREMENT_CURSOR_LABEL_WIDTH = 16
+const MEASUREMENT_CURSOR_LABEL_HEIGHT = 14
+
+function toAxisXValue(value: number, logX: boolean): number | null {
+  if (!Number.isFinite(value)) {
+    return null
+  }
+  if (!logX) {
+    return value
+  }
+  if (value <= 0) {
+    return null
+  }
+  const transformed = Math.log10(value)
+  return Number.isFinite(transformed) ? transformed : null
+}
+
+function toDisplayXValue(value: number, logX: boolean): number {
+  return logX ? 10 ** value : value
+}
 
 export function SeriesSvgChart({
   title,
   headerActions,
+  measurementCursors,
   series,
   xLabel,
   yLabel,
@@ -34,6 +67,11 @@ export function SeriesSvgChart({
   emptyMessage,
 }: SeriesSvgChartProps) {
   const { ref: chartFrameRef, width: chartWidth, height: chartHeight } = useElementSize<HTMLDivElement>()
+  const svgElementRef = useRef<SVGSVGElement | null>(null)
+  const cursorMoveHandlerRef = useRef<SeriesSvgChartMeasurementCursors['onCursorMove']>(measurementCursors?.onCursorMove)
+  const activeDragCursorRef = useRef<MeasurementCursorId | null>(null)
+  const [activeDragCursor, setActiveDragCursor] = useState<MeasurementCursorId | null>(null)
+  const [dragDisplayX, setDragDisplayX] = useState<number | null>(null)
   const chartModel = useMemo(() => buildSeriesSvgChartModel({
     series,
     xLabel,
@@ -47,6 +85,14 @@ export function SeriesSvgChart({
 
   const normalizedTitle = title?.trim() ?? ''
   const hasHeader = normalizedTitle.length > 0 || headerActions !== undefined
+
+  useEffect(() => {
+    cursorMoveHandlerRef.current = measurementCursors?.onCursorMove
+  }, [measurementCursors?.onCursorMove])
+
+  useEffect(() => {
+    activeDragCursorRef.current = activeDragCursor
+  }, [activeDragCursor])
 
   if (!chartModel) {
     return (
@@ -69,6 +115,7 @@ export function SeriesSvgChart({
     rightTicks,
     renderedSeries,
     hasRightAxis,
+    xDomain,
     leftAxisLabel,
     rightAxisLabel,
   } = chartModel
@@ -79,6 +126,98 @@ export function SeriesSvgChart({
   const leftAxisTitleX = SIDE_AXIS_TITLE_OFFSET
   const rightAxisTitleX = svgWidth - SIDE_AXIS_TITLE_OFFSET
 
+  const resolveDisplayXFromClientX = (clientX: number): number | null => {
+    const svgElement = svgElementRef.current
+    if (svgElement === null) {
+      return null
+    }
+    const rect = svgElement.getBoundingClientRect()
+    if (rect.width <= 0) {
+      return null
+    }
+    const svgX = ((clientX - rect.left) / rect.width) * svgWidth
+    const clampedSvgX = Math.min(Math.max(svgX, plotLeft), plotRight)
+    const plotWidth = Math.max(plotRight - plotLeft, 1e-12)
+    const axisX = xDomain.min + ((clampedSvgX - plotLeft) / plotWidth) * (xDomain.max - xDomain.min)
+    return toDisplayXValue(axisX, logX)
+  }
+
+  const projectMeasurementCursorX = (displayX: number | null): number | null => {
+    if (displayX === null) {
+      return null
+    }
+    const axisX = toAxisXValue(displayX, logX)
+    if (axisX === null) {
+      return null
+    }
+    const clampedAxisX = Math.min(Math.max(axisX, xDomain.min), xDomain.max)
+    const domainSpan = Math.max(xDomain.max - xDomain.min, 1e-12)
+    return plotLeft + ((clampedAxisX - xDomain.min) / domainSpan) * (plotRight - plotLeft)
+  }
+
+  const startMeasurementCursorDrag = (cursorId: MeasurementCursorId, clientX: number) => {
+    const nextDisplayX = resolveDisplayXFromClientX(clientX)
+    if (nextDisplayX === null) {
+      return
+    }
+    setActiveDragCursor(cursorId)
+    setDragDisplayX(nextDisplayX)
+    cursorMoveHandlerRef.current?.(cursorId, nextDisplayX)
+  }
+
+  useEffect(() => {
+    if (activeDragCursor === null) {
+      setDragDisplayX(null)
+      return undefined
+    }
+
+    const handlePointerMove = (event: PointerEvent) => {
+      const draggingCursor = activeDragCursorRef.current
+      if (draggingCursor === null) {
+        return
+      }
+      const nextDisplayX = resolveDisplayXFromClientX(event.clientX)
+      if (nextDisplayX === null) {
+        return
+      }
+      setDragDisplayX(nextDisplayX)
+      cursorMoveHandlerRef.current?.(draggingCursor, nextDisplayX)
+    }
+
+    const handlePointerUp = () => {
+      setActiveDragCursor(null)
+      setDragDisplayX(null)
+    }
+
+    window.addEventListener('pointermove', handlePointerMove)
+    window.addEventListener('pointerup', handlePointerUp)
+    window.addEventListener('pointercancel', handlePointerUp)
+
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove)
+      window.removeEventListener('pointerup', handlePointerUp)
+      window.removeEventListener('pointercancel', handlePointerUp)
+    }
+  }, [activeDragCursor, logX, plotLeft, plotRight, svgWidth, xDomain.max, xDomain.min])
+
+  const measurementCursorItems = [
+    {
+      id: 'a' as const,
+      label: 'A',
+      visible: measurementCursors?.cursorAVisible ?? false,
+      displayX: activeDragCursor === 'a' && dragDisplayX !== null ? dragDisplayX : (measurementCursors?.cursorAX ?? null),
+    },
+    {
+      id: 'b' as const,
+      label: 'B',
+      visible: measurementCursors?.cursorBVisible ?? false,
+      displayX: activeDragCursor === 'b' && dragDisplayX !== null ? dragDisplayX : (measurementCursors?.cursorBX ?? null),
+    },
+  ].map((cursor) => ({
+    ...cursor,
+    plotX: cursor.visible ? projectMeasurementCursorX(cursor.displayX) : null,
+  })).filter((cursor) => cursor.visible && cursor.plotX !== null)
+
   return (
     <div className="svg-chart-shell">
       {hasHeader ? (
@@ -88,7 +227,7 @@ export function SeriesSvgChart({
         </div>
       ) : null}
       <div ref={chartFrameRef} className="svg-chart-frame">
-        <svg viewBox={`0 0 ${svgWidth} ${svgHeight}`} className="svg-chart" aria-label="Simulation series chart">
+        <svg ref={svgElementRef} viewBox={`0 0 ${svgWidth} ${svgHeight}`} className="svg-chart" aria-label="Simulation series chart">
           <rect x={plotLeft} y={plotTop} width={plotRight - plotLeft} height={plotBottom - plotTop} className="svg-chart__plot-bg" />
           {leftTicks.map((tick) => (
             <line key={`grid-y-${tick.value}`} x1={plotLeft} x2={plotRight} y1={tick.position} y2={tick.position} className="svg-chart__grid" />
@@ -111,6 +250,29 @@ export function SeriesSvgChart({
               points={item.polylinePoints}
               className="svg-chart__series"
             />
+          ))}
+          {measurementCursorItems.map((cursor) => (
+            <g
+              key={`measurement-cursor-${cursor.id}`}
+              className={`svg-chart__measurement-cursor svg-chart__measurement-cursor--${cursor.id}`}
+              onPointerDown={cursorMoveHandlerRef.current ? (event) => {
+                event.preventDefault()
+                startMeasurementCursorDrag(cursor.id, event.clientX)
+              } : undefined}
+            >
+              <line x1={cursor.plotX ?? 0} x2={cursor.plotX ?? 0} y1={plotTop} y2={plotBottom} className="svg-chart__measurement-cursor-line" />
+              <line x1={cursor.plotX ?? 0} x2={cursor.plotX ?? 0} y1={plotTop} y2={plotBottom} className="svg-chart__measurement-cursor-hitbox" />
+              <rect
+                x={(cursor.plotX ?? 0) - MEASUREMENT_CURSOR_LABEL_WIDTH / 2}
+                y={plotTop + 2}
+                rx={MEASUREMENT_CURSOR_LABEL_HEIGHT / 2}
+                ry={MEASUREMENT_CURSOR_LABEL_HEIGHT / 2}
+                width={MEASUREMENT_CURSOR_LABEL_WIDTH}
+                height={MEASUREMENT_CURSOR_LABEL_HEIGHT}
+                className="svg-chart__measurement-cursor-badge"
+              />
+              <text x={cursor.plotX ?? 0} y={plotTop + MEASUREMENT_CURSOR_LABEL_Y_OFFSET} textAnchor="middle" className="svg-chart__measurement-cursor-label">{cursor.label}</text>
+            </g>
           ))}
           {leftTicks.map((tick) => (
             <g key={`left-tick-${tick.value}`}>

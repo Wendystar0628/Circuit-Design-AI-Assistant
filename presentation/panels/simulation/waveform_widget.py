@@ -50,8 +50,6 @@ from domain.simulation.models.simulation_result import SimulationResult
 from presentation.panels.simulation.waveform_export_bundle_builder import waveform_export_bundle_builder
 from presentation.panels.simulation.waveform_measurement_support import waveform_measurement_support
 from presentation.panels.simulation.waveform_plot_types import (
-    CURSOR_A_COLOR,
-    CURSOR_B_COLOR,
     INITIAL_POINTS,
     VIEWPORT_POINTS,
     PlotItem,
@@ -114,8 +112,8 @@ class WaveformWidget(QWidget):
         self._color_index: int = 0
         
         # 光标
-        self._cursor_a: Optional[pg.InfiniteLine] = None
-        self._cursor_b: Optional[pg.InfiniteLine] = None
+        self._cursor_a_visible: bool = False
+        self._cursor_b_visible: bool = False
         self._cursor_a_pos: Optional[float] = None
         self._cursor_b_pos: Optional[float] = None
         
@@ -341,7 +339,7 @@ class WaveformWidget(QWidget):
             self._x_domain = None
             self._left_y_domain = None
             self._right_y_domain = None
-            self._update_measurement()
+            self._measurement_cache = None
         else:
             self.fit_to_view()
         
@@ -370,25 +368,24 @@ class WaveformWidget(QWidget):
         Args:
             x_position: X 轴位置
         """
-        if self._cursor_a is None:
-            self._create_cursor_a()
-        if self._x_domain is not None:
-            x_position = min(max(x_position, self._x_domain[0]), self._x_domain[1])
-        
-        self._cursor_a.setValue(x_position)
-        self._cursor_a_pos = x_position
-        self._update_measurement()
+        view_x_position = self._to_view_x_value(x_position)
+        if view_x_position is None:
+            return
+        self._cursor_a_visible = True
+        self._set_cursor_a_view_position(view_x_position)
 
     def set_cursor_a_visible(self, visible: bool):
-        if visible:
-            if self._cursor_a is None:
+        self._cursor_a_visible = bool(visible)
+        if self._cursor_a_visible:
+            if self._cursor_a_pos is None:
                 if self._x_domain is not None:
                     x_position = (self._x_domain[0] + self._x_domain[1]) / 2
                 else:
                     x_position = 0.0
-                self.set_cursor_a(x_position)
+                self._set_cursor_a_view_position(x_position)
             return
-        self._remove_cursor_a()
+        self._cursor_a_pos = None
+        self._measurement_cache = None
     
     def set_cursor_b(self, x_position: float):
         """
@@ -397,26 +394,25 @@ class WaveformWidget(QWidget):
         Args:
             x_position: X 轴位置
         """
-        if self._cursor_b is None:
-            self._create_cursor_b()
-        if self._x_domain is not None:
-            x_position = min(max(x_position, self._x_domain[0]), self._x_domain[1])
-        
-        self._cursor_b.setValue(x_position)
-        self._cursor_b_pos = x_position
-        self._update_measurement()
+        view_x_position = self._to_view_x_value(x_position)
+        if view_x_position is None:
+            return
+        self._cursor_b_visible = True
+        self._set_cursor_b_view_position(view_x_position)
 
     def set_cursor_b_visible(self, visible: bool):
-        if visible:
-            if self._cursor_b is None:
+        self._cursor_b_visible = bool(visible)
+        if self._cursor_b_visible:
+            if self._cursor_b_pos is None:
                 if self._x_domain is not None:
                     span = self._x_domain[1] - self._x_domain[0]
                     x_position = self._x_domain[0] + span * 0.6
                 else:
                     x_position = 0.0
-                self.set_cursor_b(x_position)
+                self._set_cursor_b_view_position(x_position)
             return
-        self._remove_cursor_b()
+        self._cursor_b_pos = None
+        self._measurement_cache = None
     
     def get_measurement(self) -> WaveformMeasurement:
         """
@@ -535,8 +531,8 @@ class WaveformWidget(QWidget):
             "visible_series": visible_series,
             "x_axis_label": self._get_x_axis_label(),
             "log_x": self._is_log_x_enabled(),
-            "cursor_a_visible": self._cursor_a is not None,
-            "cursor_b_visible": self._cursor_b is not None,
+            "cursor_a_visible": self._cursor_a_visible,
+            "cursor_b_visible": self._cursor_b_visible,
             "measurement": {
                 "cursor_a_x": float(measurement.cursor_a_x) if measurement.cursor_a_x is not None else None,
                 "cursor_b_x": float(measurement.cursor_b_x) if measurement.cursor_b_x is not None else None,
@@ -568,7 +564,7 @@ class WaveformWidget(QWidget):
 
         self._rebuild_domains()
         self._apply_full_viewport()
-        self._update_measurement()
+        self._measurement_cache = None
 
     def zoom_to_x_range(self, start: float, end: float):
         if self._current_result is None or not self._plot_items or self._x_domain is None:
@@ -595,7 +591,7 @@ class WaveformWidget(QWidget):
         )
         self._apply_domain_limits()
         self._apply_viewport(clamped_x_range, current_left_y, current_right_y)
-        self._update_measurement()
+        self._measurement_cache = None
 
     def _get_result_signature(self, result: Optional[SimulationResult]) -> Optional[Tuple[str, str, str]]:
         if result is None:
@@ -633,8 +629,10 @@ class WaveformWidget(QWidget):
         self._left_y_domain = None
         self._right_y_domain = None
         self._refresh_legend()
-        self._remove_cursor_a()
-        self._remove_cursor_b()
+        self._cursor_a_visible = False
+        self._cursor_b_visible = False
+        self._cursor_a_pos = None
+        self._cursor_b_pos = None
 
         if not preserve_result_context or self._current_result is None:
             self._current_result = None
@@ -658,6 +656,15 @@ class WaveformWidget(QWidget):
         if not self._is_log_x_enabled():
             return float(value)
         return float(10 ** value)
+
+    def _to_view_x_value(self, value: float) -> Optional[float]:
+        if not np.isfinite(value):
+            return None
+        if not self._is_log_x_enabled():
+            return float(value)
+        if value <= 0:
+            return None
+        return float(np.log10(value))
 
     def _refresh_legend(self):
         if self._legend is None:
@@ -750,82 +757,24 @@ class WaveformWidget(QWidget):
         )
         self._apply_domain_limits()
         self._apply_viewport(clamped_x_range, clamped_left_y_range, applied_right_y_range)
-        self._update_measurement()
+        self._measurement_cache = None
 
     
     # ============================================================
     # 内部方法 - 光标管理
     # ============================================================
     
-    def _create_cursor_a(self):
-        """创建光标 A"""
-        if self._cursor_a is not None:
-            return
-        
-        pen = pg.mkPen(color=CURSOR_A_COLOR, width=1, style=Qt.PenStyle.DashLine)
-        self._cursor_a = pg.InfiniteLine(
-            pos=0,
-            angle=90,
-            pen=pen,
-            movable=True,
-            label='A',
-            labelOpts={'color': CURSOR_A_COLOR, 'position': 0.95}
-        )
-        self._cursor_a.sigPositionChanged.connect(self._on_cursor_a_moved)
-        self._plot_widget.addItem(self._cursor_a)
+    def _set_cursor_a_view_position(self, x_position: float):
+        if self._x_domain is not None:
+            x_position = min(max(x_position, self._x_domain[0]), self._x_domain[1])
+        self._cursor_a_pos = x_position
+        self._measurement_cache = None
 
-    def _create_cursor_b(self):
-        """创建光标 B"""
-        if self._cursor_b is not None:
-            return
-        
-        pen = pg.mkPen(color=CURSOR_B_COLOR, width=1, style=Qt.PenStyle.DashLine)
-        self._cursor_b = pg.InfiniteLine(
-            pos=0,
-            angle=90,
-            pen=pen,
-            movable=True,
-            label='B',
-            labelOpts={'color': CURSOR_B_COLOR, 'position': 0.90}
-        )
-        self._cursor_b.sigPositionChanged.connect(self._on_cursor_b_moved)
-        self._plot_widget.addItem(self._cursor_b)
-
-    def _remove_cursor_a(self):
-        """移除光标 A"""
-        if self._cursor_a is not None:
-            self._plot_widget.removeItem(self._cursor_a)
-            self._cursor_a = None
-            self._cursor_a_pos = None
-            self._update_measurement()
-
-    def _remove_cursor_b(self):
-        """移除光标 B"""
-        if self._cursor_b is not None:
-            self._plot_widget.removeItem(self._cursor_b)
-            self._cursor_b = None
-            self._cursor_b_pos = None
-            self._update_measurement()
-
-    def _on_cursor_a_moved(self, line):
-        """光标 A 移动事件"""
-        self._cursor_a_pos = line.value()
-        self._update_measurement()
-    
-    def _on_cursor_b_moved(self, line):
-        """光标 B 移动事件"""
-        self._cursor_b_pos = line.value()
-        self._update_measurement()
-    
-    def _update_measurement(self):
-        """更新测量显示（包括所有信号在光标处的 Y 值）"""
-        self._measurement_cache = self._measurement_support.build_measurement(
-            self._current_result,
-            self._plot_items,
-            self._cursor_a_pos,
-            self._cursor_b_pos,
-            self._from_view_x_value,
-        )
+    def _set_cursor_b_view_position(self, x_position: float):
+        if self._x_domain is not None:
+            x_position = min(max(x_position, self._x_domain[0]), self._x_domain[1])
+        self._cursor_b_pos = x_position
+        self._measurement_cache = None
 
     # ============================================================
     # 内部方法 - 事件处理

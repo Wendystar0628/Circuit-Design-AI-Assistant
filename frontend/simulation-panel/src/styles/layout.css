@@ -884,6 +884,39 @@
   font-weight: 700;
 }
 
+.svg-chart__measurement-cursor {
+  color: #ff6b6b;
+  cursor: ew-resize;
+}
+
+.svg-chart__measurement-cursor--b {
+  color: #2ecc71;
+}
+
+.svg-chart__measurement-cursor-line {
+  stroke: currentColor;
+  stroke-width: 1.3;
+  stroke-dasharray: 6 4;
+  vector-effect: non-scaling-stroke;
+}
+
+.svg-chart__measurement-cursor-hitbox {
+  stroke: transparent;
+  stroke-width: 14;
+  vector-effect: non-scaling-stroke;
+}
+
+.svg-chart__measurement-cursor-badge {
+  fill: currentColor;
+}
+
+.svg-chart__measurement-cursor-label {
+  fill: #ffffff;
+  font-size: 10px;
+  font-weight: 700;
+  pointer-events: none;
+}
+
 .svg-chart__series {
   vector-effect: non-scaling-stroke;
 }

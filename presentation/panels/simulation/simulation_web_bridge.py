@@ -12,6 +12,7 @@ class SimulationWebBridge(QObject):
     chart_series_visibility_toggled = pyqtSignal(str, bool)
     clear_all_chart_series_requested = pyqtSignal()
     chart_measurement_enabled_changed = pyqtSignal(bool)
+    chart_measurement_cursor_move_requested = pyqtSignal(str, float)
     chart_data_cursor_enabled_changed = pyqtSignal(bool)
     chart_fit_requested = pyqtSignal()
     signal_visibility_toggled = pyqtSignal(str, bool)
@@ -54,6 +55,10 @@ class SimulationWebBridge(QObject):
     @pyqtSlot(bool)
     def setChartMeasurementEnabled(self, enabled: bool) -> None:
         self.chart_measurement_enabled_changed.emit(bool(enabled))
+
+    @pyqtSlot(str, float)
+    def moveChartMeasurementCursor(self, cursor_id: str, position: float) -> None:
+        self.chart_measurement_cursor_move_requested.emit(self._normalize_cursor_id(cursor_id), float(position or 0.0))
 
     @pyqtSlot(bool)
     def setChartDataCursorEnabled(self, enabled: bool) -> None:

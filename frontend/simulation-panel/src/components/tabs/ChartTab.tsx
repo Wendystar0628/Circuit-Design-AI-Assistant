@@ -147,6 +147,13 @@ export function ChartTab({ state, bridge }: ChartTabProps) {
             <SeriesSvgChart
               title={chart.has_chart ? chartDisplayName : ''}
               headerActions={chartHeaderActions}
+              measurementCursors={{
+                cursorAVisible: chart.measurement_enabled,
+                cursorBVisible: chart.measurement_enabled,
+                cursorAX: chart.measurement.cursor_a_x,
+                cursorBX: chart.measurement.cursor_b_x,
+                onCursorMove: (cursorId, position) => bridge?.moveChartMeasurementCursor(cursorId, position),
+              }}
               series={chart.visible_series}
               xLabel={chart.x_label}
               yLabel={chart.y_label}

@@ -775,6 +775,21 @@
   gap: var(--sim-gap-sm);
 }
 
+.svg-chart-header {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.svg-chart-title {
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.3;
+  color: var(--sim-text-primary);
+  word-break: break-word;
+}
+
 .svg-chart-frame {
   display: flex;
   flex: 1 1 auto;
@@ -812,14 +827,14 @@
 
 .svg-chart__tick-label {
   fill: #64748b;
-  font-size: 10px;
-  font-weight: 500;
+  font-size: 11px;
+  font-weight: 600;
 }
 
 .svg-chart__axis-title {
   fill: #334155;
-  font-size: 11px;
-  font-weight: 600;
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .svg-chart__series {

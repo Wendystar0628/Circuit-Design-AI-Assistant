@@ -94,12 +94,14 @@ class ChartViewer(QWidget):
     def get_web_snapshot(self) -> Dict[str, Any]:
         page = self._chart_page
         page_snapshot = page.get_web_snapshot() if page is not None else {}
+        spec = self._chart_spec
         return {
             "has_chart": bool(page is not None and page.has_chart()),
-            "chart_count": 1 if self._chart_spec is not None else 0,
+            "chart_count": 1 if spec is not None else 0,
             "can_export": bool(page is not None and page.has_chart()),
             "can_add_to_conversation": bool(page is not None and page.has_chart()),
             **page_snapshot,
+            "chart_type_display_name": ChartType.get_display_name(spec.chart_type) if spec is not None else "",
         }
 
     def export_current_image(self, path: str) -> bool:

@@ -22,6 +22,7 @@ function formatNumber(value: number | null): string {
 export function ChartTab({ state, bridge }: ChartTabProps) {
   const chart = state.analysis_chart_view
   const supportsDataCursor = chart.available_series.length > 0
+  const chartDisplayName = chart.chart_type_display_name || chart.title || chart.chart_type || '图表'
   const visibleLegendSeries = useMemo(() => chart.available_series.filter((series) => series.visible), [chart.available_series])
   const measurementRows = useMemo(() => {
     const names = Array.from(new Set([
@@ -39,7 +40,7 @@ export function ChartTab({ state, bridge }: ChartTabProps) {
     <div className="tab-surface">
       <CompactToolbar
         title="图表"
-        description={chart.title ? `${chart.title} · ${chart.chart_type || 'chart'}` : '统一前端图表显示层，直接消费后端权威 snapshot。'}
+        description={chart.has_chart ? `当前图表：${chartDisplayName}` : '统一前端图表显示层，直接消费后端权威 snapshot。'}
         actions={
           <>
             <button
@@ -149,6 +150,7 @@ export function ChartTab({ state, bridge }: ChartTabProps) {
         main={
           <div className="content-card content-card--canvas">
             <SeriesSvgChart
+              title={chart.has_chart ? chartDisplayName : ''}
               series={chart.visible_series}
               xLabel={chart.x_label}
               yLabel={chart.y_label}
@@ -162,7 +164,7 @@ export function ChartTab({ state, bridge }: ChartTabProps) {
         footer={
           <div className="content-card content-card--scrollable">
             <div className="info-grid info-grid--compact">
-              <div className="info-row"><div className="card-title">图表类型</div><div className="info-row__value">{chart.chart_type || '未定义'}</div></div>
+              <div className="info-row"><div className="card-title">图表类型</div><div className="info-row__value">{chart.has_chart ? chartDisplayName : '未定义'}</div></div>
               <div className="info-row"><div className="card-title">数据光标</div><div className="info-row__value">{chart.data_cursor_enabled ? (chart.data_cursor_target || '已启用') : '未启用'}</div></div>
               <div className="info-row"><div className="card-title">测量状态</div><div className="info-row__value">{chart.measurement_enabled ? '已启用' : '未启用'}</div></div>
               <div className="info-row"><div className="card-title">ΔX / f</div><div className="info-row__value">{`${formatNumber(chart.measurement.delta_x)} / ${formatNumber(chart.measurement.frequency)}`}</div></div>

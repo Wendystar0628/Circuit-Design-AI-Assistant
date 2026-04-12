@@ -80,6 +80,7 @@ export interface AnalysisChartViewState {
   can_add_to_conversation: boolean
   title: string
   chart_type: string
+  chart_type_display_name: string
   x_label: string
   y_label: string
   secondary_y_label: string
@@ -395,6 +396,7 @@ export const EMPTY_SIMULATION_STATE: SimulationMainState = {
     can_add_to_conversation: false,
     title: '',
     chart_type: '',
+    chart_type_display_name: '',
     x_label: '',
     y_label: '',
     secondary_y_label: '',
@@ -777,6 +779,7 @@ export function normalizeSimulationState(input: unknown): SimulationMainState {
       can_add_to_conversation: asBoolean(analysisChartView.can_add_to_conversation),
       title: asString(analysisChartView.title),
       chart_type: asString(analysisChartView.chart_type),
+      chart_type_display_name: asString(analysisChartView.chart_type_display_name),
       x_label: asString(analysisChartView.x_label),
       y_label: asString(analysisChartView.y_label),
       secondary_y_label: asString(analysisChartView.secondary_y_label),

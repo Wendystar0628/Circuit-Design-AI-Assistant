@@ -93,6 +93,13 @@ export function ChartTab({ state, bridge }: ChartTabProps) {
         }
       />
       <ResponsivePane
+        sidebarConfig={{
+          defaultSize: 176,
+          minSize: 132,
+          maxSize: 360,
+          mainMinSize: 320,
+          resizable: true,
+        }}
         sidebar={
           <div className="content-card content-card--scrollable">
             <div className="card-title">序列列表</div>
@@ -131,7 +138,7 @@ export function ChartTab({ state, bridge }: ChartTabProps) {
           </div>
         }
         main={
-          <div className="content-card">
+          <div className="content-card content-card--canvas">
             <div className="canvas-stage canvas-stage--chart">
               <div className="card-title">图表画布</div>
               <div className="card-subtitle">

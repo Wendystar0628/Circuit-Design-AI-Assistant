@@ -1,6 +1,9 @@
 :root {
   color-scheme: light;
   font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+  --sim-tab-font-family: "SimHei", "Heiti SC", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+  --sim-tab-font-size: 12px;
+  --sim-tab-font-weight: 700;
   --sim-app-bg: #f3f6fb;
   --sim-surface-bg: #ffffff;
   --sim-surface-muted: #f8fafc;
@@ -14,18 +17,18 @@
   --sim-success: #047857;
   --sim-error: #b42318;
   --sim-warning: #9a6700;
-  --sim-radius-sm: 6px;
-  --sim-radius-md: 8px;
-  --sim-radius-lg: 10px;
-  --sim-gap-xs: 4px;
-  --sim-gap-sm: 6px;
-  --sim-gap-md: 8px;
-  --sim-gap-lg: 10px;
-  --sim-pad-outer: 10px;
-  --sim-pad-inner: 8px;
-  --sim-pad-tight: 6px;
-  --sim-control-height: 28px;
-  --sim-tab-bar-height: 40px;
+  --sim-radius-sm: 3px;
+  --sim-radius-md: 5px;
+  --sim-radius-lg: 6px;
+  --sim-gap-xs: 2px;
+  --sim-gap-sm: 3px;
+  --sim-gap-md: 4px;
+  --sim-gap-lg: 6px;
+  --sim-pad-outer: 2px;
+  --sim-pad-inner: 4px;
+  --sim-pad-tight: 3px;
+  --sim-control-height: 26px;
+  --sim-tab-bar-height: 36px;
 }
 
 *,
@@ -36,17 +39,18 @@
 
 @media (max-width: 1080px) {
   :root {
-    --sim-pad-outer: 8px;
-    --sim-pad-inner: 7px;
+    --sim-pad-outer: 2px;
+    --sim-pad-inner: 4px;
   }
 }
 
 @media (max-width: 760px) {
   :root {
-    --sim-pad-outer: 6px;
-    --sim-pad-inner: 6px;
-    --sim-control-height: 26px;
-    --sim-tab-bar-height: 38px;
+    --sim-pad-outer: 1px;
+    --sim-pad-inner: 3px;
+    --sim-control-height: 24px;
+    --sim-tab-bar-height: 34px;
+    --sim-tab-font-size: 11px;
   }
 }
 

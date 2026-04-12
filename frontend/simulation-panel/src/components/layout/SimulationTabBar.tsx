@@ -21,19 +21,39 @@ const TAB_LABELS: Record<SimulationTabId, string> = {
 export function SimulationTabBar({ activeTab, availableTabs, onTabSelect }: SimulationTabBarProps) {
   return (
     <nav className="simulation-tab-bar-shell" aria-label="Simulation Result Tabs">
+      <span className="simulation-tab-bar__title" aria-hidden="true">
+        仿真面板
+      </span>
       <div className="simulation-tab-bar" role="tablist" aria-orientation="horizontal">
         {availableTabs.map((tabId) => {
           const active = tabId === activeTab
+          const tabLabel = TAB_LABELS[tabId] ?? tabId
+
+          if (active) {
+            return (
+              <button
+                key={tabId}
+                type="button"
+                role="tab"
+                aria-selected="true"
+                className="simulation-tab-chip simulation-tab-chip--active"
+                onClick={() => onTabSelect(tabId)}
+              >
+                {tabLabel}
+              </button>
+            )
+          }
+
           return (
             <button
               key={tabId}
               type="button"
               role="tab"
-              aria-selected={active ? 'true' : 'false'}
-              className={active ? 'simulation-tab-chip simulation-tab-chip--active' : 'simulation-tab-chip'}
+              aria-selected="false"
+              className="simulation-tab-chip"
               onClick={() => onTabSelect(tabId)}
             >
-              {TAB_LABELS[tabId] ?? tabId}
+              {tabLabel}
             </button>
           )
         })}

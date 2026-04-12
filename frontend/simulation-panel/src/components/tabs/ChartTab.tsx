@@ -21,7 +21,6 @@ function formatNumber(value: number | null): string {
 export function ChartTab({ state, bridge }: ChartTabProps) {
   const chart = state.analysis_chart_view
   const supportsDataCursor = chart.available_series.length > 0
-  const cursorTargetOptions = useMemo(() => chart.available_series.map((series) => series.name), [chart.available_series])
   const measurementRows = useMemo(() => {
     const names = Array.from(new Set([
       ...Object.keys(chart.measurement.values_a),
@@ -102,22 +101,6 @@ export function ChartTab({ state, bridge }: ChartTabProps) {
         }}
         sidebar={
           <div className="content-card content-card--scrollable">
-            <div className="card-title">序列列表</div>
-            <div className="card-subtitle">共 {chart.available_series.length} 条序列，当前显示 {chart.visible_series_count} 条</div>
-            <label className="field-row">
-              <span className="field-row__label">数据光标目标</span>
-              <select
-                className="field-select"
-                value={chart.data_cursor_target || ''}
-                disabled={!supportsDataCursor}
-                onChange={(event: { target: { value: string } }) => bridge?.setChartDataCursorTarget(event.target.value)}
-              >
-                <option value="">未选择</option>
-                {cursorTargetOptions.map((seriesName) => (
-                  <option key={seriesName} value={seriesName}>{seriesName}</option>
-                ))}
-              </select>
-            </label>
             <div className="signal-list">
               {chart.available_series.length ? chart.available_series.map((series) => (
                 <label key={series.name} className="signal-item signal-item--checkbox">
@@ -139,21 +122,15 @@ export function ChartTab({ state, bridge }: ChartTabProps) {
         }
         main={
           <div className="content-card content-card--canvas">
-            <div className="canvas-stage canvas-stage--chart">
-              <div className="card-title">图表画布</div>
-              <div className="card-subtitle">
-                {[chart.x_label || 'X', chart.y_label || 'Y', chart.secondary_y_label].filter(Boolean).join(' / ')}
-              </div>
-              <SeriesSvgChart
-                series={chart.visible_series}
-                xLabel={chart.x_label}
-                yLabel={chart.y_label}
-                secondaryYLabel={chart.secondary_y_label}
-                logX={chart.log_x}
-                logY={chart.log_y}
-                emptyMessage={chart.has_chart ? '当前未显示任何序列，请在左侧重新勾选。' : '当前结果没有可用图表。'}
-              />
-            </div>
+            <SeriesSvgChart
+              series={chart.visible_series}
+              xLabel={chart.x_label}
+              yLabel={chart.y_label}
+              secondaryYLabel={chart.secondary_y_label}
+              logX={chart.log_x}
+              logY={chart.log_y}
+              emptyMessage={chart.has_chart ? '当前未显示任何序列，请在左侧重新勾选。' : '当前结果没有可用图表。'}
+            />
           </div>
         }
         footer={

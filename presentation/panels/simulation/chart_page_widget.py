@@ -313,7 +313,11 @@ class ChartPage(QWidget):
         return str(self._data_cursor.target_id() or "")
 
     def set_data_cursor_target(self, target_id: str) -> bool:
-        return self._activate_cursor_target(str(target_id or ""))
+        normalized_target_id = str(target_id or "")
+        if not normalized_target_id:
+            self._data_cursor.set_target("")
+            return True
+        return self._activate_cursor_target(normalized_target_id)
 
     def set_series_visible(self, series_name: str, visible: bool) -> bool:
         if self._spec is None or not series_name or series_name not in self._series_items:

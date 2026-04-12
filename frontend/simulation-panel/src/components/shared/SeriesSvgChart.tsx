@@ -106,16 +106,6 @@ export function SeriesSvgChart({
           ) : null}
         </svg>
       </div>
-      <div className="svg-chart-legend">
-        {renderedSeries.map((item) => (
-          <div key={item.name} className="svg-chart-legend__item">
-            <svg className="svg-chart-legend__swatch" viewBox="0 0 24 12" aria-hidden="true" focusable="false">
-              <line x1="1" x2="23" y1="6" y2="6" stroke={item.color} strokeWidth="2" strokeLinecap="round" strokeDasharray={item.strokeDasharray} className="svg-chart-legend__line" />
-            </svg>
-            <span className="svg-chart-legend__name">{item.name}</span>
-          </div>
-        ))}
-      </div>
     </div>
   )
 }

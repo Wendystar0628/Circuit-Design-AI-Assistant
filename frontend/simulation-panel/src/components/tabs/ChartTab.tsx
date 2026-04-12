@@ -3,6 +3,7 @@ import { useMemo } from 'react'
 import type { SimulationBridge } from '../../bridge/bridge'
 import type { SimulationMainState } from '../../types/state'
 import { CompactToolbar } from '../layout/CompactToolbar'
+import { ResizableStack } from '../layout/ResizableStack'
 import { ResponsivePane } from '../layout/ResponsivePane'
 import { SeriesSvgChart } from '../shared/SeriesSvgChart'
 
@@ -21,6 +22,7 @@ function formatNumber(value: number | null): string {
 export function ChartTab({ state, bridge }: ChartTabProps) {
   const chart = state.analysis_chart_view
   const supportsDataCursor = chart.available_series.length > 0
+  const visibleLegendSeries = useMemo(() => chart.available_series.filter((series) => series.visible), [chart.available_series])
   const measurementRows = useMemo(() => {
     const names = Array.from(new Set([
       ...Object.keys(chart.measurement.values_a),
@@ -100,24 +102,48 @@ export function ChartTab({ state, bridge }: ChartTabProps) {
           resizable: true,
         }}
         sidebar={
-          <div className="content-card content-card--scrollable">
-            <div className="signal-list">
-              {chart.available_series.length ? chart.available_series.map((series) => (
-                <label key={series.name} className="signal-item signal-item--checkbox">
-                  <div className="signal-item__stack">
-                    <span className="signal-item__name">{series.name}</span>
-                    <span className="signal-item__meta">
-                      {[series.axis_key, series.component, `${series.point_count} 点`].filter(Boolean).join(' · ') || '无元数据'}
-                    </span>
+          <div className="content-card chart-sidebar">
+            <ResizableStack
+              defaultPrimaryRatio={0.7}
+              minPrimarySize={144}
+              minSecondarySize={104}
+              primary={
+                <section className="chart-sidebar__panel">
+                  <div className="chart-sidebar__panel-title">选择信号</div>
+                  <div className="chart-sidebar__panel-body">
+                    <div className="signal-list chart-sidebar__signal-list">
+                      {chart.available_series.length ? chart.available_series.map((series) => (
+                        <label key={series.name} className="signal-item signal-item--checkbox">
+                          <span className="signal-item__name">{series.name}</span>
+                          <input
+                            type="checkbox"
+                            checked={series.visible}
+                            onChange={() => bridge?.setChartSeriesVisible(series.name, !series.visible)}
+                          />
+                        </label>
+                      )) : <div className="signal-item"><span className="muted-text">当前结果没有可用图表序列。</span></div>}
+                    </div>
                   </div>
-                  <input
-                    type="checkbox"
-                    checked={series.visible}
-                    onChange={() => bridge?.setChartSeriesVisible(series.name, !series.visible)}
-                  />
-                </label>
-              )) : <div className="signal-item"><span className="signal-item__meta">当前结果没有可用图表序列。</span></div>}
-            </div>
+                </section>
+              }
+              secondary={
+                <section className="chart-sidebar__panel">
+                  <div className="chart-sidebar__panel-title">已显示</div>
+                  <div className="chart-sidebar__panel-body">
+                    <div className="chart-sidebar-legend">
+                      {visibleLegendSeries.length ? visibleLegendSeries.map((series) => (
+                        <div key={series.name} className="chart-sidebar-legend__item">
+                          <svg className="chart-sidebar-legend__swatch" viewBox="0 0 24 12" aria-hidden="true" focusable="false">
+                            <line x1="1" x2="23" y1="6" y2="6" stroke={series.color} strokeWidth="2" strokeLinecap="round" className="chart-sidebar-legend__line" />
+                          </svg>
+                          <span className="chart-sidebar-legend__name">{series.name}</span>
+                        </div>
+                      )) : <div className="muted-text">当前没有已显示信号。</div>}
+                    </div>
+                  </div>
+                </section>
+              }
+            />
           </div>
         }
         main={

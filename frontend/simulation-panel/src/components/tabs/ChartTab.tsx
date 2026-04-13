@@ -2,10 +2,10 @@ import { useEffect, useMemo, useState } from 'react'
 
 import type { SimulationBridge } from '../../bridge/bridge'
 import type { SimulationMainState } from '../../types/state'
-import { ResizableStack } from '../layout/ResizableStack'
 import { ResponsivePane } from '../layout/ResponsivePane'
 import { MeasurementFloatingPanel } from '../shared/MeasurementFloatingPanel'
 import { MeasurementPointFloatingPanel } from '../shared/MeasurementPointFloatingPanel'
+import { SignalSelectionSidebar } from '../shared/SignalSelectionSidebar'
 import { SeriesSvgChart, type SeriesSvgChartFloatingPanel } from '../shared/SeriesSvgChart'
 import { buildChartMeasurementPresentationGroups } from '../shared/chartMeasurementPresentation'
 import { formatMeasurementNumber } from '../shared/chartValueFormatting'
@@ -84,6 +84,18 @@ export function ChartTab({ state, bridge }: ChartTabProps) {
     </>
   ) : undefined
   const visibleLegendSeries = useMemo(() => chart.available_series.filter((series) => series.visible), [chart.available_series])
+  const selectableSeriesItems = useMemo(() => chart.available_series.map((series) => ({
+    id: series.name,
+    label: series.name,
+    checked: series.visible,
+    onCheckedChange: (checked: boolean) => bridge?.setChartSeriesVisible(series.name, checked),
+  })), [bridge, chart.available_series])
+  const visibleSeriesItems = useMemo(() => visibleLegendSeries.map((series) => ({
+    id: series.name,
+    label: series.name,
+    color: series.color,
+    lineStyle: series.line_style === 'dash' ? 'dash' as const : 'solid' as const,
+  })), [visibleLegendSeries])
   const preferredMeasurementGroupId = useMemo(() => {
     if (chart.measurement_point.target_id && measurementSignalOptions.some((option) => option.id === chart.measurement_point.target_id)) {
       return chart.measurement_point.target_id
@@ -178,49 +190,15 @@ export function ChartTab({ state, bridge }: ChartTabProps) {
           resizable: true,
         }}
         sidebar={
-          <div className="content-card chart-sidebar">
-            <ResizableStack
-              defaultPrimaryRatio={0.7}
-              minPrimarySize={144}
-              minSecondarySize={104}
-              primary={
-                <section className="chart-sidebar__panel">
-                  <div className="chart-sidebar__panel-title">选择信号</div>
-                  <div className="chart-sidebar__panel-body">
-                    <div className="signal-list chart-sidebar__signal-list">
-                      {chart.available_series.length ? chart.available_series.map((series) => (
-                        <label key={series.name} className="signal-item signal-item--checkbox">
-                          <span className="signal-item__name">{series.name}</span>
-                          <input
-                            type="checkbox"
-                            checked={series.visible}
-                            onChange={(event) => bridge?.setChartSeriesVisible(series.name, event.target.checked)}
-                          />
-                        </label>
-                      )) : <div className="signal-item"><span className="muted-text">当前结果没有可用图表序列。</span></div>}
-                    </div>
-                  </div>
-                </section>
-              }
-              secondary={
-                <section className="chart-sidebar__panel">
-                  <div className="chart-sidebar__panel-title">已显示</div>
-                  <div className="chart-sidebar__panel-body">
-                    <div className="chart-sidebar-legend">
-                      {visibleLegendSeries.length ? visibleLegendSeries.map((series) => (
-                        <div key={series.name} className="chart-sidebar-legend__item">
-                          <svg className="chart-sidebar-legend__swatch" viewBox="0 0 24 12" aria-hidden="true" focusable="false">
-                            <line x1="1" x2="23" y1="6" y2="6" stroke={series.color} strokeWidth="2" strokeLinecap="round" className="chart-sidebar-legend__line" />
-                          </svg>
-                          <span className="chart-sidebar-legend__name">{series.name}</span>
-                        </div>
-                      )) : <div className="muted-text">当前没有已显示信号。</div>}
-                    </div>
-                  </div>
-                </section>
-              }
-            />
-          </div>
+          <SignalSelectionSidebar
+            selectableTitle="选择信号"
+            selectableItems={selectableSeriesItems}
+            emptySelectableMessage="当前结果没有可用图表序列。"
+            visibleTitle="已显示"
+            visibleItems={visibleSeriesItems}
+            emptyVisibleMessage="当前没有已显示信号。"
+            defaultPrimaryRatio={0.7}
+          />
         }
         main={
           <div className="content-card content-card--canvas">

@@ -2,9 +2,9 @@ import { useEffect, useMemo, useState } from 'react'
 
 import type { SimulationBridge } from '../../bridge/bridge'
 import type { SimulationMainState } from '../../types/state'
-import { CompactToolbar } from '../layout/CompactToolbar'
 import { ResponsivePane } from '../layout/ResponsivePane'
 import { MeasurementFloatingPanel } from '../shared/MeasurementFloatingPanel'
+import { SignalSelectionSidebar } from '../shared/SignalSelectionSidebar'
 import { SeriesSvgChart } from '../shared/SeriesSvgChart'
 import { formatMeasurementNumber } from '../shared/chartValueFormatting'
 
@@ -23,6 +23,7 @@ function formatMeasurementDelta(valueA: number | null, valueB: number | null): s
 export function WaveformTab({ state, bridge }: WaveformTabProps) {
   const waveform = state.waveform_view
   const [selectedMeasurementSignalId, setSelectedMeasurementSignalId] = useState('')
+  const normalizedAnalysisType = (state.analysis_info_view.analysis_type || '').trim().toLowerCase()
   const viewWindow = useMemo(() => ({
     active: waveform.viewport.active,
     xMin: waveform.viewport.x_min,
@@ -48,6 +49,75 @@ export function WaveformTab({ state, bridge }: WaveformTabProps) {
       valueB: waveform.measurement.values_b[name] ?? null,
     }))
   }, [waveform.measurement.values_a, waveform.measurement.values_b, waveform.visible_series])
+  const waveformTitle = useMemo(() => {
+    if (!waveform.has_waveform) {
+      return ''
+    }
+    if (normalizedAnalysisType === 'tran') {
+      return '时域波形图'
+    }
+    if (normalizedAnalysisType === 'dc') {
+      return '直流扫描波形图'
+    }
+    return '波形图'
+  }, [normalizedAnalysisType, waveform.has_waveform])
+  const waveformHeaderActions = waveform.has_waveform ? (
+    <>
+      <button
+        type="button"
+        className="chart-header-button"
+        disabled={!waveform.has_waveform}
+        onClick={() => bridge?.resetWaveformViewport()}
+      >
+        Fit
+      </button>
+      <button
+        type="button"
+        className="chart-header-button"
+        disabled={!waveform.has_waveform}
+        onClick={() => bridge?.setCursorVisible('a', !waveform.cursor_a_visible)}
+      >
+        {waveform.cursor_a_visible ? '隐藏 A' : '显示 A'}
+      </button>
+      <button
+        type="button"
+        className="chart-header-button"
+        disabled={!waveform.has_waveform}
+        onClick={() => bridge?.setCursorVisible('b', !waveform.cursor_b_visible)}
+      >
+        {waveform.cursor_b_visible ? '隐藏 B' : '显示 B'}
+      </button>
+      <button
+        type="button"
+        className="chart-header-button"
+        disabled={!waveform.signal_catalog.length}
+        onClick={() => bridge?.clearAllSignals()}
+      >
+        清空信号
+      </button>
+      <button
+        type="button"
+        className="chart-header-button chart-header-button--accent"
+        disabled={!waveform.can_add_to_conversation}
+        onClick={() => bridge?.addToConversation('waveform')}
+      >
+        添加至对话
+      </button>
+    </>
+  ) : undefined
+  const selectableSignalItems = useMemo(() => waveform.signal_catalog.map((signal) => ({
+    id: signal.name,
+    label: signal.name,
+    meta: signal.signal_type || 'signal',
+    checked: signal.visible,
+    onCheckedChange: (checked: boolean) => bridge?.setSignalVisible(signal.name, checked),
+  })), [bridge, waveform.signal_catalog])
+  const visibleSignalItems = useMemo(() => waveform.visible_series.map((series) => ({
+    id: series.name,
+    label: series.name,
+    color: series.color,
+    meta: (waveform.signal_catalog.find((signal) => signal.name === series.name)?.signal_type) || undefined,
+  })), [waveform.signal_catalog, waveform.visible_series])
 
   const preferredMeasurementSignalId = measurementSignals[0]?.id ?? ''
 
@@ -83,54 +153,32 @@ export function WaveformTab({ state, bridge }: WaveformTabProps) {
 
   return (
     <div className="tab-surface">
-      <CompactToolbar
-        title="波形"
-        description={waveform.x_axis_label ? `X 轴：${waveform.x_axis_label}` : '统一前端波形显示层，直接消费后端权威 snapshot。'}
-        actions={
-          <>
-            <button type="button" className="toolbar-button-secondary" onClick={() => bridge?.resetWaveformViewport()}>
-              Fit
-            </button>
-            <button type="button" className="toolbar-button-secondary" disabled={!waveform.has_waveform} onClick={() => bridge?.setCursorVisible('a', !waveform.cursor_a_visible)}>
-              {waveform.cursor_a_visible ? '隐藏 A' : '显示 A'}
-            </button>
-            <button type="button" className="toolbar-button-secondary" disabled={!waveform.has_waveform} onClick={() => bridge?.setCursorVisible('b', !waveform.cursor_b_visible)}>
-              {waveform.cursor_b_visible ? '隐藏 B' : '显示 B'}
-            </button>
-            <button type="button" className="toolbar-button-secondary" disabled={!waveform.signal_catalog.length} onClick={() => bridge?.clearAllSignals()}>
-              清空信号
-            </button>
-            <button type="button" className="toolbar-button" disabled={!waveform.can_add_to_conversation} onClick={() => bridge?.addToConversation('waveform')}>
-              添加至对话
-            </button>
-          </>
-        }
-      />
       <ResponsivePane
+        sidebarConfig={{
+          defaultSize: 176,
+          minSize: 132,
+          maxSize: 360,
+          mainMinSize: 320,
+          resizable: true,
+        }}
         sidebar={
-          <div className="content-card content-card--scrollable">
-            <div className="card-title">信号浏览区</div>
-            <div className="card-subtitle">总信号 {waveform.signal_count} 条，当前显示 {waveform.displayed_signal_names.length} 条</div>
-            <div className="signal-list">
-              {waveform.signal_catalog.length ? waveform.signal_catalog.map((signal) => (
-                <label key={signal.name} className="signal-item signal-item--checkbox">
-                  <div className="signal-item__stack">
-                    <span className="signal-item__name">{signal.name}</span>
-                    <span className="signal-item__meta">{signal.signal_type || 'signal'}</span>
-                  </div>
-                  <input
-                    type="checkbox"
-                    checked={signal.visible}
-                    onChange={() => bridge?.setSignalVisible(signal.name, !signal.visible)}
-                  />
-                </label>
-              )) : <div className="signal-item"><span className="signal-item__meta">暂无信号</span></div>}
-            </div>
-          </div>
+          <SignalSelectionSidebar
+            selectableTitle="选择信号"
+            selectableDescription={`总信号 ${waveform.signal_count} 条，当前显示 ${waveform.displayed_signal_names.length} 条`}
+            selectableItems={selectableSignalItems}
+            emptySelectableMessage="当前结果没有可用波形信号。"
+            visibleTitle="已显示"
+            visibleDescription={`${waveform.visible_series.length} 条信号正在绘制`}
+            visibleItems={visibleSignalItems}
+            emptyVisibleMessage="当前没有已显示信号。"
+            defaultPrimaryRatio={0.7}
+          />
         }
         main={
           <div className="content-card content-card--canvas">
             <SeriesSvgChart
+              title={waveformTitle}
+              headerActions={waveformHeaderActions}
               floatingPanels={waveform.cursor_a_visible || waveform.cursor_b_visible ? [
                 {
                   id: 'waveform-measurement',

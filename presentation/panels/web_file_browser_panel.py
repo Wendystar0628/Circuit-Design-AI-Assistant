@@ -1,12 +1,13 @@
 import json
 import os
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Set, Tuple
 
 from PyQt6.QtCore import QObject, Qt, pyqtSignal, pyqtSlot
 from PyQt6.QtWidgets import QApplication, QInputDialog, QLabel, QMessageBox, QSizePolicy, QVBoxLayout, QWidget
 from PyQt6.QtWebChannel import QWebChannel
 from presentation.core.web_resource_host import app_resource_url, configure_app_web_view
+from presentation.panels.workspace_explorer_state_store import WorkspaceExplorerStateStore
 
 from shared.path_utils import normalize_identity_path
 from shared.workspace_file_types import (
@@ -29,6 +30,8 @@ class _ExplorerBridge(QObject):
     open_file_requested = pyqtSignal(str)
     refresh_requested = pyqtSignal()
     context_action_requested = pyqtSignal(str, str)
+    directory_expanded_changed = pyqtSignal(str, bool)
+    collapse_all_directories_requested = pyqtSignal()
 
     @pyqtSlot()
     def markReady(self) -> None:
@@ -46,6 +49,14 @@ class _ExplorerBridge(QObject):
     def triggerContextAction(self, action_id: str, path: str) -> None:
         self.context_action_requested.emit(str(action_id or ""), str(path or ""))
 
+    @pyqtSlot(str, bool)
+    def setDirectoryExpanded(self, path: str, expanded: bool) -> None:
+        self.directory_expanded_changed.emit(str(path or ""), bool(expanded))
+
+    @pyqtSlot()
+    def collapseAllDirectories(self) -> None:
+        self.collapse_all_directories_requested.emit()
+
 
 class FileBrowserPanel(QWidget):
     file_selected = pyqtSignal(str)
@@ -58,6 +69,8 @@ class FileBrowserPanel(QWidget):
         self._logger = None
         self._root_path: Optional[str] = None
         self._workspace_file_state: Dict[str, Any] = {"items": []}
+        self._expanded_directory_paths: Set[str] = set()
+        self._state_store = WorkspaceExplorerStateStore()
         self._page_loaded = False
         self._bridge: Optional[_ExplorerBridge] = None
         self._channel: Optional[QWebChannel] = None
@@ -129,6 +142,8 @@ class FileBrowserPanel(QWidget):
         self._bridge.open_file_requested.connect(self._on_open_file_requested)
         self._bridge.refresh_requested.connect(self.refresh)
         self._bridge.context_action_requested.connect(self._on_context_action_requested)
+        self._bridge.directory_expanded_changed.connect(self._on_directory_expanded_changed)
+        self._bridge.collapse_all_directories_requested.connect(self._on_collapse_all_directories_requested)
         self._channel = QWebChannel(self)
         self._channel.registerObject("workspaceExplorerBridge", self._bridge)
         self._web_view = QWebEngineView(self)
@@ -155,6 +170,28 @@ class FileBrowserPanel(QWidget):
             return
         self.file_selected.emit(display_path)
 
+    def _on_directory_expanded_changed(self, path: str, expanded: bool) -> None:
+        identity_path = self._normalize_directory_identity(path, require_exists=True)
+        if not identity_path:
+            return
+        if expanded:
+            if identity_path in self._expanded_directory_paths:
+                return
+            self._expanded_directory_paths.add(identity_path)
+        else:
+            if identity_path not in self._expanded_directory_paths:
+                return
+            self._expanded_directory_paths.discard(identity_path)
+        self._persist_expanded_directory_paths()
+        self._dispatch_state()
+
+    def _on_collapse_all_directories_requested(self) -> None:
+        if not self._expanded_directory_paths:
+            return
+        self._expanded_directory_paths.clear()
+        self._persist_expanded_directory_paths()
+        self._dispatch_state()
+
     def _on_context_action_requested(self, action_id: str, path: str) -> None:
         action = str(action_id or "").strip()
         display_path = str(path or "").strip()
@@ -174,6 +211,79 @@ class FileBrowserPanel(QWidget):
             return
         if self.logger:
             self.logger.warning(f"Unsupported file browser context action: {action}")
+
+    def _normalize_directory_identity(self, path: str, *, require_exists: bool) -> Optional[str]:
+        display_path = str(path or "").strip()
+        if not display_path or not self._root_path:
+            return None
+        absolute_path = os.path.abspath(display_path)
+        identity_path = normalize_identity_path(absolute_path)
+        root_identity = normalize_identity_path(self._root_path)
+        try:
+            if os.path.commonpath([root_identity, identity_path]) != root_identity:
+                return None
+        except ValueError:
+            return None
+        if require_exists and not os.path.isdir(absolute_path):
+            return None
+        if identity_path == root_identity:
+            return None
+        return identity_path
+
+    def _load_expanded_directory_paths(self) -> None:
+        if not self._root_path:
+            self._expanded_directory_paths = set()
+            return
+        self._expanded_directory_paths = self._state_store.load_expanded_directories(self._root_path)
+        if self._synchronize_expanded_directory_paths():
+            self._persist_expanded_directory_paths()
+
+    def _persist_expanded_directory_paths(self) -> None:
+        if not self._root_path:
+            return
+        self._state_store.save_expanded_directories(self._root_path, self._expanded_directory_paths)
+
+    def _synchronize_expanded_directory_paths(self) -> bool:
+        if not self._root_path:
+            if not self._expanded_directory_paths:
+                return False
+            self._expanded_directory_paths = set()
+            return True
+        root_identity = normalize_identity_path(self._root_path)
+        next_paths: Set[str] = set()
+        for identity_path in self._expanded_directory_paths:
+            try:
+                if os.path.commonpath([root_identity, identity_path]) != root_identity:
+                    continue
+            except ValueError:
+                continue
+            if os.path.isdir(identity_path):
+                next_paths.add(normalize_identity_path(identity_path))
+        if next_paths == self._expanded_directory_paths:
+            return False
+        self._expanded_directory_paths = next_paths
+        return True
+
+    def _remap_expanded_directory_paths(self, source_path: str, destination_path: str) -> bool:
+        source_identity = self._normalize_directory_identity(source_path, require_exists=False)
+        destination_identity = self._normalize_directory_identity(destination_path, require_exists=False)
+        if not source_identity or not destination_identity:
+            return False
+        prefix = source_identity + os.sep
+        changed = False
+        next_paths: Set[str] = set()
+        for identity_path in self._expanded_directory_paths:
+            if identity_path == source_identity or identity_path.startswith(prefix):
+                suffix = identity_path[len(source_identity):].lstrip("\\/")
+                remapped_path = destination_identity if not suffix else normalize_identity_path(os.path.join(destination_path, suffix))
+                next_paths.add(remapped_path)
+                changed = True
+                continue
+            next_paths.add(identity_path)
+        if not changed:
+            return False
+        self._expanded_directory_paths = next_paths
+        return True
 
     def _workspace_item_state_for_path(self, path: str) -> Optional[Dict[str, Any]]:
         identity_path = normalize_identity_path(path)
@@ -369,6 +479,8 @@ class FileBrowserPanel(QWidget):
         root_path = self._root_path or ""
         folder_name = os.path.basename(root_path) if root_path else ""
         has_project = bool(root_path)
+        if self._synchronize_expanded_directory_paths():
+            self._persist_expanded_directory_paths()
         tree_nodes = self._build_tree_nodes()
         empty_message = self._get_text(
             "hint.select_file",
@@ -430,30 +542,30 @@ class FileBrowserPanel(QWidget):
         if not root_path or not os.path.isdir(root_path):
             return []
         open_identity_paths, dirty_identity_paths, active_identity_path = self._workspace_sets()
-        nodes, _ = self._build_directory_nodes(
+        return self._build_directory_nodes(
             Path(root_path),
+            self._expanded_directory_paths,
             open_identity_paths,
             dirty_identity_paths,
             active_identity_path,
         )
-        return nodes
 
     def _build_directory_nodes(
         self,
         folder_path: Path,
+        expanded_directory_paths: set[str],
         open_identity_paths: set[str],
         dirty_identity_paths: set[str],
         active_identity_path: str,
-    ) -> Tuple[list[Dict[str, Any]], bool]:
+    ) -> list[Dict[str, Any]]:
         nodes = []
-        has_active_content = False
         try:
             entries = sorted(
                 folder_path.iterdir(),
                 key=lambda item: (not item.is_dir(), item.name.lower()),
             )
         except Exception:
-            return [], False
+            return []
 
         for entry in entries:
             entry_name = entry.name
@@ -465,8 +577,10 @@ class FileBrowserPanel(QWidget):
                 continue
             entry_path = str(entry)
             if is_directory:
-                child_nodes, child_has_active_content = self._build_directory_nodes(
+                identity_path = normalize_identity_path(entry_path)
+                child_nodes = self._build_directory_nodes(
                     entry,
+                    expanded_directory_paths,
                     open_identity_paths,
                     dirty_identity_paths,
                     active_identity_path,
@@ -478,13 +592,12 @@ class FileBrowserPanel(QWidget):
                     "isOpen": False,
                     "isDirty": False,
                     "isActive": False,
+                    "isExpanded": identity_path in expanded_directory_paths,
                     "iconName": workspace_entry_icon_name(entry_name, is_directory=True),
                     "openIconName": workspace_entry_open_icon_name(entry_name, is_directory=True),
                     "typeLabel": "Folder",
-                    "defaultExpanded": child_has_active_content,
                     "children": child_nodes,
                 })
-                has_active_content = has_active_content or child_has_active_content
                 continue
 
             identity_path = normalize_identity_path(entry_path)
@@ -501,12 +614,10 @@ class FileBrowserPanel(QWidget):
                 "iconName": workspace_entry_icon_name(entry_name),
                 "openIconName": workspace_entry_open_icon_name(entry_name),
                 "typeLabel": file_type_label(entry_name),
-                "defaultExpanded": False,
                 "children": [],
             })
-            has_active_content = has_active_content or is_open or is_dirty or is_active
 
-        return nodes, has_active_content
+        return nodes
 
     def set_root_path(self, folder_path: str) -> None:
         display_path = str(folder_path or "")
@@ -514,7 +625,8 @@ class FileBrowserPanel(QWidget):
             if self.logger:
                 self.logger.warning(f"Invalid folder path: {folder_path}")
             return
-        self._root_path = display_path
+        self._root_path = os.path.abspath(display_path)
+        self._load_expanded_directory_paths()
         self._dispatch_state()
 
     def refresh(self) -> None:
@@ -523,6 +635,7 @@ class FileBrowserPanel(QWidget):
     def clear(self) -> None:
         self._root_path = None
         self._workspace_file_state = {"items": []}
+        self._expanded_directory_paths = set()
         self._dispatch_state()
 
     def set_workspace_file_state(self, state: Dict[str, Any]) -> None:
@@ -571,6 +684,8 @@ class FileBrowserPanel(QWidget):
             incoming_root = os.path.normcase(os.path.abspath(project_root))
             if current_root != incoming_root:
                 return
+        if self._synchronize_expanded_directory_paths():
+            self._persist_expanded_directory_paths()
         self._dispatch_state()
 
     def _on_file_changed(self, event_data: Dict[str, Any]) -> None:
@@ -579,17 +694,28 @@ class FileBrowserPanel(QWidget):
         data = event_data.get("data", event_data)
         if not isinstance(data, dict):
             return
+        source_path = str(data.get("path", "") or "")
+        destination_path = str(data.get("dest_path", "") or "")
+        expanded_state_changed = False
+        if bool(data.get("is_directory", False)) and source_path and destination_path:
+            expanded_state_changed = self._remap_expanded_directory_paths(source_path, destination_path)
         root_path = os.path.normcase(os.path.abspath(self._root_path))
-        for changed_path in (str(data.get("path", "") or ""), str(data.get("dest_path", "") or "")):
+        relevant_change = False
+        for changed_path in (source_path, destination_path):
             if not changed_path:
                 continue
             normalized = os.path.normcase(os.path.abspath(changed_path))
             try:
                 if os.path.commonpath([root_path, normalized]) == root_path:
-                    self._dispatch_state()
+                    relevant_change = True
                     break
             except ValueError:
                 continue
-
-
+        if not relevant_change and not expanded_state_changed:
+            return
+        if self._synchronize_expanded_directory_paths():
+            expanded_state_changed = True
+        if expanded_state_changed:
+            self._persist_expanded_directory_paths()
+        self._dispatch_state()
 __all__ = ["FileBrowserPanel"]

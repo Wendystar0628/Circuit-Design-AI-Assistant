@@ -23,7 +23,6 @@
     tree: [],
   };
 
-  const expandedPaths = new Set();
   const contextMenuState = {
     visible: false,
     path: '',
@@ -99,23 +98,6 @@
     requestAnimationFrame(positionContextMenu);
   }
 
-  function syncExpandedPaths(nodes) {
-    function visit(node) {
-      if (!node || typeof node !== 'object') {
-        return false;
-      }
-      const children = asArray(node.children);
-      const hasActiveDescendant = children.some((child) => visit(child));
-      const shouldExpand = Boolean(node.defaultExpanded || node.isActive || hasActiveDescendant);
-      if (node.isDirectory && shouldExpand && node.path) {
-        expandedPaths.add(String(node.path));
-      }
-      return Boolean(node.isActive || hasActiveDescendant);
-    }
-
-    asArray(nodes).forEach((node) => visit(node));
-  }
-
   function createStateIndicators(node) {
     const indicatorsEl = document.createElement('div');
     indicatorsEl.className = 'tree-indicators';
@@ -189,7 +171,7 @@
 
     const disclosure = document.createElement('div');
     disclosure.className = `disclosure${node.isDirectory ? '' : ' placeholder'}`;
-    const isExpanded = node.isDirectory && expandedPaths.has(String(node.path || ''));
+    const isExpanded = Boolean(node.isDirectory && node.isExpanded);
     disclosure.textContent = node.isDirectory ? (isExpanded ? '▾' : '▸') : '';
 
     if (depth > 0) {
@@ -212,12 +194,7 @@
         if (!path) {
           return;
         }
-        if (expandedPaths.has(path)) {
-          expandedPaths.delete(path);
-        } else {
-          expandedPaths.add(path);
-        }
-        renderTree();
+        invokeBridge('setDirectoryExpanded', path, !isExpanded);
         return;
       }
       if (node.path) {
@@ -283,8 +260,8 @@
   }
 
   collapseAllBtn.addEventListener('click', () => {
-    expandedPaths.clear();
-    renderTree();
+    hideContextMenu();
+    invokeBridge('collapseAllDirectories');
   });
 
   refreshBtn.addEventListener('click', () => {
@@ -356,7 +333,6 @@
           };
       state.iconSpriteUrl = incoming.iconSpriteUrl || '';
       state.tree = asArray(incoming.tree);
-      syncExpandedPaths(state.tree);
       render();
     },
   };

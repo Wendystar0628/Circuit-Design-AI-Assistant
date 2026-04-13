@@ -198,7 +198,7 @@ export function ChartTab({ state, bridge }: ChartTabProps) {
                           <input
                             type="checkbox"
                             checked={series.visible}
-                            onChange={() => bridge?.setChartSeriesVisible(series.name, !series.visible)}
+                            onChange={(event) => bridge?.setChartSeriesVisible(series.name, event.target.checked)}
                           />
                         </label>
                       )) : <div className="signal-item"><span className="muted-text">当前结果没有可用图表序列。</span></div>}

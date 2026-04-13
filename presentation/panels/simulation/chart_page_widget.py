@@ -1,13 +1,12 @@
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import numpy as np
 import pyqtgraph as pg
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QSplitter, QTreeWidgetItem, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QSplitter, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget
 
 from presentation.panels.simulation.chart_measurement_point import MeasurementPointSample, MeasurementPointValue, clamp_to_bounds, midpoint_of_bounds, serialize_measurement_point_sample
 from presentation.panels.simulation.chart_export_utils import build_chart_export_payload, serialize_chart_series_for_web
-from presentation.panels.simulation.chart_signal_tree import SignalTreeWidget
 from presentation.panels.simulation.chart_view_types import ChartSeries, ChartSpec
 from presentation.panels.simulation.qt_surface_export import export_widget_image
 from presentation.panels.simulation.ltspice_plot_interaction import (
@@ -41,6 +40,7 @@ class ChartPage(QWidget):
         self._cursor_b_pos: Optional[float] = None
         self._plot_items: Dict[str, pg.PlotDataItem] = {}
         self._series_items: Dict[str, QTreeWidgetItem] = {}
+        self._visible_series_names: Set[str] = set()
         self._updating_tree = False
         self._x_domain: Optional[Tuple[float, float]] = None
         self._y_domain: Optional[Tuple[float, float]] = None
@@ -78,12 +78,11 @@ class ChartPage(QWidget):
         signal_header_layout.addWidget(self._clear_all_btn)
         signal_layout.addWidget(signal_header)
 
-        self._signal_tree = SignalTreeWidget()
+        self._signal_tree = QTreeWidget()
         self._signal_tree.setObjectName("signalTree")
         self._signal_tree.setHeaderHidden(True)
         self._signal_tree.setRootIsDecorated(False)
         self._signal_tree.itemChanged.connect(self._on_signal_item_changed)
-        self._signal_tree.signal_label_clicked.connect(self._on_signal_label_clicked)
         signal_layout.addWidget(self._signal_tree)
 
         self._main_splitter.addWidget(self._signal_panel)
@@ -166,6 +165,7 @@ class ChartPage(QWidget):
         self._spec = None
         self._plot_items = {}
         self._series_items = {}
+        self._visible_series_names = set()
         self._x_domain = None
         self._y_domain = None
         self._view_x_range = None
@@ -186,6 +186,7 @@ class ChartPage(QWidget):
         self._updating_tree = True
         self._signal_tree.clear()
         self._series_items = {}
+        self._visible_series_names = set()
         for series in spec.series:
             x_data = np.asarray(series.x_data, dtype=float)
             y_data = np.asarray(series.y_data, dtype=float)
@@ -195,6 +196,8 @@ class ChartPage(QWidget):
             item = QTreeWidgetItem(self._signal_tree, [series.name])
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             is_default_visible = len(valid_series) == 1
+            if is_default_visible:
+                self._visible_series_names.add(series.name)
             item.setCheckState(0, Qt.CheckState.Checked if is_default_visible else Qt.CheckState.Unchecked)
             self._series_items[series.name] = item
         self._updating_tree = False
@@ -260,14 +263,16 @@ class ChartPage(QWidget):
     def set_series_visible(self, series_name: str, visible: bool) -> bool:
         if self._spec is None or not series_name or series_name not in self._series_items:
             return False
-        item = self._series_items[series_name]
-        desired_state = Qt.CheckState.Checked if visible else Qt.CheckState.Unchecked
-        if item.checkState(0) == desired_state:
+        next_visible_series_names = set(self._visible_series_names)
+        if visible:
+            next_visible_series_names.add(series_name)
+        else:
+            next_visible_series_names.discard(series_name)
+        if next_visible_series_names == self._visible_series_names:
             return True
-        self._updating_tree = True
-        item.setCheckState(0, desired_state)
-        self._updating_tree = False
-        if desired_state != Qt.CheckState.Checked and series_name == self._measurement_point_target_id:
+        self._visible_series_names = next_visible_series_names
+        self._sync_signal_tree_checks()
+        if not visible and series_name == self._measurement_point_target_id:
             self._measurement_point_target_id = ""
             self._measurement_point_x = None
         self._rebuild_plot()
@@ -281,10 +286,9 @@ class ChartPage(QWidget):
             return False
         item = self._series_items[target_id]
         self._signal_tree.setCurrentItem(item)
-        if item.checkState(0) != Qt.CheckState.Checked:
-            self._updating_tree = True
-            item.setCheckState(0, Qt.CheckState.Checked)
-            self._updating_tree = False
+        if target_id not in self._visible_series_names:
+            self._visible_series_names.add(target_id)
+            self._sync_signal_tree_checks()
             self._rebuild_plot()
         self._measurement_point_target_id = target_id
         return True
@@ -339,7 +343,6 @@ class ChartPage(QWidget):
     def get_web_snapshot(self) -> Dict[str, Any]:
         spec = self._spec
         visible_series = self._visible_series()
-        visible_series_names = {series.name for series in visible_series}
         available_series = []
         if spec is not None:
             available_series = [
@@ -350,7 +353,7 @@ class ChartPage(QWidget):
                     "line_style": series.line_style,
                     "group_key": series.group_key,
                     "component": series.component,
-                    "visible": series.name in visible_series_names,
+                    "visible": series.name in self._visible_series_names,
                     "point_count": int(len(series.y_data)),
                 }
                 for series in spec.series
@@ -593,12 +596,14 @@ class ChartPage(QWidget):
     def _visible_series(self) -> List[ChartSeries]:
         if self._spec is None:
             return []
-        visible_names = {
-            name
-            for name, item in self._series_items.items()
-            if item.checkState(0) == Qt.CheckState.Checked
-        }
-        return [series for series in self._spec.series if series.name in visible_names]
+        return [series for series in self._spec.series if series.name in self._visible_series_names]
+
+    def _sync_signal_tree_checks(self) -> None:
+        self._updating_tree = True
+        for series_name, item in self._series_items.items():
+            desired_state = Qt.CheckState.Checked if series_name in self._visible_series_names else Qt.CheckState.Unchecked
+            item.setCheckState(0, desired_state)
+        self._updating_tree = False
 
     def _rebuild_plot(self):
         plot_item = self._plot_widget.getPlotItem()
@@ -693,25 +698,27 @@ class ChartPage(QWidget):
         self._apply_viewport(self._x_domain, self._y_domain)
 
     def _on_signal_item_changed(self, item: QTreeWidgetItem, column: int):
-        if self._updating_tree or self._spec is None:
+        if self._updating_tree or self._spec is None or item is None or column != 0:
             return
-        if item.checkState(0) != Qt.CheckState.Checked and item.text(0) == self._measurement_point_target_id:
+        series_name = item.text(0)
+        if not series_name or series_name not in self._series_items:
+            return
+        next_visible_series_names = set(self._visible_series_names)
+        if item.checkState(0) == Qt.CheckState.Checked:
+            next_visible_series_names.add(series_name)
+        else:
+            next_visible_series_names.discard(series_name)
+        if next_visible_series_names == self._visible_series_names:
+            return
+        self._visible_series_names = next_visible_series_names
+        if series_name == self._measurement_point_target_id and series_name not in self._visible_series_names:
             self._measurement_point_target_id = ""
             self._measurement_point_x = None
         self._rebuild_plot()
 
-    def _on_signal_label_clicked(self, item: QTreeWidgetItem):
-        if self._spec is None or self._updating_tree or item is None:
-            return
-        if not self._measurement_point_enabled:
-            return
-        self._activate_measurement_point_target(item.text(0))
-
     def _on_clear_all_series(self):
-        self._updating_tree = True
-        for item in self._series_items.values():
-            item.setCheckState(0, Qt.CheckState.Unchecked)
-        self._updating_tree = False
+        self._visible_series_names = set()
+        self._sync_signal_tree_checks()
         self._measurement_point_target_id = ""
         self._measurement_point_x = None
         self._viewport_active = False

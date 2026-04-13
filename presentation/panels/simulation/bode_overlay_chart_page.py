@@ -1,13 +1,12 @@
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 import numpy as np
 import pyqtgraph as pg
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QSplitter, QTreeWidgetItem, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QSplitter, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget
 
 from presentation.panels.simulation.chart_measurement_point import MeasurementPointSample, MeasurementPointValue, clamp_to_bounds, midpoint_of_bounds, serialize_measurement_point_sample
 from presentation.panels.simulation.chart_export_utils import build_chart_export_payload, serialize_chart_series_for_web
-from presentation.panels.simulation.chart_signal_tree import SignalTreeWidget
 from presentation.panels.simulation.chart_view_types import ChartSeries, ChartSpec
 from presentation.panels.simulation.qt_surface_export import export_widget_image
 from presentation.panels.simulation.ltspice_plot_interaction import apply_dynamic_tick_spacing, clamp_range, finite_range, merge_ranges, nice_tick_spacing
@@ -20,6 +19,7 @@ class BodeOverlayChartPage(QWidget):
         self._spec: Optional[ChartSpec] = None
         self._series_items: Dict[str, QTreeWidgetItem] = {}
         self._series_groups: Dict[str, Dict[str, ChartSeries]] = {}
+        self._visible_group_keys_state: Set[str] = set()
         self._plot_items: Dict[str, pg.PlotDataItem] = {}
         self._group_colors: Dict[str, str] = {}
         self._updating_tree = False
@@ -67,12 +67,11 @@ class BodeOverlayChartPage(QWidget):
         signal_header_layout.addWidget(self._clear_all_btn)
         signal_layout.addWidget(signal_header)
 
-        self._signal_tree = SignalTreeWidget()
+        self._signal_tree = QTreeWidget()
         self._signal_tree.setObjectName("signalTree")
         self._signal_tree.setHeaderHidden(True)
         self._signal_tree.setRootIsDecorated(False)
         self._signal_tree.itemChanged.connect(self._on_signal_item_changed)
-        self._signal_tree.signal_label_clicked.connect(self._on_signal_label_clicked)
         signal_layout.addWidget(self._signal_tree)
 
         self._main_splitter.addWidget(self._signal_panel)
@@ -159,6 +158,7 @@ class BodeOverlayChartPage(QWidget):
         self._spec = None
         self._series_items = {}
         self._series_groups = {}
+        self._visible_group_keys_state = set()
         self._plot_items = {}
         self._group_colors = {}
         self._x_domain = None
@@ -181,6 +181,9 @@ class BodeOverlayChartPage(QWidget):
 
         valid_series: List[ChartSeries] = []
         self._updating_tree = True
+        self._signal_tree.clear()
+        self._series_items = {}
+        self._visible_group_keys_state = set()
         for series in spec.series:
             x_data = np.asarray(series.x_data, dtype=float)
             y_data = np.asarray(series.y_data, dtype=float)
@@ -202,6 +205,8 @@ class BodeOverlayChartPage(QWidget):
                 item = QTreeWidgetItem(self._signal_tree, [group_key])
                 item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsSelectable)
                 is_default_visible = len(self._series_items) == 0
+                if is_default_visible:
+                    self._visible_group_keys_state.add(group_key)
                 item.setCheckState(0, Qt.CheckState.Checked if is_default_visible else Qt.CheckState.Unchecked)
                 self._series_items[group_key] = item
         self._updating_tree = False
@@ -237,10 +242,9 @@ class BodeOverlayChartPage(QWidget):
             return False
         item = self._series_items[target_id]
         self._signal_tree.setCurrentItem(item)
-        if item.checkState(0) != Qt.CheckState.Checked:
-            self._updating_tree = True
-            item.setCheckState(0, Qt.CheckState.Checked)
-            self._updating_tree = False
+        if target_id not in self._visible_group_keys_state:
+            self._visible_group_keys_state.add(target_id)
+            self._sync_signal_tree_checks()
             self._rebuild_plot()
         self._measurement_point_target_id = target_id
         return True
@@ -292,14 +296,16 @@ class BodeOverlayChartPage(QWidget):
                     break
         if resolved_group_key is None or resolved_group_key not in self._series_items:
             return False
-        item = self._series_items[resolved_group_key]
-        desired_state = Qt.CheckState.Checked if visible else Qt.CheckState.Unchecked
-        if item.checkState(0) == desired_state:
+        next_visible_group_keys = set(self._visible_group_keys_state)
+        if visible:
+            next_visible_group_keys.add(resolved_group_key)
+        else:
+            next_visible_group_keys.discard(resolved_group_key)
+        if next_visible_group_keys == self._visible_group_keys_state:
             return True
-        self._updating_tree = True
-        item.setCheckState(0, desired_state)
-        self._updating_tree = False
-        if desired_state != Qt.CheckState.Checked and resolved_group_key == self._measurement_point_target_id:
+        self._visible_group_keys_state = next_visible_group_keys
+        self._sync_signal_tree_checks()
+        if not visible and resolved_group_key == self._measurement_point_target_id:
             self._measurement_point_target_id = ""
             self._measurement_point_x = None
         self._rebuild_plot()
@@ -355,7 +361,6 @@ class BodeOverlayChartPage(QWidget):
     def get_web_snapshot(self) -> Dict[str, object]:
         spec = self._spec
         visible_series = self._visible_series()
-        visible_groups = set(self._visible_group_keys())
         available_series = []
         if spec is not None:
             for group_key, bucket in self._series_groups.items():
@@ -369,7 +374,7 @@ class BodeOverlayChartPage(QWidget):
                     "line_style": first_series.line_style,
                     "group_key": group_key,
                     "component": "/".join(sorted(bucket.keys())),
-                    "visible": group_key in visible_groups,
+                    "visible": group_key in self._visible_group_keys_state,
                     "point_count": int(len(first_series.y_data)),
                 })
         return {
@@ -492,13 +497,19 @@ class BodeOverlayChartPage(QWidget):
             self._group_colors[group_key] = series.color
 
     def _visible_group_keys(self) -> List[str]:
-        return [key for key, item in self._series_items.items() if item.checkState(0) == Qt.CheckState.Checked]
+        return [key for key in self._series_items.keys() if key in self._visible_group_keys_state]
 
     def _visible_series(self) -> List[ChartSeries]:
         if self._spec is None:
             return []
-        visible_groups = set(self._visible_group_keys())
-        return [series for series in self._spec.series if (series.group_key or series.name) in visible_groups]
+        return [series for series in self._spec.series if (series.group_key or series.name) in self._visible_group_keys_state]
+
+    def _sync_signal_tree_checks(self) -> None:
+        self._updating_tree = True
+        for group_key, item in self._series_items.items():
+            desired_state = Qt.CheckState.Checked if group_key in self._visible_group_keys_state else Qt.CheckState.Unchecked
+            item.setCheckState(0, desired_state)
+        self._updating_tree = False
 
     def _is_log_x(self) -> bool:
         return bool(self._spec.log_x) if self._spec is not None else False
@@ -790,25 +801,27 @@ class BodeOverlayChartPage(QWidget):
         return float(-np.interp(frequency_hz, unique_x, derivative))
 
     def _on_signal_item_changed(self, item: QTreeWidgetItem, column: int):
-        if self._updating_tree or column != 0:
+        if self._updating_tree or column != 0 or item is None:
             return
-        if item.checkState(0) != Qt.CheckState.Checked and item.text(0) == self._measurement_point_target_id:
+        group_key = item.text(0)
+        if not group_key or group_key not in self._series_items:
+            return
+        next_visible_group_keys = set(self._visible_group_keys_state)
+        if item.checkState(0) == Qt.CheckState.Checked:
+            next_visible_group_keys.add(group_key)
+        else:
+            next_visible_group_keys.discard(group_key)
+        if next_visible_group_keys == self._visible_group_keys_state:
+            return
+        self._visible_group_keys_state = next_visible_group_keys
+        if group_key == self._measurement_point_target_id and group_key not in self._visible_group_keys_state:
             self._measurement_point_target_id = ""
             self._measurement_point_x = None
         self._rebuild_plot()
 
-    def _on_signal_label_clicked(self, item: QTreeWidgetItem):
-        if self._spec is None or self._updating_tree or item is None:
-            return
-        if not self._measurement_point_enabled:
-            return
-        self._activate_measurement_point_target(item.text(0))
-
     def _on_clear_all_series(self):
-        self._updating_tree = True
-        for item in self._series_items.values():
-            item.setCheckState(0, Qt.CheckState.Unchecked)
-        self._updating_tree = False
+        self._visible_group_keys_state = set()
+        self._sync_signal_tree_checks()
         self._measurement_point_target_id = ""
         self._measurement_point_x = None
         self._viewport_active = False

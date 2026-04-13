@@ -63,6 +63,7 @@ interface SeriesSvgChartProps {
   secondaryYLabel?: string
   logX?: boolean
   logY?: boolean
+  rightLogY?: boolean
   viewWindow?: SeriesSvgChartViewWindow | null
   onViewportChange?: (viewWindow: SeriesSvgChartViewportSelection) => void
   emptyMessage: string
@@ -98,7 +99,7 @@ function toAxisYValue(value: number, axisKey: string, logY: boolean): number | n
   if (!Number.isFinite(value)) {
     return null
   }
-  if (axisKey === 'right' || !logY) {
+  if (!logY) {
     return value
   }
   if (value <= 0) {
@@ -113,10 +114,14 @@ function toDisplayXValue(value: number, logX: boolean): number {
 }
 
 function toDisplayYValue(value: number, axisKey: string, logY: boolean): number {
-  if (axisKey === 'right' || !logY) {
+  if (!logY) {
     return value
   }
   return 10 ** value
+}
+
+function isAxisLogEnabled(axisKey: string, leftLogY: boolean, rightLogY: boolean): boolean {
+  return axisKey === 'right' ? rightLogY : leftLogY
 }
 
 export function SeriesSvgChart({
@@ -131,6 +136,7 @@ export function SeriesSvgChart({
   secondaryYLabel,
   logX = false,
   logY = false,
+  rightLogY = false,
   viewWindow,
   onViewportChange,
   emptyMessage,
@@ -153,10 +159,11 @@ export function SeriesSvgChart({
     secondaryYLabel,
     logX,
     logY,
+    rightLogY,
     width: chartWidth,
     height: chartHeight,
     viewWindow,
-  }), [chartHeight, chartWidth, logX, logY, secondaryYLabel, series, viewWindow, xLabel, yLabel])
+  }), [chartHeight, chartWidth, logX, logY, rightLogY, secondaryYLabel, series, viewWindow, xLabel, yLabel])
 
   const normalizedTitle = title?.trim() ?? ''
   const hasHeader = normalizedTitle.length > 0 || headerActions !== undefined
@@ -239,17 +246,17 @@ export function SeriesSvgChart({
   }
 
   const projectYValue = (valueY: number | null, axisKey: string): number | null => {
-    if (leftDomain === null) {
-      return null
-    }
     if (valueY === null) {
       return null
     }
-    const axisValue = toAxisYValue(valueY, axisKey, logY)
+    const axisValue = toAxisYValue(valueY, axisKey, isAxisLogEnabled(axisKey, logY, rightLogY))
     if (axisValue === null) {
       return null
     }
     const domain = axisKey === 'right' && rightDomain !== null ? rightDomain : leftDomain
+    if (domain === null) {
+      return null
+    }
     const clampedAxisY = Math.min(Math.max(axisValue, domain.min), domain.max)
     const domainSpan = Math.max(domain.max - domain.min, 1e-12)
     return plotBottom - ((clampedAxisY - domain.min) / domainSpan) * (plotBottom - plotTop)
@@ -273,7 +280,7 @@ export function SeriesSvgChart({
       svgY: clampedSvgY,
       displayX: toDisplayXValue(xAxisValue, logX),
       leftDisplayY: toDisplayYValue(leftAxisValue, 'left', logY),
-      rightDisplayY: rightAxisValue === null ? null : toDisplayYValue(rightAxisValue, 'right', logY),
+      rightDisplayY: rightAxisValue === null ? null : toDisplayYValue(rightAxisValue, 'right', rightLogY),
     }
   }
 
@@ -427,7 +434,7 @@ export function SeriesSvgChart({
       window.removeEventListener('pointerup', handlePointerUp)
       window.removeEventListener('pointercancel', handlePointerUp)
     }
-  }, [activeViewportSelection, chartModel, leftDomain?.max, leftDomain?.min, logX, logY, plotBottom, plotLeft, plotRight, plotTop, rightDomain?.max, rightDomain?.min, svgHeight, svgWidth, xDomain?.max, xDomain?.min])
+  }, [activeViewportSelection, chartModel, leftDomain?.max, leftDomain?.min, logX, logY, plotBottom, plotLeft, plotRight, plotTop, rightDomain?.max, rightDomain?.min, rightLogY, svgHeight, svgWidth, xDomain?.max, xDomain?.min])
 
   const measurementCursorItems = [
     {

@@ -235,17 +235,13 @@ class BodeOverlayChartPage(QWidget):
             self._measurement_point_target_id = ""
             self._measurement_point_x = None
             return True
-        return self._activate_measurement_point_target(normalized_target_id)
+        return self._select_measurement_point_target(normalized_target_id)
 
-    def _activate_measurement_point_target(self, target_id: str) -> bool:
-        if not target_id or target_id not in self._series_items:
+    def _select_measurement_point_target(self, target_id: str) -> bool:
+        if not target_id or target_id not in self._series_items or target_id not in self._visible_group_keys_state:
             return False
         item = self._series_items[target_id]
         self._signal_tree.setCurrentItem(item)
-        if target_id not in self._visible_group_keys_state:
-            self._visible_group_keys_state.add(target_id)
-            self._sync_signal_tree_checks()
-            self._rebuild_plot()
         self._measurement_point_target_id = target_id
         return True
 
@@ -385,6 +381,7 @@ class BodeOverlayChartPage(QWidget):
             "secondary_y_label": str(spec.secondary_y_label or "") if spec is not None and spec.secondary_y_label else "",
             "log_x": bool(spec.log_x) if spec is not None else False,
             "log_y": bool(spec.log_y) if spec is not None else False,
+            "right_log_y": bool(spec.right_log_y) if spec is not None else False,
             "available_series": available_series,
             "visible_series": [serialize_chart_series_for_web(series) for series in visible_series],
             "visible_series_count": len(visible_series),

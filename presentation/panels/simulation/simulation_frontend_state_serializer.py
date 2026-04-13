@@ -102,6 +102,7 @@ class SimulationFrontendStateSerializer:
             "secondary_y_label": "",
             "log_x": False,
             "log_y": False,
+            "right_log_y": False,
             "available_series": [],
             "visible_series": [],
             "visible_series_count": 0,

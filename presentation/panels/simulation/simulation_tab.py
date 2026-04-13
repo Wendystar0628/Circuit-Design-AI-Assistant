@@ -522,7 +522,8 @@ class SimulationTab(QWidget):
     def _on_chart_series_visibility_toggled(self, series_name: str, visible: bool):
         chart_viewer = self._backend_runtime.chart_viewer
         chart_viewer.set_series_visible(series_name, visible)
-        self._sync_chart_measurement_point_target(chart_viewer)
+        if chart_viewer.is_measurement_point_enabled():
+            self._sync_chart_measurement_point_target(chart_viewer)
         self._update_authoritative_frontend_state()
 
     def _on_chart_measurement_enabled_changed(self, enabled: bool):
@@ -543,7 +544,8 @@ class SimulationTab(QWidget):
     def _on_chart_measurement_point_target_changed(self, target_id: str):
         chart_viewer = self._backend_runtime.chart_viewer
         chart_viewer.set_measurement_point_target(target_id)
-        self._sync_chart_measurement_point_target(chart_viewer)
+        if chart_viewer.is_measurement_point_enabled():
+            self._sync_chart_measurement_point_target(chart_viewer)
         self._update_authoritative_frontend_state()
 
     def _on_chart_measurement_point_move_requested(self, position: float):

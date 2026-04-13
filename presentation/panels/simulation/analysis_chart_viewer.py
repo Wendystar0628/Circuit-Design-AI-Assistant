@@ -12,9 +12,11 @@ from PyQt6.QtWidgets import (
 )
 
 from domain.simulation.data.simulation_artifact_exporter import simulation_artifact_exporter
+from domain.simulation.data.waveform_data_service import WaveformDataService
 from domain.simulation.models.chart_type import ChartType
 from domain.simulation.models.simulation_result import SimulationResult
 from presentation.panels.simulation.bode_overlay_chart_page import BodeOverlayChartPage
+from presentation.panels.simulation.chart_axis_planner import apply_axis_plan, build_chart_axis_plan
 from presentation.panels.simulation.chart_export_utils import write_chart_csv
 from presentation.panels.simulation.chart_page_widget import ChartPage
 from presentation.panels.simulation.chart_view_types import ChartSeries, ChartSpec
@@ -36,6 +38,8 @@ SERIES_COLORS = [
     "#e67e22",
     "#e84393",
 ]
+
+
 class ChartViewer(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -107,6 +111,7 @@ class ChartViewer(QWidget):
             "secondary_y_label": str(spec.secondary_y_label or "") if spec is not None and spec.secondary_y_label else "",
             "log_x": bool(spec.log_x) if spec is not None else False,
             "log_y": bool(spec.log_y) if spec is not None else False,
+            "right_log_y": bool(spec.right_log_y) if spec is not None else False,
             "available_series": [],
             "visible_series": [],
             "visible_series_count": 0,
@@ -255,6 +260,10 @@ class ChartViewer(QWidget):
         if page is not None:
             page.set_measurement_point_enabled(enabled)
 
+    def is_measurement_point_enabled(self) -> bool:
+        page = self._chart_page
+        return bool(page is not None and page.is_measurement_point_enabled())
+
     def measurement_point_target(self) -> str:
         page = self._chart_page
         if page is None:
@@ -333,6 +342,12 @@ class ChartViewer(QWidget):
         spec.series = self._deduplicate_series(spec.series)
         if not spec.series:
             return None
+        axis_plan = build_chart_axis_plan(spec.series)
+        spec.series = apply_axis_plan(spec.series, axis_plan)
+        spec.y_label = axis_plan.left_axis.label
+        spec.secondary_y_label = axis_plan.right_axis.label if axis_plan.right_axis is not None else ""
+        spec.log_y = axis_plan.left_axis.log_enabled
+        spec.right_log_y = axis_plan.right_axis.log_enabled if axis_plan.right_axis is not None else False
         return spec
 
     def _get_chart_type_for_result(self, result: SimulationResult) -> Optional[ChartType]:
@@ -346,16 +361,6 @@ class ChartViewer(QWidget):
         if analysis == "noise":
             return ChartType.NOISE_SPECTRUM
         return None
-
-    def _deduplicate_series(self, series_list: List[ChartSeries]) -> List[ChartSeries]:
-        deduplicated: List[ChartSeries] = []
-        seen_names = set()
-        for series in series_list:
-            if series.name in seen_names:
-                continue
-            deduplicated.append(series)
-            seen_names.add(series.name)
-        return deduplicated
 
     def _build_chart_spec(
         self,
@@ -376,8 +381,8 @@ class ChartViewer(QWidget):
             x_data = resolved_x_data
             if x_data is None:
                 return None
-            series = self._build_real_signal_series(result, x_data)
-            return ChartSpec(chart_type, "Transient Waveforms", resolved_x_label, "Value", series, log_x=resolved_log_x, x_domain=resolved_x_domain)
+            series = self._build_real_signal_series(result, x_data, analysis)
+            return ChartSpec(chart_type, "Transient Waveforms", resolved_x_label, "", series, log_x=resolved_log_x, x_domain=resolved_x_domain)
 
         if chart_type == ChartType.BODE_OVERLAY and analysis == "ac":
             x_data = resolved_x_data
@@ -390,15 +395,15 @@ class ChartViewer(QWidget):
             x_data = resolved_x_data
             if x_data is None:
                 return None
-            series = self._build_real_signal_series(result, x_data)
-            return ChartSpec(chart_type, "DC Sweep", resolved_x_label, "Value", series, log_x=resolved_log_x, x_domain=resolved_x_domain)
+            series = self._build_real_signal_series(result, x_data, analysis)
+            return ChartSpec(chart_type, "DC Sweep", resolved_x_label, "", series, log_x=resolved_log_x, x_domain=resolved_x_domain)
 
         if chart_type == ChartType.NOISE_SPECTRUM and analysis == "noise":
             x_data = resolved_x_data
             if x_data is None:
                 return None
             series = self._build_noise_series(result, x_data)
-            return ChartSpec(chart_type, "Noise Spectrum", resolved_x_label, "Noise Spectral Density", series, log_x=resolved_log_x, log_y=True, x_domain=resolved_x_domain)
+            return ChartSpec(chart_type, "Noise Spectrum", resolved_x_label, "", series, log_x=resolved_log_x, x_domain=resolved_x_domain)
 
         return None
 
@@ -436,6 +441,7 @@ class ChartViewer(QWidget):
         self,
         result: SimulationResult,
         x_data: np.ndarray,
+        analysis: str,
     ) -> List[ChartSeries]:
         data = result.data
         if data is None:
@@ -451,6 +457,7 @@ class ChartViewer(QWidget):
                     x_data=np.asarray(x_data, dtype=float),
                     y_data=np.asarray(y_data, dtype=float),
                     color=SERIES_COLORS[index % len(SERIES_COLORS)],
+                    axis_family=self._resolve_real_signal_axis_family(result, signal_name, analysis),
                 )
             )
         return series
@@ -483,6 +490,7 @@ class ChartViewer(QWidget):
                     y_data=np.asarray(magnitude_data, dtype=float),
                     color=color,
                     axis_key="left",
+                    axis_family="magnitude_db",
                     line_style="solid",
                     group_key=signal_name,
                     component="magnitude",
@@ -495,6 +503,7 @@ class ChartViewer(QWidget):
                     y_data=np.asarray(phase_data, dtype=float),
                     color=color,
                     axis_key="right",
+                    axis_family="phase_deg",
                     line_style="dash",
                     group_key=signal_name,
                     component="phase",
@@ -523,10 +532,28 @@ class ChartViewer(QWidget):
                     x_data=np.asarray(x_data, dtype=float),
                     y_data=y_data,
                     color=SERIES_COLORS[color_index % len(SERIES_COLORS)],
+                    axis_family=self._resolve_real_signal_axis_family(result, signal_name, "noise"),
                 )
             )
             color_index += 1
         return series
+
+    def _resolve_real_signal_axis_family(self, result: SimulationResult, signal_name: str, analysis: str) -> str:
+        data = getattr(result, "data", None)
+        signal_types = getattr(data, "signal_types", {}) if data is not None else {}
+        signal_type = WaveformDataService.get_signal_type(signal_name, signal_types)
+        normalized_analysis = str(analysis or "").lower()
+        if normalized_analysis == "noise":
+            if signal_type == "voltage":
+                return "noise_voltage_density"
+            if signal_type == "current":
+                return "noise_current_density"
+            return "noise_other_density"
+        if signal_type == "voltage":
+            return "voltage"
+        if signal_type == "current":
+            return "current"
+        return "other"
 
     def _get_base_signal_names(self, result: SimulationResult) -> List[str]:
         data = result.data
@@ -547,6 +574,17 @@ class ChartViewer(QWidget):
         signal_type = signal_types.get(name, "")
         type_rank = {"voltage": 0, "current": 1, "other": 2}.get(signal_type, 2)
         return (role_rank, type_rank, name_lower)
+
+    def _deduplicate_series(self, series_list: List[ChartSeries]) -> List[ChartSeries]:
+        deduplicated: List[ChartSeries] = []
+        seen_names = set()
+        for series in series_list:
+            series_name = str(series.name or "")
+            if not series_name or series_name in seen_names:
+                continue
+            deduplicated.append(series)
+            seen_names.add(series_name)
+        return deduplicated
 
     def _show_empty_state(self):
         self._page_host.hide()

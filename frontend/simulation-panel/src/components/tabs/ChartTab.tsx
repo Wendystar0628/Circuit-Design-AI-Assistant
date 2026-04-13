@@ -24,7 +24,7 @@ function formatMeasurementDelta(valueA: number | null, valueB: number | null): s
 
 export function ChartTab({ state, bridge }: ChartTabProps) {
   const chart = state.analysis_chart_view
-  const [selectedMeasurementSignalId, setSelectedMeasurementSignalId] = useState('')
+  const [selectedMeasurementGroupId, setSelectedMeasurementGroupId] = useState('')
   const chartDisplayName = chart.chart_type_display_name || chart.title || chart.chart_type || '图表'
   const viewWindow = useMemo(() => ({
     active: chart.viewport.active,
@@ -84,7 +84,13 @@ export function ChartTab({ state, bridge }: ChartTabProps) {
     </>
   ) : undefined
   const visibleLegendSeries = useMemo(() => chart.available_series.filter((series) => series.visible), [chart.available_series])
-  const preferredMeasurementSignalId = useMemo(() => {
+  const preferredMeasurementGroupId = useMemo(() => {
+    if (chart.measurement_point.target_id && measurementSignalOptions.some((option) => option.id === chart.measurement_point.target_id)) {
+      return chart.measurement_point.target_id
+    }
+    return measurementSignalOptions[0]?.id ?? ''
+  }, [chart.measurement_point.target_id, measurementSignalOptions])
+  const measurementPointTargetId = useMemo(() => {
     if (chart.measurement_point.target_id && measurementSignalOptions.some((option) => option.id === chart.measurement_point.target_id)) {
       return chart.measurement_point.target_id
     }
@@ -92,30 +98,20 @@ export function ChartTab({ state, bridge }: ChartTabProps) {
   }, [chart.measurement_point.target_id, measurementSignalOptions])
 
   useEffect(() => {
-    setSelectedMeasurementSignalId((current) => {
+    setSelectedMeasurementGroupId((current) => {
       if (measurementSignalOptions.some((option) => option.id === current)) {
         return current
       }
-      return preferredMeasurementSignalId
+      return preferredMeasurementGroupId
     })
-  }, [measurementSignalOptions, preferredMeasurementSignalId])
-
-  useEffect(() => {
-    if (!selectedMeasurementSignalId) {
-      return
-    }
-    if (selectedMeasurementSignalId === chart.measurement_point.target_id) {
-      return
-    }
-    bridge?.setChartMeasurementPointTarget(selectedMeasurementSignalId)
-  }, [bridge, chart.measurement_point.target_id, selectedMeasurementSignalId])
+  }, [measurementSignalOptions, preferredMeasurementGroupId])
 
   const activeMeasurementGroup = useMemo(() => {
     if (!measurementGroups.length) {
       return null
     }
-    return measurementGroups.find((group) => group.id === selectedMeasurementSignalId) ?? measurementGroups[0]
-  }, [measurementGroups, selectedMeasurementSignalId])
+    return measurementGroups.find((group) => group.id === selectedMeasurementGroupId) ?? measurementGroups[0]
+  }, [measurementGroups, selectedMeasurementGroupId])
 
   const measurementPanelRows = useMemo(() => (activeMeasurementGroup?.rows ?? []).map((row) => ({
     id: row.id,
@@ -143,8 +139,8 @@ export function ChartTab({ state, bridge }: ChartTabProps) {
           <MeasurementPointFloatingPanel
             title="测量点"
             signalOptions={measurementSignalOptions}
-            selectedSignalId={selectedMeasurementSignalId}
-            onSelectedSignalChange={setSelectedMeasurementSignalId}
+            selectedSignalId={measurementPointTargetId}
+            onSelectedSignalChange={(signalId) => bridge?.setChartMeasurementPointTarget(signalId)}
             rows={measurementPointPanelRows}
             emptyMessage="当前测量点没有可展示的采样值。"
           />
@@ -161,7 +157,7 @@ export function ChartTab({ state, bridge }: ChartTabProps) {
             title="测量"
             signalOptions={measurementSignalOptions}
             selectedSignalId={activeMeasurementGroup?.id ?? ''}
-            onSelectedSignalChange={setSelectedMeasurementSignalId}
+            onSelectedSignalChange={setSelectedMeasurementGroupId}
             rows={measurementPanelRows}
             emptyMessage="当前所选信号没有可展示的测量值。"
           />
@@ -169,7 +165,7 @@ export function ChartTab({ state, bridge }: ChartTabProps) {
       })
     }
     return panels
-  }, [activeMeasurementGroup?.id, chart.measurement_enabled, chart.measurement_point.enabled, measurementPanelRows, measurementPointPanelRows, measurementSignalOptions, selectedMeasurementSignalId])
+  }, [activeMeasurementGroup?.id, bridge, chart.measurement_enabled, chart.measurement_point.enabled, measurementPanelRows, measurementPointPanelRows, measurementPointTargetId, measurementSignalOptions])
 
   return (
     <div className="tab-surface">
@@ -254,6 +250,7 @@ export function ChartTab({ state, bridge }: ChartTabProps) {
               secondaryYLabel={chart.secondary_y_label}
               logX={chart.log_x}
               logY={chart.log_y}
+              rightLogY={chart.right_log_y}
               emptyMessage={chart.has_chart ? '当前未显示任何序列，请在左侧重新勾选。' : '当前结果没有可用图表。'}
             />
           </div>

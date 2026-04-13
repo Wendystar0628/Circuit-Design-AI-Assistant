@@ -13,6 +13,7 @@ class ChartSeries:
     y_data: np.ndarray
     color: str
     axis_key: str = "left"
+    axis_family: str = "other"
     line_style: str = "solid"
     group_key: str = ""
     component: str = "value"
@@ -29,6 +30,7 @@ class ChartSpec:
     log_y: bool = False
     x_domain: Optional[Tuple[float, float]] = None
     secondary_y_label: Optional[str] = None
+    right_log_y: bool = False
 
 
 __all__ = ["ChartSeries", "ChartSpec"]

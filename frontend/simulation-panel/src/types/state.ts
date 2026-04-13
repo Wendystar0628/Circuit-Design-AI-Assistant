@@ -86,6 +86,7 @@ export interface AnalysisChartViewState {
   secondary_y_label: string
   log_x: boolean
   log_y: boolean
+  right_log_y: boolean
   available_series: ChartSeriesMetaState[]
   visible_series: ChartSeriesSnapshotState[]
   visible_series_count: number
@@ -440,6 +441,7 @@ export const EMPTY_SIMULATION_STATE: SimulationMainState = {
     secondary_y_label: '',
     log_x: false,
     log_y: false,
+    right_log_y: false,
     available_series: [],
     visible_series: [],
     visible_series_count: 0,
@@ -856,6 +858,7 @@ export function normalizeSimulationState(input: unknown): SimulationMainState {
       secondary_y_label: asString(analysisChartView.secondary_y_label),
       log_x: asBoolean(analysisChartView.log_x),
       log_y: asBoolean(analysisChartView.log_y),
+      right_log_y: asBoolean(analysisChartView.right_log_y),
       available_series: normalizeChartSeriesMeta(analysisChartView.available_series),
       visible_series: normalizeChartSeriesSnapshots(analysisChartView.visible_series),
       visible_series_count: asNumber(analysisChartView.visible_series_count),

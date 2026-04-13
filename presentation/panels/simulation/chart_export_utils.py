@@ -78,6 +78,7 @@ def build_chart_export_payload(spec: ChartSpec, visible_series: Sequence[ChartSe
         "secondary_y_label": spec.secondary_y_label,
         "log_x": spec.log_x,
         "log_y": spec.log_y,
+        "right_log_y": spec.right_log_y,
         "series": [serialize_chart_series(series) for series in visible_series],
         "rows": rows,
     }

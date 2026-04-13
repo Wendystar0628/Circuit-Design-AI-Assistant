@@ -8,6 +8,7 @@ from PyQt6.QtWidgets import QApplication
 from domain.simulation.data.simulation_artifact_exporter import simulation_artifact_exporter
 from domain.simulation.models.simulation_result import SimulationData, SimulationResult
 from presentation.panels.simulation.analysis_chart_viewer import ChartViewer
+from presentation.panels.simulation.simulation_tab import SimulationTab
 from presentation.panels.simulation.simulation_conversation_attachment_coordinator import SimulationConversationAttachmentCoordinator
 from presentation.panels.simulation.simulation_export_panel import SimulationExportPanel
 from presentation.panels.simulation.waveform_widget import WaveformWidget
@@ -36,6 +37,10 @@ def sample_result() -> SimulationResult:
             "V(out)": np.array([1.0, 2.0, 3.0, 4.0], dtype=float),
             "V(in)": np.array([0.5, 0.6, 0.7, 0.8], dtype=float),
         },
+        signal_types={
+            "V(out)": "voltage",
+            "V(in)": "voltage",
+        },
     )
     return SimulationResult(
         executor="spice",
@@ -53,6 +58,80 @@ def sample_result() -> SimulationResult:
             "parameters": {
                 "step_time": "1n",
                 "stop_time": "1u",
+            }
+        },
+    )
+
+
+@pytest.fixture
+def sample_mixed_axis_result() -> SimulationResult:
+    time = np.array([0.0, 0.1, 0.2, 0.3], dtype=float)
+    data = SimulationData(
+        time=time,
+        signals={
+            "V(out)": np.array([1.0, 2.0, 3.0, 4.0], dtype=float),
+            "I(V1)": np.array([1e-3, 1.5e-3, 2e-3, 2.5e-3], dtype=float),
+        },
+        signal_types={
+            "V(out)": "voltage",
+            "I(V1)": "current",
+        },
+    )
+    return SimulationResult(
+        executor="spice",
+        file_path="results/export_consistency_mixed.cir",
+        analysis_type="tran",
+        success=True,
+        data=data,
+        raw_output="Transient mixed-axis simulation finished",
+        timestamp="2026-04-06T00:12:00",
+        x_axis_kind="time",
+        x_axis_label="Time (s)",
+        x_axis_scale="linear",
+        analysis_command=".tran 1n 1u",
+        analysis_info={
+            "parameters": {
+                "step_time": "1n",
+                "stop_time": "1u",
+            }
+        },
+    )
+
+
+@pytest.fixture
+def sample_noise_result() -> SimulationResult:
+    frequency = np.array([1e1, 1e2, 1e3, 1e4], dtype=float)
+    data = SimulationData(
+        frequency=frequency,
+        signals={
+            "V(onoise)": np.array([1e-9, 2e-9, 3e-9, 4e-9], dtype=float),
+            "I(V1)": np.array([2e-12, 3e-12, 4e-12, 5e-12], dtype=float),
+        },
+        signal_types={
+            "V(onoise)": "voltage",
+            "I(V1)": "current",
+        },
+    )
+    return SimulationResult(
+        executor="spice",
+        file_path="results/export_consistency_noise.cir",
+        analysis_type="noise",
+        success=True,
+        data=data,
+        raw_output="Noise simulation finished",
+        timestamp="2026-04-06T00:18:00",
+        x_axis_kind="frequency",
+        x_axis_label="Frequency (Hz)",
+        x_axis_scale="log",
+        analysis_command=".noise v(out) V1 dec 10 10 10k",
+        analysis_info={
+            "parameters": {
+                "output_node": "out",
+                "input_source": "V1",
+                "sweep_type": "dec",
+                "points_per_decade": "10",
+                "start_frequency": "10",
+                "stop_frequency": "10k",
             }
         },
     )
@@ -198,6 +277,7 @@ def test_project_export_root_uses_visible_results_folder_and_unique_timestamp_di
 def test_chart_and_waveform_exports_follow_common_payload_schema(qapp, sample_result: SimulationResult, tmp_path: Path):
     chart_viewer = ChartViewer()
     chart_viewer.load_result(sample_result)
+    chart_snapshot = chart_viewer.get_web_snapshot()
 
     waveform_widget = WaveformWidget()
     waveform_widget.load_waveform(sample_result, "V(out)")
@@ -217,6 +297,8 @@ def test_chart_and_waveform_exports_follow_common_payload_schema(qapp, sample_re
     _assert_common_artifact_payload(chart_payload, "chart", expected_file_name="export_consistency.cir", expected_x_axis_label="Time (s)")
     _assert_common_artifact_payload(waveform_payload, "waveforms", expected_file_name="export_consistency.cir", expected_x_axis_label="Time (s)")
 
+    assert chart_snapshot["y_label"] == "Voltage (V)"
+    assert chart_snapshot["secondary_y_label"] == ""
     assert charts_manifest["summary"]["chart_count"] == 1
     assert chart_payload["data"]["chart_type"] == "waveform_time"
     assert len(chart_payload["data"]["series"]) == 2
@@ -270,6 +352,7 @@ def test_ac_chart_exports_single_bode_overlay_with_dual_axis_metadata(qapp, samp
     assert chart_payload["data"]["chart_type"] == "bode_overlay"
     assert chart_payload["data"]["secondary_y_label"] == "Phase (°)"
     assert chart_payload["data"]["log_x"] is True
+    assert snapshot["right_log_y"] is False
     assert len(chart_payload["data"]["series"]) == 2
 
     series_by_name = {series["name"]: series for series in chart_payload["data"]["series"]}
@@ -288,6 +371,104 @@ def test_ac_chart_rejects_legacy_derived_only_bode_signals(qapp, sample_legacy_a
     assert snapshot["has_chart"] is False
     assert snapshot["chart_type"] == ""
     assert chart_viewer.supports_measurement_point() is False
+
+
+def test_tran_chart_reassigns_axes_based_on_visible_signal_semantics(qapp, sample_mixed_axis_result: SimulationResult):
+    chart_viewer = ChartViewer()
+    chart_viewer.load_result(sample_mixed_axis_result)
+
+    initial_snapshot = chart_viewer.get_web_snapshot()
+    assert initial_snapshot["y_label"] == "Voltage (V)"
+    assert initial_snapshot["secondary_y_label"] == ""
+    assert {series["name"]: series["axis_key"] for series in initial_snapshot["visible_series"]} == {"V(out)": "left"}
+
+    assert chart_viewer.set_series_visible("I(V1)", True) is True
+    dual_axis_snapshot = chart_viewer.get_web_snapshot()
+    assert dual_axis_snapshot["y_label"] == "Voltage (V)"
+    assert dual_axis_snapshot["secondary_y_label"] == "Current (A)"
+    assert dual_axis_snapshot["log_y"] is False
+    assert dual_axis_snapshot["right_log_y"] is False
+    assert {series["name"]: series["axis_key"] for series in dual_axis_snapshot["visible_series"]} == {
+        "V(out)": "left",
+        "I(V1)": "right",
+    }
+
+    assert chart_viewer.set_series_visible("V(out)", False) is True
+    current_only_snapshot = chart_viewer.get_web_snapshot()
+    assert current_only_snapshot["y_label"] == "Current (A)"
+    assert current_only_snapshot["secondary_y_label"] == ""
+    assert {series["name"]: series["axis_key"] for series in current_only_snapshot["visible_series"]} == {"I(V1)": "left"}
+
+
+def test_noise_chart_emits_dual_log_axis_metadata_for_mixed_noise_quantities(qapp, sample_noise_result: SimulationResult):
+    chart_viewer = ChartViewer()
+    chart_viewer.load_result(sample_noise_result)
+
+    assert chart_viewer.set_series_visible("I(V1)", True) is True
+    snapshot = chart_viewer.get_web_snapshot()
+
+    assert snapshot["chart_type"] == "noise_spectrum"
+    assert snapshot["y_label"] == "Voltage Noise Density (V/√Hz)"
+    assert snapshot["secondary_y_label"] == "Current Noise Density (A/√Hz)"
+    assert snapshot["log_x"] is True
+    assert snapshot["log_y"] is True
+    assert snapshot["right_log_y"] is True
+    assert {series["name"]: series["axis_key"] for series in snapshot["visible_series"]} == {
+        "V(onoise)": "left",
+        "I(V1)": "right",
+    }
+
+def test_chart_measurement_point_target_write_does_not_reenable_hidden_series(qapp, sample_result: SimulationResult):
+    chart_viewer = ChartViewer()
+    chart_viewer.load_result(sample_result)
+
+    assert chart_viewer.set_series_visible("V(out)", False) is True
+    snapshot_after_hide = chart_viewer.get_web_snapshot()
+    visibility_after_hide = {item["name"]: bool(item["visible"]) for item in snapshot_after_hide["available_series"]}
+
+    assert visibility_after_hide == {
+        "V(out)": False,
+        "V(in)": False,
+    }
+    assert snapshot_after_hide["visible_series"] == []
+
+    assert chart_viewer.set_measurement_point_target("V(out)") is False
+
+    snapshot_after_target_request = chart_viewer.get_web_snapshot()
+    visibility_after_target_request = {item["name"]: bool(item["visible"]) for item in snapshot_after_target_request["available_series"]}
+    assert visibility_after_target_request == visibility_after_hide
+    assert snapshot_after_target_request["visible_series"] == []
+    assert snapshot_after_target_request["measurement_point"]["target_id"] == ""
+
+
+def test_chart_measurement_point_sync_retains_visible_targets_only():
+    class _FakeChartViewer:
+        def __init__(self):
+            self._target = "V(out)"
+            self.calls = []
+
+        def get_web_snapshot(self):
+            return {
+                "available_series": [
+                    {"name": "V(out)", "group_key": "V(out)", "visible": False},
+                    {"name": "V(in)", "group_key": "V(in)", "visible": True},
+                ]
+            }
+
+        def measurement_point_target(self):
+            return self._target
+
+        def set_measurement_point_target(self, target_id: str):
+            self.calls.append(target_id)
+            self._target = target_id
+            return True
+
+    fake_chart_viewer = _FakeChartViewer()
+
+    SimulationTab._sync_chart_measurement_point_target(SimpleNamespace(), fake_chart_viewer)
+
+    assert fake_chart_viewer.calls == ["V(in)"]
+    assert fake_chart_viewer.measurement_point_target() == "V(in)"
 
 
 class _FakeEventBus:

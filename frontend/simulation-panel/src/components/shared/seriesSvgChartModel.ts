@@ -91,6 +91,7 @@ interface BuildSeriesSvgChartModelOptions {
   secondaryYLabel?: string
   logX: boolean
   logY: boolean
+  rightLogY?: boolean
   width: number
   height: number
   viewWindow?: SeriesSvgChartViewWindow | null
@@ -149,6 +150,10 @@ function normalizeAxisKey(value: string | undefined): 'left' | 'right' {
 
 function normalizeLineStyle(value: string | undefined): 'solid' | 'dash' {
   return value === 'dash' ? 'dash' : 'solid'
+}
+
+function isAxisLogEnabled(axisKey: 'left' | 'right', leftLogY: boolean, rightLogY: boolean): boolean {
+  return axisKey === 'right' ? rightLogY : leftLogY
 }
 
 function normalizeRequestedRange(minValue: number | null, maxValue: number | null, logEnabled: boolean): AxisDomain | null {
@@ -318,6 +323,7 @@ export function buildSeriesSvgChartModel({
   secondaryYLabel,
   logX,
   logY,
+  rightLogY = false,
   width,
   height,
   viewWindow,
@@ -325,7 +331,7 @@ export function buildSeriesSvgChartModel({
   const normalizedSeries: NormalizedSeries[] = series.map((item) => {
     const axisKey = normalizeAxisKey(item.axis_key)
     const lineStyle = normalizeLineStyle(item.line_style)
-    const points = buildPointPairs(item, logX, axisKey === 'left' && logY)
+    const points = buildPointPairs(item, logX, isAxisLogEnabled(axisKey, logY, rightLogY))
     return {
       name: item.name,
       color: item.color || '#2563eb',
@@ -358,7 +364,7 @@ export function buildSeriesSvgChartModel({
   const requestedXDomain = viewWindow?.active ? clampRequestedDomain(normalizeRequestedRange(viewWindow.xMin, viewWindow.xMax, logX), xDomain) : null
   const requestedLeftDomain = viewWindow?.active ? clampRequestedDomain(normalizeRequestedRange(viewWindow.leftYMin, viewWindow.leftYMax, logY), leftDomain) : null
   const requestedRightDomain = viewWindow?.active && rightDomain !== null
-    ? clampRequestedDomain(normalizeRequestedRange(viewWindow.rightYMin, viewWindow.rightYMax, false), rightDomain)
+    ? clampRequestedDomain(normalizeRequestedRange(viewWindow.rightYMin, viewWindow.rightYMax, rightLogY), rightDomain)
     : null
 
   const effectiveXDomain = requestedXDomain ?? xDomain
@@ -369,7 +375,7 @@ export function buildSeriesSvgChartModel({
   const yTargetTicks = clamp(Math.round((viewport.plotBottom - viewport.plotTop) / 40), 6, 12)
   const xTicks = buildTicks(effectiveXDomain, viewport, xTargetTicks, 'horizontal', logX)
   const leftTicks = buildTicks(effectiveLeftDomain, viewport, yTargetTicks, 'vertical', logY)
-  const rightTicks = effectiveRightDomain === null ? [] : buildTicks(effectiveRightDomain, viewport, yTargetTicks, 'vertical', false)
+  const rightTicks = effectiveRightDomain === null ? [] : buildTicks(effectiveRightDomain, viewport, yTargetTicks, 'vertical', rightLogY)
 
   const renderedSeries = normalizedSeries.map((item) => {
     const yDomain = item.axisKey === 'right' && effectiveRightDomain !== null ? effectiveRightDomain : effectiveLeftDomain

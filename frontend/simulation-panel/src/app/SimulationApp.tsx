@@ -1,23 +1,20 @@
-import type { ReactNode } from 'react'
-
 import type { SimulationBridge } from '../bridge/bridge'
 import { ActiveResultTabRouter } from '../components/layout/ActiveResultTabRouter'
 import { SimulationLayoutShell } from '../components/layout/SimulationLayoutShell'
-import type { SimulationMainState, SimulationTabId } from '../types/state'
+import { RawDataTab } from '../components/tabs/RawDataTab'
+import type { RawDataViewState, SimulationMainState, SimulationTabId } from '../types/state'
 
 interface SimulationAppProps {
   state: SimulationMainState
+  rawDataView: RawDataViewState
   bridge: SimulationBridge | null
   bridgeConnected: boolean
   onTabSelect(tabId: SimulationTabId): void
 }
 
-export function SimulationApp({ state, bridge, bridgeConnected, onTabSelect }: SimulationAppProps) {
+export function SimulationApp({ state, rawDataView, bridge, bridgeConnected, onTabSelect }: SimulationAppProps) {
   const activeTab = state.surface_tabs.active_tab
-
-  const activeTabNode: ReactNode = (
-    <ActiveResultTabRouter activeTab={activeTab} state={state} bridge={bridge} />
-  )
+  const shouldMountRawDataSurface = activeTab === 'raw_data' || rawDataView.visible_columns.length > 0 || rawDataView.rows.length > 0
 
   return (
     <SimulationLayoutShell
@@ -25,7 +22,12 @@ export function SimulationApp({ state, bridge, bridgeConnected, onTabSelect }: S
       bridgeConnected={bridgeConnected}
       onTabSelect={onTabSelect}
     >
-      {activeTabNode}
+      {activeTab === 'raw_data' ? null : <ActiveResultTabRouter activeTab={activeTab} state={state} bridge={bridge} />}
+      {shouldMountRawDataSurface ? (
+        <div className={activeTab === 'raw_data' ? 'tab-surface-shell' : 'tab-surface-shell tab-surface-shell--hidden'}>
+          <RawDataTab rawDataView={rawDataView} />
+        </div>
+      ) : null}
     </SimulationLayoutShell>
   )
 }

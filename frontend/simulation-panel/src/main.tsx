@@ -3,13 +3,22 @@ import { createRoot } from 'react-dom/client'
 
 import { SimulationApp } from './app/SimulationApp'
 import type { SimulationAppApi, SimulationBridge } from './bridge/bridge'
-import { EMPTY_SIMULATION_STATE, normalizeSimulationState, type SimulationMainState, type SimulationTabId } from './types/state'
+import {
+  EMPTY_RAW_DATA_VIEW,
+  EMPTY_SIMULATION_STATE,
+  normalizeRawDataView,
+  normalizeSimulationState,
+  type RawDataViewState,
+  type SimulationMainState,
+  type SimulationTabId,
+} from './types/state'
 
 import './styles/tokens.css'
 import './styles/layout.css'
 
 function Root() {
   const [state, setState] = useState<SimulationMainState>(EMPTY_SIMULATION_STATE)
+  const [rawDataView, setRawDataView] = useState<RawDataViewState>(EMPTY_RAW_DATA_VIEW)
   const [bridge, setBridge] = useState<SimulationBridge | null>(null)
   const [bridgeConnected, setBridgeConnected] = useState(false)
 
@@ -17,6 +26,9 @@ function Root() {
     const api: SimulationAppApi = {
       setState(nextState) {
         setState(normalizeSimulationState(nextState))
+      },
+      setRawDataView(nextState) {
+        setRawDataView(normalizeRawDataView(nextState))
       },
     }
     window.simulationApp = api
@@ -53,6 +65,7 @@ function Root() {
   return (
     <SimulationApp
       state={state}
+      rawDataView={rawDataView}
       bridge={bridge}
       bridgeConnected={bridgeConnected}
       onTabSelect={handleTabSelect}

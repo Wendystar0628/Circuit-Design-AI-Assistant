@@ -296,7 +296,6 @@ export interface SimulationMainState {
   analysis_chart_view: AnalysisChartViewState
   waveform_view: WaveformViewState
   analysis_info_view: AnalysisInfoViewState
-  raw_data_view: RawDataViewState
   output_log_view: OutputLogViewState
   export_view: ExportViewState
   history_results_view: HistoryResultsViewState
@@ -357,6 +356,11 @@ const EMPTY_WAVEFORM_MEASUREMENT: WaveformMeasurementState = {
   cursor_b_x: null,
   values_a: {},
   values_b: {},
+}
+
+export const EMPTY_RAW_DATA_VIEW: RawDataViewState = {
+  visible_columns: [],
+  rows: [],
 }
 
 export const EMPTY_SIMULATION_STATE: SimulationMainState = {
@@ -437,10 +441,6 @@ export const EMPTY_SIMULATION_STATE: SimulationMainState = {
     requested_x_range: null,
     actual_x_range: null,
     parameters: {},
-  },
-  raw_data_view: {
-    visible_columns: [],
-    rows: [],
   },
   output_log_view: {
     has_log: false,
@@ -726,7 +726,6 @@ export function normalizeSimulationState(input: unknown): SimulationMainState {
   const analysisChartView = asRecord(root.analysis_chart_view)
   const waveformView = asRecord(root.waveform_view)
   const analysisInfoView = asRecord(root.analysis_info_view)
-  const rawDataView = asRecord(root.raw_data_view)
   const outputLogView = asRecord(root.output_log_view)
   const exportView = asRecord(root.export_view)
   const historyResultsView = asRecord(root.history_results_view)
@@ -830,10 +829,6 @@ export function normalizeSimulationState(input: unknown): SimulationMainState {
       actual_x_range: asRange(analysisInfoView.actual_x_range),
       parameters: asRecord(analysisInfoView.parameters),
     },
-    raw_data_view: {
-      visible_columns: asStringArray(rawDataView.visible_columns),
-      rows: normalizeRawDataRows(rawDataView.rows),
-    },
     output_log_view: {
       has_log: asBoolean(outputLogView.has_log),
       can_add_to_conversation: asBoolean(outputLogView.can_add_to_conversation),
@@ -863,5 +858,13 @@ export function normalizeSimulationState(input: unknown): SimulationMainState {
       sections: normalizeOpResultSections(opResultView.sections),
       can_add_to_conversation: asBoolean(opResultView.can_add_to_conversation),
     },
+  }
+}
+
+export function normalizeRawDataView(input: unknown): RawDataViewState {
+  const rawDataView = asRecord(input)
+  return {
+    visible_columns: asStringArray(rawDataView.visible_columns),
+    rows: normalizeRawDataRows(rawDataView.rows),
   }
 }

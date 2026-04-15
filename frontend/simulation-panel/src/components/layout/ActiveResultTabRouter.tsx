@@ -7,7 +7,6 @@ import { HistoryResultsTab } from '../tabs/HistoryResultsTab'
 import { MetricsTab } from '../tabs/MetricsTab'
 import { OpResultTab } from '../tabs/OpResultTab'
 import { OutputLogTab } from '../tabs/OutputLogTab'
-import { RawDataTab } from '../tabs/RawDataTab'
 import { WaveformTab } from '../tabs/WaveformTab'
 
 interface ActiveResultTabRouterProps {
@@ -25,9 +24,6 @@ export function ActiveResultTabRouter({ activeTab, state, bridge }: ActiveResult
   }
   if (activeTab === 'analysis_info') {
     return <AnalysisInfoTab state={state} />
-  }
-  if (activeTab === 'raw_data') {
-    return <RawDataTab state={state} />
   }
   if (activeTab === 'output_log') {
     return <OutputLogTab state={state} bridge={bridge} />

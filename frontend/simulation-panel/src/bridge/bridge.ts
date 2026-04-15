@@ -1,4 +1,4 @@
-import type { SimulationMainState, SimulationTabId } from '../types/state'
+import type { RawDataViewState, SimulationMainState, SimulationTabId } from '../types/state'
 
 export interface SimulationSurfaceViewportInput {
   xMin: number
@@ -40,6 +40,7 @@ export interface SimulationBridge {
 
 export interface SimulationAppApi {
   setState(state: SimulationMainState | Record<string, unknown>): void
+  setRawDataView(state: RawDataViewState | Record<string, unknown>): void
 }
 
 interface QtTransport {

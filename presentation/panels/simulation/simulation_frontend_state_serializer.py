@@ -53,7 +53,6 @@ class SimulationFrontendStateSerializer:
         awaiting_confirmation: bool = False,
         analysis_chart_snapshot: Optional[Dict[str, Any]] = None,
         waveform_snapshot: Optional[Dict[str, Any]] = None,
-        raw_data_snapshot: Optional[Dict[str, Any]] = None,
         output_log_snapshot: Optional[Dict[str, Any]] = None,
         export_snapshot: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
@@ -78,7 +77,6 @@ class SimulationFrontendStateSerializer:
         signal_names = self._signal_names(result)
         has_waveform = bool(signal_names)
         has_chart = self._has_chart(result)
-        raw_data_snapshot_payload = raw_data_snapshot if isinstance(raw_data_snapshot, dict) else None
         output_log_snapshot_payload = output_log_snapshot if isinstance(output_log_snapshot, dict) else None
         export_snapshot_payload = export_snapshot if isinstance(export_snapshot, dict) else None
         has_output_log = bool(output_log_snapshot_payload.get("has_log")) if output_log_snapshot_payload is not None else bool(getattr(result, "raw_output", None))
@@ -166,10 +164,6 @@ class SimulationFrontendStateSerializer:
                 "values_b": {},
             },
         }
-        raw_data_view = {
-            "visible_columns": [],
-            "rows": [],
-        }
         output_log_view = {
             "has_log": bool(output_log_snapshot_payload.get("has_log")) if output_log_snapshot_payload is not None else has_output_log,
             "can_add_to_conversation": bool(output_log_snapshot_payload.get("can_add_to_conversation")) if output_log_snapshot_payload is not None else has_output_log,
@@ -182,8 +176,6 @@ class SimulationFrontendStateSerializer:
             analysis_chart_view.update(analysis_chart_snapshot)
         if isinstance(waveform_snapshot, dict):
             waveform_view.update(waveform_snapshot)
-        if isinstance(raw_data_snapshot, dict):
-            raw_data_view.update(raw_data_snapshot)
         if isinstance(output_log_snapshot, dict):
             output_log_view.update(output_log_snapshot)
 
@@ -235,7 +227,6 @@ class SimulationFrontendStateSerializer:
             "analysis_chart_view": analysis_chart_view,
             "waveform_view": waveform_view,
             "analysis_info_view": self.serialize_analysis_info(result),
-            "raw_data_view": raw_data_view,
             "output_log_view": output_log_view,
             "export_view": export_view,
             "history_results_view": {
@@ -244,6 +235,23 @@ class SimulationFrontendStateSerializer:
                 "can_load": bool(project_root),
             },
             "op_result_view": op_result_view,
+        }
+
+    def serialize_raw_data_view(
+        self,
+        raw_data_snapshot: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        payload = raw_data_snapshot if isinstance(raw_data_snapshot, dict) else {}
+        return {
+            "visible_columns": [str(value or "") for value in payload.get("visible_columns", []) if str(value or "")],
+            "rows": [
+                {
+                    "row_number": int(item.get("row_number") or 0),
+                    "values": [str(value or "") for value in item.get("values", [])],
+                }
+                for item in payload.get("rows", [])
+                if isinstance(item, dict)
+            ],
         }
 
     def serialize_metric(self, metric: DisplayMetric) -> Dict[str, Any]:

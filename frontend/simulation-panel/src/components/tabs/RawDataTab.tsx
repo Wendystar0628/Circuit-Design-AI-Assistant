@@ -1,11 +1,13 @@
-import type { SimulationMainState } from '../../types/state'
+import { memo } from 'react'
+
+import type { RawDataViewState } from '../../types/state'
 
 interface RawDataTabProps {
-  state: SimulationMainState
+  rawDataView: RawDataViewState
 }
 
-export function RawDataTab({ state }: RawDataTabProps) {
-  const rawData = state.raw_data_view
+export const RawDataTab = memo(function RawDataTab({ rawDataView }: RawDataTabProps) {
+  const rawData = rawDataView
 
   return (
     <div className="tab-surface">
@@ -39,4 +41,4 @@ export function RawDataTab({ state }: RawDataTabProps) {
       </div>
     </div>
   )
-}
+})

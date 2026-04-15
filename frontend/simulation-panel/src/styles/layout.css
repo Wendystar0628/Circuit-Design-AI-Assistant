@@ -112,6 +112,23 @@
   min-height: 0;
 }
 
+.tab-surface-shell {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+}
+
+.tab-surface-shell > .tab-surface {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+}
+
+.tab-surface-shell--hidden {
+  display: none;
+}
+
 .surface-state-stack {
   display: flex;
   flex-direction: column;

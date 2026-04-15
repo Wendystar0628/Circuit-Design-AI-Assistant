@@ -69,6 +69,7 @@ class SimulationTab(QWidget):
     """
 
     authoritative_frontend_state_changed = pyqtSignal(dict)
+    raw_data_frontend_state_changed = pyqtSignal(dict)
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -86,6 +87,7 @@ class SimulationTab(QWidget):
         self._runtime_status_message = ""
         self._state_serializer = SimulationFrontendStateSerializer()
         self._authoritative_frontend_state = self._state_serializer.serialize_main_state()
+        self._authoritative_raw_data_view = self._state_serializer.serialize_raw_data_view()
         self._history_results_cache: List[dict] = []
         self._bound_web_bridge: Optional[SimulationWebBridge] = None
         
@@ -112,7 +114,7 @@ class SimulationTab(QWidget):
         
         # 初始化文本
         self.retranslate_ui()
-        self._update_authoritative_frontend_state()
+        self._update_frontend_payloads(include_raw_data=True)
     
     def _setup_ui(self):
         """初始化 UI 组件"""
@@ -145,6 +147,9 @@ class SimulationTab(QWidget):
 
     def get_authoritative_frontend_state(self):
         return copy.deepcopy(self._authoritative_frontend_state)
+
+    def get_authoritative_raw_data_view(self):
+        return copy.deepcopy(self._authoritative_raw_data_view)
 
     def _normalize_frontend_tab_id(self, tab_id: str) -> str:
         return str(tab_id or "metrics")
@@ -184,11 +189,9 @@ class SimulationTab(QWidget):
         current_result = self._view_model.current_result
         analysis_chart_snapshot = self._backend_runtime.chart_viewer.get_web_snapshot() if active_tab == "chart" else None
         waveform_snapshot = self._backend_runtime.waveform_widget.get_web_snapshot() if active_tab == "waveform" else None
-        raw_data_snapshot = None
         output_log_snapshot = None
         export_snapshot = self._backend_runtime.export_panel.get_web_snapshot()
         if current_result is not None:
-            raw_data_snapshot = self._backend_runtime.raw_data_table.get_web_snapshot()
             if active_tab == "output_log":
                 output_log_snapshot = self._backend_runtime.output_log_viewer.get_web_snapshot()
             else:
@@ -196,7 +199,6 @@ class SimulationTab(QWidget):
         return {
             "analysis_chart_snapshot": analysis_chart_snapshot,
             "waveform_snapshot": waveform_snapshot,
-            "raw_data_snapshot": raw_data_snapshot,
             "output_log_snapshot": output_log_snapshot,
             "export_snapshot": export_snapshot,
         }
@@ -219,14 +221,33 @@ class SimulationTab(QWidget):
             awaiting_confirmation=self._awaiting_confirmation,
             analysis_chart_snapshot=snapshot_payloads["analysis_chart_snapshot"],
             waveform_snapshot=snapshot_payloads["waveform_snapshot"],
-            raw_data_snapshot=snapshot_payloads["raw_data_snapshot"],
             output_log_snapshot=snapshot_payloads["output_log_snapshot"],
             export_snapshot=snapshot_payloads["export_snapshot"],
         )
 
+    def _build_authoritative_raw_data_view(self):
+        return self._state_serializer.serialize_raw_data_view(
+            self._backend_runtime.raw_data_table.get_web_snapshot()
+        )
+
     def _update_authoritative_frontend_state(self):
-        self._authoritative_frontend_state = self._build_authoritative_frontend_state()
+        next_state = self._build_authoritative_frontend_state()
+        if next_state == self._authoritative_frontend_state:
+            return
+        self._authoritative_frontend_state = next_state
         self.authoritative_frontend_state_changed.emit(copy.deepcopy(self._authoritative_frontend_state))
+
+    def _update_authoritative_raw_data_view(self):
+        next_raw_data_view = self._build_authoritative_raw_data_view()
+        if next_raw_data_view == self._authoritative_raw_data_view:
+            return
+        self._authoritative_raw_data_view = next_raw_data_view
+        self.raw_data_frontend_state_changed.emit(copy.deepcopy(self._authoritative_raw_data_view))
+
+    def _update_frontend_payloads(self, *, include_raw_data: bool = False) -> None:
+        self._update_authoritative_frontend_state()
+        if include_raw_data:
+            self._update_authoritative_raw_data_view()
 
     def _subscribe_events(self):
         """订阅事件"""
@@ -286,7 +307,7 @@ class SimulationTab(QWidget):
         elif name == "error_message":
             if value:
                 self._show_error(value)
-        self._update_authoritative_frontend_state()
+        self._update_frontend_payloads()
     
     def _on_project_opened(self, event_data: dict):
         """处理项目打开事件"""
@@ -319,7 +340,7 @@ class SimulationTab(QWidget):
         self._logger.info(f"Simulation started: {circuit_file}")
         self._awaiting_confirmation = False
         self._runtime_status_message = self._get_text("simulation.running", "仿真进行中，请等待...")
-        self._update_authoritative_frontend_state()
+        self._update_frontend_payloads()
     
     def _on_simulation_complete(self, event_data: dict):
         """处理仿真完成事件"""
@@ -340,7 +361,7 @@ class SimulationTab(QWidget):
 
         if loaded and self._project_root:
             self._auto_export_current_result()
-        self._update_authoritative_frontend_state()
+        self._update_frontend_payloads()
 
     def _on_language_changed(self, event_data: dict):
         """处理语言切换事件"""
@@ -354,14 +375,14 @@ class SimulationTab(QWidget):
             "simulation.awaiting_confirmation",
             "迭代完成，请在对话面板中选择下一步操作"
         )
-        self._update_authoritative_frontend_state()
+        self._update_frontend_payloads()
 
     def _on_user_confirmed(self, event_data: dict):
         """处理用户确认事件"""
         del event_data
         self._awaiting_confirmation = False
         self._runtime_status_message = ""
-        self._update_authoritative_frontend_state()
+        self._update_frontend_payloads()
 
     def _on_simulation_error(self, event_data: dict):
         """处理仿真错误事件"""
@@ -371,7 +392,7 @@ class SimulationTab(QWidget):
         self._logger.error(f"Simulation error: {error_message}")
         self._awaiting_confirmation = False
         self._runtime_status_message = error_message
-        self._update_authoritative_frontend_state()
+        self._update_frontend_payloads()
 
     def _on_add_metrics_to_conversation_clicked(self):
         result = self._view_model.current_result
@@ -515,40 +536,40 @@ class SimulationTab(QWidget):
 
     def _on_chart_clear_all_requested(self):
         self._backend_runtime.chart_viewer.clear_all_series()
-        self._update_authoritative_frontend_state()
+        self._update_frontend_payloads()
 
     def _on_chart_series_visibility_toggled(self, series_name: str, visible: bool):
         chart_viewer = self._backend_runtime.chart_viewer
         chart_viewer.set_series_visible(series_name, visible)
         if chart_viewer.is_measurement_point_enabled():
             self._sync_chart_measurement_point_target(chart_viewer)
-        self._update_authoritative_frontend_state()
+        self._update_frontend_payloads()
 
     def _on_chart_measurement_enabled_changed(self, enabled: bool):
         self._backend_runtime.chart_viewer.set_measurement_enabled(enabled)
-        self._update_authoritative_frontend_state()
+        self._update_frontend_payloads()
 
     def _on_chart_measurement_cursor_move_requested(self, cursor_id: str, position: float):
         self._backend_runtime.chart_viewer.set_measurement_cursor(cursor_id, position)
-        self._update_authoritative_frontend_state()
+        self._update_frontend_payloads()
 
     def _on_chart_measurement_point_enabled_changed(self, enabled: bool):
         chart_viewer = self._backend_runtime.chart_viewer
         chart_viewer.set_measurement_point_enabled(enabled)
         if enabled:
             self._sync_chart_measurement_point_target(chart_viewer)
-        self._update_authoritative_frontend_state()
+        self._update_frontend_payloads()
 
     def _on_chart_measurement_point_target_changed(self, target_id: str):
         chart_viewer = self._backend_runtime.chart_viewer
         chart_viewer.set_measurement_point_target(target_id)
         if chart_viewer.is_measurement_point_enabled():
             self._sync_chart_measurement_point_target(chart_viewer)
-        self._update_authoritative_frontend_state()
+        self._update_frontend_payloads()
 
     def _on_chart_measurement_point_move_requested(self, position: float):
         self._backend_runtime.chart_viewer.set_measurement_point_position(position)
-        self._update_authoritative_frontend_state()
+        self._update_frontend_payloads()
 
     def _sync_chart_measurement_point_target(self, chart_viewer):
         snapshot = chart_viewer.get_web_snapshot()
@@ -571,19 +592,19 @@ class SimulationTab(QWidget):
 
     def _on_chart_viewport_changed(self, viewport: dict):
         self._backend_runtime.chart_viewer.set_viewport(viewport)
-        self._update_authoritative_frontend_state()
+        self._update_frontend_payloads()
 
     def _on_chart_viewport_reset_requested(self):
         self._backend_runtime.chart_viewer.reset_viewport()
-        self._update_authoritative_frontend_state()
+        self._update_frontend_payloads()
 
     def _on_waveform_clear_all_requested(self):
         self._backend_runtime.waveform_widget.clear_displayed_signals()
-        self._update_authoritative_frontend_state()
+        self._update_frontend_payloads()
 
     def _on_waveform_signal_visibility_toggled(self, signal_name: str, visible: bool):
         self._backend_runtime.waveform_widget.set_signal_visible(signal_name, visible)
-        self._update_authoritative_frontend_state()
+        self._update_frontend_payloads()
 
     def _on_waveform_cursor_visibility_toggled(self, cursor_id: str, visible: bool):
         waveform_widget = self._backend_runtime.waveform_widget
@@ -591,7 +612,7 @@ class SimulationTab(QWidget):
             waveform_widget.set_cursor_b_visible(visible)
         else:
             waveform_widget.set_cursor_a_visible(visible)
-        self._update_authoritative_frontend_state()
+        self._update_frontend_payloads()
 
     def _on_waveform_cursor_move_requested(self, cursor_id: str, position: float):
         waveform_widget = self._backend_runtime.waveform_widget
@@ -599,45 +620,45 @@ class SimulationTab(QWidget):
             waveform_widget.set_cursor_b(position)
         else:
             waveform_widget.set_cursor_a(position)
-        self._update_authoritative_frontend_state()
+        self._update_frontend_payloads()
 
     def _on_waveform_viewport_changed(self, viewport: dict):
         self._backend_runtime.waveform_widget.set_viewport(viewport)
-        self._update_authoritative_frontend_state()
+        self._update_frontend_payloads()
 
     def _on_waveform_viewport_reset_requested(self):
         self._backend_runtime.waveform_widget.reset_viewport()
-        self._update_authoritative_frontend_state()
+        self._update_frontend_payloads()
 
     def _on_output_log_search_requested(self, keyword: str):
         self._backend_runtime.output_log_viewer.search(keyword)
-        self._update_authoritative_frontend_state()
+        self._update_frontend_payloads()
 
     def _on_output_log_filter_requested(self, level: str):
         self._backend_runtime.output_log_viewer.filter_by_level(level)
-        self._update_authoritative_frontend_state()
+        self._update_frontend_payloads()
 
     def _on_export_type_selection_changed(self, export_type: str, selected: bool):
         self._backend_runtime.export_panel.set_export_type_selected(export_type, selected)
-        self._update_authoritative_frontend_state()
+        self._update_frontend_payloads()
 
     def _on_export_all_selection_requested(self, selected: bool):
         self._backend_runtime.export_panel.set_all_types_selected(selected)
-        self._update_authoritative_frontend_state()
+        self._update_frontend_payloads()
 
     def _on_export_directory_pick_requested(self):
         changed = self._backend_runtime.export_panel.choose_export_directory()
         if changed:
-            self._update_authoritative_frontend_state()
+            self._update_frontend_payloads()
 
     def _on_export_directory_clear_requested(self):
         self._backend_runtime.export_panel.clear_manual_export_directory()
-        self._update_authoritative_frontend_state()
+        self._update_frontend_payloads()
 
     def _on_export_requested(self):
         execution = self._backend_runtime.export_panel.export_selected()
         if execution is not None:
-            self._update_authoritative_frontend_state()
+            self._update_frontend_payloads()
 
     def _on_bridge_add_to_conversation_requested(self, target: str):
         normalized_target = str(target or "metrics")
@@ -687,7 +708,7 @@ class SimulationTab(QWidget):
                 next_active_tab = "op_result"
         self._set_active_frontend_tab(next_active_tab)
         self._refresh_history_results_cache()
-        self._update_authoritative_frontend_state()
+        self._update_frontend_payloads(include_raw_data=True)
 
     def _restore_project_result_after_project_opened(self):
         if not self._project_root:
@@ -759,7 +780,7 @@ class SimulationTab(QWidget):
         self._runtime_status_message = ""
         self._backend_runtime.clear()
         self._view_model.clear()
-        self._update_authoritative_frontend_state()
+        self._update_frontend_payloads(include_raw_data=True)
 
     def reload_latest_result(self):
         """刷新显示"""
@@ -773,7 +794,7 @@ class SimulationTab(QWidget):
         if normalized_tab_id == self._active_frontend_tab:
             return True
         self._active_frontend_tab = normalized_tab_id
-        self._update_authoritative_frontend_state()
+        self._update_frontend_payloads()
         return True
 
     def load_history_result(self, result_path: str) -> bool:
@@ -863,14 +884,14 @@ class SimulationTab(QWidget):
                 execution.export_root,
                 execution.errors,
             )
-            self._update_authoritative_frontend_state()
+            self._update_frontend_payloads()
             return
         self._logger.info(
             "Project auto export completed: root=%s, files=%s",
             execution.export_root,
             len(execution.exported_files),
         )
-        self._update_authoritative_frontend_state()
+        self._update_frontend_payloads()
 
     def _get_latest_project_export_root(self) -> Optional[str]:
         export_root = self._backend_runtime.export_panel.latest_project_export_root

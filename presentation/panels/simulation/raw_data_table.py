@@ -202,6 +202,7 @@ class RawDataTable(QWidget):
         super().__init__(parent)
         
         self._logger = logging.getLogger(__name__)
+        self._web_snapshot_cache: Optional[Dict[str, Any]] = None
         
         # 数据模型
         self._model = RawDataTableModel()
@@ -224,6 +225,7 @@ class RawDataTable(QWidget):
             result: 仿真结果对象
         """
         self._model.load_result(result)
+        self._web_snapshot_cache = None
         
         self._logger.info(
             f"Loaded data: {self._model.total_rows} rows, "
@@ -233,14 +235,18 @@ class RawDataTable(QWidget):
     def clear(self):
         """清空数据"""
         self._model.clear()
+        self._web_snapshot_cache = None
     
     def get_web_snapshot(self) -> Dict[str, Any]:
+        if self._web_snapshot_cache is not None:
+            return self._web_snapshot_cache
         snapshot = self._model.snapshot
         if snapshot is None or snapshot.total_rows <= 0:
-            return {
+            self._web_snapshot_cache = {
                 "visible_columns": [],
                 "rows": [],
             }
+            return self._web_snapshot_cache
         signal_names = self._model.signal_names
         visible_columns = [self._model.x_label, *signal_names]
         visible_column_arrays = [snapshot.x_values]
@@ -255,10 +261,11 @@ class RawDataTable(QWidget):
                 "row_number": row_index + 1,
                 "values": values,
             })
-        return {
+        self._web_snapshot_cache = {
             "visible_columns": visible_columns,
             "rows": rows,
         }
+        return self._web_snapshot_cache
     
     def retranslate_ui(self):
         """重新翻译 UI 文本"""

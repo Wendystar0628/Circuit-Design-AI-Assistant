@@ -2,6 +2,7 @@ from typing import Callable, Dict, List, Mapping, Optional
 
 import numpy as np
 
+from domain.simulation.data.waveform_data_service import WaveformDataService
 from domain.simulation.models.simulation_result import SimulationResult
 from presentation.panels.simulation.waveform_plot_types import PlotItem, WaveformMeasurement
 
@@ -10,6 +11,7 @@ class WaveformMeasurementSupport:
     def get_all_y_at_x(
         self,
         current_result: Optional[SimulationResult],
+        data_service: WaveformDataService,
         plot_items: Mapping[str, PlotItem],
         x: float,
     ) -> Dict[str, float]:
@@ -20,8 +22,8 @@ class WaveformMeasurementSupport:
         if x_data is None or len(x_data) == 0:
             return result
         x_array = np.asarray(x_data, dtype=float)
-        for signal_name, item in plot_items.items():
-            y_data = current_result.get_signal(signal_name)
+        for signal_name in plot_items:
+            y_data = data_service.get_signal_data(current_result, signal_name)
             if y_data is None:
                 continue
             y_array = np.asarray(y_data, dtype=float)
@@ -36,6 +38,7 @@ class WaveformMeasurementSupport:
     def build_measurement(
         self,
         current_result: Optional[SimulationResult],
+        data_service: WaveformDataService,
         plot_items: Mapping[str, PlotItem],
         cursor_a_pos: Optional[float],
         cursor_b_pos: Optional[float],
@@ -45,14 +48,14 @@ class WaveformMeasurementSupport:
 
         if cursor_a_pos is not None:
             measurement.cursor_a_x = from_view_x_value(cursor_a_pos)
-            all_y_a = self.get_all_y_at_x(current_result, plot_items, measurement.cursor_a_x)
+            all_y_a = self.get_all_y_at_x(current_result, data_service, plot_items, measurement.cursor_a_x)
             measurement.signal_values_a = all_y_a
             if all_y_a:
                 measurement.cursor_a_y = next(iter(all_y_a.values()))
 
         if cursor_b_pos is not None:
             measurement.cursor_b_x = from_view_x_value(cursor_b_pos)
-            all_y_b = self.get_all_y_at_x(current_result, plot_items, measurement.cursor_b_x)
+            all_y_b = self.get_all_y_at_x(current_result, data_service, plot_items, measurement.cursor_b_x)
             measurement.signal_values_b = all_y_b
             if all_y_b:
                 measurement.cursor_b_y = next(iter(all_y_b.values()))

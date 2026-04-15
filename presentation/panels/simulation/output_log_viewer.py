@@ -120,12 +120,14 @@ class OutputLogViewer(QWidget):
         # 计算摘要
         error_count = sum(1 for line in log_lines if line.is_error())
         warning_count = sum(1 for line in log_lines if line.is_warning())
+        first_error = next((line.content for line in log_lines if line.is_error()), None)
         
         summary = SimulationSummary(
             total_lines=len(log_lines),
             error_count=error_count,
             warning_count=warning_count,
             info_count=len(log_lines) - error_count - warning_count,
+            first_error=first_error,
         )
         self._store_log_state(log_lines, summary, reset_view_state=True)
 
@@ -198,47 +200,19 @@ class OutputLogViewer(QWidget):
                 reset_view_state=False,
             )
     
-    def get_error_count(self) -> int:
-        """获取错误数"""
-        return self._summary.error_count if self._summary else 0
-    
-    def get_warning_count(self) -> int:
-        """获取警告数"""
-        return self._summary.warning_count if self._summary else 0
-    
-    def get_total_lines(self) -> int:
-        """获取总行数"""
-        return self._summary.total_lines if self._summary else 0
-    
     def get_web_snapshot(self, *, max_lines: int = 1000) -> Dict[str, Any]:
         total_filtered_lines = len(self._filtered_lines)
         selected_line_number = self._current_selected_line_number()
-        summary = self._summary.to_dict() if self._summary is not None else {
-            "total_lines": 0,
-            "error_count": 0,
-            "warning_count": 0,
-            "info_count": 0,
-            "analysis_type": "",
-            "duration_seconds": 0.0,
-            "success": True,
-            "first_error": None,
-            "timestamp": "",
-        }
+        first_error = self._summary.first_error if self._summary is not None else None
         if max_lines <= 0:
             return {
                 "has_log": bool(self._log_lines),
-                "line_count": len(self._log_lines),
-                "filtered_line_count": total_filtered_lines,
                 "can_refresh": bool(self._sim_result_path and self._project_root),
                 "can_add_to_conversation": bool(self._log_lines),
                 "current_filter": str(self._current_filter or "all"),
                 "search_keyword": self._search_keyword,
-                "summary": summary,
+                "first_error": first_error,
                 "lines": [],
-                "window_start": 0,
-                "window_end": 0,
-                "has_more_before": False,
-                "has_more_after": total_filtered_lines > 0,
                 "selected_line_number": selected_line_number,
             }
         if total_filtered_lines <= max_lines:
@@ -258,18 +232,12 @@ class OutputLogViewer(QWidget):
         visible_lines = self._filtered_lines[window_start:window_end]
         return {
             "has_log": bool(self._log_lines),
-            "line_count": len(self._log_lines),
-            "filtered_line_count": total_filtered_lines,
             "can_refresh": bool(self._sim_result_path and self._project_root),
             "can_add_to_conversation": bool(self._log_lines),
             "current_filter": str(self._current_filter or "all"),
             "search_keyword": self._search_keyword,
-            "summary": summary,
+            "first_error": first_error,
             "lines": [line.to_dict() for line in visible_lines],
-            "window_start": window_start + 1 if visible_lines else 0,
-            "window_end": window_end,
-            "has_more_before": window_start > 0,
-            "has_more_after": window_end < total_filtered_lines,
             "selected_line_number": selected_line_number,
         }
     

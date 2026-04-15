@@ -418,6 +418,27 @@ def test_noise_chart_emits_dual_log_axis_metadata_for_mixed_noise_quantities(qap
         "I(V1)": "right",
     }
 
+
+def test_waveform_widget_accepts_viewport_for_resolved_complex_waveform_series(qapp, sample_ac_result: SimulationResult):
+    waveform_widget = WaveformWidget()
+    waveform_widget.load_waveform(sample_ac_result, "V(out)")
+
+    snapshot = waveform_widget.get_web_snapshot()
+    assert [series["name"] for series in snapshot["visible_series"]] == ["V(out)_mag"]
+
+    visible_series = snapshot["visible_series"][0]
+    assert waveform_widget.set_viewport({
+        "x_min": float(visible_series["x"][0]),
+        "x_max": float(visible_series["x"][-2]),
+        "left_y_min": float(min(visible_series["y"])),
+        "left_y_max": float(max(visible_series["y"])),
+    }) is True
+
+    updated_snapshot = waveform_widget.get_web_snapshot()
+    assert updated_snapshot["viewport"]["active"] is True
+    assert updated_snapshot["viewport"]["x_min"] == pytest.approx(float(visible_series["x"][0]))
+    assert updated_snapshot["viewport"]["x_max"] == pytest.approx(float(visible_series["x"][-2]))
+
 def test_chart_measurement_point_target_write_does_not_reenable_hidden_series(qapp, sample_result: SimulationResult):
     chart_viewer = ChartViewer()
     chart_viewer.load_result(sample_result)

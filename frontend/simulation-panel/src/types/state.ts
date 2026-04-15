@@ -238,31 +238,13 @@ export interface RawDataRowState {
 
 export interface OutputLogViewState {
   has_log: boolean
-  line_count: number
   can_refresh: boolean
   can_add_to_conversation: boolean
-  filtered_line_count: number
   current_filter: string
   search_keyword: string
-  summary: OutputLogSummaryState
-  lines: OutputLogLineState[]
-  window_start: number
-  window_end: number
-  has_more_before: boolean
-  has_more_after: boolean
-  selected_line_number: number | null
-}
-
-export interface OutputLogSummaryState {
-  total_lines: number
-  error_count: number
-  warning_count: number
-  info_count: number
-  analysis_type: string
-  duration_seconds: number
-  success: boolean
   first_error: string | null
-  timestamp: string
+  lines: OutputLogLineState[]
+  selected_line_number: number | null
 }
 
 export interface OutputLogLineState {
@@ -389,18 +371,6 @@ const EMPTY_WAVEFORM_MEASUREMENT: WaveformMeasurementState = {
   values_b: {},
 }
 
-const EMPTY_OUTPUT_LOG_SUMMARY: OutputLogSummaryState = {
-  total_lines: 0,
-  error_count: 0,
-  warning_count: 0,
-  info_count: 0,
-  analysis_type: '',
-  duration_seconds: 0,
-  success: true,
-  first_error: null,
-  timestamp: '',
-}
-
 export const EMPTY_SIMULATION_STATE: SimulationMainState = {
   simulation_runtime: {
     status: 'idle',
@@ -503,18 +473,12 @@ export const EMPTY_SIMULATION_STATE: SimulationMainState = {
   },
   output_log_view: {
     has_log: false,
-    line_count: 0,
     can_refresh: false,
     can_add_to_conversation: false,
-    filtered_line_count: 0,
     current_filter: 'all',
     search_keyword: '',
-    summary: EMPTY_OUTPUT_LOG_SUMMARY,
+    first_error: null,
     lines: [],
-    window_start: 0,
-    window_end: 0,
-    has_more_before: false,
-    has_more_after: false,
     selected_line_number: null,
   },
   export_view: {
@@ -731,21 +695,6 @@ function normalizeRawDataRows(value: unknown): RawDataRowState[] {
   })
 }
 
-function normalizeOutputLogSummary(value: unknown): OutputLogSummaryState {
-  const record = asRecord(value)
-  return {
-    total_lines: asNumber(record.total_lines),
-    error_count: asNumber(record.error_count),
-    warning_count: asNumber(record.warning_count),
-    info_count: asNumber(record.info_count),
-    analysis_type: asString(record.analysis_type),
-    duration_seconds: asNumber(record.duration_seconds),
-    success: !('success' in record) || asBoolean(record.success),
-    first_error: asNullableString(record.first_error),
-    timestamp: asString(record.timestamp),
-  }
-}
-
 function normalizeOutputLogLines(value: unknown): OutputLogLineState[] {
   if (!Array.isArray(value)) {
     return []
@@ -920,18 +869,12 @@ export function normalizeSimulationState(input: unknown): SimulationMainState {
     },
     output_log_view: {
       has_log: asBoolean(outputLogView.has_log),
-      line_count: asNumber(outputLogView.line_count),
       can_refresh: asBoolean(outputLogView.can_refresh),
       can_add_to_conversation: asBoolean(outputLogView.can_add_to_conversation),
-      filtered_line_count: asNumber(outputLogView.filtered_line_count),
       current_filter: asString(outputLogView.current_filter) || 'all',
       search_keyword: asString(outputLogView.search_keyword),
-      summary: normalizeOutputLogSummary(outputLogView.summary),
+      first_error: asNullableString(outputLogView.first_error),
       lines: normalizeOutputLogLines(outputLogView.lines),
-      window_start: asNumber(outputLogView.window_start),
-      window_end: asNumber(outputLogView.window_end),
-      has_more_before: asBoolean(outputLogView.has_more_before),
-      has_more_after: asBoolean(outputLogView.has_more_after),
       selected_line_number: asNullableNumber(outputLogView.selected_line_number),
     },
     export_view: {

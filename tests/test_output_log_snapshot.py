@@ -24,12 +24,9 @@ def test_output_log_viewer_snapshot_tracks_search_filter_and_selection(qapp):
     initial_snapshot = viewer.get_web_snapshot()
 
     assert initial_snapshot["has_log"] is True
-    assert initial_snapshot["line_count"] == 4
-    assert initial_snapshot["filtered_line_count"] == 4
     assert initial_snapshot["search_keyword"] == ""
     assert initial_snapshot["selected_line_number"] is None
-    assert initial_snapshot["summary"]["error_count"] == 1
-    assert initial_snapshot["summary"]["warning_count"] == 1
+    assert initial_snapshot["first_error"] == "error: singular matrix"
 
     viewer.search("singular")
     searched_snapshot = viewer.get_web_snapshot(max_lines=0)
@@ -41,7 +38,6 @@ def test_output_log_viewer_snapshot_tracks_search_filter_and_selection(qapp):
     filtered_snapshot = viewer.get_web_snapshot()
 
     assert filtered_snapshot["current_filter"] == "error"
-    assert filtered_snapshot["filtered_line_count"] == 1
     assert filtered_snapshot["selected_line_number"] == 3
     assert [line["line_number"] for line in filtered_snapshot["lines"]] == [3]
 
@@ -55,6 +51,6 @@ def test_output_log_viewer_snapshot_tracks_search_filter_and_selection(qapp):
     cleared_snapshot = viewer.get_web_snapshot()
 
     assert cleared_snapshot["has_log"] is False
-    assert cleared_snapshot["line_count"] == 0
     assert cleared_snapshot["search_keyword"] == ""
+    assert cleared_snapshot["first_error"] is None
     assert cleared_snapshot["selected_line_number"] is None

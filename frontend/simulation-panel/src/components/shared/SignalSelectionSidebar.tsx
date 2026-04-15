@@ -18,11 +18,9 @@ export interface SignalSelectionSidebarVisibleItem {
 
 interface SignalSelectionSidebarProps {
   selectableTitle: string
-  selectableDescription?: string
   selectableItems: SignalSelectionSidebarSelectableItem[]
   emptySelectableMessage: string
   visibleTitle: string
-  visibleDescription?: string
   visibleItems: SignalSelectionSidebarVisibleItem[]
   emptyVisibleMessage: string
   defaultPrimaryRatio?: number
@@ -30,11 +28,9 @@ interface SignalSelectionSidebarProps {
 
 export function SignalSelectionSidebar({
   selectableTitle,
-  selectableDescription,
   selectableItems,
   emptySelectableMessage,
   visibleTitle,
-  visibleDescription,
   visibleItems,
   emptyVisibleMessage,
   defaultPrimaryRatio = 0.7,
@@ -49,7 +45,6 @@ export function SignalSelectionSidebar({
           <section className="signal-sidebar__panel">
             <div className="signal-sidebar__panel-header">
               <div className="signal-sidebar__panel-title">{selectableTitle}</div>
-              {selectableDescription ? <div className="signal-sidebar__panel-description">{selectableDescription}</div> : null}
             </div>
             <div className="signal-sidebar__panel-body">
               <div className="signal-list signal-sidebar__selection-list">
@@ -74,7 +69,6 @@ export function SignalSelectionSidebar({
           <section className="signal-sidebar__panel">
             <div className="signal-sidebar__panel-header">
               <div className="signal-sidebar__panel-title">{visibleTitle}</div>
-              {visibleDescription ? <div className="signal-sidebar__panel-description">{visibleDescription}</div> : null}
             </div>
             <div className="signal-sidebar__panel-body">
               <div className="signal-sidebar__visible-list">

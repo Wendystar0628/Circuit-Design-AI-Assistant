@@ -63,15 +63,6 @@ export function OutputLogTab({ state, bridge }: OutputLogTabProps) {
             应用过滤
           </button>
         </div>
-        <div className="log-summary-grid">
-          <div className="info-row"><div className="card-title">总行数</div><div className="info-row__value">{logView.summary.total_lines}</div></div>
-          <div className="info-row"><div className="card-title">过滤后</div><div className="info-row__value">{logView.filtered_line_count}</div></div>
-          <div className="info-row"><div className="card-title">错误</div><div className="info-row__value">{logView.summary.error_count}</div></div>
-          <div className="info-row"><div className="card-title">警告</div><div className="info-row__value">{logView.summary.warning_count}</div></div>
-        </div>
-        <div className="log-window-meta muted-text">
-          窗口：{logView.window_start} - {logView.window_end} · 当前过滤：{logView.current_filter || 'all'}
-        </div>
         <div className="log-stage log-stage--lines">
           {logView.lines.length ? logView.lines.map((line) => (
             <div
@@ -84,10 +75,10 @@ export function OutputLogTab({ state, bridge }: OutputLogTabProps) {
             </div>
           )) : <div className="muted-text">当前没有可显示的日志行。</div>}
         </div>
-        {logView.summary.first_error ? (
+        {logView.first_error ? (
           <div className="surface-state-card surface-state-card--error">
             <div className="card-title">首条错误</div>
-            <div className="muted-text">{logView.summary.first_error}</div>
+            <div className="muted-text">{logView.first_error}</div>
           </div>
         ) : null}
       </div>

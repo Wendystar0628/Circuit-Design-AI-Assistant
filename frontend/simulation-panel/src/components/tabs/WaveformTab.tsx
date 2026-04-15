@@ -164,11 +164,9 @@ export function WaveformTab({ state, bridge }: WaveformTabProps) {
         sidebar={
           <SignalSelectionSidebar
             selectableTitle="选择信号"
-            selectableDescription={`总信号 ${waveform.signal_count} 条，当前显示 ${waveform.displayed_signal_names.length} 条`}
             selectableItems={selectableSignalItems}
             emptySelectableMessage="当前结果没有可用波形信号。"
             visibleTitle="已显示"
-            visibleDescription={`${waveform.visible_series.length} 条信号正在绘制`}
             visibleItems={visibleSignalItems}
             emptyVisibleMessage="当前没有已显示信号。"
             defaultPrimaryRatio={0.7}

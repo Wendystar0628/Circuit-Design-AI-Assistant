@@ -246,18 +246,12 @@
 }
 
 .metrics-grid,
-.summary-grid,
 .info-grid,
 .history-list,
 .signal-list,
-.log-summary-grid,
 .export-grid {
   display: grid;
   gap: var(--sim-gap-sm);
-}
-
-.summary-grid {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .metrics-grid {
@@ -265,7 +259,6 @@
 }
 
 .info-grid,
-.log-summary-grid,
 .export-grid,
 .history-preview-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -623,11 +616,6 @@
   font-size: 11px;
   font-weight: 700;
   color: var(--sim-text-secondary);
-}
-
-.signal-sidebar__panel-description {
-  font-size: 11px;
-  color: var(--sim-text-tertiary);
 }
 
 .signal-sidebar__panel-body {
@@ -1173,17 +1161,6 @@
   background: rgba(255, 255, 255, 0.65);
 }
 
-.log-window-meta {
-  margin-top: -2px;
-}
-
-.log-stage--lines {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  font-family: Consolas, monospace;
-}
-
 .log-line {
   display: grid;
   grid-template-columns: 60px 70px minmax(0, 1fr);
@@ -1222,10 +1199,8 @@
 }
 
 @media (max-width: 960px) {
-  .summary-grid,
   .metrics-grid,
   .info-grid,
-  .log-summary-grid,
   .export-grid,
   .history-preview-grid,
   .responsive-pane--with-sidebar {

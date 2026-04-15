@@ -435,6 +435,7 @@ class WaveformWidget(QWidget):
         if self._measurement_cache is None:
             self._measurement_cache = self._measurement_support.build_measurement(
                 self._current_result,
+                self._data_service,
                 self._plot_items,
                 self._cursor_a_pos,
                 self._cursor_b_pos,

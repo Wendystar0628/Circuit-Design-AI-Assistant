@@ -66,10 +66,7 @@ class WaveformViewportManager:
         left_y_ranges = []
         right_y_ranges = []
         for signal_name, plot_item in plot_items.items():
-            signal_data = current_result.data.get_signal(signal_name)
-            if signal_data is None:
-                continue
-            y_range = finite_range(signal_data)
+            y_range = self._data_service.get_signal_range(current_result, signal_name)
             if y_range is None:
                 continue
             if plot_item.axis == "right":

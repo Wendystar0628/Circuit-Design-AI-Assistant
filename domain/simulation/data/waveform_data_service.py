@@ -293,6 +293,50 @@ class WaveformDataService:
             is_downsampled=len(x_out) < pyramid.original_points,
             original_points=pyramid.original_points,
         )
+
+    def get_signal_range(
+        self,
+        result: SimulationResult,
+        signal_name: str,
+    ) -> Optional[Tuple[float, float]]:
+        if not result.success or result.data is None:
+            return None
+
+        resolved_signal_name = self.resolve_signal_name(result, signal_name)
+        if resolved_signal_name is None:
+            return None
+
+        signal_data = self._get_signal_data(result.data, resolved_signal_name)
+        if signal_data is None:
+            return None
+
+        values = np.asarray(signal_data, dtype=float)
+        if values.size == 0:
+            return None
+
+        finite_values = values[np.isfinite(values)]
+        if finite_values.size == 0:
+            return None
+
+        return float(np.min(finite_values)), float(np.max(finite_values))
+
+    def get_signal_data(
+        self,
+        result: SimulationResult,
+        signal_name: str,
+    ) -> Optional[np.ndarray]:
+        if not result.success or result.data is None:
+            return None
+
+        resolved_signal_name = self.resolve_signal_name(result, signal_name)
+        if resolved_signal_name is None:
+            return None
+
+        signal_data = self._get_signal_data(result.data, resolved_signal_name)
+        if signal_data is None:
+            return None
+
+        return np.asarray(signal_data)
     
     def get_resolved_signal_names(
         self,

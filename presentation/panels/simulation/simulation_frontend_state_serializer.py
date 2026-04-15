@@ -187,7 +187,6 @@ class SimulationFrontendStateSerializer:
         }
         output_log_view = {
             "has_log": bool(output_log_snapshot_payload.get("has_log")) if output_log_snapshot_payload is not None else has_output_log,
-            "line_count": int(output_log_snapshot_payload.get("line_count") or 0) if output_log_snapshot_payload is not None else self._line_count(getattr(result, "raw_output", "") if result is not None else ""),
             "can_refresh": bool(output_log_snapshot_payload.get("can_refresh")) if output_log_snapshot_payload is not None else bool(project_root and normalized_result_path),
             "can_add_to_conversation": bool(output_log_snapshot_payload.get("can_add_to_conversation")) if output_log_snapshot_payload is not None else has_output_log,
         }
@@ -410,12 +409,6 @@ class SimulationFrontendStateSerializer:
             return int(len(signal)) if signal is not None else 0
         except Exception:
             return 0
-
-    def _line_count(self, raw_output: Any) -> int:
-        text = str(raw_output or "")
-        if not text.strip():
-            return 0
-        return len(text.splitlines())
 
     def _range_to_list(self, value: Any) -> Optional[List[float]]:
         if not isinstance(value, (tuple, list)) or len(value) != 2:

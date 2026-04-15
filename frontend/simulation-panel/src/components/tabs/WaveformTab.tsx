@@ -108,7 +108,6 @@ export function WaveformTab({ state, bridge }: WaveformTabProps) {
   const selectableSignalItems = useMemo(() => waveform.signal_catalog.map((signal) => ({
     id: signal.name,
     label: signal.name,
-    meta: signal.signal_type || 'signal',
     checked: signal.visible,
     onCheckedChange: (checked: boolean) => bridge?.setSignalVisible(signal.name, checked),
   })), [bridge, waveform.signal_catalog])
@@ -116,7 +115,6 @@ export function WaveformTab({ state, bridge }: WaveformTabProps) {
     id: series.name,
     label: series.name,
     color: series.color,
-    meta: (waveform.signal_catalog.find((signal) => signal.name === series.name)?.signal_type) || undefined,
   })), [waveform.signal_catalog, waveform.visible_series])
 
   const preferredMeasurementSignalId = measurementSignals[0]?.id ?? ''

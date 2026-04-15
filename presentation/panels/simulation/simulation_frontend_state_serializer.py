@@ -166,8 +166,24 @@ class SimulationFrontendStateSerializer:
         }
         raw_data_view = {
             "has_data": bool(raw_data_snapshot_payload.get("has_data")) if raw_data_snapshot_payload is not None else bool(result is not None and getattr(result, "data", None) is not None),
-            "columns": [],
+            "row_count": int(raw_data_snapshot_payload.get("row_count") or 0) if raw_data_snapshot_payload is not None else self._row_count(result),
+            "signal_count": int(raw_data_snapshot_payload.get("signal_count") or 0) if raw_data_snapshot_payload is not None else len(signal_names),
+            "x_axis_label": str(raw_data_snapshot_payload.get("x_axis_label") or "") if raw_data_snapshot_payload is not None else str(getattr(result, "x_axis_label", "") or ""),
+            "result_binding_text": str(raw_data_snapshot_payload.get("result_binding_text") or "") if raw_data_snapshot_payload is not None else "",
+            "search_columns": [],
+            "visible_columns": [],
             "rows": [],
+            "window_start": 0,
+            "window_end": 0,
+            "has_more_before": False,
+            "has_more_after": False,
+            "selected_row_numbers": [],
+            "selection_count": 0,
+            "visible_signal_start": 0,
+            "visible_signal_end": 0,
+            "visible_signal_count": 0,
+            "has_more_signal_columns_before": False,
+            "has_more_signal_columns_after": False,
         }
         output_log_view = {
             "has_log": bool(output_log_snapshot_payload.get("has_log")) if output_log_snapshot_payload is not None else has_output_log,
@@ -373,6 +389,26 @@ class SimulationFrontendStateSerializer:
         except Exception:
             return []
         return [str(name or "") for name in names if str(name or "")]
+
+    def _row_count(self, result: Optional[SimulationResult]) -> int:
+        data = getattr(result, "data", None) if result is not None else None
+        if data is None:
+            return 0
+        for axis_name in ("time", "frequency", "sweep"):
+            axis_values = getattr(data, axis_name, None)
+            if axis_values is not None:
+                try:
+                    return int(len(axis_values))
+                except Exception:
+                    return 0
+        signal_names = self._signal_names(result)
+        if not signal_names or not hasattr(data, "get_signal"):
+            return 0
+        try:
+            signal = data.get_signal(signal_names[0])
+            return int(len(signal)) if signal is not None else 0
+        except Exception:
+            return 0
 
     def _range_to_list(self, value: Any) -> Optional[List[float]]:
         if not isinstance(value, (tuple, list)) or len(value) != 2:

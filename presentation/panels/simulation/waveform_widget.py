@@ -519,7 +519,6 @@ class WaveformWidget(QWidget):
             {
                 "name": signal_name,
                 "visible": signal_name in displayed_signal_set,
-                "signal_type": WaveformDataService.get_signal_type(signal_name, self._signal_types),
             }
             for signal_name in available_signal_names
         ]

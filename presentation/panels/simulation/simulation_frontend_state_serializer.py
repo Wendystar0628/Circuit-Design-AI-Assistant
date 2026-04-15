@@ -55,6 +55,7 @@ class SimulationFrontendStateSerializer:
         waveform_snapshot: Optional[Dict[str, Any]] = None,
         raw_data_snapshot: Optional[Dict[str, Any]] = None,
         output_log_snapshot: Optional[Dict[str, Any]] = None,
+        export_snapshot: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         result = current_result if isinstance(current_result, SimulationResult) else None
         normalized_metrics = [
@@ -79,6 +80,7 @@ class SimulationFrontendStateSerializer:
         has_chart = self._has_chart(result)
         raw_data_snapshot_payload = raw_data_snapshot if isinstance(raw_data_snapshot, dict) else None
         output_log_snapshot_payload = output_log_snapshot if isinstance(output_log_snapshot, dict) else None
+        export_snapshot_payload = export_snapshot if isinstance(export_snapshot, dict) else None
         has_output_log = bool(output_log_snapshot_payload.get("has_log")) if output_log_snapshot_payload is not None else bool(getattr(result, "raw_output", None))
         has_op_result = self._has_op_result(result)
         result_summary = self.serialize_result(result, normalized_result_path)
@@ -170,7 +172,6 @@ class SimulationFrontendStateSerializer:
             "signal_count": int(raw_data_snapshot_payload.get("signal_count") or 0) if raw_data_snapshot_payload is not None else len(signal_names),
             "x_axis_label": str(raw_data_snapshot_payload.get("x_axis_label") or "") if raw_data_snapshot_payload is not None else str(getattr(result, "x_axis_label", "") or ""),
             "result_binding_text": str(raw_data_snapshot_payload.get("result_binding_text") or "") if raw_data_snapshot_payload is not None else "",
-            "search_columns": [],
             "visible_columns": [],
             "rows": [],
             "window_start": 0,
@@ -187,8 +188,11 @@ class SimulationFrontendStateSerializer:
         }
         output_log_view = {
             "has_log": bool(output_log_snapshot_payload.get("has_log")) if output_log_snapshot_payload is not None else has_output_log,
-            "can_refresh": bool(output_log_snapshot_payload.get("can_refresh")) if output_log_snapshot_payload is not None else bool(project_root and normalized_result_path),
             "can_add_to_conversation": bool(output_log_snapshot_payload.get("can_add_to_conversation")) if output_log_snapshot_payload is not None else has_output_log,
+            "current_filter": "all",
+            "search_keyword": "",
+            "lines": [],
+            "selected_line_number": None,
         }
         if isinstance(analysis_chart_snapshot, dict):
             analysis_chart_view.update(analysis_chart_snapshot)
@@ -198,6 +202,24 @@ class SimulationFrontendStateSerializer:
             raw_data_view.update(raw_data_snapshot)
         if isinstance(output_log_snapshot, dict):
             output_log_view.update(output_log_snapshot)
+
+        export_view = {
+            "has_result": has_result,
+            "can_export": False,
+            "items": [
+                {
+                    "id": export_type,
+                    "label": export_type,
+                    "selected": True,
+                    "enabled": True,
+                }
+                for export_type in available_export_types
+            ] if has_result else [],
+            "selected_directory": "",
+            "latest_project_export_root": str(latest_project_export_root or ""),
+        }
+        if export_snapshot_payload is not None:
+            export_view.update(export_snapshot_payload)
 
         return {
             "simulation_runtime": {
@@ -231,11 +253,7 @@ class SimulationFrontendStateSerializer:
             "analysis_info_view": self.serialize_analysis_info(result),
             "raw_data_view": raw_data_view,
             "output_log_view": output_log_view,
-            "export_view": {
-                "has_result": has_result,
-                "available_types": available_export_types,
-                "latest_project_export_root": str(latest_project_export_root or ""),
-            },
+            "export_view": export_view,
             "history_results_view": {
                 "items": normalized_history,
                 "selected_result_path": normalized_result_path,

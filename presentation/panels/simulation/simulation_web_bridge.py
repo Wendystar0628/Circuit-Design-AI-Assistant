@@ -24,15 +24,14 @@ class SimulationWebBridge(QObject):
     cursor_move_requested = pyqtSignal(str, float)
     waveform_viewport_changed = pyqtSignal(dict)
     waveform_viewport_reset_requested = pyqtSignal()
-    raw_data_jump_to_row_requested = pyqtSignal(int)
-    raw_data_jump_to_x_requested = pyqtSignal(float)
-    raw_data_value_search_requested = pyqtSignal(int, float, float)
     raw_data_shift_signal_window_requested = pyqtSignal(int)
     output_log_search_requested = pyqtSignal(str)
     output_log_filter_requested = pyqtSignal(str)
-    output_log_jump_to_error_requested = pyqtSignal()
-    output_log_refresh_requested = pyqtSignal()
-    export_requested = pyqtSignal(list)
+    export_type_selection_changed = pyqtSignal(str, bool)
+    export_all_selection_requested = pyqtSignal(bool)
+    export_directory_pick_requested = pyqtSignal()
+    export_directory_clear_requested = pyqtSignal()
+    export_requested = pyqtSignal()
     add_to_conversation_requested = pyqtSignal(str)
 
     @pyqtSlot()
@@ -114,23 +113,6 @@ class SimulationWebBridge(QObject):
         self.waveform_viewport_reset_requested.emit()
 
     @pyqtSlot(int)
-    def jumpRawDataToRow(self, row: int) -> None:
-        normalized_row = max(1, int(row or 0)) - 1
-        self.raw_data_jump_to_row_requested.emit(normalized_row)
-
-    @pyqtSlot(float)
-    def jumpRawDataToX(self, x_value: float) -> None:
-        self.raw_data_jump_to_x_requested.emit(float(x_value or 0.0))
-
-    @pyqtSlot(int, float, float)
-    def searchRawDataValue(self, column: int, value: float, tolerance: float) -> None:
-        self.raw_data_value_search_requested.emit(
-            max(0, int(column or 0)),
-            float(value or 0.0),
-            max(0.0, float(tolerance or 0.0)),
-        )
-
-    @pyqtSlot(int)
     def shiftRawDataSignalWindow(self, page_delta: int) -> None:
         normalized_delta = int(page_delta or 0)
         if normalized_delta == 0:
@@ -145,35 +127,29 @@ class SimulationWebBridge(QObject):
     def filterOutputLog(self, level: str) -> None:
         self.output_log_filter_requested.emit(str(level or ""))
 
-    @pyqtSlot()
-    def jumpToOutputLogError(self) -> None:
-        self.output_log_jump_to_error_requested.emit()
+    @pyqtSlot(str, bool)
+    def setExportTypeSelected(self, export_type: str, selected: bool) -> None:
+        self.export_type_selection_changed.emit(str(export_type or ""), bool(selected))
+
+    @pyqtSlot(bool)
+    def setAllExportTypesSelected(self, selected: bool) -> None:
+        self.export_all_selection_requested.emit(bool(selected))
 
     @pyqtSlot()
-    def refreshOutputLog(self) -> None:
-        self.output_log_refresh_requested.emit()
+    def chooseExportDirectory(self) -> None:
+        self.export_directory_pick_requested.emit()
 
-    @pyqtSlot(QJsonValue)
-    @pyqtSlot(list)
-    def requestExport(self, export_types: Any) -> None:
-        normalized = self._normalize_list_payload(export_types)
-        self.export_requested.emit(normalized)
+    @pyqtSlot()
+    def clearExportDirectory(self) -> None:
+        self.export_directory_clear_requested.emit()
+
+    @pyqtSlot()
+    def requestExport(self) -> None:
+        self.export_requested.emit()
 
     @pyqtSlot(str)
     def addToConversation(self, target: str) -> None:
         self.add_to_conversation_requested.emit(self._normalize_attachment_target(target))
-
-    def _normalize_list_payload(self, payload: Any) -> List[str]:
-        if isinstance(payload, QJsonValue):
-            payload = payload.toVariant()
-        if not isinstance(payload, list):
-            return []
-        normalized: List[str] = []
-        for item in payload:
-            value = str(item or "").strip()
-            if value:
-                normalized.append(value)
-        return normalized
 
     def _normalize_tab_id(self, tab_id: str) -> str:
         normalized = str(tab_id or "metrics").strip().lower()

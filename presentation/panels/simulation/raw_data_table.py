@@ -300,69 +300,6 @@ class RawDataTable(QWidget):
         self._model.clear()
         self._selected_rows = []
         self._visible_signal_window_start = 0
-    
-    def jump_to_row(self, row_number: int):
-        """
-        跳转到指定行
-        
-        Args:
-            row_number: 行号（从 0 开始）
-        """
-        if row_number < 0 or row_number >= self._model.total_rows:
-            return
-        
-        self._selected_rows = [row_number]
-    
-    def jump_to_x_value(self, x_value: float):
-        """
-        跳转到指定 X 轴值
-        
-        Args:
-            x_value: X 轴值
-        """
-        row = self._model.get_row_for_x_value(x_value)
-        
-        if row >= 0:
-            self.jump_to_row(row)
-    
-    def search_value(
-        self,
-        column: int,
-        value: float,
-        tolerance: float = DEFAULT_TOLERANCE
-    ) -> bool:
-        """
-        搜索特定值
-        
-        Args:
-            column: 列索引
-            value: 要搜索的值
-            tolerance: 容差
-            
-        Returns:
-            bool: 是否找到
-        """
-        self._ensure_signal_column_visible(column)
-        # 从当前选中行的下一行开始搜索
-        selection = list(self._selected_rows)
-        start_row = 0
-        if selection:
-            start_row = selection[-1] + 1
-        
-        row = self._model.search_value(column, value, tolerance, start_row)
-        
-        if row >= 0:
-            self.jump_to_row(row)
-            return True
-        
-        # 如果从中间开始没找到，从头开始搜索
-        if start_row > 0:
-            row = self._model.search_value(column, value, tolerance, 0)
-            if row >= 0:
-                self.jump_to_row(row)
-                return True
-        
-        return False
 
     def shift_signal_window(self, page_delta: int) -> bool:
         total_signal_columns = len(self._model.signal_names)
@@ -388,7 +325,6 @@ class RawDataTable(QWidget):
         snapshot = self._model.snapshot
         signal_names = self._model.signal_names
         total_signal_columns = len(signal_names)
-        search_columns = [self._model.x_label, *signal_names] if snapshot is not None else []
         total_rows = self._model.total_rows
         selected_rows = [row for row in self._selected_rows if 0 <= row < total_rows]
         self._selected_rows = list(selected_rows)
@@ -400,7 +336,6 @@ class RawDataTable(QWidget):
                 "signal_count": total_signal_columns,
                 "x_axis_label": self._model.x_label,
                 "result_binding_text": self._build_result_binding_text(),
-                "search_columns": [],
                 "visible_columns": [],
                 "rows": [],
                 "window_start": 0,
@@ -453,7 +388,6 @@ class RawDataTable(QWidget):
             "signal_count": total_signal_columns,
             "x_axis_label": self._model.x_label,
             "result_binding_text": self._build_result_binding_text(),
-            "search_columns": search_columns,
             "visible_columns": visible_columns,
             "rows": rows,
             "window_start": window_start + 1 if rows else 0,

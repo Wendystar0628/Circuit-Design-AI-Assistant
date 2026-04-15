@@ -319,15 +319,50 @@ def test_export_panel_auto_exports_current_result_into_project_results_tree(qapp
     export_panel.set_result(sample_result)
     export_panel.set_metrics(sample_metrics)
     export_panel.set_overall_score(88.0)
+    export_panel.set_all_types_selected(False)
+    export_panel.set_export_type_selected("metrics", True)
 
     execution = export_panel.auto_export_to_project(str(tmp_path))
 
     assert execution is not None
     assert execution.errors == []
+    assert execution.selected_types == ["metrics", "charts", "waveforms", "analysis_info", "raw_data", "output_log"]
     assert execution.export_root.relative_to(tmp_path).parts == ("simulation_results", "export_consistency", "2026-04-06_00-10-00")
     assert (execution.export_root / "export_manifest.json").exists()
     assert (execution.export_root / "charts" / "charts.json").exists()
     assert (execution.export_root / "waveforms" / "waveform.json").exists()
+
+
+def test_export_panel_snapshot_tracks_selection_and_directory_state(qapp, sample_result: SimulationResult, tmp_path: Path):
+    chart_viewer = ChartViewer()
+    chart_viewer.load_result(sample_result)
+
+    waveform_widget = WaveformWidget()
+    waveform_widget.load_waveform(sample_result, "V(out)")
+
+    export_panel = SimulationExportPanel(chart_viewer, waveform_widget)
+    export_panel.set_result(sample_result)
+
+    initial_snapshot = export_panel.get_web_snapshot()
+    initial_items = {item["id"]: item for item in initial_snapshot["items"]}
+
+    assert initial_snapshot["has_result"] is True
+    assert initial_snapshot["can_export"] is False
+    assert initial_snapshot["selected_directory"] == ""
+    assert initial_items["metrics"]["selected"] is True
+    assert initial_items["op_result"]["enabled"] is False
+    assert initial_items["op_result"]["selected"] is False
+
+    export_panel.set_export_type_selected("metrics", False)
+    export_panel.set_manual_export_directory(str(tmp_path))
+
+    updated_snapshot = export_panel.get_web_snapshot()
+    updated_items = {item["id"]: item for item in updated_snapshot["items"]}
+
+    assert updated_snapshot["selected_directory"] == str(tmp_path)
+    assert updated_snapshot["can_export"] is True
+    assert updated_items["metrics"]["selected"] is False
+    assert updated_items["charts"]["selected"] is True
 
 
 def test_ac_chart_exports_single_bode_overlay_with_dual_axis_metadata(qapp, sample_ac_result: SimulationResult, tmp_path: Path):

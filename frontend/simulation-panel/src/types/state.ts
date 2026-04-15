@@ -213,7 +213,6 @@ export interface RawDataViewState {
   signal_count: number
   x_axis_label: string
   result_binding_text: string
-  search_columns: string[]
   visible_columns: string[]
   rows: RawDataRowState[]
   window_start: number
@@ -237,11 +236,9 @@ export interface RawDataRowState {
 
 export interface OutputLogViewState {
   has_log: boolean
-  can_refresh: boolean
   can_add_to_conversation: boolean
   current_filter: string
   search_keyword: string
-  first_error: string | null
   lines: OutputLogLineState[]
   selected_line_number: number | null
 }
@@ -252,9 +249,18 @@ export interface OutputLogLineState {
   level: string
 }
 
+export interface ExportItemState {
+  id: string
+  label: string
+  selected: boolean
+  enabled: boolean
+}
+
 export interface ExportViewState {
   has_result: boolean
-  available_types: string[]
+  can_export: boolean
+  items: ExportItemState[]
+  selected_directory: string
   latest_project_export_root: string
 }
 
@@ -455,7 +461,6 @@ export const EMPTY_SIMULATION_STATE: SimulationMainState = {
     signal_count: 0,
     x_axis_label: '',
     result_binding_text: '',
-    search_columns: [],
     visible_columns: [],
     rows: [],
     window_start: 0,
@@ -472,17 +477,17 @@ export const EMPTY_SIMULATION_STATE: SimulationMainState = {
   },
   output_log_view: {
     has_log: false,
-    can_refresh: false,
     can_add_to_conversation: false,
     current_filter: 'all',
     search_keyword: '',
-    first_error: null,
     lines: [],
     selected_line_number: null,
   },
   export_view: {
     has_result: false,
-    available_types: [],
+    can_export: false,
+    items: [],
+    selected_directory: '',
     latest_project_export_root: '',
   },
   history_results_view: {
@@ -707,6 +712,21 @@ function normalizeOutputLogLines(value: unknown): OutputLogLineState[] {
   })
 }
 
+function normalizeExportItems(value: unknown): ExportItemState[] {
+  if (!Array.isArray(value)) {
+    return []
+  }
+  return value.map((item) => {
+    const record = asRecord(item)
+    return {
+      id: asString(record.id),
+      label: asString(record.label),
+      selected: asBoolean(record.selected),
+      enabled: asBoolean(record.enabled),
+    }
+  })
+}
+
 function normalizeOpResultSections(value: unknown): OpResultSectionState[] {
   if (!Array.isArray(value)) {
     return []
@@ -850,7 +870,6 @@ export function normalizeSimulationState(input: unknown): SimulationMainState {
       signal_count: asNumber(rawDataView.signal_count),
       x_axis_label: asString(rawDataView.x_axis_label),
       result_binding_text: asString(rawDataView.result_binding_text),
-      search_columns: asStringArray(rawDataView.search_columns),
       visible_columns: asStringArray(rawDataView.visible_columns),
       rows: normalizeRawDataRows(rawDataView.rows),
       window_start: asNumber(rawDataView.window_start),
@@ -867,17 +886,17 @@ export function normalizeSimulationState(input: unknown): SimulationMainState {
     },
     output_log_view: {
       has_log: asBoolean(outputLogView.has_log),
-      can_refresh: asBoolean(outputLogView.can_refresh),
       can_add_to_conversation: asBoolean(outputLogView.can_add_to_conversation),
       current_filter: asString(outputLogView.current_filter) || 'all',
       search_keyword: asString(outputLogView.search_keyword),
-      first_error: asNullableString(outputLogView.first_error),
       lines: normalizeOutputLogLines(outputLogView.lines),
       selected_line_number: asNullableNumber(outputLogView.selected_line_number),
     },
     export_view: {
       has_result: asBoolean(exportView.has_result),
-      available_types: asStringArray(exportView.available_types),
+      can_export: asBoolean(exportView.can_export),
+      items: normalizeExportItems(exportView.items),
+      selected_directory: asString(exportView.selected_directory),
       latest_project_export_root: asString(exportView.latest_project_export_root),
     },
     history_results_view: {

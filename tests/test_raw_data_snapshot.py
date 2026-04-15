@@ -147,12 +147,6 @@ def test_raw_data_table_widget_shows_current_result_binding(qapp, sample_result:
     assert "2026-04-05T17:00:00" in binding_text
     assert "run_007.json" in binding_text
 
-    table.jump_to_row(2)
-    selected_snapshot = table.get_web_snapshot()
-    assert selected_snapshot["selection_count"] == 1
-    assert selected_snapshot["selected_row_numbers"] == [3]
-    assert any(row["selected"] and row["row_number"] == 3 for row in selected_snapshot["rows"])
-
     table.clear()
     cleared_snapshot = table.get_web_snapshot()
     assert cleared_snapshot["result_binding_text"] == ""
@@ -171,8 +165,6 @@ def test_raw_data_table_web_snapshot_uses_row_and_signal_windows(qapp):
     assert initial_snapshot["window_end"] == WEB_SNAPSHOT_MAX_ROWS
     assert "TRAN" in initial_snapshot["result_binding_text"]
     assert len(initial_snapshot["rows"]) == WEB_SNAPSHOT_MAX_ROWS
-    assert initial_snapshot["search_columns"][0] == "Time (s)"
-    assert len(initial_snapshot["search_columns"]) == 21
     assert initial_snapshot["visible_columns"][0] == "Time (s)"
     assert len(initial_snapshot["visible_columns"]) == WEB_SNAPSHOT_MAX_SIGNAL_COLUMNS + 1
     assert initial_snapshot["visible_signal_start"] == 1
@@ -186,36 +178,10 @@ def test_raw_data_table_web_snapshot_uses_row_and_signal_windows(qapp):
     assert shifted_snapshot["visible_signal_end"] == WEB_SNAPSHOT_MAX_SIGNAL_COLUMNS * 2
     assert shifted_snapshot["has_more_signal_columns_before"] is True
     assert shifted_snapshot["has_more_signal_columns_after"] is True
-    assert shifted_snapshot["visible_columns"][1:] == initial_snapshot["search_columns"][WEB_SNAPSHOT_MAX_SIGNAL_COLUMNS + 1:WEB_SNAPSHOT_MAX_SIGNAL_COLUMNS * 2 + 1]
-
-    table.jump_to_row(110)
-    selected_snapshot = table.get_web_snapshot()
-
-    assert selected_snapshot["selected_row_numbers"] == [111]
-    assert selected_snapshot["window_start"] == 41
-    assert selected_snapshot["window_end"] == 120
-    assert any(row["selected"] and row["row_number"] == 111 for row in selected_snapshot["rows"])
-
-
-def test_raw_data_search_aligns_signal_window_to_target_column(qapp):
-    table = RawDataTable()
-    table.load_data(build_result(row_count=32, signal_count=12))
-
-    initial_snapshot = table.get_web_snapshot()
-    target_column = len(initial_snapshot["search_columns"]) - 1
-    target_signal_name = initial_snapshot["search_columns"][target_column]
-    target_signal_index = int(target_signal_name.split("V(n", 1)[1].rstrip(")"))
-    target_row_index = 5
-    target_value = float(target_signal_index + target_row_index)
-
-    assert table.search_value(target_column, target_value, tolerance=1e-9) is True
-
-    snapshot = table.get_web_snapshot()
-
-    assert snapshot["selected_row_numbers"] == [target_row_index + 1]
-    assert snapshot["visible_signal_start"] > 1
-    assert snapshot["visible_signal_start"] <= target_column <= snapshot["visible_signal_end"]
-    assert target_signal_name in snapshot["visible_columns"]
+    expected_shifted_columns = table._model.signal_names[
+        WEB_SNAPSHOT_MAX_SIGNAL_COLUMNS:WEB_SNAPSHOT_MAX_SIGNAL_COLUMNS * 2
+    ]
+    assert shifted_snapshot["visible_columns"][1:] == expected_shifted_columns
 
 
 def test_simulation_artifact_exporter_exports_full_raw_data_snapshot(sample_result: SimulationResult, tmp_path):

@@ -169,49 +169,15 @@ class OutputLogViewer(QWidget):
         self._current_filter = normalized_level
         self._apply_filter()
     
-    def jump_to_error(self) -> bool:
-        """
-        跳转到第一个错误行
-        
-        Returns:
-            bool: 是否找到错误行
-        """
-        for line in self._filtered_lines:
-            if line.is_error():
-                self._selected_line_number = int(line.line_number)
-                return True
-        return False
-    
-    def jump_to_line(self, line_number: int):
-        """
-        跳转到指定行
-        
-        Args:
-            line_number: 行号（从 1 开始）
-        """
-        self._jump_to_line(line_number)
-
-    def refresh_log(self):
-        """重新加载当前日志文件"""
-        if self._sim_result_path and self._project_root:
-            self._store_log_state(
-                self._reader.get_output_log(self._sim_result_path, self._project_root),
-                self._reader.get_simulation_summary(self._sim_result_path, self._project_root),
-                reset_view_state=False,
-            )
-    
     def get_web_snapshot(self, *, max_lines: int = 1000) -> Dict[str, Any]:
         total_filtered_lines = len(self._filtered_lines)
         selected_line_number = self._current_selected_line_number()
-        first_error = self._summary.first_error if self._summary is not None else None
         if max_lines <= 0:
             return {
                 "has_log": bool(self._log_lines),
-                "can_refresh": bool(self._sim_result_path and self._project_root),
                 "can_add_to_conversation": bool(self._log_lines),
                 "current_filter": str(self._current_filter or "all"),
                 "search_keyword": self._search_keyword,
-                "first_error": first_error,
                 "lines": [],
                 "selected_line_number": selected_line_number,
             }
@@ -232,11 +198,9 @@ class OutputLogViewer(QWidget):
         visible_lines = self._filtered_lines[window_start:window_end]
         return {
             "has_log": bool(self._log_lines),
-            "can_refresh": bool(self._sim_result_path and self._project_root),
             "can_add_to_conversation": bool(self._log_lines),
             "current_filter": str(self._current_filter or "all"),
             "search_keyword": self._search_keyword,
-            "first_error": first_error,
             "lines": [line.to_dict() for line in visible_lines],
             "selected_line_number": selected_line_number,
         }
@@ -264,15 +228,10 @@ class OutputLogViewer(QWidget):
             return self._selected_line_number
         return None
     
-    def _jump_to_line(self, line_number: int):
-        """跳转到指定行"""
-        normalized_line_number = int(line_number)
-        if normalized_line_number < 1:
-            return
-
-        if not self._is_line_visible(normalized_line_number):
-            return
-        self._selected_line_number = normalized_line_number
+    def _is_line_visible(self, line_number: Optional[int]) -> bool:
+        if line_number is None:
+            return False
+        return any(int(line.line_number) == int(line_number) for line in self._filtered_lines)
 
     def _store_log_state(
         self,
@@ -295,11 +254,6 @@ class OutputLogViewer(QWidget):
         if not self._search_keyword:
             return None
         return self._find_matching_line_number(self._search_keyword)
-
-    def _is_line_visible(self, line_number: Optional[int]) -> bool:
-        if line_number is None:
-            return False
-        return any(int(line.line_number) == int(line_number) for line in self._filtered_lines)
 
     def _find_matching_line_number(self, keyword: str) -> Optional[int]:
         normalized_keyword = str(keyword or "").strip().lower()

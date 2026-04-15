@@ -9,6 +9,8 @@ class SimulationWebBridge(QObject):
     ready = pyqtSignal()
     activate_tab_requested = pyqtSignal(str)
     load_history_result_requested = pyqtSignal(str)
+    raw_data_viewport_requested = pyqtSignal(dict)
+    raw_data_copy_requested = pyqtSignal(dict)
     chart_series_visibility_toggled = pyqtSignal(str, bool)
     clear_all_chart_series_requested = pyqtSignal()
     chart_measurement_enabled_changed = pyqtSignal(bool)
@@ -44,6 +46,21 @@ class SimulationWebBridge(QObject):
     @pyqtSlot(str)
     def loadHistoryResult(self, result_path: str) -> None:
         self.load_history_result_requested.emit(str(result_path or ""))
+
+    @pyqtSlot(QJsonValue)
+    @pyqtSlot(dict)
+    def requestRawDataViewport(self, payload: Any) -> None:
+        normalized = self._normalize_raw_data_range_payload(payload)
+        if normalized is not None:
+            self.raw_data_viewport_requested.emit(normalized)
+
+    @pyqtSlot(QJsonValue)
+    @pyqtSlot(dict)
+    def copyRawDataRange(self, payload: Any) -> None:
+        normalized = self._normalize_raw_data_range_payload(payload)
+        if normalized is not None:
+            normalized["include_headers"] = bool(normalized.get("include_headers"))
+            self.raw_data_copy_requested.emit(normalized)
 
     @pyqtSlot(str, bool)
     def setChartSeriesVisible(self, series_name: str, visible: bool) -> None:
@@ -166,6 +183,33 @@ class SimulationWebBridge(QObject):
         normalized = str(target or "metrics").strip().lower()
         allowed = {"metrics", "chart", "waveform", "output_log", "op_result"}
         return normalized if normalized in allowed else "metrics"
+
+    def _normalize_raw_data_range_payload(self, payload: Any) -> Optional[Dict[str, Any]]:
+        if isinstance(payload, QJsonValue):
+            payload = payload.toVariant()
+        if not isinstance(payload, dict):
+            return None
+        try:
+            row_start = max(0, int(payload.get("rowStart") or 0))
+            row_end = max(row_start, int(payload.get("rowEnd") or row_start))
+            col_start = max(0, int(payload.get("colStart") or 0))
+            col_end = max(col_start, int(payload.get("colEnd") or col_start))
+        except (TypeError, ValueError):
+            return None
+        version_value = payload.get("version")
+        try:
+            version = int(version_value) if version_value is not None else None
+        except (TypeError, ValueError):
+            version = None
+        return {
+            "dataset_id": str(payload.get("datasetId") or ""),
+            "version": version,
+            "row_start": row_start,
+            "row_end": row_end,
+            "col_start": col_start,
+            "col_end": col_end,
+            "include_headers": bool(payload.get("includeHeaders")),
+        }
 
     def _normalize_viewport_payload(self, payload: Any) -> Optional[Dict[str, Optional[float]]]:
         if isinstance(payload, QJsonValue):

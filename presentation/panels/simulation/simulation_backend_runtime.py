@@ -29,7 +29,6 @@ class SimulationBackendRuntime(QWidget):
         self._prime_surface(self._chart_viewer, _PRIMARY_SURFACE_SIZE)
         self._prime_surface(self._waveform_widget, _PRIMARY_SURFACE_SIZE)
         self._prime_surface(self._analysis_info_panel, _AUX_SURFACE_SIZE)
-        self._prime_surface(self._raw_data_table, _AUX_SURFACE_SIZE)
         self._prime_surface(self._output_log_viewer, _AUX_SURFACE_SIZE)
         self._prime_surface(self._export_panel, _AUX_SURFACE_SIZE)
 

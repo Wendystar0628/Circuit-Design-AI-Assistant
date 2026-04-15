@@ -207,14 +207,46 @@ export interface AnalysisInfoViewState {
   parameters: Record<string, unknown>
 }
 
-export interface RawDataViewState {
-  visible_columns: string[]
-  rows: RawDataRowState[]
+export interface RawDataColumnState {
+  key: string
+  label: string
+  width_px: number
 }
 
-export interface RawDataRowState {
-  row_number: number
+export interface RawDataDocumentState {
+  dataset_id: string
+  version: number
+  has_data: boolean
+  row_count: number
+  column_count: number
+  row_header_width_px: number
+  row_height_px: number
+  column_header_height_px: number
+  columns: RawDataColumnState[]
+}
+
+export interface RawDataViewportRowState {
+  row_index: number
   values: string[]
+}
+
+export interface RawDataViewportState {
+  dataset_id: string
+  version: number
+  row_start: number
+  row_end: number
+  col_start: number
+  col_end: number
+  rows: RawDataViewportRowState[]
+}
+
+export interface RawDataCopyResultState {
+  dataset_id: string
+  version: number
+  sequence: number
+  success: boolean
+  row_count: number
+  col_count: number
 }
 
 export interface OutputLogViewState {
@@ -358,9 +390,35 @@ const EMPTY_WAVEFORM_MEASUREMENT: WaveformMeasurementState = {
   values_b: {},
 }
 
-export const EMPTY_RAW_DATA_VIEW: RawDataViewState = {
-  visible_columns: [],
+export const EMPTY_RAW_DATA_DOCUMENT: RawDataDocumentState = {
+  dataset_id: '',
+  version: 0,
+  has_data: false,
+  row_count: 0,
+  column_count: 0,
+  row_header_width_px: 0,
+  row_height_px: 0,
+  column_header_height_px: 0,
+  columns: [],
+}
+
+export const EMPTY_RAW_DATA_VIEWPORT: RawDataViewportState = {
+  dataset_id: '',
+  version: 0,
+  row_start: 0,
+  row_end: 0,
+  col_start: 0,
+  col_end: 0,
   rows: [],
+}
+
+export const EMPTY_RAW_DATA_COPY_RESULT: RawDataCopyResultState = {
+  dataset_id: '',
+  version: 0,
+  sequence: 0,
+  success: false,
+  row_count: 0,
+  col_count: 0,
 }
 
 export const EMPTY_SIMULATION_STATE: SimulationMainState = {
@@ -651,14 +709,28 @@ function normalizeWaveformMeasurement(value: unknown): WaveformMeasurementState 
   }
 }
 
-function normalizeRawDataRows(value: unknown): RawDataRowState[] {
+function normalizeRawDataColumns(value: unknown): RawDataColumnState[] {
   if (!Array.isArray(value)) {
     return []
   }
   return value.map((item) => {
     const record = asRecord(item)
     return {
-      row_number: asNumber(record.row_number),
+      key: asString(record.key),
+      label: asString(record.label),
+      width_px: asNumber(record.width_px),
+    }
+  })
+}
+
+function normalizeRawDataViewportRows(value: unknown): RawDataViewportRowState[] {
+  if (!Array.isArray(value)) {
+    return []
+  }
+  return value.map((item) => {
+    const record = asRecord(item)
+    return {
+      row_index: asNumber(record.row_index),
       values: asStringArray(record.values),
     }
   })
@@ -719,8 +791,7 @@ function normalizeOpResultSections(value: unknown): OpResultSectionState[] {
 
 export function normalizeSimulationState(input: unknown): SimulationMainState {
   const root = asRecord(input)
-  const runtime = asRecord(root.simulation_runtime)
-  const currentResult = asRecord(runtime.current_result)
+  const simulationRuntime = asRecord(root.simulation_runtime)
   const surfaceTabs = asRecord(root.surface_tabs)
   const metricsView = asRecord(root.metrics_view)
   const analysisChartView = asRecord(root.analysis_chart_view)
@@ -730,6 +801,8 @@ export function normalizeSimulationState(input: unknown): SimulationMainState {
   const exportView = asRecord(root.export_view)
   const historyResultsView = asRecord(root.history_results_view)
   const opResultView = asRecord(root.op_result_view)
+  const runtime = simulationRuntime
+  const currentResult = asRecord(simulationRuntime.current_result)
 
   return {
     simulation_runtime: {
@@ -861,10 +934,42 @@ export function normalizeSimulationState(input: unknown): SimulationMainState {
   }
 }
 
-export function normalizeRawDataView(input: unknown): RawDataViewState {
-  const rawDataView = asRecord(input)
+export function normalizeRawDataDocument(input: unknown): RawDataDocumentState {
+  const rawDataDocument = asRecord(input)
   return {
-    visible_columns: asStringArray(rawDataView.visible_columns),
-    rows: normalizeRawDataRows(rawDataView.rows),
+    dataset_id: asString(rawDataDocument.dataset_id),
+    version: asNumber(rawDataDocument.version),
+    has_data: asBoolean(rawDataDocument.has_data),
+    row_count: asNumber(rawDataDocument.row_count),
+    column_count: asNumber(rawDataDocument.column_count),
+    row_header_width_px: asNumber(rawDataDocument.row_header_width_px),
+    row_height_px: asNumber(rawDataDocument.row_height_px),
+    column_header_height_px: asNumber(rawDataDocument.column_header_height_px),
+    columns: normalizeRawDataColumns(rawDataDocument.columns),
+  }
+}
+
+export function normalizeRawDataViewport(input: unknown): RawDataViewportState {
+  const rawDataViewport = asRecord(input)
+  return {
+    dataset_id: asString(rawDataViewport.dataset_id),
+    version: asNumber(rawDataViewport.version),
+    row_start: asNumber(rawDataViewport.row_start),
+    row_end: asNumber(rawDataViewport.row_end),
+    col_start: asNumber(rawDataViewport.col_start),
+    col_end: asNumber(rawDataViewport.col_end),
+    rows: normalizeRawDataViewportRows(rawDataViewport.rows),
+  }
+}
+
+export function normalizeRawDataCopyResult(input: unknown): RawDataCopyResultState {
+  const rawDataCopyResult = asRecord(input)
+  return {
+    dataset_id: asString(rawDataCopyResult.dataset_id),
+    version: asNumber(rawDataCopyResult.version),
+    sequence: asNumber(rawDataCopyResult.sequence),
+    success: asBoolean(rawDataCopyResult.success),
+    row_count: asNumber(rawDataCopyResult.row_count),
+    col_count: asNumber(rawDataCopyResult.col_count),
   }
 }

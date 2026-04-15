@@ -237,21 +237,66 @@ class SimulationFrontendStateSerializer:
             "op_result_view": op_result_view,
         }
 
-    def serialize_raw_data_view(
+    def serialize_raw_data_document(
         self,
-        raw_data_snapshot: Optional[Dict[str, Any]] = None,
+        raw_data_document: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        payload = raw_data_snapshot if isinstance(raw_data_snapshot, dict) else {}
+        payload = raw_data_document if isinstance(raw_data_document, dict) else {}
+        columns = [
+            {
+                "key": str(item.get("key") or ""),
+                "label": str(item.get("label") or ""),
+                "width_px": int(item.get("width_px") or 0),
+            }
+            for item in payload.get("columns", [])
+            if isinstance(item, dict)
+        ]
         return {
-            "visible_columns": [str(value or "") for value in payload.get("visible_columns", []) if str(value or "")],
+            "dataset_id": str(payload.get("dataset_id") or ""),
+            "version": int(payload.get("version") or 0),
+            "has_data": bool(payload.get("has_data")) and bool(columns),
+            "row_count": int(payload.get("row_count") or 0),
+            "column_count": int(payload.get("column_count") or 0),
+            "row_header_width_px": int(payload.get("row_header_width_px") or 0),
+            "row_height_px": int(payload.get("row_height_px") or 0),
+            "column_header_height_px": int(payload.get("column_header_height_px") or 0),
+            "columns": columns,
+        }
+
+    def serialize_raw_data_viewport(
+        self,
+        raw_data_viewport: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        payload = raw_data_viewport if isinstance(raw_data_viewport, dict) else {}
+        return {
+            "dataset_id": str(payload.get("dataset_id") or ""),
+            "version": int(payload.get("version") or 0),
+            "row_start": int(payload.get("row_start") or 0),
+            "row_end": int(payload.get("row_end") or 0),
+            "col_start": int(payload.get("col_start") or 0),
+            "col_end": int(payload.get("col_end") or 0),
             "rows": [
                 {
-                    "row_number": int(item.get("row_number") or 0),
+                    "row_index": int(item.get("row_index") or 0),
                     "values": [str(value or "") for value in item.get("values", [])],
                 }
                 for item in payload.get("rows", [])
                 if isinstance(item, dict)
             ],
+        }
+
+    def serialize_raw_data_copy_result(
+        self,
+        raw_data_copy_result: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        payload = raw_data_copy_result if isinstance(raw_data_copy_result, dict) else {}
+        return {
+            "dataset_id": str(payload.get("dataset_id") or ""),
+            "version": int(payload.get("version") or 0),
+            "sequence": int(payload.get("sequence") or 0),
+            "success": bool(payload.get("success")),
+            "row_count": int(payload.get("row_count") or 0),
+            "col_count": int(payload.get("col_count") or 0),
         }
 
     def serialize_metric(self, metric: DisplayMetric) -> Dict[str, Any]:

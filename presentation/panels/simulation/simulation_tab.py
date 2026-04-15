@@ -69,7 +69,9 @@ class SimulationTab(QWidget):
     """
 
     authoritative_frontend_state_changed = pyqtSignal(dict)
-    raw_data_frontend_state_changed = pyqtSignal(dict)
+    raw_data_document_changed = pyqtSignal(dict)
+    raw_data_viewport_changed = pyqtSignal(dict)
+    raw_data_copy_result_changed = pyqtSignal(dict)
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -87,7 +89,10 @@ class SimulationTab(QWidget):
         self._runtime_status_message = ""
         self._state_serializer = SimulationFrontendStateSerializer()
         self._authoritative_frontend_state = self._state_serializer.serialize_main_state()
-        self._authoritative_raw_data_view = self._state_serializer.serialize_raw_data_view()
+        self._authoritative_raw_data_document = self._state_serializer.serialize_raw_data_document()
+        self._authoritative_raw_data_viewport = self._state_serializer.serialize_raw_data_viewport()
+        self._raw_data_copy_sequence = 0
+        self._authoritative_raw_data_copy_result = self._state_serializer.serialize_raw_data_copy_result()
         self._history_results_cache: List[dict] = []
         self._bound_web_bridge: Optional[SimulationWebBridge] = None
         
@@ -148,8 +153,14 @@ class SimulationTab(QWidget):
     def get_authoritative_frontend_state(self):
         return copy.deepcopy(self._authoritative_frontend_state)
 
-    def get_authoritative_raw_data_view(self):
-        return copy.deepcopy(self._authoritative_raw_data_view)
+    def get_authoritative_raw_data_document(self):
+        return copy.deepcopy(self._authoritative_raw_data_document)
+
+    def get_authoritative_raw_data_viewport(self):
+        return copy.deepcopy(self._authoritative_raw_data_viewport)
+
+    def get_authoritative_raw_data_copy_result(self):
+        return copy.deepcopy(self._authoritative_raw_data_copy_result)
 
     def _normalize_frontend_tab_id(self, tab_id: str) -> str:
         return str(tab_id or "metrics")
@@ -225,9 +236,50 @@ class SimulationTab(QWidget):
             export_snapshot=snapshot_payloads["export_snapshot"],
         )
 
-    def _build_authoritative_raw_data_view(self):
-        return self._state_serializer.serialize_raw_data_view(
-            self._backend_runtime.raw_data_table.get_web_snapshot()
+    def _build_authoritative_raw_data_document(self):
+        return self._state_serializer.serialize_raw_data_document(
+            self._backend_runtime.raw_data_table.get_document_payload()
+        )
+
+    def _build_authoritative_raw_data_viewport(
+        self,
+        *,
+        dataset_id: str = "",
+        version: Optional[int] = None,
+        row_start: int = 0,
+        row_end: int = 0,
+        col_start: int = 0,
+        col_end: int = 0,
+    ):
+        return self._state_serializer.serialize_raw_data_viewport(
+            self._backend_runtime.raw_data_table.get_viewport_payload(
+                dataset_id=dataset_id,
+                version=version,
+                row_start=row_start,
+                row_end=row_end,
+                col_start=col_start,
+                col_end=col_end,
+            )
+        )
+
+    def _build_authoritative_raw_data_copy_result(
+        self,
+        *,
+        dataset_id: str = "",
+        version: int = 0,
+        success: bool = False,
+        row_count: int = 0,
+        col_count: int = 0,
+    ):
+        return self._state_serializer.serialize_raw_data_copy_result(
+            {
+                "dataset_id": dataset_id,
+                "version": version,
+                "sequence": self._raw_data_copy_sequence,
+                "success": success,
+                "row_count": row_count,
+                "col_count": col_count,
+            }
         )
 
     def _update_authoritative_frontend_state(self):
@@ -237,17 +289,60 @@ class SimulationTab(QWidget):
         self._authoritative_frontend_state = next_state
         self.authoritative_frontend_state_changed.emit(copy.deepcopy(self._authoritative_frontend_state))
 
-    def _update_authoritative_raw_data_view(self):
-        next_raw_data_view = self._build_authoritative_raw_data_view()
-        if next_raw_data_view == self._authoritative_raw_data_view:
+    def _update_authoritative_raw_data_document(self):
+        next_raw_data_document = self._build_authoritative_raw_data_document()
+        if next_raw_data_document == self._authoritative_raw_data_document:
             return
-        self._authoritative_raw_data_view = next_raw_data_view
-        self.raw_data_frontend_state_changed.emit(copy.deepcopy(self._authoritative_raw_data_view))
+        self._authoritative_raw_data_document = next_raw_data_document
+        self.raw_data_document_changed.emit(copy.deepcopy(self._authoritative_raw_data_document))
+
+    def _update_authoritative_raw_data_viewport(
+        self,
+        *,
+        dataset_id: str = "",
+        version: Optional[int] = None,
+        row_start: int = 0,
+        row_end: int = 0,
+        col_start: int = 0,
+        col_end: int = 0,
+    ):
+        next_raw_data_viewport = self._build_authoritative_raw_data_viewport(
+            dataset_id=dataset_id,
+            version=version,
+            row_start=row_start,
+            row_end=row_end,
+            col_start=col_start,
+            col_end=col_end,
+        )
+        if next_raw_data_viewport == self._authoritative_raw_data_viewport:
+            return
+        self._authoritative_raw_data_viewport = next_raw_data_viewport
+        self.raw_data_viewport_changed.emit(copy.deepcopy(self._authoritative_raw_data_viewport))
+
+    def _emit_authoritative_raw_data_copy_result(
+        self,
+        *,
+        dataset_id: str = "",
+        version: int = 0,
+        success: bool = False,
+        row_count: int = 0,
+        col_count: int = 0,
+    ):
+        self._raw_data_copy_sequence += 1
+        self._authoritative_raw_data_copy_result = self._build_authoritative_raw_data_copy_result(
+            dataset_id=dataset_id,
+            version=version,
+            success=success,
+            row_count=row_count,
+            col_count=col_count,
+        )
+        self.raw_data_copy_result_changed.emit(copy.deepcopy(self._authoritative_raw_data_copy_result))
 
     def _update_frontend_payloads(self, *, include_raw_data: bool = False) -> None:
         self._update_authoritative_frontend_state()
         if include_raw_data:
-            self._update_authoritative_raw_data_view()
+            self._update_authoritative_raw_data_document()
+            self._update_authoritative_raw_data_viewport()
 
     def _subscribe_events(self):
         """订阅事件"""
@@ -510,6 +605,8 @@ class SimulationTab(QWidget):
         self._bound_web_bridge = bridge
         bridge.activate_tab_requested.connect(self.activate_result_tab)
         bridge.load_history_result_requested.connect(self.load_history_result)
+        bridge.raw_data_viewport_requested.connect(self._on_raw_data_viewport_requested)
+        bridge.raw_data_copy_requested.connect(self._on_raw_data_copy_requested)
         bridge.chart_series_visibility_toggled.connect(self._on_chart_series_visibility_toggled)
         bridge.clear_all_chart_series_requested.connect(self._on_chart_clear_all_requested)
         bridge.chart_measurement_enabled_changed.connect(self._on_chart_measurement_enabled_changed)
@@ -533,6 +630,42 @@ class SimulationTab(QWidget):
         bridge.export_directory_clear_requested.connect(self._on_export_directory_clear_requested)
         bridge.export_requested.connect(self._on_export_requested)
         bridge.add_to_conversation_requested.connect(self._on_bridge_add_to_conversation_requested)
+
+    def _on_raw_data_viewport_requested(self, payload: dict):
+        if not isinstance(payload, dict):
+            return
+        self._update_authoritative_raw_data_viewport(
+            dataset_id=str(payload.get("dataset_id") or ""),
+            version=payload.get("version"),
+            row_start=int(payload.get("row_start") or 0),
+            row_end=int(payload.get("row_end") or 0),
+            col_start=int(payload.get("col_start") or 0),
+            col_end=int(payload.get("col_end") or 0),
+        )
+
+    def _on_raw_data_copy_requested(self, payload: dict):
+        if not isinstance(payload, dict):
+            return
+        row_start = int(payload.get("row_start") or 0)
+        row_end = int(payload.get("row_end") or 0)
+        col_start = int(payload.get("col_start") or 0)
+        col_end = int(payload.get("col_end") or 0)
+        success = self._backend_runtime.raw_data_table.copy_range_to_clipboard(
+            dataset_id=str(payload.get("dataset_id") or ""),
+            version=payload.get("version"),
+            row_start=row_start,
+            row_end=row_end,
+            col_start=col_start,
+            col_end=col_end,
+            include_headers=bool(payload.get("include_headers")),
+        )
+        self._emit_authoritative_raw_data_copy_result(
+            dataset_id=str(payload.get("dataset_id") or ""),
+            version=int(payload.get("version") or 0),
+            success=success,
+            row_count=max(0, row_end - row_start),
+            col_count=max(0, col_end - col_start),
+        )
 
     def _on_chart_clear_all_requested(self):
         self._backend_runtime.chart_viewer.clear_all_series()

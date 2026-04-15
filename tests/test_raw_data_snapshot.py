@@ -1,7 +1,6 @@
 import numpy as np
 import pytest
 import importlib
-from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication
 
 import domain.simulation.data as simulation_data_package
@@ -10,7 +9,6 @@ from domain.simulation.data.waveform_data_service import WaveformDataService
 from domain.simulation.models.simulation_result import SimulationData, SimulationResult
 from presentation.panels.simulation.raw_data_table import (
     RawDataTable,
-    RawDataTableModel,
 )
 
 
@@ -103,60 +101,103 @@ def test_waveform_data_service_builds_stable_table_snapshot(sample_result: Simul
     )
 
 
-def test_raw_data_table_model_keeps_row_identity_stable(sample_result: SimulationResult):
-    model = RawDataTableModel()
-    model.load_result(sample_result)
-
-    assert model.rowCount() == 4
-    assert model.columnCount() == 3
-    assert model.headerData(0, Qt.Orientation.Horizontal, Qt.ItemDataRole.DisplayRole) == "Time (s)"
-    assert model.headerData(1, Qt.Orientation.Horizontal, Qt.ItemDataRole.DisplayRole) == "V(out)"
-    assert model.headerData(0, Qt.Orientation.Vertical, Qt.ItemDataRole.DisplayRole) == "1"
-    assert model.headerData(3, Qt.Orientation.Vertical, Qt.ItemDataRole.DisplayRole) == "4"
-
-    first_value = model.data(model.index(0, 1), Qt.ItemDataRole.DisplayRole)
-    last_value = model.data(model.index(3, 1), Qt.ItemDataRole.DisplayRole)
-
-    assert first_value == "1"
-    assert last_value == "4"
-
-    model.data(model.index(3, 1), Qt.ItemDataRole.DisplayRole)
-    assert model.data(model.index(0, 1), Qt.ItemDataRole.DisplayRole) == "1"
-    snapshot = model.snapshot
-    assert snapshot is not None
-    assert float(snapshot.x_values[2]) == 0.2
-    assert float(snapshot.signal_columns["V(out)"][2]) == 3.0
-
-
-def test_raw_data_table_web_snapshot_exposes_full_table(qapp, sample_result: SimulationResult):
+def test_raw_data_table_document_payload_exposes_metadata(qapp, sample_result: SimulationResult):
     table = RawDataTable()
     table.load_data(sample_result)
-    snapshot = table.get_web_snapshot()
+    document = table.get_document_payload()
 
-    assert snapshot["visible_columns"] == ["Time (s)", "V(out)", "V(in)"]
-    assert [row["row_number"] for row in snapshot["rows"]] == [1, 2, 3, 4]
-    assert snapshot["rows"][0]["values"] == ["0.000000e+00", "1", "0.5"]
-    assert snapshot["rows"][3]["values"] == ["0.3", "4", "0.8"]
+    assert document["dataset_id"] == "session-raw-7::results/run_007.json::2026-04-05T17:00:00"
+    assert document["version"] == 1
+    assert document["has_data"] is True
+    assert document["row_count"] == 4
+    assert document["column_count"] == 3
+    assert [column["label"] for column in document["columns"]] == ["Time (s)", "V(out)", "V(in)"]
 
     table.clear()
-    cleared_snapshot = table.get_web_snapshot()
-    assert cleared_snapshot["visible_columns"] == []
-    assert cleared_snapshot["rows"] == []
+    cleared_document = table.get_document_payload()
+    assert cleared_document["has_data"] is False
+    assert cleared_document["row_count"] == 0
+    assert cleared_document["column_count"] == 0
+    assert cleared_document["columns"] == []
 
 
-def test_raw_data_table_web_snapshot_exposes_all_signal_columns(qapp):
+def test_raw_data_table_viewport_payload_returns_requested_chunk(qapp, sample_result: SimulationResult):
+    table = RawDataTable()
+    table.load_data(sample_result)
+    document = table.get_document_payload()
+
+    viewport = table.get_viewport_payload(
+        dataset_id=document["dataset_id"],
+        version=document["version"],
+        row_start=1,
+        row_end=4,
+        col_start=0,
+        col_end=2,
+    )
+
+    assert viewport["dataset_id"] == document["dataset_id"]
+    assert viewport["version"] == document["version"]
+    assert viewport["row_start"] == 1
+    assert viewport["row_end"] == 4
+    assert viewport["col_start"] == 0
+    assert viewport["col_end"] == 2
+    assert [row["row_index"] for row in viewport["rows"]] == [1, 2, 3]
+    assert viewport["rows"][0]["values"] == ["0.1", "2"]
+    assert viewport["rows"][2]["values"] == ["0.3", "4"]
+
+
+def test_raw_data_table_document_and_viewport_cover_all_signal_columns(qapp):
     table = RawDataTable()
     table.load_data(build_result(row_count=120, signal_count=20))
+    document = table.get_document_payload()
+    column_labels = [column["label"] for column in document["columns"]]
 
-    snapshot = table.get_web_snapshot()
+    assert column_labels == ["Time (s)", *table.signal_names]
+    assert len(document["columns"]) == 21
+    assert document["row_count"] == 120
+    target_column_index = column_labels.index("V(n19)")
 
-    assert snapshot["visible_columns"] == ["Time (s)", *table._model.signal_names]
-    assert len(snapshot["visible_columns"]) == 21
-    assert len(snapshot["rows"]) == 120
-    assert snapshot["rows"][0]["row_number"] == 1
-    assert snapshot["rows"][-1]["row_number"] == 120
-    target_column = snapshot["visible_columns"].index("V(n19)")
-    assert snapshot["rows"][5]["values"][target_column] == "24"
+    viewport = table.get_viewport_payload(
+        dataset_id=document["dataset_id"],
+        version=document["version"],
+        row_start=5,
+        row_end=6,
+        col_start=target_column_index,
+        col_end=target_column_index + 1,
+    )
+
+    assert len(viewport["rows"]) == 1
+    assert viewport["rows"][0]["row_index"] == 5
+    assert viewport["rows"][0]["values"] == ["24"]
+
+
+def test_raw_data_table_copy_range_to_clipboard(qapp, sample_result: SimulationResult, monkeypatch):
+    class DummyClipboard:
+        def __init__(self):
+            self.value = ""
+
+        def setText(self, value: str):
+            self.value = value
+
+    clipboard = DummyClipboard()
+    monkeypatch.setattr(QApplication, "clipboard", lambda self: clipboard)
+
+    table = RawDataTable()
+    table.load_data(sample_result)
+    document = table.get_document_payload()
+
+    copied = table.copy_range_to_clipboard(
+        dataset_id=document["dataset_id"],
+        version=document["version"],
+        row_start=1,
+        row_end=3,
+        col_start=0,
+        col_end=2,
+        include_headers=True,
+    )
+
+    assert copied is True
+    assert clipboard.value == "Time (s)\tV(out)\n0.1\t2\n0.2\t3"
 
 
 def test_simulation_artifact_exporter_exports_full_raw_data_snapshot(sample_result: SimulationResult, tmp_path):

@@ -1,4 +1,4 @@
-import type { RawDataViewState, SimulationMainState, SimulationTabId } from '../types/state'
+import type { RawDataCopyResultState, RawDataDocumentState, RawDataViewportState, SimulationMainState, SimulationTabId } from '../types/state'
 
 export interface SimulationSurfaceViewportInput {
   xMin: number
@@ -9,10 +9,25 @@ export interface SimulationSurfaceViewportInput {
   rightYMax?: number | null
 }
 
+export interface RawDataViewportRequestInput {
+  datasetId: string
+  version: number
+  rowStart: number
+  rowEnd: number
+  colStart: number
+  colEnd: number
+}
+
+export interface RawDataCopyRequestInput extends RawDataViewportRequestInput {
+  includeHeaders?: boolean
+}
+
 export interface SimulationBridge {
   markReady(): void
   activateTab(tabId: SimulationTabId): void
   loadHistoryResult(resultPath: string): void
+  requestRawDataViewport(payload: RawDataViewportRequestInput): void
+  copyRawDataRange(payload: RawDataCopyRequestInput): void
   setChartSeriesVisible(seriesName: string, visible: boolean): void
   clearAllChartSeries(): void
   setChartMeasurementEnabled(enabled: boolean): void
@@ -40,7 +55,9 @@ export interface SimulationBridge {
 
 export interface SimulationAppApi {
   setState(state: SimulationMainState | Record<string, unknown>): void
-  setRawDataView(state: RawDataViewState | Record<string, unknown>): void
+  setRawDataDocument(state: RawDataDocumentState | Record<string, unknown>): void
+  setRawDataViewport(state: RawDataViewportState | Record<string, unknown>): void
+  finishRawDataCopy(state: RawDataCopyResultState | Record<string, unknown>): void
 }
 
 interface QtTransport {

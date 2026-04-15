@@ -21,259 +21,264 @@
 """
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
-from PyQt6.QtCore import (
-    Qt,
-    QAbstractTableModel,
-    QModelIndex,
-)
-from PyQt6.QtWidgets import (
-    QWidget,
-    QSizePolicy,
-)
+from PyQt6.QtCore import QObject
+from PyQt6.QtWidgets import QApplication
 
 from domain.simulation.data.waveform_data_service import (
-    WaveformDataService,
     TableSnapshot,
     waveform_data_service,
 )
 from domain.simulation.models.simulation_result import SimulationResult
 
-# ============================================================
-# 常量定义
-# ============================================================
-
-# 数值显示精度
 VALUE_PRECISION = 6
+DEFAULT_COLUMN_WIDTH_PX = 136
+DEFAULT_ROW_HEIGHT_PX = 28
+DEFAULT_COLUMN_HEADER_HEIGHT_PX = 32
+DEFAULT_ROW_HEADER_WIDTH_PX = 64
 
 
-# ============================================================
-# RawDataTableModel - 快照数据模型
-# ============================================================
-
-class RawDataTableModel(QAbstractTableModel):
+class RawDataTable(QObject):
     def __init__(self, parent=None):
         super().__init__(parent)
-        
         self._logger = logging.getLogger(__name__)
-        self._data_service: WaveformDataService = waveform_data_service
         self._snapshot: Optional[TableSnapshot] = None
-    
-    def load_result(self, result: SimulationResult):
-        self.beginResetModel()
-        self._snapshot = self._data_service.build_table_snapshot(result)
-        self.endResetModel()
-        
-        total_rows = self._snapshot.total_rows if self._snapshot else 0
-        signal_count = len(self._snapshot.signal_names) if self._snapshot else 0
-        self._logger.debug(f"Loaded result snapshot: {total_rows} rows, {signal_count} signals")
-    
-    def clear(self):
-        self.beginResetModel()
-        self._snapshot = None
-        self.endResetModel()
-    
-    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
-        if parent.isValid():
-            return 0
-        if self._snapshot is None:
-            return 0
-        return self._snapshot.total_rows
-    
-    def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:
-        if parent.isValid():
-            return 0
-        if self._snapshot is None:
-            return 1
-        return 1 + len(self._snapshot.signal_names)
-    
-    def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole):
-        if not index.isValid() or self._snapshot is None:
-            return None
-        
-        row = index.row()
-        col = index.column()
-        
-        if row < 0 or row >= self._snapshot.total_rows:
-            return None
-        
-        if col < 0 or col >= self.columnCount():
-            return None
-        
-        if role == Qt.ItemDataRole.DisplayRole:
-            value = self._get_cell_value(row, col)
-            if value is None:
-                return "--"
-            return self._format_value(value)
+        self._dataset_id = ""
+        self._document_version = 0
 
-        if role == Qt.ItemDataRole.TextAlignmentRole:
-            return Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
-        
-        return None
-    
-    def headerData(
-        self,
-        section: int,
-        orientation: Qt.Orientation,
-        role: int = Qt.ItemDataRole.DisplayRole
-    ):
-        if role != Qt.ItemDataRole.DisplayRole:
-            return None
-        
-        if orientation == Qt.Orientation.Horizontal:
-            if section == 0:
-                return self.x_label
-            if self._snapshot and section - 1 < len(self._snapshot.signal_names):
-                return self._snapshot.signal_names[section - 1]
-        
-        elif orientation == Qt.Orientation.Vertical:
-            return str(section + 1)
-        
-        return None
-    
+    @property
+    def dataset_id(self) -> str:
+        return self._dataset_id
+
+    @property
+    def document_version(self) -> int:
+        return self._document_version
+
     @property
     def signal_names(self) -> List[str]:
         if self._snapshot is None:
             return []
-        return self._snapshot.signal_names.copy()
-    
+        return list(self._snapshot.signal_names)
+
     @property
-    def total_rows(self) -> int:
+    def row_count(self) -> int:
         if self._snapshot is None:
             return 0
         return self._snapshot.total_rows
-    
+
+    @property
+    def column_count(self) -> int:
+        if self._snapshot is None:
+            return 0
+        return 1 + len(self._snapshot.signal_names)
+
     @property
     def x_label(self) -> str:
-        """获取 X 轴标签"""
         if self._snapshot is None:
             return "X"
         return self._snapshot.x_label
 
-    @property
-    def snapshot(self) -> Optional[TableSnapshot]:
-        return self._snapshot
-
-    def _get_column_array(self, column: int) -> Optional[np.ndarray]:
-        if self._snapshot is None:
-            return None
-        if column == 0:
-            return self._snapshot.x_values
-        signal_index = column - 1
-        if signal_index < 0 or signal_index >= len(self._snapshot.signal_names):
-            return None
-        signal_name = self._snapshot.signal_names[signal_index]
-        return self._snapshot.signal_columns.get(signal_name)
-
-    def _get_cell_value(self, row: int, column: int) -> Optional[float]:
-        column_values = self._get_column_array(column)
-        if column_values is None or row < 0 or row >= len(column_values):
-            return None
-        value = float(column_values[row])
-        if not np.isfinite(value):
-            return None
-        return value
-
-    def _format_value(self, value: float) -> str:
-        if abs(value) < 1e-3 or abs(value) >= 1e6:
-            return f"{value:.{VALUE_PRECISION}e}"
-        return f"{value:.{VALUE_PRECISION}g}"
-
-
-# ============================================================
-# RawDataTable - 原始数据表格组件
-# ============================================================
-
-class RawDataTable(QWidget):
-    """
-    原始数据表格组件
-    
-    以表格形式显示仿真原始数据，支持：
-    - 基于结果快照的稳定表格显示
-    - 跳转到指定行/X 轴值
-    - 搜索特定值
-    - 导出选中数据
-    """
-    
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        
-        self._logger = logging.getLogger(__name__)
-        self._web_snapshot_cache: Optional[Dict[str, Any]] = None
-        
-        # 数据模型
-        self._model = RawDataTableModel()
-        self.setSizePolicy(
-            QSizePolicy.Policy.Expanding,
-            QSizePolicy.Policy.Expanding
-        )
-        self.setStyleSheet("")
-        self.retranslate_ui()
-    
-    # ============================================================
-    # 公共方法
-    # ============================================================
-    
     def load_data(self, result: SimulationResult):
-        """
-        加载仿真结果数据
-        
-        Args:
-            result: 仿真结果对象
-        """
-        self._model.load_result(result)
-        self._web_snapshot_cache = None
-        
+        self._snapshot = waveform_data_service.build_table_snapshot(result)
+        self._document_version += 1
+        self._dataset_id = self._build_dataset_id(result) if self._snapshot is not None and self._snapshot.total_rows > 0 else ""
+        total_rows = self._snapshot.total_rows if self._snapshot else 0
+        signal_count = len(self._snapshot.signal_names) if self._snapshot else 0
         self._logger.info(
-            f"Loaded data: {self._model.total_rows} rows, "
-            f"{len(self._model.signal_names)} signals"
+            f"Loaded data: {total_rows} rows, {signal_count} signals"
         )
-    
+
     def clear(self):
-        """清空数据"""
-        self._model.clear()
-        self._web_snapshot_cache = None
-    
-    def get_web_snapshot(self) -> Dict[str, Any]:
-        if self._web_snapshot_cache is not None:
-            return self._web_snapshot_cache
-        snapshot = self._model.snapshot
+        self._snapshot = None
+        self._dataset_id = ""
+        self._document_version += 1
+
+    def get_document_payload(self) -> Dict[str, Any]:
+        snapshot = self._snapshot
         if snapshot is None or snapshot.total_rows <= 0:
-            self._web_snapshot_cache = {
-                "visible_columns": [],
+            return self._build_empty_document_payload()
+        columns = [
+            {
+                "key": f"column_{column_index}",
+                "label": self._column_label(column_index),
+                "width_px": DEFAULT_COLUMN_WIDTH_PX,
+            }
+            for column_index in range(self.column_count)
+        ]
+        return {
+            "dataset_id": self._dataset_id,
+            "version": self._document_version,
+            "has_data": True,
+            "row_count": snapshot.total_rows,
+            "column_count": len(columns),
+            "row_header_width_px": DEFAULT_ROW_HEADER_WIDTH_PX,
+            "row_height_px": DEFAULT_ROW_HEIGHT_PX,
+            "column_header_height_px": DEFAULT_COLUMN_HEADER_HEIGHT_PX,
+            "columns": columns,
+        }
+
+    def get_viewport_payload(
+        self,
+        *,
+        dataset_id: str = "",
+        version: Optional[int] = None,
+        row_start: int = 0,
+        row_end: int = 0,
+        col_start: int = 0,
+        col_end: int = 0,
+    ) -> Dict[str, Any]:
+        snapshot = self._snapshot
+        if snapshot is None or not self._matches_document(dataset_id, version):
+            return self._build_empty_viewport_payload()
+        normalized_row_start, normalized_row_end = self._clamp_range(row_start, row_end, snapshot.total_rows)
+        normalized_col_start, normalized_col_end = self._clamp_range(col_start, col_end, self.column_count)
+        if normalized_row_start >= normalized_row_end or normalized_col_start >= normalized_col_end:
+            return {
+                "dataset_id": self._dataset_id,
+                "version": self._document_version,
+                "row_start": normalized_row_start,
+                "row_end": normalized_row_end,
+                "col_start": normalized_col_start,
+                "col_end": normalized_col_end,
                 "rows": [],
             }
-            return self._web_snapshot_cache
-        signal_names = self._model.signal_names
-        visible_columns = [self._model.x_label, *signal_names]
-        visible_column_arrays = [snapshot.x_values]
-        visible_column_arrays.extend(snapshot.signal_columns.get(signal_name) for signal_name in signal_names)
+        column_arrays = [
+            self._get_column_array(column_index)
+            for column_index in range(normalized_col_start, normalized_col_end)
+        ]
         rows = []
-        for row_index in range(snapshot.total_rows):
-            values = [
-                self._format_web_value(column_values, row_index)
-                for column_values in visible_column_arrays
-            ]
+        for row_index in range(normalized_row_start, normalized_row_end):
             rows.append({
-                "row_number": row_index + 1,
-                "values": values,
+                "row_index": row_index,
+                "values": [
+                    self._format_web_value(column_array, row_index)
+                    for column_array in column_arrays
+                ],
             })
-        self._web_snapshot_cache = {
-            "visible_columns": visible_columns,
+        return {
+            "dataset_id": self._dataset_id,
+            "version": self._document_version,
+            "row_start": normalized_row_start,
+            "row_end": normalized_row_end,
+            "col_start": normalized_col_start,
+            "col_end": normalized_col_end,
             "rows": rows,
         }
-        return self._web_snapshot_cache
-    
+
+    def copy_range_to_clipboard(
+        self,
+        *,
+        dataset_id: str = "",
+        version: Optional[int] = None,
+        row_start: int = 0,
+        row_end: int = 0,
+        col_start: int = 0,
+        col_end: int = 0,
+        include_headers: bool = False,
+    ) -> bool:
+        snapshot = self._snapshot
+        if snapshot is None or not self._matches_document(dataset_id, version):
+            return False
+        text = self._build_copy_text(
+            row_start=row_start,
+            row_end=row_end,
+            col_start=col_start,
+            col_end=col_end,
+            include_headers=include_headers,
+        )
+        if not text:
+            return False
+        app = QApplication.instance()
+        if app is None:
+            return False
+        clipboard = app.clipboard()
+        if clipboard is None:
+            return False
+        clipboard.setText(text)
+        return True
+
     def retranslate_ui(self):
-        """重新翻译 UI 文本"""
         return
 
-    # ============================================================
-    # 内部方法
-    # ============================================================
+    def _build_empty_document_payload(self) -> Dict[str, Any]:
+        return {
+            "dataset_id": self._dataset_id,
+            "version": self._document_version,
+            "has_data": False,
+            "row_count": 0,
+            "column_count": 0,
+            "row_header_width_px": DEFAULT_ROW_HEADER_WIDTH_PX,
+            "row_height_px": DEFAULT_ROW_HEIGHT_PX,
+            "column_header_height_px": DEFAULT_COLUMN_HEADER_HEIGHT_PX,
+            "columns": [],
+        }
+
+    def _build_empty_viewport_payload(self) -> Dict[str, Any]:
+        return {
+            "dataset_id": self._dataset_id,
+            "version": self._document_version,
+            "row_start": 0,
+            "row_end": 0,
+            "col_start": 0,
+            "col_end": 0,
+            "rows": [],
+        }
+
+    def _build_copy_text(
+        self,
+        *,
+        row_start: int,
+        row_end: int,
+        col_start: int,
+        col_end: int,
+        include_headers: bool,
+    ) -> str:
+        snapshot = self._snapshot
+        if snapshot is None:
+            return ""
+        normalized_row_start, normalized_row_end = self._clamp_range(row_start, row_end, snapshot.total_rows)
+        normalized_col_start, normalized_col_end = self._clamp_range(col_start, col_end, self.column_count)
+        if normalized_row_start >= normalized_row_end or normalized_col_start >= normalized_col_end:
+            return ""
+        column_arrays = [
+            self._get_column_array(column_index)
+            for column_index in range(normalized_col_start, normalized_col_end)
+        ]
+        lines: List[str] = []
+        if include_headers:
+            lines.append("\t".join(
+                self._column_label(column_index)
+                for column_index in range(normalized_col_start, normalized_col_end)
+            ))
+        for row_index in range(normalized_row_start, normalized_row_end):
+            lines.append("\t".join(
+                self._format_web_value(column_array, row_index)
+                for column_array in column_arrays
+            ))
+        return "\n".join(lines)
+
+    def _column_label(self, column_index: int) -> str:
+        if column_index <= 0:
+            return self.x_label
+        signal_index = column_index - 1
+        if signal_index < 0 or signal_index >= len(self.signal_names):
+            return ""
+        return self.signal_names[signal_index]
+
+    def _get_column_array(self, column_index: int) -> Optional[np.ndarray]:
+        snapshot = self._snapshot
+        if snapshot is None:
+            return None
+        if column_index == 0:
+            return snapshot.x_values
+        signal_index = column_index - 1
+        if signal_index < 0 or signal_index >= len(snapshot.signal_names):
+            return None
+        signal_name = snapshot.signal_names[signal_index]
+        return snapshot.signal_columns.get(signal_name)
 
     def _format_web_value(self, column_values: Optional[np.ndarray], row_index: int) -> str:
         if column_values is None or row_index < 0 or row_index >= len(column_values):
@@ -281,7 +286,47 @@ class RawDataTable(QWidget):
         value = float(column_values[row_index])
         if not np.isfinite(value):
             return "--"
-        return self._model._format_value(value)
+        return self._format_value(value)
+
+    def _format_value(self, value: float) -> str:
+        if abs(value) < 1e-3 or abs(value) >= 1e6:
+            return f"{value:.{VALUE_PRECISION}e}"
+        return f"{value:.{VALUE_PRECISION}g}"
+
+    def _build_dataset_id(self, result: SimulationResult) -> str:
+        parts = [
+            str(getattr(result, "session_id", "") or "").strip(),
+            str(getattr(result, "file_path", "") or "").strip(),
+            str(getattr(result, "timestamp", "") or "").strip(),
+        ]
+        normalized_parts = [part for part in parts if part]
+        if normalized_parts:
+            return "::".join(normalized_parts)
+        return f"raw-data-{self._document_version}"
+
+    def _matches_document(self, dataset_id: str, version: Optional[int]) -> bool:
+        normalized_dataset_id = str(dataset_id or "").strip()
+        if normalized_dataset_id and normalized_dataset_id != self._dataset_id:
+            return False
+        if version is None:
+            return True
+        try:
+            return int(version) == self._document_version
+        except (TypeError, ValueError):
+            return False
+
+    def _clamp_range(self, start: int, end: int, length: int) -> Tuple[int, int]:
+        try:
+            normalized_start = int(start)
+        except (TypeError, ValueError):
+            normalized_start = 0
+        try:
+            normalized_end = int(end)
+        except (TypeError, ValueError):
+            normalized_end = normalized_start
+        normalized_start = max(0, min(normalized_start, length))
+        normalized_end = max(normalized_start, min(normalized_end, length))
+        return normalized_start, normalized_end
 
 
 # ============================================================
@@ -290,5 +335,4 @@ class RawDataTable(QWidget):
 
 __all__ = [
     "RawDataTable",
-    "RawDataTableModel",
 ]

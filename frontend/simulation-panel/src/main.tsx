@@ -4,11 +4,17 @@ import { createRoot } from 'react-dom/client'
 import { SimulationApp } from './app/SimulationApp'
 import type { SimulationAppApi, SimulationBridge } from './bridge/bridge'
 import {
-  EMPTY_RAW_DATA_VIEW,
+  EMPTY_RAW_DATA_COPY_RESULT,
+  EMPTY_RAW_DATA_DOCUMENT,
+  EMPTY_RAW_DATA_VIEWPORT,
   EMPTY_SIMULATION_STATE,
-  normalizeRawDataView,
+  normalizeRawDataCopyResult,
+  normalizeRawDataDocument,
+  normalizeRawDataViewport,
   normalizeSimulationState,
-  type RawDataViewState,
+  type RawDataCopyResultState,
+  type RawDataDocumentState,
+  type RawDataViewportState,
   type SimulationMainState,
   type SimulationTabId,
 } from './types/state'
@@ -18,7 +24,9 @@ import './styles/layout.css'
 
 function Root() {
   const [state, setState] = useState<SimulationMainState>(EMPTY_SIMULATION_STATE)
-  const [rawDataView, setRawDataView] = useState<RawDataViewState>(EMPTY_RAW_DATA_VIEW)
+  const [rawDataCopyResult, setRawDataCopyResult] = useState<RawDataCopyResultState>(EMPTY_RAW_DATA_COPY_RESULT)
+  const [rawDataDocument, setRawDataDocument] = useState<RawDataDocumentState>(EMPTY_RAW_DATA_DOCUMENT)
+  const [rawDataViewport, setRawDataViewport] = useState<RawDataViewportState>(EMPTY_RAW_DATA_VIEWPORT)
   const [bridge, setBridge] = useState<SimulationBridge | null>(null)
   const [bridgeConnected, setBridgeConnected] = useState(false)
 
@@ -27,8 +35,14 @@ function Root() {
       setState(nextState) {
         setState(normalizeSimulationState(nextState))
       },
-      setRawDataView(nextState) {
-        setRawDataView(normalizeRawDataView(nextState))
+      setRawDataDocument(nextState) {
+        setRawDataDocument(normalizeRawDataDocument(nextState))
+      },
+      setRawDataViewport(nextState) {
+        setRawDataViewport(normalizeRawDataViewport(nextState))
+      },
+      finishRawDataCopy(nextState) {
+        setRawDataCopyResult(normalizeRawDataCopyResult(nextState))
       },
     }
     window.simulationApp = api
@@ -65,7 +79,9 @@ function Root() {
   return (
     <SimulationApp
       state={state}
-      rawDataView={rawDataView}
+      rawDataCopyResult={rawDataCopyResult}
+      rawDataDocument={rawDataDocument}
+      rawDataViewport={rawDataViewport}
       bridge={bridge}
       bridgeConnected={bridgeConnected}
       onTabSelect={handleTabSelect}

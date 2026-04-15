@@ -24,10 +24,6 @@ class SimulationWebBridge(QObject):
     cursor_move_requested = pyqtSignal(str, float)
     waveform_viewport_changed = pyqtSignal(dict)
     waveform_viewport_reset_requested = pyqtSignal()
-    raw_data_jump_to_row_requested = pyqtSignal(int)
-    raw_data_jump_to_x_requested = pyqtSignal(float)
-    raw_data_value_search_requested = pyqtSignal(int, float, float)
-    raw_data_shift_signal_window_requested = pyqtSignal(int)
     output_log_search_requested = pyqtSignal(str)
     output_log_filter_requested = pyqtSignal(str)
     output_log_jump_to_error_requested = pyqtSignal()
@@ -112,30 +108,6 @@ class SimulationWebBridge(QObject):
     @pyqtSlot()
     def resetWaveformViewport(self) -> None:
         self.waveform_viewport_reset_requested.emit()
-
-    @pyqtSlot(int)
-    def jumpRawDataToRow(self, row: int) -> None:
-        normalized_row = max(1, int(row or 0)) - 1
-        self.raw_data_jump_to_row_requested.emit(normalized_row)
-
-    @pyqtSlot(float)
-    def jumpRawDataToX(self, x_value: float) -> None:
-        self.raw_data_jump_to_x_requested.emit(float(x_value or 0.0))
-
-    @pyqtSlot(int, float, float)
-    def searchRawDataValue(self, column: int, value: float, tolerance: float) -> None:
-        self.raw_data_value_search_requested.emit(
-            max(0, int(column or 0)),
-            float(value or 0.0),
-            max(0.0, float(tolerance or 0.0)),
-        )
-
-    @pyqtSlot(int)
-    def shiftRawDataSignalWindow(self, page_delta: int) -> None:
-        normalized_delta = int(page_delta or 0)
-        if normalized_delta == 0:
-            return
-        self.raw_data_shift_signal_window_requested.emit(1 if normalized_delta > 0 else -1)
 
     @pyqtSlot(str)
     def searchOutputLog(self, keyword: str) -> None:

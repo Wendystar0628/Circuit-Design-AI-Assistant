@@ -1,5 +1,4 @@
 import type { SimulationMainState } from '../../types/state'
-import { CompactToolbar } from '../layout/CompactToolbar'
 
 interface AnalysisInfoTabProps {
   state: SimulationMainState
@@ -11,7 +10,6 @@ export function AnalysisInfoTab({ state }: AnalysisInfoTabProps) {
 
   return (
     <div className="tab-surface">
-      <CompactToolbar title="分析信息" description="结构化字段区；不承担全局摘要职责。" />
       <div className="content-card content-card--scrollable">
         <div className="info-grid">
           <div className="info-row"><div className="card-title">分析类型</div><div className="info-row__value">{info.analysis_type || '未加载'}</div></div>

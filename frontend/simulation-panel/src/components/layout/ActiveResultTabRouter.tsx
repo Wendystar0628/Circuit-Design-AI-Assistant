@@ -27,7 +27,7 @@ export function ActiveResultTabRouter({ activeTab, state, bridge }: ActiveResult
     return <AnalysisInfoTab state={state} />
   }
   if (activeTab === 'raw_data') {
-    return <RawDataTab state={state} bridge={bridge} />
+    return <RawDataTab state={state} />
   }
   if (activeTab === 'output_log') {
     return <OutputLogTab state={state} bridge={bridge} />

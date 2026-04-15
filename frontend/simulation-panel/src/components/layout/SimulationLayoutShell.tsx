@@ -68,7 +68,9 @@ export function SimulationLayoutShell({
                 ) : null}
               </div>
             ) : null}
-            {children}
+            <div className="simulation-active-surface__viewport">
+              {children}
+            </div>
           </div>
         </div>
       </section>

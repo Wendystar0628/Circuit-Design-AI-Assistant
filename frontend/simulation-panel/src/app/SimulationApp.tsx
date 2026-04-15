@@ -22,7 +22,11 @@ export function SimulationApp({ state, rawDataView, bridge, bridgeConnected, onT
       bridgeConnected={bridgeConnected}
       onTabSelect={onTabSelect}
     >
-      {activeTab === 'raw_data' ? null : <ActiveResultTabRouter activeTab={activeTab} state={state} bridge={bridge} />}
+      {activeTab === 'raw_data' ? null : (
+        <div className="tab-surface-shell">
+          <ActiveResultTabRouter activeTab={activeTab} state={state} bridge={bridge} />
+        </div>
+      )}
       {shouldMountRawDataSurface ? (
         <div className={activeTab === 'raw_data' ? 'tab-surface-shell' : 'tab-surface-shell tab-surface-shell--hidden'}>
           <RawDataTab rawDataView={rawDataView} />

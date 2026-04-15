@@ -105,18 +105,32 @@
   height: 100%;
   min-height: 0;
   overflow: hidden;
+  position: relative;
 }
 
-.simulation-active-surface__frame > .tab-surface {
+.simulation-active-surface__frame > .tab-surface,
+.simulation-active-surface__viewport > .tab-surface {
   flex: 1 1 auto;
   min-height: 0;
 }
 
-.tab-surface-shell {
-  display: flex;
+.simulation-active-surface__viewport {
+  position: relative;
   flex: 1 1 auto;
   min-height: 0;
   min-width: 0;
+  overflow: hidden;
+}
+
+.tab-surface-shell {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  min-height: 0;
+  min-width: 0;
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
 }
 
 .tab-surface-shell > .tab-surface {
@@ -126,7 +140,9 @@
 }
 
 .tab-surface-shell--hidden {
-  display: none;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
 }
 
 .surface-state-stack {
@@ -778,6 +794,7 @@
 .raw-data-table-shell {
   flex: 1 1 auto;
   min-height: 0;
+  contain: layout paint style;
 }
 
 .data-table {
@@ -789,6 +806,7 @@
 .raw-data-table {
   width: max-content;
   min-width: 100%;
+  table-layout: fixed;
 }
 
 .data-table th,
@@ -798,6 +816,10 @@
   text-align: left;
   font-size: 12px;
   white-space: nowrap;
+  min-width: 120px;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .data-table th {

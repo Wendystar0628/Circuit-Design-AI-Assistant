@@ -208,30 +208,13 @@ export interface AnalysisInfoViewState {
 }
 
 export interface RawDataViewState {
-  has_data: boolean
-  row_count: number
-  signal_count: number
-  x_axis_label: string
-  result_binding_text: string
   visible_columns: string[]
   rows: RawDataRowState[]
-  window_start: number
-  window_end: number
-  has_more_before: boolean
-  has_more_after: boolean
-  selected_row_numbers: number[]
-  selection_count: number
-  visible_signal_start: number
-  visible_signal_end: number
-  visible_signal_count: number
-  has_more_signal_columns_before: boolean
-  has_more_signal_columns_after: boolean
 }
 
 export interface RawDataRowState {
   row_number: number
   values: string[]
-  selected: boolean
 }
 
 export interface OutputLogViewState {
@@ -456,24 +439,8 @@ export const EMPTY_SIMULATION_STATE: SimulationMainState = {
     parameters: {},
   },
   raw_data_view: {
-    has_data: false,
-    row_count: 0,
-    signal_count: 0,
-    x_axis_label: '',
-    result_binding_text: '',
     visible_columns: [],
     rows: [],
-    window_start: 0,
-    window_end: 0,
-    has_more_before: false,
-    has_more_after: false,
-    selected_row_numbers: [],
-    selection_count: 0,
-    visible_signal_start: 0,
-    visible_signal_end: 0,
-    visible_signal_count: 0,
-    has_more_signal_columns_before: false,
-    has_more_signal_columns_after: false,
   },
   output_log_view: {
     has_log: false,
@@ -693,7 +660,6 @@ function normalizeRawDataRows(value: unknown): RawDataRowState[] {
     return {
       row_number: asNumber(record.row_number),
       values: asStringArray(record.values),
-      selected: asBoolean(record.selected),
     }
   })
 }
@@ -865,24 +831,8 @@ export function normalizeSimulationState(input: unknown): SimulationMainState {
       parameters: asRecord(analysisInfoView.parameters),
     },
     raw_data_view: {
-      has_data: asBoolean(rawDataView.has_data),
-      row_count: asNumber(rawDataView.row_count),
-      signal_count: asNumber(rawDataView.signal_count),
-      x_axis_label: asString(rawDataView.x_axis_label),
-      result_binding_text: asString(rawDataView.result_binding_text),
       visible_columns: asStringArray(rawDataView.visible_columns),
       rows: normalizeRawDataRows(rawDataView.rows),
-      window_start: asNumber(rawDataView.window_start),
-      window_end: asNumber(rawDataView.window_end),
-      has_more_before: asBoolean(rawDataView.has_more_before),
-      has_more_after: asBoolean(rawDataView.has_more_after),
-      selected_row_numbers: asNumberArray(rawDataView.selected_row_numbers),
-      selection_count: asNumber(rawDataView.selection_count),
-      visible_signal_start: asNumber(rawDataView.visible_signal_start),
-      visible_signal_end: asNumber(rawDataView.visible_signal_end),
-      visible_signal_count: asNumber(rawDataView.visible_signal_count),
-      has_more_signal_columns_before: asBoolean(rawDataView.has_more_signal_columns_before),
-      has_more_signal_columns_after: asBoolean(rawDataView.has_more_signal_columns_after),
     },
     output_log_view: {
       has_log: asBoolean(outputLogView.has_log),

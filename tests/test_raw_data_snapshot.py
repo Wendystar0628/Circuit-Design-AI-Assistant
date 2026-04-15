@@ -11,8 +11,6 @@ from domain.simulation.models.simulation_result import SimulationData, Simulatio
 from presentation.panels.simulation.raw_data_table import (
     RawDataTable,
     RawDataTableModel,
-    WEB_SNAPSHOT_MAX_ROWS,
-    WEB_SNAPSHOT_MAX_SIGNAL_COLUMNS,
 )
 
 
@@ -124,64 +122,41 @@ def test_raw_data_table_model_keeps_row_identity_stable(sample_result: Simulatio
 
     model.data(model.index(3, 1), Qt.ItemDataRole.DisplayRole)
     assert model.data(model.index(0, 1), Qt.ItemDataRole.DisplayRole) == "1"
-    assert model.search_value(1, 3.0, tolerance=1e-9) == 2
-    assert model.get_row_for_x_value(0.29) == 3
     snapshot = model.snapshot
     assert snapshot is not None
     assert float(snapshot.x_values[2]) == 0.2
     assert float(snapshot.signal_columns["V(out)"][2]) == 3.0
 
 
-def test_raw_data_table_widget_shows_current_result_binding(qapp, sample_result: SimulationResult):
+def test_raw_data_table_web_snapshot_exposes_full_table(qapp, sample_result: SimulationResult):
     table = RawDataTable()
     table.load_data(sample_result)
     snapshot = table.get_web_snapshot()
 
-    assert snapshot["row_count"] == 4
-    assert snapshot["selection_count"] == 0
-    assert snapshot["selected_row_numbers"] == []
-
-    binding_text = snapshot["result_binding_text"]
-    assert "TRAN" in binding_text
-    assert "v7" in binding_text
-    assert "2026-04-05T17:00:00" in binding_text
-    assert "run_007.json" in binding_text
+    assert snapshot["visible_columns"] == ["Time (s)", "V(out)", "V(in)"]
+    assert [row["row_number"] for row in snapshot["rows"]] == [1, 2, 3, 4]
+    assert snapshot["rows"][0]["values"] == ["0.000000e+00", "1", "0.5"]
+    assert snapshot["rows"][3]["values"] == ["0.3", "4", "0.8"]
 
     table.clear()
     cleared_snapshot = table.get_web_snapshot()
-    assert cleared_snapshot["result_binding_text"] == ""
-    assert cleared_snapshot["row_count"] == 0
-    assert cleared_snapshot["selection_count"] == 0
+    assert cleared_snapshot["visible_columns"] == []
+    assert cleared_snapshot["rows"] == []
 
 
-def test_raw_data_table_web_snapshot_uses_row_and_signal_windows(qapp):
+def test_raw_data_table_web_snapshot_exposes_all_signal_columns(qapp):
     table = RawDataTable()
     table.load_data(build_result(row_count=120, signal_count=20))
 
-    initial_snapshot = table.get_web_snapshot()
+    snapshot = table.get_web_snapshot()
 
-    assert initial_snapshot["row_count"] == 120
-    assert initial_snapshot["window_start"] == 1
-    assert initial_snapshot["window_end"] == WEB_SNAPSHOT_MAX_ROWS
-    assert "TRAN" in initial_snapshot["result_binding_text"]
-    assert len(initial_snapshot["rows"]) == WEB_SNAPSHOT_MAX_ROWS
-    assert initial_snapshot["visible_columns"][0] == "Time (s)"
-    assert len(initial_snapshot["visible_columns"]) == WEB_SNAPSHOT_MAX_SIGNAL_COLUMNS + 1
-    assert initial_snapshot["visible_signal_start"] == 1
-    assert initial_snapshot["visible_signal_end"] == WEB_SNAPSHOT_MAX_SIGNAL_COLUMNS
-    assert initial_snapshot["has_more_signal_columns_after"] is True
-
-    assert table.shift_signal_window(1) is True
-    shifted_snapshot = table.get_web_snapshot()
-
-    assert shifted_snapshot["visible_signal_start"] == WEB_SNAPSHOT_MAX_SIGNAL_COLUMNS + 1
-    assert shifted_snapshot["visible_signal_end"] == WEB_SNAPSHOT_MAX_SIGNAL_COLUMNS * 2
-    assert shifted_snapshot["has_more_signal_columns_before"] is True
-    assert shifted_snapshot["has_more_signal_columns_after"] is True
-    expected_shifted_columns = table._model.signal_names[
-        WEB_SNAPSHOT_MAX_SIGNAL_COLUMNS:WEB_SNAPSHOT_MAX_SIGNAL_COLUMNS * 2
-    ]
-    assert shifted_snapshot["visible_columns"][1:] == expected_shifted_columns
+    assert snapshot["visible_columns"] == ["Time (s)", *table._model.signal_names]
+    assert len(snapshot["visible_columns"]) == 21
+    assert len(snapshot["rows"]) == 120
+    assert snapshot["rows"][0]["row_number"] == 1
+    assert snapshot["rows"][-1]["row_number"] == 120
+    target_column = snapshot["visible_columns"].index("V(n19)")
+    assert snapshot["rows"][5]["values"][target_column] == "24"
 
 
 def test_simulation_artifact_exporter_exports_full_raw_data_snapshot(sample_result: SimulationResult, tmp_path):

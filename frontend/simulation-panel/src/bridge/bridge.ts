@@ -28,7 +28,6 @@ export interface SimulationBridge {
   moveCursor(cursorId: 'a' | 'b', position: number): void
   setWaveformViewport(viewport: SimulationSurfaceViewportInput): void
   resetWaveformViewport(): void
-  shiftRawDataSignalWindow(pageDelta: number): void
   searchOutputLog(keyword: string): void
   filterOutputLog(level: string): void
   setExportTypeSelected(exportType: string, selected: boolean): void

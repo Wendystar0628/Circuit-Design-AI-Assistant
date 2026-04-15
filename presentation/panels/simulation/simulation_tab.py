@@ -188,10 +188,7 @@ class SimulationTab(QWidget):
         output_log_snapshot = None
         export_snapshot = self._backend_runtime.export_panel.get_web_snapshot()
         if current_result is not None:
-            if active_tab == "raw_data":
-                raw_data_snapshot = self._backend_runtime.raw_data_table.get_web_snapshot()
-            else:
-                raw_data_snapshot = self._backend_runtime.raw_data_table.get_web_snapshot(max_rows=0)
+            raw_data_snapshot = self._backend_runtime.raw_data_table.get_web_snapshot()
             if active_tab == "output_log":
                 output_log_snapshot = self._backend_runtime.output_log_viewer.get_web_snapshot()
             else:
@@ -507,7 +504,6 @@ class SimulationTab(QWidget):
         bridge.cursor_move_requested.connect(self._on_waveform_cursor_move_requested)
         bridge.waveform_viewport_changed.connect(self._on_waveform_viewport_changed)
         bridge.waveform_viewport_reset_requested.connect(self._on_waveform_viewport_reset_requested)
-        bridge.raw_data_shift_signal_window_requested.connect(self._on_raw_data_shift_signal_window_requested)
         bridge.output_log_search_requested.connect(self._on_output_log_search_requested)
         bridge.output_log_filter_requested.connect(self._on_output_log_filter_requested)
         bridge.export_type_selection_changed.connect(self._on_export_type_selection_changed)
@@ -612,11 +608,6 @@ class SimulationTab(QWidget):
     def _on_waveform_viewport_reset_requested(self):
         self._backend_runtime.waveform_widget.reset_viewport()
         self._update_authoritative_frontend_state()
-
-    def _on_raw_data_shift_signal_window_requested(self, page_delta: int):
-        changed = self._backend_runtime.raw_data_table.shift_signal_window(page_delta)
-        if changed:
-            self._update_authoritative_frontend_state()
 
     def _on_output_log_search_requested(self, keyword: str):
         self._backend_runtime.output_log_viewer.search(keyword)

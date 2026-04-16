@@ -23,8 +23,8 @@ import type {
   SchematicLayoutPoint,
   SchematicLayoutRect,
   SchematicLayoutResult,
-  SchematicLayoutSegmentAxis,
 } from './schematicLayoutTypes'
+import { routeSchematicNets } from './schematicOrthogonalRouter'
 
 export type {
   SchematicCanvasViewState,
@@ -59,7 +59,6 @@ interface ResolvedPinAnchor {
 const FIT_PADDING = 56
 const MIN_SCALE = 0.35
 const MAX_SCALE = 2.6
-const NET_STUB_LENGTH = 28
 const INSTANCE_LABEL_FONT_SIZE = 16.5
 const SECONDARY_LABEL_FONT_SIZE = 15
 const COMPONENT_LABEL_MIN_WIDTH = 36
@@ -206,68 +205,6 @@ function makeLabelPosition(label: LabelPosition | null, symbolBounds: SchematicL
     y: symbolTop - 6,
     textAnchor: 'middle',
   }
-}
-
-function buildOrthogonalFallback(startPoint: SchematicLayoutPoint, endPoint: SchematicLayoutPoint): SchematicLayoutPoint[] {
-  if (Math.abs(startPoint.x - endPoint.x) >= Math.abs(startPoint.y - endPoint.y)) {
-    const middleX = (startPoint.x + endPoint.x) / 2
-    return [
-      startPoint,
-      { x: middleX, y: startPoint.y },
-      { x: middleX, y: endPoint.y },
-      endPoint,
-    ]
-  }
-  const middleY = (startPoint.y + endPoint.y) / 2
-  return [
-    startPoint,
-    { x: startPoint.x, y: middleY },
-    { x: endPoint.x, y: middleY },
-    endPoint,
-  ]
-}
-
-function resolveSegmentAxis(points: SchematicLayoutPoint[]): SchematicLayoutSegmentAxis {
-  if (points.length < 2) {
-    return 'mixed'
-  }
-  const hasHorizontalDelta = points.some((point, index) => index > 0 && point.x !== points[index - 1].x)
-  const hasVerticalDelta = points.some((point, index) => index > 0 && point.y !== points[index - 1].y)
-  if (hasHorizontalDelta && hasVerticalDelta) {
-    return 'mixed'
-  }
-  if (hasHorizontalDelta) {
-    return 'horizontal'
-  }
-  if (hasVerticalDelta) {
-    return 'vertical'
-  }
-  return 'mixed'
-}
-
-function buildStubSegment(pin: SchematicLayoutPin): SchematicLayoutPoint[] {
-  if (pin.side === 'left') {
-    return [
-      { x: pin.x - NET_STUB_LENGTH, y: pin.y },
-      { x: pin.x, y: pin.y },
-    ]
-  }
-  if (pin.side === 'right') {
-    return [
-      { x: pin.x, y: pin.y },
-      { x: pin.x + NET_STUB_LENGTH, y: pin.y },
-    ]
-  }
-  if (pin.side === 'top') {
-    return [
-      { x: pin.x, y: pin.y - NET_STUB_LENGTH },
-      { x: pin.x, y: pin.y },
-    ]
-  }
-  return [
-    { x: pin.x, y: pin.y },
-    { x: pin.x, y: pin.y + NET_STUB_LENGTH },
-  ]
 }
 
 function buildTextLabelRect(label: SchematicLayoutLabel, width: number, height: number, verticalMode: 'baseline' | 'middle'): LayoutRect {
@@ -481,76 +418,45 @@ function buildComponentLayouts(
   return { components, groups }
 }
 
+function buildPinsByNet(
+  semantic: SchematicSemanticModel,
+  portMap: Map<string, SchematicLayoutPin>,
+): Map<string, SchematicLayoutPin[]> {
+  const pinsByNet = new Map<string, SchematicLayoutPin[]>()
+  for (const semanticNet of semantic.nets) {
+    const pins: SchematicLayoutPin[] = []
+    for (const connection of semanticNet.net.connections) {
+      const pin = portMap.get(buildPortId(connection.component_id, connection.pin_name))
+      if (pin) {
+        pins.push(pin)
+      }
+    }
+    pinsByNet.set(semanticNet.net.id, pins)
+  }
+  return pinsByNet
+}
+
 function buildNetLayouts(
   semantic: SchematicSemanticModel,
   skeleton: SchematicSkeleton,
   portMap: Map<string, SchematicLayoutPin>,
   components: SchematicLayoutComponent[],
 ): SchematicLayoutNet[] {
-  const netsById = new Map<string, SchematicLayoutNet>()
+  const pinsByNet = buildPinsByNet(semantic, portMap)
+  const routedSegments = routeSchematicNets(semantic, skeleton, pinsByNet, components)
+  const nets: SchematicLayoutNet[] = []
   for (const semanticNet of semantic.nets) {
-    netsById.set(semanticNet.net.id, {
+    const segments = routedSegments.get(semanticNet.net.id) ?? []
+    if (segments.length === 0) {
+      continue
+    }
+    nets.push({
       net: semanticNet.net,
-      segments: [],
-      label: null,
+      segments,
+      label: resolveNetLabelPosition(semanticNet.net.name, segments, components),
     })
   }
-
-  for (const semanticNet of semantic.nets) {
-    const skeletonNet = skeleton.netsById.get(semanticNet.net.id)
-    const targetNet = netsById.get(semanticNet.net.id)
-    if (!targetNet || !skeletonNet) {
-      continue
-    }
-    if (skeletonNet.role === 'dangling') {
-      if (semanticNet.net.connections.length === 1) {
-        const onlyConnection = semanticNet.net.connections[0]
-        const pin = portMap.get(buildPortId(onlyConnection.component_id, onlyConnection.pin_name))
-        if (pin) {
-          const stubPoints = buildStubSegment(pin)
-          targetNet.segments.push({
-            key: `${semanticNet.net.id}:stub`,
-            kind: 'stub',
-            axis: resolveSegmentAxis(stubPoints),
-            points: stubPoints,
-          })
-        }
-      }
-      continue
-    }
-    const connections = semanticNet.net.connections.filter((connection) =>
-      portMap.has(buildPortId(connection.component_id, connection.pin_name)),
-    )
-    if (connections.length < 2) {
-      continue
-    }
-    const [firstConnection, ...otherConnections] = connections
-    const sourcePortId = buildPortId(firstConnection.component_id, firstConnection.pin_name)
-    const sourcePin = portMap.get(sourcePortId)
-    if (!sourcePin) {
-      continue
-    }
-    otherConnections.forEach((connection, index) => {
-      const targetPortId = buildPortId(connection.component_id, connection.pin_name)
-      const targetPin = portMap.get(targetPortId)
-      if (!targetPin) {
-        return
-      }
-      const points = buildOrthogonalFallback({ x: sourcePin.x, y: sourcePin.y }, { x: targetPin.x, y: targetPin.y })
-      targetNet.segments.push({
-        key: `${semanticNet.net.id}::${sourcePortId}::${targetPortId}::${index}`,
-        kind: 'fallback',
-        axis: resolveSegmentAxis(points),
-        points,
-      })
-    })
-  }
-
-  for (const targetNet of netsById.values()) {
-    targetNet.label = resolveNetLabelPosition(targetNet.net.name, targetNet.segments, components)
-  }
-
-  return [...netsById.values()].filter((item) => item.segments.length > 0)
+  return nets
 }
 
 function buildBounds(components: SchematicLayoutComponent[], groups: SchematicLayoutGroup[], nets: SchematicLayoutNet[]): SchematicLayoutBounds | null {

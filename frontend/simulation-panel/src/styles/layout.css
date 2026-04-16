@@ -1358,6 +1358,285 @@
   text-align: right;
 }
 
+.schematic-canvas {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+}
+
+.schematic-canvas__viewport {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid rgba(203, 213, 225, 0.95);
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(248, 250, 252, 0.98) 0%, rgba(241, 245, 249, 0.96) 100%);
+  cursor: grab;
+  touch-action: none;
+}
+
+.schematic-canvas__viewport--dragging {
+  cursor: grabbing;
+}
+
+.schematic-canvas__svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.schematic-canvas__component {
+  cursor: pointer;
+  transition: opacity 120ms ease, filter 120ms ease;
+}
+
+.schematic-canvas__component:hover,
+.schematic-canvas__component--selected {
+  filter: drop-shadow(0 6px 12px rgba(37, 99, 235, 0.15));
+}
+
+.schematic-canvas__component--readonly {
+  opacity: 0.92;
+}
+
+.schematic-canvas__component:focus-visible {
+  outline: none;
+}
+
+.schematic-canvas__instance-label,
+.schematic-canvas__value-label,
+.schematic-canvas__pin-label,
+.schematic-canvas__net-label {
+  font-family: var(--sim-tab-font-family);
+  pointer-events: none;
+}
+
+.schematic-canvas__instance-label {
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.schematic-canvas__value-label,
+.schematic-canvas__pin-label,
+.schematic-canvas__net-label {
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.schematic-canvas__net-label-backdrop {
+  fill: rgba(255, 255, 255, 0.92);
+  stroke: rgba(203, 213, 225, 0.95);
+}
+
+.schematic-canvas__empty-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  padding: 18px;
+}
+
+.schematic-canvas__floating-banner {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: min(320px, calc(100% - 24px));
+  pointer-events: none;
+}
+
+.schematic-canvas__floating-banner > .surface-state-card {
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.08);
+  pointer-events: auto;
+}
+
+.schematic-property-panel {
+  min-height: 0;
+  overflow: auto;
+}
+
+.schematic-property-panel,
+.schematic-property-panel__section,
+.schematic-property-panel__field-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.schematic-property-panel__section,
+.schematic-property-panel__field-list {
+  gap: var(--sim-gap-sm);
+}
+
+.schematic-property-panel__section--grow {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.schematic-property-panel__header,
+.schematic-property-panel__field-header,
+.schematic-property-panel__field-footer,
+.schematic-property-panel__pin-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sim-gap-sm);
+}
+
+.schematic-property-panel__header {
+  align-items: flex-start;
+}
+
+.schematic-property-panel__badge,
+.schematic-property-panel__status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 24px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.schematic-property-panel__badge {
+  border: 1px solid #bcd2ff;
+  background: #eef4ff;
+  color: var(--sim-accent);
+}
+
+.schematic-property-panel__badge--readonly,
+.schematic-property-panel__status--readonly {
+  border: 1px solid rgba(203, 213, 225, 0.98);
+  background: rgba(248, 250, 252, 0.96);
+  color: var(--sim-text-secondary);
+}
+
+.schematic-property-panel__status--editable {
+  border: 1px solid #bcd2ff;
+  background: #eef4ff;
+  color: var(--sim-accent);
+}
+
+.schematic-property-panel__status--success {
+  border: 1px solid #b7ebc6;
+  background: #edfdf3;
+  color: #17663a;
+}
+
+.schematic-property-panel__status--error {
+  border: 1px solid #f3c1c1;
+  background: #fff1f2;
+  color: #b42318;
+}
+
+.schematic-property-panel__meta-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--sim-gap-sm);
+}
+
+.schematic-property-panel__meta-item,
+.schematic-property-panel__field-card,
+.schematic-property-panel__pin-item {
+  border: 1px solid var(--sim-border);
+  border-radius: var(--sim-radius-md);
+  background: var(--sim-surface-muted);
+}
+
+.schematic-property-panel__meta-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+}
+
+.schematic-property-panel__meta-label,
+.schematic-property-panel__field-caption,
+.schematic-property-panel__pin-name {
+  font-size: 11px;
+  color: var(--sim-text-secondary);
+  font-weight: 600;
+}
+
+.schematic-property-panel__meta-value,
+.schematic-property-panel__pin-node,
+.schematic-property-panel__field-title {
+  font-size: 12px;
+  color: var(--sim-text-primary);
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.schematic-property-panel__pin-list,
+.schematic-property-panel__field-list {
+  min-height: 0;
+}
+
+.schematic-property-panel__pin-item {
+  padding: 8px 10px;
+}
+
+.schematic-property-panel__pin-node {
+  font-variant-numeric: tabular-nums;
+}
+
+.schematic-property-panel__field-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+}
+
+.schematic-property-panel__field-card--readonly {
+  background: rgba(248, 250, 252, 0.96);
+}
+
+.schematic-property-panel__field-label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.schematic-property-panel__input {
+  width: 100%;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--sim-border);
+  border-radius: var(--sim-radius-md);
+  background: #fff;
+  color: var(--sim-text-primary);
+  font-size: 12px;
+}
+
+.schematic-property-panel__input:disabled {
+  background: var(--sim-surface-muted);
+  color: var(--sim-text-secondary);
+}
+
+.schematic-property-panel__write-message,
+.schematic-property-panel__write-banner {
+  border-radius: var(--sim-radius-md);
+  padding: 8px 10px;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.schematic-property-panel__write-banner {
+  border: 1px solid #b7ebc6;
+  background: #edfdf3;
+  color: #17663a;
+}
+
+.schematic-property-panel__write-message--error,
+.schematic-property-panel__write-banner--error {
+  border: 1px solid #f3c1c1;
+  background: #fff1f2;
+  color: #b42318;
+}
+
 @media (max-width: 960px) {
   .metrics-grid,
   .info-grid,

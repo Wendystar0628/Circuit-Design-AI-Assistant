@@ -43,7 +43,7 @@ export function SimulationApp({ state, schematicDocument, schematicWriteResult, 
       )}
       {shouldMountSchematicSurface ? (
         <div className={activeTab === 'schematic' ? 'tab-surface-shell' : 'tab-surface-shell tab-surface-shell--hidden'}>
-          <SchematicTab state={state} schematicDocument={schematicDocument} schematicWriteResult={schematicWriteResult} />
+          <SchematicTab bridge={bridge} schematicDocument={schematicDocument} schematicWriteResult={schematicWriteResult} />
         </div>
       ) : null}
       {shouldMountRawDataSurface ? (

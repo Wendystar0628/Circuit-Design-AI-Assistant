@@ -11,6 +11,7 @@ from presentation.panels.simulation.simulation_view_model import DisplayMetric
 class SimulationFrontendStateSerializer:
     _BASE_TABS = [
         "metrics",
+        "schematic",
         "chart",
         "waveform",
         "analysis_info",

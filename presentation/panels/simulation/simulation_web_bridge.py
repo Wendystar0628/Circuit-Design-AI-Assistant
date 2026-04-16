@@ -164,6 +164,7 @@ class SimulationWebBridge(QObject):
         normalized = str(tab_id or "metrics").strip().lower()
         allowed = {
             "metrics",
+            "schematic",
             "chart",
             "waveform",
             "analysis_info",

@@ -1,5 +1,6 @@
 export type SimulationTabId =
   | 'metrics'
+  | 'schematic'
   | 'chart'
   | 'waveform'
   | 'analysis_info'
@@ -437,7 +438,7 @@ export const EMPTY_SIMULATION_STATE: SimulationMainState = {
   },
   surface_tabs: {
     active_tab: 'metrics',
-    available_tabs: ['metrics', 'chart', 'waveform', 'analysis_info', 'raw_data', 'output_log', 'export'],
+    available_tabs: ['metrics', 'schematic', 'chart', 'waveform', 'analysis_info', 'raw_data', 'output_log', 'export'],
     has_history: false,
     has_op_result: false,
   },

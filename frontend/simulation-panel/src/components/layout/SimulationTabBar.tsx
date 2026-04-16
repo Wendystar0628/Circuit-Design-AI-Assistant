@@ -8,6 +8,7 @@ interface SimulationTabBarProps {
 
 const TAB_LABELS: Record<SimulationTabId, string> = {
   metrics: '指标',
+  schematic: '电路',
   chart: '图表',
   waveform: '波形',
   analysis_info: '分析信息',

@@ -168,6 +168,7 @@ class SimulationTab(QWidget):
     def _is_allowed_frontend_tab(self, tab_id: str) -> bool:
         return tab_id in {
             "metrics",
+            "schematic",
             "chart",
             "waveform",
             "analysis_info",

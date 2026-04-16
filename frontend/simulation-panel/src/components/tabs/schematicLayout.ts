@@ -1,13 +1,14 @@
-import type { ELK as ElkApi, ElkEdgeSection, ElkExtendedEdge, ElkNode, ElkPort } from 'elkjs/lib/elk-api'
-
-import type { SchematicComponentState, SchematicDocumentState, SchematicNetState, SchematicPinState } from '../../types/state'
+import type { SchematicComponentState, SchematicDocumentState, SchematicPinState } from '../../types/state'
 import { getSchematicSymbolDefinition, type SchematicPinSide } from './symbolRegistry'
 import { normalizeSchematicDocument } from './schematicDocumentNormalizer'
 import type {
   SchematicSemanticModel,
   SemanticComponent,
-  SemanticScopeGroup,
 } from './schematicSemanticModel'
+import { analyzeSchematicSkeleton } from './schematicSkeletonAnalyzer'
+import type { SchematicSkeleton } from './schematicSkeletonModel'
+import { computeSchematicCoarsePlacement } from './schematicCoarsePlacement'
+import type { SchematicCoarsePlacement } from './schematicCoarsePlacement'
 import type {
   SchematicCanvasViewState,
   SchematicLayoutBounds,
@@ -41,83 +42,17 @@ export type {
 
 type LayoutRect = SchematicLayoutRect
 
-interface Padding {
-  top: number
-  right: number
-  bottom: number
-  left: number
-}
-
 interface LabelPosition {
   slot: string
   text: string
 }
 
-interface ComponentBlueprint {
-  component: SchematicComponentState
-  orientation: SchematicLayoutOrientation
-  nodeId: string
-  width: number
-  height: number
-  symbolX: number
-  symbolY: number
-  symbolWidth: number
-  symbolHeight: number
-  pins: Array<{
-    portId: string
-    pin: SchematicPinState
-    side: SchematicPinSide
-    x: number
-    y: number
-  }>
-}
-
-interface PositionedComponentBox extends ComponentBlueprint {
-  x: number
-  y: number
-}
-
-interface EdgeBlueprint {
-  edgeId: string
-  net: SchematicNetState
-  sourcePortId: string
-  targetPortId: string
-}
-
-interface GroupBlueprint {
-  id: string
-  label: string
-  depth: number
-}
-
-let elkInstancePromise: Promise<ElkApi> | null = null
-
-async function getElkInstance(): Promise<ElkApi> {
-  if (elkInstancePromise === null) {
-    elkInstancePromise = import('elkjs/lib/elk.bundled.js').then((module) => new module.default())
-  }
-  return elkInstancePromise
-}
-
-const ROOT_PADDING: Padding = {
-  top: 64,
-  right: 64,
-  bottom: 64,
-  left: 64,
-}
-
-const GROUP_PADDING: Padding = {
-  top: 44,
-  right: 24,
-  bottom: 24,
-  left: 24,
-}
-
-const NODE_PADDING: Padding = {
-  top: 28,
-  right: 24,
-  bottom: 30,
-  left: 24,
+interface ResolvedPinAnchor {
+  portId: string
+  pin: SchematicPinState
+  side: SchematicPinSide
+  anchorX: number
+  anchorY: number
 }
 
 const FIT_PADDING = 56
@@ -145,10 +80,6 @@ function estimateTextWidth(text: string, fontSize: number, minWidth: number, hor
 
 export function getSchematicNetLabelWidth(text: string): number {
   return estimateTextWidth(text, SECONDARY_LABEL_FONT_SIZE, NET_LABEL_MIN_WIDTH, NET_LABEL_HORIZONTAL_PADDING)
-}
-
-function toPaddingValue(padding: Padding): string {
-  return `[top=${padding.top},left=${padding.left},bottom=${padding.bottom},right=${padding.right}]`
 }
 
 function includePoint(bounds: SchematicLayoutBounds | null, point: SchematicLayoutPoint): SchematicLayoutBounds {
@@ -223,20 +154,19 @@ function resolveLabel(component: SchematicComponentState, kind: 'name' | 'value'
   }
 }
 
-function makeLabelPosition(label: LabelPosition | null, componentBox: PositionedComponentBox): SchematicLayoutLabel | null {
+function makeLabelPosition(label: LabelPosition | null, symbolBounds: SchematicLayoutRect): SchematicLayoutLabel | null {
   if (label === null) {
     return null
   }
-  const left = componentBox.x
-  const top = componentBox.y
-  const symbolLeft = left + componentBox.symbolX
-  const symbolTop = top + componentBox.symbolY
-  const symbolRight = symbolLeft + componentBox.symbolWidth
-  const symbolBottom = symbolTop + componentBox.symbolHeight
+  const symbolLeft = symbolBounds.x
+  const symbolTop = symbolBounds.y
+  const symbolRight = symbolLeft + symbolBounds.width
+  const symbolBottom = symbolTop + symbolBounds.height
+  const symbolCenterX = symbolLeft + symbolBounds.width / 2
   if (label.slot === 'bottom') {
     return {
       text: label.text,
-      x: symbolLeft + componentBox.symbolWidth / 2,
+      x: symbolCenterX,
       y: symbolBottom + 14,
       textAnchor: 'middle',
     }
@@ -275,7 +205,7 @@ function makeLabelPosition(label: LabelPosition | null, componentBox: Positioned
   }
   return {
     text: label.text,
-    x: symbolLeft + componentBox.symbolWidth / 2,
+    x: symbolCenterX,
     y: symbolTop - 6,
     textAnchor: 'middle',
   }
@@ -489,248 +419,72 @@ function resolveNetLabelPosition(netName: string, segments: SchematicLayoutNetSe
       }
 }
 
-function extractSectionPoints(section: ElkEdgeSection): SchematicLayoutPoint[] {
-  return [
-    section.startPoint,
-    ...(section.bendPoints ?? []),
-    section.endPoint,
-  ].map((item) => ({ x: item.x, y: item.y }))
-}
-
-function findElkPort(node: ElkNode, portId: string): ElkPort | null {
-  return node.ports?.find((item) => item.id === portId) ?? null
-}
-
-function buildGraph(semantic: SchematicSemanticModel) {
-  const componentBlueprints = new Map<string, ComponentBlueprint>()
-  const groupBlueprints = new Map<string, GroupBlueprint>()
-  const edgeBlueprints = new Map<string, EdgeBlueprint>()
-  const portOwnerMap = new Map<string, string>()
-
-  const priorityOrder = new Map(semantic.components.map((item, index) => [item.component.id, index]))
-
-  function orderScopedComponentIds(componentIds: string[]): string[] {
-    return [...componentIds].sort((left, right) => {
-      const leftRank = priorityOrder.get(left) ?? Number.MAX_SAFE_INTEGER
-      const rightRank = priorityOrder.get(right) ?? Number.MAX_SAFE_INTEGER
-      return leftRank - rightRank
-    })
-  }
-
-  function requireScopeGroup(scopeGroupId: string): SemanticScopeGroup {
-    const group = semantic.scopeGroupsById.get(scopeGroupId)
-    if (!group) {
-      throw new Error(`[schematicLayout] Semantic scope group missing: ${scopeGroupId}`)
+function resolvePinAnchors(semanticComponent: SemanticComponent): ResolvedPinAnchor[] {
+  const component = semanticComponent.component
+  const definition = getSchematicSymbolDefinition(component.symbol_kind)
+  return semanticComponent.pins.map((semanticPin) => {
+    const anchor = definition.getPinAnchor(component, semanticPin.pin, semanticPin.index)
+    return {
+      portId: buildPortId(component.id, semanticPin.pin.name),
+      pin: semanticPin.pin,
+      side: anchor.side,
+      anchorX: anchor.x,
+      anchorY: anchor.y,
     }
-    return group
-  }
+  })
+}
 
-  function requireSemanticComponent(componentId: string): SemanticComponent {
-    const semanticComponent = semantic.componentsById.get(componentId)
+function buildComponentLayouts(
+  semantic: SchematicSemanticModel,
+  placement: SchematicCoarsePlacement,
+  portMap: Map<string, SchematicLayoutPin>,
+): { components: SchematicLayoutComponent[]; groups: SchematicLayoutGroup[] } {
+  const components: SchematicLayoutComponent[] = []
+  for (const position of placement.componentPositions) {
+    const semanticComponent = semantic.componentsById.get(position.componentId)
     if (!semanticComponent) {
-      throw new Error(`[schematicLayout] Semantic component missing: ${componentId}`)
-    }
-    return semanticComponent
-  }
-
-  function buildComponentNode(semanticComponent: SemanticComponent): ElkNode {
-    const component = semanticComponent.component
-    const definition = getSchematicSymbolDefinition(component.symbol_kind)
-    const width = definition.width + NODE_PADDING.left + NODE_PADDING.right
-    const height = definition.height + NODE_PADDING.top + NODE_PADDING.bottom
-    const pins = semanticComponent.pins.map((semanticPin) => {
-      const anchor = definition.getPinAnchor(component, semanticPin.pin, semanticPin.index)
-      const portId = buildPortId(component.id, semanticPin.pin.name)
-      portOwnerMap.set(portId, component.id)
-      return {
-        portId,
-        pin: semanticPin.pin,
-        side: anchor.side,
-        x: NODE_PADDING.left + anchor.x,
-        y: NODE_PADDING.top + anchor.y,
-      }
-    })
-    componentBlueprints.set(component.id, {
-      component,
-      orientation: resolveComponentOrientation(semanticComponent),
-      nodeId: component.id,
-      width,
-      height,
-      symbolX: NODE_PADDING.left,
-      symbolY: NODE_PADDING.top,
-      symbolWidth: definition.width,
-      symbolHeight: definition.height,
-      pins,
-    })
-    return {
-      id: component.id,
-      width,
-      height,
-      layoutOptions: {
-        'elk.portConstraints': 'FIXED_POS',
-      },
-      ports: pins.map((pin) => ({
-        id: pin.portId,
-        width: 8,
-        height: 8,
-        x: pin.x - 4,
-        y: pin.y - 4,
-      })),
-    }
-  }
-
-  function buildScopeGroupNode(scopeGroup: SemanticScopeGroup): ElkNode {
-    const childNodes: ElkNode[] = []
-    for (const childGroupId of scopeGroup.childGroupIds) {
-      childNodes.push(buildScopeGroupNode(requireScopeGroup(childGroupId)))
-    }
-    for (const componentId of orderScopedComponentIds(scopeGroup.componentIds)) {
-      childNodes.push(buildComponentNode(requireSemanticComponent(componentId)))
-    }
-    groupBlueprints.set(scopeGroup.id, { id: scopeGroup.id, label: scopeGroup.label, depth: scopeGroup.depth })
-    return {
-      id: scopeGroup.id,
-      children: childNodes,
-      layoutOptions: {
-        'elk.padding': toPaddingValue(GROUP_PADDING),
-      },
-    }
-  }
-
-  const rootScopeGroup = requireScopeGroup(semantic.rootScopeGroupId)
-  const rootChildren: ElkNode[] = []
-  for (const childGroupId of rootScopeGroup.childGroupIds) {
-    rootChildren.push(buildScopeGroupNode(requireScopeGroup(childGroupId)))
-  }
-  for (const componentId of orderScopedComponentIds(rootScopeGroup.componentIds)) {
-    rootChildren.push(buildComponentNode(requireSemanticComponent(componentId)))
-  }
-
-  const graph: ElkNode = {
-    id: 'schematic-root',
-    children: rootChildren,
-    edges: [],
-    layoutOptions: {
-      'elk.algorithm': 'layered',
-      'elk.direction': 'RIGHT',
-      'elk.edgeRouting': 'ORTHOGONAL',
-      'elk.hierarchyHandling': 'INCLUDE_CHILDREN',
-      'elk.padding': toPaddingValue(ROOT_PADDING),
-      'elk.spacing.nodeNode': '42',
-      'elk.layered.spacing.nodeNodeBetweenLayers': '84',
-      'elk.layered.spacing.edgeNodeBetweenLayers': '24',
-      'elk.layered.nodePlacement.strategy': 'NETWORK_SIMPLEX',
-      'elk.layered.considerModelOrder.strategy': 'NODES_AND_EDGES',
-      'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
-    },
-  }
-
-  for (const semanticNet of semantic.nets) {
-    if (semanticNet.pinCount < 2) {
       continue
     }
-    const connections = semanticNet.net.connections.filter((connection) => portOwnerMap.has(buildPortId(connection.component_id, connection.pin_name)))
-    if (connections.length < 2) {
-      continue
-    }
-    const [firstConnection, ...otherConnections] = connections
-    const sourcePortId = buildPortId(firstConnection.component_id, firstConnection.pin_name)
-    otherConnections.forEach((connection, index) => {
-      const targetPortId = buildPortId(connection.component_id, connection.pin_name)
-      const edgeId = `${semanticNet.net.id}::${sourcePortId}::${targetPortId}::${index}`
-      edgeBlueprints.set(edgeId, {
-        edgeId,
-        net: semanticNet.net,
-        sourcePortId,
-        targetPortId,
-      })
-      graph.edges?.push({
-        id: edgeId,
-        sources: [sourcePortId],
-        targets: [targetPortId],
-      })
-    })
-  }
-
-  return {
-    graph,
-    componentBlueprints,
-    groupBlueprints,
-    edgeBlueprints,
-  }
-}
-
-function collectComponentLayouts(node: ElkNode, parentX: number, parentY: number, componentBlueprints: Map<string, ComponentBlueprint>, groupBlueprints: Map<string, GroupBlueprint>, components: SchematicLayoutComponent[], groups: SchematicLayoutGroup[], portMap: Map<string, SchematicLayoutPin>) {
-  const currentX = parentX + (node.x ?? 0)
-  const currentY = parentY + (node.y ?? 0)
-  const componentBlueprint = componentBlueprints.get(node.id)
-  if (componentBlueprint) {
-    const pins = componentBlueprint.pins.map((item) => {
-      const port = findElkPort(node, item.portId)
+    const pinAnchors = resolvePinAnchors(semanticComponent)
+    const pins: SchematicLayoutPin[] = pinAnchors.map((anchor) => {
       const pin: SchematicLayoutPin = {
-        id: item.portId,
-        componentId: componentBlueprint.component.id,
-        pin: item.pin,
-        side: item.side,
-        x: currentX + ((port?.x ?? item.x - 4) + 4),
-        y: currentY + ((port?.y ?? item.y - 4) + 4),
+        id: anchor.portId,
+        componentId: position.componentId,
+        pin: anchor.pin,
+        side: anchor.side,
+        x: position.symbolBox.x + anchor.anchorX,
+        y: position.symbolBox.y + anchor.anchorY,
       }
-      portMap.set(item.portId, pin)
+      portMap.set(anchor.portId, pin)
       return pin
     })
-    const componentBox: ComponentBlueprint = {
-      ...componentBlueprint,
-      pins: componentBlueprint.pins,
-    }
+    const orientation: SchematicLayoutOrientation = resolveComponentOrientation(semanticComponent)
     const layoutComponent: SchematicLayoutComponent = {
-      component: componentBlueprint.component,
-      orientation: componentBlueprint.orientation,
-      bounds: {
-        x: currentX,
-        y: currentY,
-        width: componentBlueprint.width,
-        height: componentBlueprint.height,
-      },
-      symbolBounds: {
-        x: currentX + componentBlueprint.symbolX,
-        y: currentY + componentBlueprint.symbolY,
-        width: componentBlueprint.symbolWidth,
-        height: componentBlueprint.symbolHeight,
-      },
+      component: semanticComponent.component,
+      orientation,
+      bounds: { ...position.box },
+      symbolBounds: { ...position.symbolBox },
       pins,
-      nameLabel: null,
-      valueLabel: null,
+      nameLabel: makeLabelPosition(resolveLabel(semanticComponent.component, 'name'), position.symbolBox),
+      valueLabel: makeLabelPosition(resolveLabel(semanticComponent.component, 'value'), position.symbolBox),
     }
-    const labelComponentBox = {
-      ...componentBox,
-      x: currentX,
-      y: currentY,
-    }
-    layoutComponent.nameLabel = makeLabelPosition(resolveLabel(componentBlueprint.component, 'name'), labelComponentBox)
-    layoutComponent.valueLabel = makeLabelPosition(resolveLabel(componentBlueprint.component, 'value'), labelComponentBox)
     components.push(layoutComponent)
-  } else {
-    const groupBlueprint = groupBlueprints.get(node.id)
-    if (groupBlueprint) {
-      groups.push({
-        id: groupBlueprint.id,
-        label: groupBlueprint.label,
-        depth: groupBlueprint.depth,
-        bounds: {
-          x: currentX,
-          y: currentY,
-          width: node.width ?? 0,
-          height: node.height ?? 0,
-        },
-      })
-    }
-    for (const child of node.children ?? []) {
-      collectComponentLayouts(child, currentX, currentY, componentBlueprints, groupBlueprints, components, groups, portMap)
-    }
   }
+  const groups: SchematicLayoutGroup[] = placement.scopeGroupBounds.map((entry) => ({
+    id: entry.scopeGroupId,
+    label: entry.label,
+    depth: entry.depth,
+    bounds: { ...entry.bounds },
+  }))
+  return { components, groups }
 }
 
-function buildNetLayouts(semantic: SchematicSemanticModel, edges: ElkExtendedEdge[] | undefined, edgeBlueprints: Map<string, EdgeBlueprint>, portMap: Map<string, SchematicLayoutPin>, components: SchematicLayoutComponent[]): SchematicLayoutNet[] {
+function buildNetLayouts(
+  semantic: SchematicSemanticModel,
+  skeleton: SchematicSkeleton,
+  portMap: Map<string, SchematicLayoutPin>,
+  components: SchematicLayoutComponent[],
+): SchematicLayoutNet[] {
   const netsById = new Map<string, SchematicLayoutNet>()
   for (const semanticNet of semantic.nets) {
     netsById.set(semanticNet.net.id, {
@@ -740,57 +494,57 @@ function buildNetLayouts(semantic: SchematicSemanticModel, edges: ElkExtendedEdg
     })
   }
 
-  for (const edge of edges ?? []) {
-    const blueprint = edgeBlueprints.get(edge.id || '')
-    if (!blueprint) {
+  for (const semanticNet of semantic.nets) {
+    const skeletonNet = skeleton.netsById.get(semanticNet.net.id)
+    const targetNet = netsById.get(semanticNet.net.id)
+    if (!targetNet || !skeletonNet) {
       continue
     }
-    const targetNet = netsById.get(blueprint.net.id)
-    if (!targetNet) {
+    if (skeletonNet.role === 'dangling') {
+      if (semanticNet.net.connections.length === 1) {
+        const onlyConnection = semanticNet.net.connections[0]
+        const pin = portMap.get(buildPortId(onlyConnection.component_id, onlyConnection.pin_name))
+        if (pin) {
+          const stubPoints = buildStubSegment(pin)
+          targetNet.segments.push({
+            key: `${semanticNet.net.id}:stub`,
+            kind: 'stub',
+            axis: resolveSegmentAxis(stubPoints),
+            points: stubPoints,
+          })
+        }
+      }
       continue
     }
-    const sections = edge.sections ?? []
-    if (sections.length > 0) {
-      sections.forEach((section, index) => {
-        const points = extractSectionPoints(section)
-        targetNet.segments.push({
-          key: `${edge.id}:${section.id || index}`,
-          kind: 'route',
-          axis: resolveSegmentAxis(points),
-          points,
-        })
+    const connections = semanticNet.net.connections.filter((connection) =>
+      portMap.has(buildPortId(connection.component_id, connection.pin_name)),
+    )
+    if (connections.length < 2) {
+      continue
+    }
+    const [firstConnection, ...otherConnections] = connections
+    const sourcePortId = buildPortId(firstConnection.component_id, firstConnection.pin_name)
+    const sourcePin = portMap.get(sourcePortId)
+    if (!sourcePin) {
+      continue
+    }
+    otherConnections.forEach((connection, index) => {
+      const targetPortId = buildPortId(connection.component_id, connection.pin_name)
+      const targetPin = portMap.get(targetPortId)
+      if (!targetPin) {
+        return
+      }
+      const points = buildOrthogonalFallback({ x: sourcePin.x, y: sourcePin.y }, { x: targetPin.x, y: targetPin.y })
+      targetNet.segments.push({
+        key: `${semanticNet.net.id}::${sourcePortId}::${targetPortId}::${index}`,
+        kind: 'fallback',
+        axis: resolveSegmentAxis(points),
+        points,
       })
-      continue
-    }
-    const sourcePin = portMap.get(blueprint.sourcePortId)
-    const targetPin = portMap.get(blueprint.targetPortId)
-    if (!sourcePin || !targetPin) {
-      continue
-    }
-    const fallbackPoints = buildOrthogonalFallback({ x: sourcePin.x, y: sourcePin.y }, { x: targetPin.x, y: targetPin.y })
-    targetNet.segments.push({
-      key: `${edge.id}:fallback`,
-      kind: 'fallback',
-      axis: resolveSegmentAxis(fallbackPoints),
-      points: fallbackPoints,
     })
   }
 
   for (const targetNet of netsById.values()) {
-    const semanticNet = semantic.netsById.get(targetNet.net.id)
-    if (semanticNet && semanticNet.pinCount === 1) {
-      const onlyConnection = targetNet.net.connections[0]
-      const pin = portMap.get(buildPortId(onlyConnection.component_id, onlyConnection.pin_name))
-      if (pin) {
-        const stubPoints = buildStubSegment(pin)
-        targetNet.segments.push({
-          key: `${targetNet.net.id}:stub`,
-          kind: 'stub',
-          axis: resolveSegmentAxis(stubPoints),
-          points: stubPoints,
-        })
-      }
-    }
     targetNet.label = resolveNetLabelPosition(targetNet.net.name, targetNet.segments, components)
   }
 
@@ -880,18 +634,11 @@ export async function computeSchematicLayout(document: SchematicDocumentState): 
   }
 
   const semantic = normalizeSchematicDocument(document)
-  const { graph, componentBlueprints, groupBlueprints, edgeBlueprints } = buildGraph(semantic)
-  const elk = await getElkInstance()
-  const laidOutGraph = await elk.layout(graph)
-  const components: SchematicLayoutComponent[] = []
-  const groups: SchematicLayoutGroup[] = []
+  const skeleton = analyzeSchematicSkeleton(semantic)
+  const placement = computeSchematicCoarsePlacement(semantic, skeleton)
   const portMap = new Map<string, SchematicLayoutPin>()
-
-  for (const child of laidOutGraph.children ?? []) {
-    collectComponentLayouts(child, laidOutGraph.x ?? 0, laidOutGraph.y ?? 0, componentBlueprints, groupBlueprints, components, groups, portMap)
-  }
-
-  const nets = buildNetLayouts(semantic, laidOutGraph.edges, edgeBlueprints, portMap, components)
+  const { components, groups } = buildComponentLayouts(semantic, placement, portMap)
+  const nets = buildNetLayouts(semantic, skeleton, portMap, components)
   const bounds = buildBounds(components, groups, nets)
 
   return {

@@ -114,6 +114,16 @@ export function SchematicTab({ bridge, schematicDocument, schematicWriteResult }
   }, [schematicDocument.components, selectedComponentId])
 
   useEffect(() => {
+    if (selectedComponentId) {
+      return
+    }
+    if (!schematicDocument.has_schematic || schematicDocument.components.length === 0) {
+      return
+    }
+    setSelectedComponentId(schematicDocument.components[0].id)
+  }, [schematicDocument.components, schematicDocument.has_schematic, selectedComponentId])
+
+  useEffect(() => {
     const requestKey = buildLayoutRequestKey(schematicDocument.document_id, schematicDocument.revision)
     latestLayoutRequestKeyRef.current = requestKey
     pendingAutoFitRequestKeyRef.current = requestKey

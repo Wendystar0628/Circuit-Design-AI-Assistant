@@ -1,4 +1,5 @@
 import type { SchematicComponentState, SchematicEditableFieldState, SchematicWriteResultState } from '../../types/state'
+import { getSchematicComponentTypeLabel } from './symbolRegistry'
 
 interface SchematicPropertyPanelProps {
   component: SchematicComponentState | null
@@ -15,6 +16,8 @@ interface SchematicPropertyPanelProps {
 export function SchematicPropertyPanel({ component, schematicWriteResult, fieldDrafts, pendingFieldRequestIds, staleDraftNotice, canFit, onFit, onDraftChange, onSubmitField }: SchematicPropertyPanelProps) {
   const visibleFields = component ? component.editable_fields.filter((field) => field.field_key === 'value') : []
   const hasPendingWrite = component !== null && Object.keys(pendingFieldRequestIds).length > 0
+  const componentTypeLabel = component ? getSchematicComponentTypeLabel(component) : '--'
+  const currentComponentName = component?.instance_name || component?.display_name || component?.id || '--'
   const latestWriteMessage = component === null
     ? ''
     : hasPendingWrite
@@ -51,16 +54,14 @@ export function SchematicPropertyPanel({ component, schematicWriteResult, fieldD
       {component ? (
         <>
           <div className="schematic-property-panel__section">
-            <div className="schematic-property-panel__header">
-              <div>
-                <div className="card-title">{component.instance_name || component.display_name || component.id}</div>
-                <div className="card-subtitle">{component.display_name || component.kind || component.symbol_kind}</div>
-              </div>
-            </div>
             <div className="schematic-property-panel__meta-grid">
               <div className="schematic-property-panel__meta-item">
                 <span className="schematic-property-panel__meta-label">元件类型</span>
-                <span className="schematic-property-panel__meta-value">{component.kind || component.symbol_kind || '--'}</span>
+                <span className="schematic-property-panel__meta-value">{componentTypeLabel}</span>
+              </div>
+              <div className="schematic-property-panel__meta-item">
+                <span className="schematic-property-panel__meta-label">当前元件名称</span>
+                <span className="schematic-property-panel__meta-value">{currentComponentName}</span>
               </div>
             </div>
           </div>

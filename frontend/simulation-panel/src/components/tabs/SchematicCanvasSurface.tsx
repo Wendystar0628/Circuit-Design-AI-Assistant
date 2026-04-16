@@ -227,7 +227,7 @@ export function SchematicCanvas({
       return
     }
     if (!isInteractiveComponentTarget(event.target)) {
-      onSelectComponent(null)
+      return
     }
   }
 

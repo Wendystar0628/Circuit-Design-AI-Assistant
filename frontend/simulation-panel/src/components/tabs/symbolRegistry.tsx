@@ -54,6 +54,53 @@ export function isSchematicComponentReadonly(component: SchematicComponentState)
   return component.editable_fields.every((field) => !field.editable)
 }
 
+const schematicComponentTypeLabels: Record<string, string> = {
+  r: '电阻',
+  resistor: '电阻',
+  c: '电容',
+  capacitor: '电容',
+  l: '电感',
+  inductor: '电感',
+  d: '二极管',
+  diode: '二极管',
+  v: '电压源',
+  voltage_source: '电压源',
+  i: '电流源',
+  current_source: '电流源',
+  gnd: '接地',
+  ground: '接地',
+  x: '子电路',
+  subckt: '子电路',
+  subckt_block: '子电路',
+  controlled_source: '受控源',
+  e: '受控源',
+  f: '受控源',
+  g: '受控源',
+  h: '受控源',
+  u: '运算放大器',
+  opamp: '运算放大器',
+  q: '三极管',
+  bjt: '三极管',
+  m: 'MOS 管',
+  mos: 'MOS 管',
+  unknown: '未知元件',
+}
+
+function normalizeSchematicComponentTypeKey(value: string): string {
+  return value.trim().toLowerCase()
+}
+
+export function getSchematicComponentTypeLabel(component: SchematicComponentState): string {
+  const candidates = [component.symbol_kind, component.kind, component.display_name].filter((value) => Boolean(value))
+  for (const candidate of candidates) {
+    const label = schematicComponentTypeLabels[normalizeSchematicComponentTypeKey(candidate)]
+    if (label) {
+      return label
+    }
+  }
+  return component.display_name || component.kind || component.symbol_kind || '--'
+}
+
 function renderLeadLine(x1: number, y1: number, x2: number, y2: number, stroke: string): ReactNode {
   return <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={stroke} strokeWidth={2.2} strokeLinecap="round" />
 }

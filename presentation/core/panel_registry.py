@@ -96,7 +96,7 @@ PANEL_DEFINITIONS: Dict[str, Dict[str, Any]] = {
     },
     "code_editor": {
         "class": "CodeEditorPanel",
-        "module": "presentation.panels.code_editor_panel",
+        "module": "presentation.panels.workspace_code_editor_panel",
         "region": "CENTER",
         "default_visible": True,
         "title_key": "panel.code_editor",

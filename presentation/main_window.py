@@ -222,7 +222,7 @@ class MainWindow(QMainWindow):
         )
         
         # 中栏 - 代码编辑器
-        from presentation.panels.code_editor_panel import CodeEditorPanel
+        from presentation.panels.workspace_code_editor_panel import CodeEditorPanel
         code_editor = CodeEditorPanel()
         code_editor.setMinimumWidth(400)
         self._splitters["workspace_horizontal"].addWidget(code_editor)

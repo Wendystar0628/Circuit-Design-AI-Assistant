@@ -69,6 +69,7 @@ class FileBrowserPanel(QWidget):
         self._logger = None
         self._root_path: Optional[str] = None
         self._workspace_file_state: Dict[str, Any] = {"items": []}
+        self._last_dispatched_workspace_file_state: Optional[Dict[str, Any]] = None
         self._expanded_directory_paths: Set[str] = set()
         self._state_store = WorkspaceExplorerStateStore()
         self._page_loaded = False
@@ -578,13 +579,14 @@ class FileBrowserPanel(QWidget):
             entry_path = str(entry)
             if is_directory:
                 identity_path = normalize_identity_path(entry_path)
+                is_expanded = identity_path in expanded_directory_paths
                 child_nodes = self._build_directory_nodes(
                     entry,
                     expanded_directory_paths,
                     open_identity_paths,
                     dirty_identity_paths,
                     active_identity_path,
-                )
+                ) if is_expanded else []
                 nodes.append({
                     "name": entry_name,
                     "path": entry_path,
@@ -592,7 +594,7 @@ class FileBrowserPanel(QWidget):
                     "isOpen": False,
                     "isDirty": False,
                     "isActive": False,
-                    "isExpanded": identity_path in expanded_directory_paths,
+                    "isExpanded": is_expanded,
                     "iconName": workspace_entry_icon_name(entry_name, is_directory=True),
                     "openIconName": workspace_entry_open_icon_name(entry_name, is_directory=True),
                     "typeLabel": "Folder",
@@ -635,11 +637,16 @@ class FileBrowserPanel(QWidget):
     def clear(self) -> None:
         self._root_path = None
         self._workspace_file_state = {"items": []}
+        self._last_dispatched_workspace_file_state = None
         self._expanded_directory_paths = set()
         self._dispatch_state()
 
     def set_workspace_file_state(self, state: Dict[str, Any]) -> None:
-        self._workspace_file_state = dict(state) if isinstance(state, dict) else {"items": []}
+        next_state = dict(state) if isinstance(state, dict) else {"items": []}
+        if self._last_dispatched_workspace_file_state == next_state:
+            return
+        self._workspace_file_state = next_state
+        self._last_dispatched_workspace_file_state = dict(next_state)
         self._dispatch_state()
 
     def retranslate_ui(self) -> None:

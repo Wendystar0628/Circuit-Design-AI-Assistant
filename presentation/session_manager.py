@@ -133,22 +133,7 @@ class SessionManager:
             return
         
         editor_panel = self._panels["code_editor"]
-        
-        # 依次打开文件
-        for file_path in open_files:
-            if file_path and os.path.isfile(file_path):
-                editor_panel.load_file(file_path)
-        
-        # 切换到上次激活的文件
-        if active_file and os.path.isfile(active_file):
-            editor_panel.switch_to_file(active_file)
-        
-        # 延迟重置所有文件的修改状态（确保 UI 完全加载后执行）
-        QTimer.singleShot(100, lambda: self._reset_all_modification_states(editor_panel))
-
-    def _reset_all_modification_states(self, editor_panel):
-        """重置所有打开文件的修改状态"""
-        editor_panel.reset_all_modification_states()
+        editor_panel.restore_session_files(open_files, active_file)
 
     # ============================================================
     # 仿真结果监控器生命周期管理

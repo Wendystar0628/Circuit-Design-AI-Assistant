@@ -273,7 +273,6 @@ export function SchematicTab({ bridge, schematicDocument, schematicWriteResult }
         sidebar={(
           <SchematicPropertyPanel
             component={selectedComponent}
-            schematicDocument={schematicDocument}
             schematicWriteResult={schematicWriteResult}
             fieldDrafts={selectedFieldDrafts}
             pendingFieldRequestIds={selectedPendingFieldRequestIds}

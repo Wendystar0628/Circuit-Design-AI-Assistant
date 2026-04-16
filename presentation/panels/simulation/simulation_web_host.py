@@ -208,31 +208,7 @@ class SimulationWebHost(QWidget):
                 self._bridge.ready.disconnect(self._on_ready)
             except Exception:
                 pass
-        if self._simulation_tab is not None:
-            try:
-                self._simulation_tab.authoritative_frontend_state_changed.disconnect(self.set_state)
-            except Exception:
-                pass
-            try:
-                self._simulation_tab.schematic_document_changed.disconnect(self.set_schematic_document)
-            except Exception:
-                pass
-            try:
-                self._simulation_tab.schematic_write_result_changed.disconnect(self.finish_schematic_write)
-            except Exception:
-                pass
-            try:
-                self._simulation_tab.raw_data_document_changed.disconnect(self.set_raw_data_document)
-            except Exception:
-                pass
-            try:
-                self._simulation_tab.raw_data_viewport_changed.disconnect(self.set_raw_data_viewport)
-            except Exception:
-                pass
-            try:
-                self._simulation_tab.raw_data_copy_result_changed.disconnect(self.finish_raw_data_copy)
-            except Exception:
-                pass
+        self.attach_simulation_tab(None)
 
     def _dispatch_state(self) -> None:
         if self._web_view is None or not self._page_loaded or not self._frontend_ready:

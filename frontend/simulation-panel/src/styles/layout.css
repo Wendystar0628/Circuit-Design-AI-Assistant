@@ -1492,6 +1492,16 @@
   min-height: 0;
 }
 
+.schematic-property-panel__toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+}
+
+.schematic-property-panel__toolbar-button {
+  align-self: flex-start;
+}
+
 .schematic-property-panel__header,
 .schematic-property-panel__field-header,
 .schematic-property-panel__field-footer,

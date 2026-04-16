@@ -3,7 +3,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { SimulationBridge } from '../../bridge/bridge'
 import type { SchematicComponentState, SchematicDocumentState, SchematicEditableFieldState, SchematicWriteResultState } from '../../types/state'
 import { ResponsivePane } from '../layout/ResponsivePane'
-import { CompactToolbar } from '../layout/CompactToolbar'
 import { SchematicCanvas } from './SchematicCanvasSurface'
 import { SchematicPropertyPanel } from './SchematicPropertyPanel'
 import { computeSchematicLayout, createEmptySchematicViewState, fitSchematicViewToBounds, type SchematicLayoutResult } from './schematicLayout'
@@ -52,8 +51,8 @@ function createEmptyViewportSize(): ViewportSize {
   }
 }
 
-function buildLayoutRequestKey(documentId: string, revision: string, relayoutNonce: number): string {
-  return `${documentId}::${revision}::${relayoutNonce}`
+function buildLayoutRequestKey(documentId: string, revision: string): string {
+  return `${documentId}::${revision}`
 }
 
 function getPendingWriteKey(componentId: string, fieldKey: string): string {
@@ -62,7 +61,6 @@ function getPendingWriteKey(componentId: string, fieldKey: string): string {
 
 export function SchematicTab({ bridge, schematicDocument, schematicWriteResult }: SchematicTabProps) {
   const [selectedComponentId, setSelectedComponentId] = useState<string | null>(null)
-  const [relayoutNonce, setRelayoutNonce] = useState(0)
   const [fieldDrafts, setFieldDrafts] = useState<Record<string, string>>({})
   const [pendingWriteRequests, setPendingWriteRequests] = useState<Record<string, PendingSchematicWriteRequest>>({})
   const [staleDraftNotice, setStaleDraftNotice] = useState('')
@@ -116,7 +114,7 @@ export function SchematicTab({ bridge, schematicDocument, schematicWriteResult }
   }, [schematicDocument.components, selectedComponentId])
 
   useEffect(() => {
-    const requestKey = buildLayoutRequestKey(schematicDocument.document_id, schematicDocument.revision, relayoutNonce)
+    const requestKey = buildLayoutRequestKey(schematicDocument.document_id, schematicDocument.revision)
     latestLayoutRequestKeyRef.current = requestKey
     pendingAutoFitRequestKeyRef.current = requestKey
     setLayoutState((current) => ({
@@ -127,7 +125,7 @@ export function SchematicTab({ bridge, schematicDocument, schematicWriteResult }
 
     let disposed = false
 
-    void computeSchematicLayout(schematicDocument, relayoutNonce)
+    void computeSchematicLayout(schematicDocument)
       .then((result) => {
         if (disposed || latestLayoutRequestKeyRef.current !== result.requestKey) {
           return
@@ -152,7 +150,7 @@ export function SchematicTab({ bridge, schematicDocument, schematicWriteResult }
     return () => {
       disposed = true
     }
-  }, [relayoutNonce, schematicDocument.document_id, schematicDocument.revision])
+  }, [schematicDocument.document_id, schematicDocument.revision])
 
   useEffect(() => {
     const bounds = layoutState.result?.bounds
@@ -262,30 +260,8 @@ export function SchematicTab({ bridge, schematicDocument, schematicWriteResult }
     setViewState(fitSchematicViewToBounds(bounds, viewportSize.width, viewportSize.height))
   }, [layoutState.result, viewportSize.height, viewportSize.width])
 
-  const toolbarActions = (
-    <>
-      <button
-        type="button"
-        className="chart-header-button"
-        disabled={layoutState.result?.bounds === null || viewportSize.width <= 0 || viewportSize.height <= 0}
-        onClick={handleFit}
-      >
-        Fit
-      </button>
-      <button
-        type="button"
-        className="chart-header-button chart-header-button--accent"
-        disabled={!schematicDocument.has_schematic}
-        onClick={() => setRelayoutNonce((current) => current + 1)}
-      >
-        重新布局
-      </button>
-    </>
-  )
-
   return (
     <div className="tab-surface">
-      <CompactToolbar title={schematicDocument.title || '电路'} actions={toolbarActions} />
       <ResponsivePane
         sidebarConfig={{
           defaultSize: 320,
@@ -294,7 +270,7 @@ export function SchematicTab({ bridge, schematicDocument, schematicWriteResult }
           mainMinSize: 360,
           resizable: true,
         }}
-        sidebar={selectedComponent ? (
+        sidebar={(
           <SchematicPropertyPanel
             component={selectedComponent}
             schematicDocument={schematicDocument}
@@ -302,10 +278,12 @@ export function SchematicTab({ bridge, schematicDocument, schematicWriteResult }
             fieldDrafts={selectedFieldDrafts}
             pendingFieldRequestIds={selectedPendingFieldRequestIds}
             staleDraftNotice={staleDraftNotice}
+            canFit={layoutState.result?.bounds !== null && viewportSize.width > 0 && viewportSize.height > 0}
+            onFit={handleFit}
             onDraftChange={handleDraftChange}
             onSubmitField={handleSubmitField}
           />
-        ) : undefined}
+        )}
         main={(
           <div className="content-card content-card--canvas">
             <SchematicCanvas

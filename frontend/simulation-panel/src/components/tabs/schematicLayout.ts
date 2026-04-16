@@ -76,7 +76,6 @@ export interface SchematicLayoutResult {
   requestKey: string
   documentId: string
   revision: string
-  relayoutNonce: number
   components: SchematicLayoutComponent[]
   nets: SchematicLayoutNet[]
   groups: SchematicLayoutGroup[]
@@ -223,8 +222,8 @@ function buildPortId(componentId: string, pinName: string): string {
   return `port:${componentId}:${pinName}`
 }
 
-function buildRequestKey(documentId: string, revision: string, relayoutNonce: number): string {
-  return `${documentId}::${revision}::${relayoutNonce}`
+function buildRequestKey(documentId: string, revision: string): string {
+  return `${documentId}::${revision}`
 }
 
 function getComponentSortKey(component: SchematicComponentState): string {
@@ -439,7 +438,7 @@ function findElkPort(node: ElkNode, portId: string): ElkPort | null {
   return node.ports?.find((item) => item.id === portId) ?? null
 }
 
-function buildGraph(document: SchematicDocumentState, relayoutNonce: number) {
+function buildGraph(document: SchematicDocumentState) {
   const subcircuitLabelMap = buildSubcircuitLabelMap(document.subcircuits)
   const rootGroup: ScopeGroupBuilder = {
     path: [],
@@ -552,7 +551,7 @@ function buildGraph(document: SchematicDocumentState, relayoutNonce: number) {
     const sourcePortId = buildPortId(firstConnection.component_id, firstConnection.pin_name)
     otherConnections.forEach((connection, index) => {
       const targetPortId = buildPortId(connection.component_id, connection.pin_name)
-      const edgeId = `${net.id}::${relayoutNonce}::${index}`
+      const edgeId = `${net.id}::${sourcePortId}::${targetPortId}::${index}`
       edgeBlueprints.set(edgeId, {
         edgeId,
         net,
@@ -776,14 +775,13 @@ export function makeViewTargetWorldPoint(clientX: number, clientY: number, rect:
   }
 }
 
-export async function computeSchematicLayout(document: SchematicDocumentState, relayoutNonce: number): Promise<SchematicLayoutResult> {
-  const requestKey = buildRequestKey(document.document_id, document.revision, relayoutNonce)
+export async function computeSchematicLayout(document: SchematicDocumentState): Promise<SchematicLayoutResult> {
+  const requestKey = buildRequestKey(document.document_id, document.revision)
   if (!document.has_schematic || document.components.length === 0) {
     return {
       requestKey,
       documentId: document.document_id,
       revision: document.revision,
-      relayoutNonce,
       components: [],
       nets: [],
       groups: [],
@@ -791,7 +789,7 @@ export async function computeSchematicLayout(document: SchematicDocumentState, r
     }
   }
 
-  const { graph, componentBlueprints, groupBlueprints, edgeBlueprints } = buildGraph(document, relayoutNonce)
+  const { graph, componentBlueprints, groupBlueprints, edgeBlueprints } = buildGraph(document)
   const elk = await getElkInstance()
   const laidOutGraph = await elk.layout(graph)
   const components: SchematicLayoutComponent[] = []
@@ -809,7 +807,6 @@ export async function computeSchematicLayout(document: SchematicDocumentState, r
     requestKey,
     documentId: document.document_id,
     revision: document.revision,
-    relayoutNonce,
     components,
     nets,
     groups,

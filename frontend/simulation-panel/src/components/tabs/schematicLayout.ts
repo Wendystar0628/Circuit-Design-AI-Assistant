@@ -170,9 +170,34 @@ const FIT_PADDING = 56
 const MIN_SCALE = 0.35
 const MAX_SCALE = 2.6
 const NET_STUB_LENGTH = 28
+const INSTANCE_LABEL_FONT_SIZE = 16.5
+const SECONDARY_LABEL_FONT_SIZE = 15
+const COMPONENT_LABEL_MIN_WIDTH = 36
+const COMPONENT_LABEL_HORIZONTAL_PADDING = 8
+const COMPONENT_LABEL_HEIGHT = 24
+const NET_LABEL_MIN_WIDTH = 54
+const NET_LABEL_HORIZONTAL_PADDING = 18
+export const SCHEMATIC_NET_LABEL_HEIGHT = 26
+const NET_LABEL_WIRE_CLEARANCE = 12
+const NET_LABEL_COMPONENT_CLEARANCE = 8
+
+interface LayoutRect {
+  x: number
+  y: number
+  width: number
+  height: number
+}
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max)
+}
+
+function estimateTextWidth(text: string, fontSize: number, minWidth: number, horizontalPadding: number): number {
+  return Math.max(minWidth, Math.ceil(text.length * fontSize * 0.62 + horizontalPadding))
+}
+
+export function getSchematicNetLabelWidth(text: string): number {
+  return estimateTextWidth(text, SECONDARY_LABEL_FONT_SIZE, NET_LABEL_MIN_WIDTH, NET_LABEL_HORIZONTAL_PADDING)
 }
 
 function toPaddingValue(padding: Padding): string {
@@ -338,23 +363,23 @@ function makeLabelPosition(label: LabelPosition | null, componentBox: Positioned
     return {
       text: label.text,
       x: symbolLeft + componentBox.symbolWidth / 2,
-      y: symbolBottom + 18,
+      y: symbolBottom + 14,
       textAnchor: 'middle',
     }
   }
   if (label.slot === 'left') {
     return {
       text: label.text,
-      x: symbolLeft - 8,
-      y: symbolTop + 12,
+      x: symbolLeft - 6,
+      y: symbolTop + 16,
       textAnchor: 'end',
     }
   }
   if (label.slot === 'right') {
     return {
       text: label.text,
-      x: symbolRight + 8,
-      y: symbolBottom - 8,
+      x: symbolRight + 6,
+      y: symbolBottom - 6,
       textAnchor: 'start',
     }
   }
@@ -362,7 +387,7 @@ function makeLabelPosition(label: LabelPosition | null, componentBox: Positioned
     return {
       text: label.text,
       x: symbolLeft,
-      y: symbolTop - 10,
+      y: symbolTop - 6,
       textAnchor: 'start',
     }
   }
@@ -370,14 +395,14 @@ function makeLabelPosition(label: LabelPosition | null, componentBox: Positioned
     return {
       text: label.text,
       x: symbolRight,
-      y: symbolBottom + 18,
+      y: symbolBottom + 14,
       textAnchor: 'end',
     }
   }
   return {
     text: label.text,
     x: symbolLeft + componentBox.symbolWidth / 2,
-    y: symbolTop - 10,
+    y: symbolTop - 6,
     textAnchor: 'middle',
   }
 }
@@ -424,6 +449,152 @@ function buildStubSegment(pin: SchematicLayoutPin): SchematicLayoutPoint[] {
     { x: pin.x, y: pin.y },
     { x: pin.x, y: pin.y + NET_STUB_LENGTH },
   ]
+}
+
+function buildTextLabelRect(label: SchematicLayoutLabel, width: number, height: number, verticalMode: 'baseline' | 'middle'): LayoutRect {
+  const x = label.textAnchor === 'middle'
+    ? label.x - width / 2
+    : label.textAnchor === 'end'
+      ? label.x - width
+      : label.x
+  const y = verticalMode === 'middle'
+    ? label.y - height / 2
+    : label.y - height * 0.78
+  return {
+    x,
+    y,
+    width,
+    height,
+  }
+}
+
+function rectsOverlap(left: LayoutRect, right: LayoutRect): boolean {
+  return left.x < right.x + right.width
+    && left.x + left.width > right.x
+    && left.y < right.y + right.height
+    && left.y + left.height > right.y
+}
+
+function buildComponentObstacleRect(component: SchematicLayoutComponent): LayoutRect {
+  return {
+    x: component.x + component.symbolX - NET_LABEL_COMPONENT_CLEARANCE,
+    y: component.y + component.symbolY - NET_LABEL_COMPONENT_CLEARANCE,
+    width: component.symbolWidth + NET_LABEL_COMPONENT_CLEARANCE * 2,
+    height: component.symbolHeight + NET_LABEL_COMPONENT_CLEARANCE * 2,
+  }
+}
+
+function buildSegmentObstacleRect(startPoint: SchematicLayoutPoint, endPoint: SchematicLayoutPoint, padding: number): LayoutRect {
+  const minX = Math.min(startPoint.x, endPoint.x) - padding
+  const minY = Math.min(startPoint.y, endPoint.y) - padding
+  return {
+    x: minX,
+    y: minY,
+    width: Math.abs(startPoint.x - endPoint.x) + padding * 2,
+    height: Math.abs(startPoint.y - endPoint.y) + padding * 2,
+  }
+}
+
+function doesRectOverlapComponents(rect: LayoutRect, components: SchematicLayoutComponent[]): boolean {
+  return components.some((component) => rectsOverlap(rect, buildComponentObstacleRect(component)))
+}
+
+function doesRectOverlapSegments(rect: LayoutRect, segments: SchematicLayoutNetSegment[]): boolean {
+  return segments.some((segment) => segment.points.some((point, index) => {
+    if (index === 0) {
+      return false
+    }
+    return rectsOverlap(rect, buildSegmentObstacleRect(segment.points[index - 1], point, 4))
+  }))
+}
+
+function collectNetLabelCandidates(segments: SchematicLayoutNetSegment[]): Array<{ x: number; y: number; horizontal: boolean; length: number }> {
+  const candidates: Array<{ x: number; y: number; horizontal: boolean; length: number }> = []
+  for (const segment of segments) {
+    for (let index = 1; index < segment.points.length; index += 1) {
+      const startPoint = segment.points[index - 1]
+      const endPoint = segment.points[index]
+      const dx = endPoint.x - startPoint.x
+      const dy = endPoint.y - startPoint.y
+      const length = Math.hypot(dx, dy)
+      if (length < 18) {
+        continue
+      }
+      candidates.push({
+        x: (startPoint.x + endPoint.x) / 2,
+        y: (startPoint.y + endPoint.y) / 2,
+        horizontal: Math.abs(dx) >= Math.abs(dy),
+        length,
+      })
+    }
+  }
+  return candidates.sort((left, right) => right.length - left.length)
+}
+
+function resolveNetLabelPosition(netName: string, segments: SchematicLayoutNetSegment[], components: SchematicLayoutComponent[]): SchematicLayoutLabel | null {
+  if (!netName) {
+    return null
+  }
+  const labelWidth = getSchematicNetLabelWidth(netName)
+  const candidates = collectNetLabelCandidates(segments)
+  for (const candidate of candidates) {
+    const labelOptions: SchematicLayoutLabel[] = candidate.horizontal
+      ? [
+          {
+            text: netName,
+            x: candidate.x,
+            y: candidate.y - (SCHEMATIC_NET_LABEL_HEIGHT / 2 + NET_LABEL_WIRE_CLEARANCE),
+            textAnchor: 'middle',
+          },
+          {
+            text: netName,
+            x: candidate.x,
+            y: candidate.y + (SCHEMATIC_NET_LABEL_HEIGHT / 2 + NET_LABEL_WIRE_CLEARANCE),
+            textAnchor: 'middle',
+          },
+        ]
+      : [
+          {
+            text: netName,
+            x: candidate.x + labelWidth / 2 + NET_LABEL_WIRE_CLEARANCE,
+            y: candidate.y,
+            textAnchor: 'middle',
+          },
+          {
+            text: netName,
+            x: candidate.x - labelWidth / 2 - NET_LABEL_WIRE_CLEARANCE,
+            y: candidate.y,
+            textAnchor: 'middle',
+          },
+        ]
+    for (const option of labelOptions) {
+      const rect = buildTextLabelRect(option, labelWidth, SCHEMATIC_NET_LABEL_HEIGHT, 'middle')
+      if (doesRectOverlapComponents(rect, components)) {
+        continue
+      }
+      if (doesRectOverlapSegments(rect, segments)) {
+        continue
+      }
+      return option
+    }
+  }
+  const fallback = candidates[0]
+  if (!fallback) {
+    return null
+  }
+  return fallback.horizontal
+    ? {
+        text: netName,
+        x: fallback.x,
+        y: fallback.y - (SCHEMATIC_NET_LABEL_HEIGHT / 2 + NET_LABEL_WIRE_CLEARANCE),
+        textAnchor: 'middle',
+      }
+    : {
+        text: netName,
+        x: fallback.x + labelWidth / 2 + NET_LABEL_WIRE_CLEARANCE,
+        y: fallback.y,
+        textAnchor: 'middle',
+      }
 }
 
 function extractSectionPoints(section: ElkEdgeSection): SchematicLayoutPoint[] {
@@ -636,7 +807,7 @@ function collectComponentLayouts(node: ElkNode, parentX: number, parentY: number
   }
 }
 
-function buildNetLayouts(document: SchematicDocumentState, edges: ElkExtendedEdge[] | undefined, edgeBlueprints: Map<string, EdgeBlueprint>, portMap: Map<string, SchematicLayoutPin>): SchematicLayoutNet[] {
+function buildNetLayouts(document: SchematicDocumentState, edges: ElkExtendedEdge[] | undefined, edgeBlueprints: Map<string, EdgeBlueprint>, portMap: Map<string, SchematicLayoutPin>, components: SchematicLayoutComponent[]): SchematicLayoutNet[] {
   const netsById = new Map<string, SchematicLayoutNet>()
   for (const net of document.nets) {
     netsById.set(net.id, {
@@ -663,15 +834,6 @@ function buildNetLayouts(document: SchematicDocumentState, edges: ElkExtendedEdg
           key: `${edge.id}:${section.id || index}`,
           points,
         })
-        if (targetNet.label === null && blueprint.net.name) {
-          const middlePoint = points[Math.max(0, Math.floor(points.length / 2) - 1)] ?? points[0]
-          targetNet.label = {
-            text: blueprint.net.name,
-            x: middlePoint.x + 8,
-            y: middlePoint.y - 10,
-            textAnchor: 'start',
-          }
-        }
       })
       continue
     }
@@ -685,15 +847,6 @@ function buildNetLayouts(document: SchematicDocumentState, edges: ElkExtendedEdg
       key: `${edge.id}:fallback`,
       points: fallbackPoints,
     })
-    if (targetNet.label === null && blueprint.net.name) {
-      const anchorPoint = fallbackPoints[Math.floor(fallbackPoints.length / 2)] ?? fallbackPoints[0]
-      targetNet.label = {
-        text: blueprint.net.name,
-        x: anchorPoint.x + 8,
-        y: anchorPoint.y - 10,
-        textAnchor: 'start',
-      }
-    }
   }
 
   for (const targetNet of netsById.values()) {
@@ -705,16 +858,9 @@ function buildNetLayouts(document: SchematicDocumentState, edges: ElkExtendedEdg
           key: `${targetNet.net.id}:stub`,
           points: buildStubSegment(pin),
         })
-        if (targetNet.label === null && targetNet.net.name) {
-          targetNet.label = {
-            text: targetNet.net.name,
-            x: pin.x + 8,
-            y: pin.y - 10,
-            textAnchor: 'start',
-          }
-        }
       }
     }
+    targetNet.label = resolveNetLabelPosition(targetNet.net.name, targetNet.segments, components)
   }
 
   return [...netsById.values()].filter((item) => item.segments.length > 0)
@@ -728,10 +874,22 @@ function buildBounds(components: SchematicLayoutComponent[], groups: SchematicLa
   for (const component of components) {
     bounds = includeRect(bounds, component.x, component.y, component.width, component.height)
     if (component.nameLabel) {
-      bounds = includeRect(bounds, component.nameLabel.x - 48, component.nameLabel.y - 18, 96, 22)
+      const nameBounds = buildTextLabelRect(
+        component.nameLabel,
+        estimateTextWidth(component.nameLabel.text, INSTANCE_LABEL_FONT_SIZE, COMPONENT_LABEL_MIN_WIDTH, COMPONENT_LABEL_HORIZONTAL_PADDING),
+        COMPONENT_LABEL_HEIGHT,
+        'baseline',
+      )
+      bounds = includeRect(bounds, nameBounds.x, nameBounds.y, nameBounds.width, nameBounds.height)
     }
     if (component.valueLabel) {
-      bounds = includeRect(bounds, component.valueLabel.x - 48, component.valueLabel.y - 18, 96, 22)
+      const valueBounds = buildTextLabelRect(
+        component.valueLabel,
+        estimateTextWidth(component.valueLabel.text, SECONDARY_LABEL_FONT_SIZE, COMPONENT_LABEL_MIN_WIDTH, COMPONENT_LABEL_HORIZONTAL_PADDING),
+        COMPONENT_LABEL_HEIGHT,
+        'baseline',
+      )
+      bounds = includeRect(bounds, valueBounds.x, valueBounds.y, valueBounds.width, valueBounds.height)
     }
   }
   for (const net of nets) {
@@ -741,7 +899,8 @@ function buildBounds(components: SchematicLayoutComponent[], groups: SchematicLa
       }
     }
     if (net.label) {
-      bounds = includeRect(bounds, net.label.x - 8, net.label.y - 14, Math.max(42, net.label.text.length * 8 + 12), 20)
+      const labelBounds = buildTextLabelRect(net.label, getSchematicNetLabelWidth(net.label.text), SCHEMATIC_NET_LABEL_HEIGHT, 'middle')
+      bounds = includeRect(bounds, labelBounds.x, labelBounds.y, labelBounds.width, labelBounds.height)
     }
   }
   return bounds
@@ -800,7 +959,7 @@ export async function computeSchematicLayout(document: SchematicDocumentState): 
     collectComponentLayouts(child, laidOutGraph.x ?? 0, laidOutGraph.y ?? 0, componentBlueprints, groupBlueprints, components, groups, portMap)
   }
 
-  const nets = buildNetLayouts(document, laidOutGraph.edges, edgeBlueprints, portMap)
+  const nets = buildNetLayouts(document, laidOutGraph.edges, edgeBlueprints, portMap, components)
   const bounds = buildBounds(components, groups, nets)
 
   return {

@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useElementSize } from '../../hooks/useElementSize'
 import type { SchematicDocumentState } from '../../types/state'
 import { getSchematicSymbolDefinition, isSchematicComponentReadonly, type SchematicSymbolAppearance } from './symbolRegistry'
-import { makeViewTargetWorldPoint, type SchematicCanvasViewState, type SchematicLayoutPin, type SchematicLayoutResult } from './schematicLayout'
+import { SCHEMATIC_NET_LABEL_HEIGHT, getSchematicNetLabelWidth, makeViewTargetWorldPoint, type SchematicCanvasViewState, type SchematicLayoutResult } from './schematicLayout'
 
 interface SchematicCanvasProps {
   schematicDocument: SchematicDocumentState
@@ -92,42 +92,6 @@ function resolveAppearance(selected: boolean, hovered: boolean, readonly: boolea
     pinFill: '#0f172a',
     readonly,
   }
-}
-
-function renderPinLabel(pin: SchematicLayoutPin, componentX: number, componentY: number, appearance: SchematicSymbolAppearance): JSX.Element {
-  const localX = pin.x - componentX
-  const localY = pin.y - componentY
-  let textAnchor: 'start' | 'middle' | 'end' = 'start'
-  let labelX = localX + 10
-  let labelY = localY + 4
-
-  if (pin.side === 'left') {
-    textAnchor = 'end'
-    labelX = localX - 10
-  } else if (pin.side === 'right') {
-    textAnchor = 'start'
-    labelX = localX + 10
-  } else if (pin.side === 'top') {
-    textAnchor = 'middle'
-    labelX = localX
-    labelY = localY - 10
-  } else {
-    textAnchor = 'middle'
-    labelX = localX
-    labelY = localY + 16
-  }
-
-  return (
-    <text
-      x={labelX}
-      y={labelY}
-      textAnchor={textAnchor}
-      className="schematic-canvas__pin-label"
-      fill={appearance.text}
-    >
-      {pin.pin.name}
-    </text>
-  )
 }
 
 export function SchematicCanvas({
@@ -316,7 +280,7 @@ export function SchematicCanvas({
                 )
               })}
               {layoutNets.map((net) => {
-                const labelWidth = net.label ? Math.max(36, net.label.text.length * 7 + 12) : 0
+                const labelWidth = net.label ? getSchematicNetLabelWidth(net.label.text) : 0
                 return (
                   <g className="schematic-canvas__net" key={net.net.id}>
                     {net.segments.map((segment) => (
@@ -335,10 +299,10 @@ export function SchematicCanvas({
                         <rect
                           className="schematic-canvas__net-label-backdrop"
                           x={getNetLabelBackdropX(net.label.textAnchor, labelWidth)}
-                          y={-12}
+                          y={-SCHEMATIC_NET_LABEL_HEIGHT / 2}
                           rx={8}
                           width={labelWidth}
-                          height={18}
+                          height={SCHEMATIC_NET_LABEL_HEIGHT}
                         />
                         <text
                           className="schematic-canvas__net-label"
@@ -393,7 +357,6 @@ export function SchematicCanvas({
                     {item.pins.map((pin) => (
                       <g key={`${item.component.id}-${pin.pin.name}`}>
                         <circle cx={pin.x - item.x} cy={pin.y - item.y} r={4.4} fill={appearance.pinFill} />
-                        {renderPinLabel(pin, item.x, item.y, appearance)}
                       </g>
                     ))}
                     {item.nameLabel ? (

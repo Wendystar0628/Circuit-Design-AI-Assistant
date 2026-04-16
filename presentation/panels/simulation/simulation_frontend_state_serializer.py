@@ -300,6 +300,140 @@ class SimulationFrontendStateSerializer:
             "col_count": int(payload.get("col_count") or 0),
         }
 
+    def serialize_schematic_document(
+        self,
+        schematic_document: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        payload = schematic_document if isinstance(schematic_document, dict) else {}
+        components = []
+        for item in payload.get("components", []):
+            if not isinstance(item, dict):
+                continue
+            components.append(
+                {
+                    "id": str(item.get("id") or ""),
+                    "instance_name": str(item.get("instance_name") or ""),
+                    "kind": str(item.get("kind") or ""),
+                    "symbol_kind": str(item.get("symbol_kind") or "unknown"),
+                    "display_name": str(item.get("display_name") or ""),
+                    "display_value": str(item.get("display_value") or ""),
+                    "pins": [
+                        {
+                            "name": str(pin.get("name") or ""),
+                            "node_id": str(pin.get("node_id") or ""),
+                            "role": str(pin.get("role") or ""),
+                        }
+                        for pin in item.get("pins", [])
+                        if isinstance(pin, dict)
+                    ],
+                    "node_ids": [str(node_id or "") for node_id in item.get("node_ids", [])],
+                    "editable_fields": [
+                        {
+                            "field_key": str(field.get("field_key") or ""),
+                            "label": str(field.get("label") or ""),
+                            "raw_text": str(field.get("raw_text") or ""),
+                            "display_text": str(field.get("display_text") or ""),
+                            "editable": bool(field.get("editable")),
+                            "readonly_reason": str(field.get("readonly_reason") or ""),
+                            "value_kind": str(field.get("value_kind") or ""),
+                        }
+                        for field in item.get("editable_fields", [])
+                        if isinstance(field, dict)
+                    ],
+                    "scope_path": [str(scope or "") for scope in item.get("scope_path", [])],
+                    "source_file": str(item.get("source_file") or ""),
+                    "symbol_variant": str(item.get("symbol_variant") or ""),
+                    "pin_roles": {
+                        str(key or ""): str(value or "")
+                        for key, value in (item.get("pin_roles") or {}).items()
+                    } if isinstance(item.get("pin_roles"), dict) else {},
+                    "port_side_hints": {
+                        str(key or ""): str(value or "")
+                        for key, value in (item.get("port_side_hints") or {}).items()
+                    } if isinstance(item.get("port_side_hints"), dict) else {},
+                    "label_slots": {
+                        str(key or ""): str(value or "")
+                        for key, value in (item.get("label_slots") or {}).items()
+                    } if isinstance(item.get("label_slots"), dict) else {},
+                    "polarity_marks": {
+                        str(key or ""): str(value or "")
+                        for key, value in (item.get("polarity_marks") or {}).items()
+                    } if isinstance(item.get("polarity_marks"), dict) else {},
+                    "render_hints": {
+                        str(key or ""): str(value or "")
+                        for key, value in (item.get("render_hints") or {}).items()
+                    } if isinstance(item.get("render_hints"), dict) else {},
+                }
+            )
+        return {
+            "document_id": str(payload.get("document_id") or ""),
+            "revision": str(payload.get("revision") or ""),
+            "file_path": str(payload.get("file_path") or ""),
+            "file_name": str(payload.get("file_name") or ""),
+            "has_schematic": bool(payload.get("has_schematic")) and bool(components or payload.get("subcircuits") or payload.get("nets")),
+            "title": str(payload.get("title") or ""),
+            "components": components,
+            "nets": [
+                {
+                    "id": str(item.get("id") or ""),
+                    "name": str(item.get("name") or ""),
+                    "scope_path": [str(scope or "") for scope in item.get("scope_path", [])],
+                    "source_file": str(item.get("source_file") or ""),
+                    "connections": [
+                        {
+                            "component_id": str(connection.get("component_id") or ""),
+                            "instance_name": str(connection.get("instance_name") or ""),
+                            "pin_name": str(connection.get("pin_name") or ""),
+                            "pin_role": str(connection.get("pin_role") or ""),
+                        }
+                        for connection in item.get("connections", [])
+                        if isinstance(connection, dict)
+                    ],
+                }
+                for item in payload.get("nets", [])
+                if isinstance(item, dict)
+            ],
+            "subcircuits": [
+                {
+                    "name": str(item.get("name") or ""),
+                    "port_names": [str(port or "") for port in item.get("port_names", [])],
+                    "scope_path": [str(scope or "") for scope in item.get("scope_path", [])],
+                    "source_file": str(item.get("source_file") or ""),
+                    "component_ids": [str(component_id or "") for component_id in item.get("component_ids", [])],
+                }
+                for item in payload.get("subcircuits", [])
+                if isinstance(item, dict)
+            ],
+            "parse_errors": [
+                {
+                    "message": str(item.get("message") or ""),
+                    "source_file": str(item.get("source_file") or ""),
+                    "line_text": str(item.get("line_text") or ""),
+                    "line_index": int(item.get("line_index") or -1),
+                    "column_start": int(item.get("column_start") or -1),
+                    "column_end": int(item.get("column_end") or -1),
+                }
+                for item in payload.get("parse_errors", [])
+                if isinstance(item, dict)
+            ],
+            "readonly_reasons": [str(reason or "") for reason in payload.get("readonly_reasons", []) if str(reason or "")],
+        }
+
+    def serialize_schematic_write_result(
+        self,
+        schematic_write_result: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        payload = schematic_write_result if isinstance(schematic_write_result, dict) else {}
+        return {
+            "document_id": str(payload.get("document_id") or ""),
+            "revision": str(payload.get("revision") or ""),
+            "request_id": str(payload.get("request_id") or ""),
+            "success": bool(payload.get("success")),
+            "component_id": str(payload.get("component_id") or ""),
+            "field_key": str(payload.get("field_key") or ""),
+            "error_message": str(payload.get("error_message") or ""),
+        }
+
     def serialize_metric(self, metric: DisplayMetric) -> Dict[str, Any]:
         return {
             "name": metric.name,

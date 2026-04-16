@@ -3,10 +3,20 @@ import { ActiveResultTabRouter } from '../components/layout/ActiveResultTabRoute
 import { SimulationLayoutShell } from '../components/layout/SimulationLayoutShell'
 import { RawDataTab } from '../components/tabs/RawDataTab'
 import { SchematicTab } from '../components/tabs/SchematicTab'
-import type { RawDataCopyResultState, RawDataDocumentState, RawDataViewportState, SimulationMainState, SimulationTabId } from '../types/state'
+import type {
+  RawDataCopyResultState,
+  RawDataDocumentState,
+  RawDataViewportState,
+  SchematicDocumentState,
+  SchematicWriteResultState,
+  SimulationMainState,
+  SimulationTabId,
+} from '../types/state'
 
 interface SimulationAppProps {
   state: SimulationMainState
+  schematicDocument: SchematicDocumentState
+  schematicWriteResult: SchematicWriteResultState
   rawDataCopyResult: RawDataCopyResultState
   rawDataDocument: RawDataDocumentState
   rawDataViewport: RawDataViewportState
@@ -15,9 +25,9 @@ interface SimulationAppProps {
   onTabSelect(tabId: SimulationTabId): void
 }
 
-export function SimulationApp({ state, rawDataCopyResult, rawDataDocument, rawDataViewport, bridge, bridgeConnected, onTabSelect }: SimulationAppProps) {
+export function SimulationApp({ state, schematicDocument, schematicWriteResult, rawDataCopyResult, rawDataDocument, rawDataViewport, bridge, bridgeConnected, onTabSelect }: SimulationAppProps) {
   const activeTab = state.surface_tabs.active_tab
-  const shouldMountSchematicSurface = activeTab === 'schematic' || Boolean(state.simulation_runtime.current_result.file_path)
+  const shouldMountSchematicSurface = activeTab === 'schematic' || schematicDocument.has_schematic || Boolean(state.simulation_runtime.current_result.file_path)
   const shouldMountRawDataSurface = activeTab === 'raw_data' || rawDataDocument.has_data
 
   return (
@@ -33,7 +43,7 @@ export function SimulationApp({ state, rawDataCopyResult, rawDataDocument, rawDa
       )}
       {shouldMountSchematicSurface ? (
         <div className={activeTab === 'schematic' ? 'tab-surface-shell' : 'tab-surface-shell tab-surface-shell--hidden'}>
-          <SchematicTab state={state} />
+          <SchematicTab state={state} schematicDocument={schematicDocument} schematicWriteResult={schematicWriteResult} />
         </div>
       ) : null}
       {shouldMountRawDataSurface ? (

@@ -250,6 +250,98 @@ export interface RawDataCopyResultState {
   col_count: number
 }
 
+export interface SchematicPinState {
+  name: string
+  node_id: string
+  role: string
+}
+
+export interface SchematicEditableFieldState {
+  field_key: string
+  label: string
+  raw_text: string
+  display_text: string
+  editable: boolean
+  readonly_reason: string
+  value_kind: string
+}
+
+export interface SchematicComponentState {
+  id: string
+  instance_name: string
+  kind: string
+  symbol_kind: string
+  display_name: string
+  display_value: string
+  pins: SchematicPinState[]
+  node_ids: string[]
+  editable_fields: SchematicEditableFieldState[]
+  scope_path: string[]
+  source_file: string
+  symbol_variant: string
+  pin_roles: Record<string, string>
+  port_side_hints: Record<string, string>
+  label_slots: Record<string, string>
+  polarity_marks: Record<string, string>
+  render_hints: Record<string, string>
+}
+
+export interface SchematicNetConnectionState {
+  component_id: string
+  instance_name: string
+  pin_name: string
+  pin_role: string
+}
+
+export interface SchematicNetState {
+  id: string
+  name: string
+  scope_path: string[]
+  source_file: string
+  connections: SchematicNetConnectionState[]
+}
+
+export interface SchematicSubcircuitState {
+  name: string
+  port_names: string[]
+  scope_path: string[]
+  source_file: string
+  component_ids: string[]
+}
+
+export interface SchematicParseErrorState {
+  message: string
+  source_file: string
+  line_text: string
+  line_index: number
+  column_start: number
+  column_end: number
+}
+
+export interface SchematicDocumentState {
+  document_id: string
+  revision: string
+  file_path: string
+  file_name: string
+  has_schematic: boolean
+  title: string
+  components: SchematicComponentState[]
+  nets: SchematicNetState[]
+  subcircuits: SchematicSubcircuitState[]
+  parse_errors: SchematicParseErrorState[]
+  readonly_reasons: string[]
+}
+
+export interface SchematicWriteResultState {
+  document_id: string
+  revision: string
+  request_id: string
+  success: boolean
+  component_id: string
+  field_key: string
+  error_message: string
+}
+
 export interface OutputLogViewState {
   has_log: boolean
   can_add_to_conversation: boolean
@@ -422,6 +514,30 @@ export const EMPTY_RAW_DATA_COPY_RESULT: RawDataCopyResultState = {
   col_count: 0,
 }
 
+export const EMPTY_SCHEMATIC_DOCUMENT: SchematicDocumentState = {
+  document_id: '',
+  revision: '',
+  file_path: '',
+  file_name: '',
+  has_schematic: false,
+  title: '',
+  components: [],
+  nets: [],
+  subcircuits: [],
+  parse_errors: [],
+  readonly_reasons: [],
+}
+
+export const EMPTY_SCHEMATIC_WRITE_RESULT: SchematicWriteResultState = {
+  document_id: '',
+  revision: '',
+  request_id: '',
+  success: false,
+  component_id: '',
+  field_key: '',
+  error_message: '',
+}
+
 export const EMPTY_SIMULATION_STATE: SimulationMainState = {
   simulation_runtime: {
     status: 'idle',
@@ -583,6 +699,11 @@ function asNumberRecord(value: unknown): Record<string, number> {
   return Object.fromEntries(Object.entries(record).map(([key, item]) => [key, asNumber(item)]))
 }
 
+function asStringRecord(value: unknown): Record<string, string> {
+  const record = asRecord(value)
+  return Object.fromEntries(Object.entries(record).map(([key, item]) => [key, asString(item)]))
+}
+
 function normalizeSurfaceViewport(value: unknown): SimulationSurfaceViewportState {
   const record = asRecord(value)
   return {
@@ -611,6 +732,126 @@ function normalizeChartSeriesMeta(value: unknown): ChartSeriesMetaState[] {
       component: asString(record.component),
       visible: asBoolean(record.visible),
       point_count: asNumber(record.point_count),
+    }
+  })
+}
+
+function normalizeSchematicPins(value: unknown): SchematicPinState[] {
+  if (!Array.isArray(value)) {
+    return []
+  }
+  return value.map((item) => {
+    const record = asRecord(item)
+    return {
+      name: asString(record.name),
+      node_id: asString(record.node_id),
+      role: asString(record.role),
+    }
+  })
+}
+
+function normalizeSchematicEditableFields(value: unknown): SchematicEditableFieldState[] {
+  if (!Array.isArray(value)) {
+    return []
+  }
+  return value.map((item) => {
+    const record = asRecord(item)
+    return {
+      field_key: asString(record.field_key),
+      label: asString(record.label),
+      raw_text: asString(record.raw_text),
+      display_text: asString(record.display_text),
+      editable: asBoolean(record.editable),
+      readonly_reason: asString(record.readonly_reason),
+      value_kind: asString(record.value_kind),
+    }
+  })
+}
+
+function normalizeSchematicComponents(value: unknown): SchematicComponentState[] {
+  if (!Array.isArray(value)) {
+    return []
+  }
+  return value.map((item) => {
+    const record = asRecord(item)
+    return {
+      id: asString(record.id),
+      instance_name: asString(record.instance_name),
+      kind: asString(record.kind),
+      symbol_kind: asString(record.symbol_kind) || 'unknown',
+      display_name: asString(record.display_name),
+      display_value: asString(record.display_value),
+      pins: normalizeSchematicPins(record.pins),
+      node_ids: asStringArray(record.node_ids),
+      editable_fields: normalizeSchematicEditableFields(record.editable_fields),
+      scope_path: asStringArray(record.scope_path),
+      source_file: asString(record.source_file),
+      symbol_variant: asString(record.symbol_variant),
+      pin_roles: asStringRecord(record.pin_roles),
+      port_side_hints: asStringRecord(record.port_side_hints),
+      label_slots: asStringRecord(record.label_slots),
+      polarity_marks: asStringRecord(record.polarity_marks),
+      render_hints: asStringRecord(record.render_hints),
+    }
+  })
+}
+
+function normalizeSchematicNets(value: unknown): SchematicNetState[] {
+  if (!Array.isArray(value)) {
+    return []
+  }
+  return value.map((item) => {
+    const record = asRecord(item)
+    const connections = Array.isArray(record.connections)
+      ? record.connections.map((connection) => {
+          const entry = asRecord(connection)
+          return {
+            component_id: asString(entry.component_id),
+            instance_name: asString(entry.instance_name),
+            pin_name: asString(entry.pin_name),
+            pin_role: asString(entry.pin_role),
+          }
+        })
+      : []
+    return {
+      id: asString(record.id),
+      name: asString(record.name),
+      scope_path: asStringArray(record.scope_path),
+      source_file: asString(record.source_file),
+      connections,
+    }
+  })
+}
+
+function normalizeSchematicSubcircuits(value: unknown): SchematicSubcircuitState[] {
+  if (!Array.isArray(value)) {
+    return []
+  }
+  return value.map((item) => {
+    const record = asRecord(item)
+    return {
+      name: asString(record.name),
+      port_names: asStringArray(record.port_names),
+      scope_path: asStringArray(record.scope_path),
+      source_file: asString(record.source_file),
+      component_ids: asStringArray(record.component_ids),
+    }
+  })
+}
+
+function normalizeSchematicParseErrors(value: unknown): SchematicParseErrorState[] {
+  if (!Array.isArray(value)) {
+    return []
+  }
+  return value.map((item) => {
+    const record = asRecord(item)
+    return {
+      message: asString(record.message),
+      source_file: asString(record.source_file),
+      line_text: asString(record.line_text),
+      line_index: asNumber(record.line_index),
+      column_start: asNumber(record.column_start),
+      column_end: asNumber(record.column_end),
     }
   })
 }
@@ -947,6 +1188,36 @@ export function normalizeRawDataDocument(input: unknown): RawDataDocumentState {
     row_height_px: asNumber(rawDataDocument.row_height_px),
     column_header_height_px: asNumber(rawDataDocument.column_header_height_px),
     columns: normalizeRawDataColumns(rawDataDocument.columns),
+  }
+}
+
+export function normalizeSchematicDocument(input: unknown): SchematicDocumentState {
+  const schematicDocument = asRecord(input)
+  return {
+    document_id: asString(schematicDocument.document_id),
+    revision: asString(schematicDocument.revision),
+    file_path: asString(schematicDocument.file_path),
+    file_name: asString(schematicDocument.file_name),
+    has_schematic: asBoolean(schematicDocument.has_schematic),
+    title: asString(schematicDocument.title),
+    components: normalizeSchematicComponents(schematicDocument.components),
+    nets: normalizeSchematicNets(schematicDocument.nets),
+    subcircuits: normalizeSchematicSubcircuits(schematicDocument.subcircuits),
+    parse_errors: normalizeSchematicParseErrors(schematicDocument.parse_errors),
+    readonly_reasons: asStringArray(schematicDocument.readonly_reasons),
+  }
+}
+
+export function normalizeSchematicWriteResult(input: unknown): SchematicWriteResultState {
+  const schematicWriteResult = asRecord(input)
+  return {
+    document_id: asString(schematicWriteResult.document_id),
+    revision: asString(schematicWriteResult.revision),
+    request_id: asString(schematicWriteResult.request_id),
+    success: asBoolean(schematicWriteResult.success),
+    component_id: asString(schematicWriteResult.component_id),
+    field_key: asString(schematicWriteResult.field_key),
+    error_message: asString(schematicWriteResult.error_message),
   }
 }
 

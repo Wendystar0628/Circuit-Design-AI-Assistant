@@ -9,6 +9,7 @@ class SimulationWebBridge(QObject):
     ready = pyqtSignal()
     activate_tab_requested = pyqtSignal(str)
     load_history_result_requested = pyqtSignal(str)
+    schematic_value_update_requested = pyqtSignal(dict)
     raw_data_viewport_requested = pyqtSignal(dict)
     raw_data_copy_requested = pyqtSignal(dict)
     chart_series_visibility_toggled = pyqtSignal(str, bool)
@@ -46,6 +47,13 @@ class SimulationWebBridge(QObject):
     @pyqtSlot(str)
     def loadHistoryResult(self, result_path: str) -> None:
         self.load_history_result_requested.emit(str(result_path or ""))
+
+    @pyqtSlot(QJsonValue)
+    @pyqtSlot(dict)
+    def updateSchematicValue(self, payload: Any) -> None:
+        normalized = self._normalize_schematic_value_update_payload(payload)
+        if normalized is not None:
+            self.schematic_value_update_requested.emit(normalized)
 
     @pyqtSlot(QJsonValue)
     @pyqtSlot(dict)
@@ -184,6 +192,20 @@ class SimulationWebBridge(QObject):
         normalized = str(target or "metrics").strip().lower()
         allowed = {"metrics", "chart", "waveform", "output_log", "op_result"}
         return normalized if normalized in allowed else "metrics"
+
+    def _normalize_schematic_value_update_payload(self, payload: Any) -> Optional[Dict[str, Any]]:
+        if isinstance(payload, QJsonValue):
+            payload = payload.toVariant()
+        if not isinstance(payload, dict):
+            return None
+        return {
+            "document_id": str(payload.get("documentId") or ""),
+            "revision": str(payload.get("revision") or ""),
+            "component_id": str(payload.get("componentId") or ""),
+            "field_key": str(payload.get("fieldKey") or ""),
+            "new_text": str(payload.get("newText") or ""),
+            "request_id": str(payload.get("requestId") or ""),
+        }
 
     def _normalize_raw_data_range_payload(self, payload: Any) -> Optional[Dict[str, Any]]:
         if isinstance(payload, QJsonValue):

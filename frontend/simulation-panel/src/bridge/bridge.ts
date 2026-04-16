@@ -1,4 +1,12 @@
-import type { RawDataCopyResultState, RawDataDocumentState, RawDataViewportState, SimulationMainState, SimulationTabId } from '../types/state'
+import type {
+  RawDataCopyResultState,
+  RawDataDocumentState,
+  RawDataViewportState,
+  SchematicDocumentState,
+  SchematicWriteResultState,
+  SimulationMainState,
+  SimulationTabId,
+} from '../types/state'
 
 export interface SimulationSurfaceViewportInput {
   xMin: number
@@ -22,10 +30,20 @@ export interface RawDataCopyRequestInput extends RawDataViewportRequestInput {
   includeHeaders?: boolean
 }
 
+export interface SchematicValueUpdateRequestInput {
+  documentId: string
+  revision: string
+  componentId: string
+  fieldKey: string
+  newText: string
+  requestId: string
+}
+
 export interface SimulationBridge {
   markReady(): void
   activateTab(tabId: SimulationTabId): void
   loadHistoryResult(resultPath: string): void
+  updateSchematicValue(payload: SchematicValueUpdateRequestInput): void
   requestRawDataViewport(payload: RawDataViewportRequestInput): void
   copyRawDataRange(payload: RawDataCopyRequestInput): void
   setChartSeriesVisible(seriesName: string, visible: boolean): void
@@ -55,6 +73,8 @@ export interface SimulationBridge {
 
 export interface SimulationAppApi {
   setState(state: SimulationMainState | Record<string, unknown>): void
+  setSchematicDocument(state: SchematicDocumentState | Record<string, unknown>): void
+  finishSchematicWrite(state: SchematicWriteResultState | Record<string, unknown>): void
   setRawDataDocument(state: RawDataDocumentState | Record<string, unknown>): void
   setRawDataViewport(state: RawDataViewportState | Record<string, unknown>): void
   finishRawDataCopy(state: RawDataCopyResultState | Record<string, unknown>): void

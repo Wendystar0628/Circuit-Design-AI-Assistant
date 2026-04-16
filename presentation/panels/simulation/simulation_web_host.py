@@ -26,6 +26,8 @@ class SimulationWebHost(QWidget):
         self._page_loaded = False
         self._frontend_ready = False
         self._state: Dict[str, Any] = {}
+        self._schematic_document: Dict[str, Any] = {}
+        self._schematic_write_result: Dict[str, Any] = {}
         self._raw_data_document: Dict[str, Any] = {}
         self._raw_data_viewport: Dict[str, Any] = {}
         self._raw_data_copy_result: Dict[str, Any] = {}
@@ -81,6 +83,8 @@ class SimulationWebHost(QWidget):
             return
         self._page_loaded = True
         self._dispatch_state()
+        self._dispatch_schematic_document()
+        self._dispatch_schematic_write_result()
         self._dispatch_raw_data_document()
         self._dispatch_raw_data_viewport()
         self._dispatch_raw_data_copy_result()
@@ -89,6 +93,8 @@ class SimulationWebHost(QWidget):
         self._page_loaded = True
         self._frontend_ready = True
         self._dispatch_state()
+        self._dispatch_schematic_document()
+        self._dispatch_schematic_write_result()
         self._dispatch_raw_data_document()
         self._dispatch_raw_data_viewport()
         self._dispatch_raw_data_copy_result()
@@ -99,6 +105,20 @@ class SimulationWebHost(QWidget):
             return
         self._state = normalized
         self._dispatch_state()
+
+    def set_schematic_document(self, state: Dict[str, Any]) -> None:
+        normalized = state if isinstance(state, dict) else {}
+        if normalized == self._schematic_document:
+            return
+        self._schematic_document = normalized
+        self._dispatch_schematic_document()
+
+    def finish_schematic_write(self, state: Dict[str, Any]) -> None:
+        normalized = state if isinstance(state, dict) else {}
+        if normalized == self._schematic_write_result:
+            return
+        self._schematic_write_result = normalized
+        self._dispatch_schematic_write_result()
 
     def set_raw_data_document(self, state: Dict[str, Any]) -> None:
         normalized = state if isinstance(state, dict) else {}
@@ -130,6 +150,14 @@ class SimulationWebHost(QWidget):
             except Exception:
                 pass
             try:
+                self._simulation_tab.schematic_document_changed.disconnect(self.set_schematic_document)
+            except Exception:
+                pass
+            try:
+                self._simulation_tab.schematic_write_result_changed.disconnect(self.finish_schematic_write)
+            except Exception:
+                pass
+            try:
                 self._simulation_tab.raw_data_document_changed.disconnect(self.set_raw_data_document)
             except Exception:
                 pass
@@ -144,17 +172,23 @@ class SimulationWebHost(QWidget):
         self._simulation_tab = simulation_tab
         if self._simulation_tab is None:
             self.set_state({})
+            self.set_schematic_document({})
+            self.finish_schematic_write({})
             self.set_raw_data_document({})
             self.set_raw_data_viewport({})
             self.finish_raw_data_copy({})
             return
         self._simulation_tab.authoritative_frontend_state_changed.connect(self.set_state)
+        self._simulation_tab.schematic_document_changed.connect(self.set_schematic_document)
+        self._simulation_tab.schematic_write_result_changed.connect(self.finish_schematic_write)
         self._simulation_tab.raw_data_document_changed.connect(self.set_raw_data_document)
         self._simulation_tab.raw_data_viewport_changed.connect(self.set_raw_data_viewport)
         self._simulation_tab.raw_data_copy_result_changed.connect(self.finish_raw_data_copy)
         if self._bridge is not None:
             self._simulation_tab.bind_web_bridge(self._bridge)
         self.set_state(self._simulation_tab.get_authoritative_frontend_state())
+        self.set_schematic_document(self._simulation_tab.get_authoritative_schematic_document())
+        self.finish_schematic_write(self._simulation_tab.get_authoritative_schematic_write_result())
         self.set_raw_data_document(self._simulation_tab.get_authoritative_raw_data_document())
         self.set_raw_data_viewport(self._simulation_tab.get_authoritative_raw_data_viewport())
         self.finish_raw_data_copy(self._simulation_tab.get_authoritative_raw_data_copy_result())
@@ -180,6 +214,14 @@ class SimulationWebHost(QWidget):
             except Exception:
                 pass
             try:
+                self._simulation_tab.schematic_document_changed.disconnect(self.set_schematic_document)
+            except Exception:
+                pass
+            try:
+                self._simulation_tab.schematic_write_result_changed.disconnect(self.finish_schematic_write)
+            except Exception:
+                pass
+            try:
                 self._simulation_tab.raw_data_document_changed.disconnect(self.set_raw_data_document)
             except Exception:
                 pass
@@ -200,6 +242,24 @@ class SimulationWebHost(QWidget):
             return
         script = "window.simulationApp && window.simulationApp.setState(%s);" % json.dumps(
             self._state,
+            ensure_ascii=False,
+        )
+        self._web_view.page().runJavaScript(script)
+
+    def _dispatch_schematic_document(self) -> None:
+        if self._web_view is None or not self._page_loaded or not self._frontend_ready:
+            return
+        script = "window.simulationApp && window.simulationApp.setSchematicDocument(%s);" % json.dumps(
+            self._schematic_document,
+            ensure_ascii=False,
+        )
+        self._web_view.page().runJavaScript(script)
+
+    def _dispatch_schematic_write_result(self) -> None:
+        if self._web_view is None or not self._page_loaded or not self._frontend_ready:
+            return
+        script = "window.simulationApp && window.simulationApp.finishSchematicWrite(%s);" % json.dumps(
+            self._schematic_write_result,
             ensure_ascii=False,
         )
         self._web_view.page().runJavaScript(script)

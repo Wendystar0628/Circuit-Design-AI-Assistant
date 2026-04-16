@@ -3,12 +3,19 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useElementSize } from '../../hooks/useElementSize'
 import type { SchematicComponentState, SchematicDocumentState, SchematicNetState, SchematicPinState } from '../../types/state'
 import { getSchematicSymbolDefinition, isSchematicComponentReadonly, type SchematicSymbolAppearance, type SchematicSymbolAnchor } from './symbolRegistry'
+import { makeViewTargetWorldPoint, type SchematicCanvasViewState, type SchematicLayoutPin, type SchematicLayoutResult as ElkSchematicLayoutResult } from './schematicLayout'
 
 interface SchematicCanvasProps {
   schematicDocument: SchematicDocumentState
+  layoutResult: ElkSchematicLayoutResult | null
+  layoutPending: boolean
+  layoutError: string
   selectedComponentId: string | null
   fitSignal: number
   relayoutSignal: number
+  viewState: SchematicCanvasViewState
+  onViewStateChange(nextViewState: SchematicCanvasViewState): void
+  onViewportSizeChange(size: { width: number; height: number }): void
   onSelectComponent(componentId: string | null): void
 }
 

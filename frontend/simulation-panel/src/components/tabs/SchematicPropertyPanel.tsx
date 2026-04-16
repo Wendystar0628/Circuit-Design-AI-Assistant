@@ -6,13 +6,21 @@ interface SchematicPropertyPanelProps {
   schematicDocument: SchematicDocumentState
   schematicWriteResult: SchematicWriteResultState
   fieldDrafts: Record<string, string>
+  pendingFieldRequestIds: Record<string, string>
+  staleDraftNotice: string
   onDraftChange(fieldKey: string, nextValue: string): void
   onSubmitField(field: SchematicEditableFieldState): void
 }
 
-function buildFieldStatusLabel(component: SchematicComponentState, field: SchematicEditableFieldState, writeResult: SchematicWriteResultState): string {
+function buildFieldStatusLabel(component: SchematicComponentState, field: SchematicEditableFieldState, writeResult: SchematicWriteResultState, pendingFieldRequestIds: Record<string, string>): string {
+  if (pendingFieldRequestIds[field.field_key]) {
+    return '提交中'
+  }
   if (writeResult.component_id === component.id && writeResult.field_key === field.field_key && writeResult.request_id) {
-    return writeResult.success ? '已提交' : '写回失败'
+    if (writeResult.result_type === 'conflict') {
+      return '发生冲突'
+    }
+    return writeResult.success ? '已回写' : '写回失败'
   }
   if (!field.editable) {
     return '只读'
@@ -20,11 +28,16 @@ function buildFieldStatusLabel(component: SchematicComponentState, field: Schema
   return '可编辑'
 }
 
-function buildFieldStatusClassName(component: SchematicComponentState, field: SchematicEditableFieldState, writeResult: SchematicWriteResultState): string {
+function buildFieldStatusClassName(component: SchematicComponentState, field: SchematicEditableFieldState, writeResult: SchematicWriteResultState, pendingFieldRequestIds: Record<string, string>): string {
+  if (pendingFieldRequestIds[field.field_key]) {
+    return 'schematic-property-panel__status schematic-property-panel__status--pending'
+  }
   if (writeResult.component_id === component.id && writeResult.field_key === field.field_key && writeResult.request_id) {
     return writeResult.success
       ? 'schematic-property-panel__status schematic-property-panel__status--success'
-      : 'schematic-property-panel__status schematic-property-panel__status--error'
+      : writeResult.result_type === 'conflict'
+        ? 'schematic-property-panel__status schematic-property-panel__status--warning'
+        : 'schematic-property-panel__status schematic-property-panel__status--error'
   }
   if (!field.editable) {
     return 'schematic-property-panel__status schematic-property-panel__status--readonly'
@@ -32,11 +45,25 @@ function buildFieldStatusClassName(component: SchematicComponentState, field: Sc
   return 'schematic-property-panel__status schematic-property-panel__status--editable'
 }
 
-export function SchematicPropertyPanel({ component, schematicDocument, schematicWriteResult, fieldDrafts, onDraftChange, onSubmitField }: SchematicPropertyPanelProps) {
+export function SchematicPropertyPanel({ component, schematicDocument, schematicWriteResult, fieldDrafts, pendingFieldRequestIds, staleDraftNotice, onDraftChange, onSubmitField }: SchematicPropertyPanelProps) {
   const readonly = isSchematicComponentReadonly(component)
-  const latestWriteMessage = schematicWriteResult.component_id === component.id && schematicWriteResult.request_id
-    ? schematicWriteResult.error_message || (schematicWriteResult.success ? '最新写回请求已发送，页面以后端回推结果为准。' : '')
-    : ''
+  const visibleFields = component.editable_fields.filter((field) => field.field_key === 'value')
+  const hasPendingWrite = Object.keys(pendingFieldRequestIds).length > 0
+  const latestWriteMessage = hasPendingWrite
+    ? '正在写回本地源文件，等待后端重新解析并回推最新文档。'
+    : schematicWriteResult.component_id === component.id && schematicWriteResult.request_id
+      ? schematicWriteResult.result_type === 'conflict'
+        ? '检测到源文件已变化，旧 revision 提交已被拒绝，请基于当前权威文档重新修改。'
+        : schematicWriteResult.error_message || (schematicWriteResult.success ? '最新写回已完成，当前渲染以后端回推文档为准。' : '')
+      : ''
+
+  const latestWriteMessageClassName = hasPendingWrite
+    ? 'schematic-property-panel__write-banner schematic-property-panel__write-banner--pending'
+    : schematicWriteResult.result_type === 'conflict'
+      ? 'schematic-property-panel__write-banner schematic-property-panel__write-banner--warning'
+      : `schematic-property-panel__write-banner${schematicWriteResult.success ? '' : ' schematic-property-panel__write-banner--error'}`
+
+  const latestWriteFieldKey = !hasPendingWrite && schematicWriteResult.component_id === component.id ? schematicWriteResult.field_key : ''
 
   return (
     <div className="content-card schematic-property-panel">
@@ -85,9 +112,10 @@ export function SchematicPropertyPanel({ component, schematicDocument, schematic
       <div className="schematic-property-panel__section schematic-property-panel__section--grow">
         <div className="card-title">可编辑字段</div>
         <div className="schematic-property-panel__field-list">
-          {component.editable_fields.length > 0 ? component.editable_fields.map((field) => {
+          {visibleFields.length > 0 ? visibleFields.map((field) => {
             const draftValue = fieldDrafts[field.field_key] ?? field.raw_text
-            const isCurrentWriteTarget = schematicWriteResult.component_id === component.id && schematicWriteResult.field_key === field.field_key && Boolean(schematicWriteResult.request_id)
+            const isPending = Boolean(pendingFieldRequestIds[field.field_key])
+            const isCurrentWriteTarget = latestWriteFieldKey === field.field_key && Boolean(schematicWriteResult.request_id)
             return (
               <div className={`schematic-property-panel__field-card${field.editable ? '' : ' schematic-property-panel__field-card--readonly'}`} key={`${component.id}-${field.field_key}`}>
                 <div className="schematic-property-panel__field-header">
@@ -95,8 +123,8 @@ export function SchematicPropertyPanel({ component, schematicDocument, schematic
                     <div className="schematic-property-panel__field-title">{field.label || field.field_key}</div>
                     <div className="card-subtitle">{field.value_kind || 'text'}</div>
                   </div>
-                  <div className={buildFieldStatusClassName(component, field, schematicWriteResult)}>
-                    {buildFieldStatusLabel(component, field, schematicWriteResult)}
+                  <div className={buildFieldStatusClassName(component, field, schematicWriteResult, pendingFieldRequestIds)}>
+                    {buildFieldStatusLabel(component, field, schematicWriteResult, pendingFieldRequestIds)}
                   </div>
                 </div>
                 <label className="schematic-property-panel__field-label">
@@ -105,7 +133,7 @@ export function SchematicPropertyPanel({ component, schematicDocument, schematic
                     className="schematic-property-panel__input"
                     type="text"
                     value={draftValue}
-                    disabled={!field.editable}
+                    disabled={!field.editable || isPending}
                     onChange={(event) => onDraftChange(field.field_key, event.target.value)}
                   />
                 </label>
@@ -116,12 +144,17 @@ export function SchematicPropertyPanel({ component, schematicDocument, schematic
                   <button
                     type="button"
                     className="toolbar-button"
-                    disabled={!field.editable || draftValue === field.raw_text}
+                    disabled={!field.editable || draftValue === field.raw_text || isPending}
                     onClick={() => onSubmitField(field)}
                   >
-                    提交
+                    {isPending ? '提交中...' : '提交'}
                   </button>
                 </div>
+                {isPending ? (
+                  <div className="schematic-property-panel__write-message schematic-property-panel__write-message--pending">
+                    正在请求后端写回源文件，当前显示值仍以后端文档为准。
+                  </div>
+                ) : null}
                 {isCurrentWriteTarget && schematicWriteResult.error_message ? (
                   <div className="schematic-property-panel__write-message schematic-property-panel__write-message--error">
                     {schematicWriteResult.error_message}
@@ -134,8 +167,13 @@ export function SchematicPropertyPanel({ component, schematicDocument, schematic
       </div>
 
       {latestWriteMessage ? (
-        <div className={`schematic-property-panel__write-banner${schematicWriteResult.success ? '' : ' schematic-property-panel__write-banner--error'}`}>
+        <div className={latestWriteMessageClassName}>
           {latestWriteMessage}
+        </div>
+      ) : null}
+      {staleDraftNotice ? (
+        <div className="schematic-property-panel__write-banner schematic-property-panel__write-banner--warning">
+          {staleDraftNotice}
         </div>
       ) : null}
     </div>

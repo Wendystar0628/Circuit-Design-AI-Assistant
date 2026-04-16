@@ -1387,6 +1387,13 @@
   height: 100%;
 }
 
+.schematic-canvas__group-label {
+  font-family: var(--sim-tab-font-family);
+  font-size: 11px;
+  font-weight: 700;
+  pointer-events: none;
+}
+
 .schematic-canvas__component {
   cursor: pointer;
   transition: opacity 120ms ease, filter 120ms ease;
@@ -1447,7 +1454,18 @@
   pointer-events: none;
 }
 
+.schematic-canvas__floating-banner-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
 .schematic-canvas__floating-banner > .surface-state-card {
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.08);
+  pointer-events: auto;
+}
+
+.schematic-canvas__floating-banner-stack > .surface-state-card {
   box-shadow: 0 12px 28px rgba(15, 23, 42, 0.08);
   pointer-events: auto;
 }
@@ -1518,6 +1536,18 @@
   border: 1px solid #bcd2ff;
   background: #eef4ff;
   color: var(--sim-accent);
+}
+
+.schematic-property-panel__status--pending {
+  border: 1px solid #d5c1ff;
+  background: #f5f0ff;
+  color: #6d28d9;
+}
+
+.schematic-property-panel__status--warning {
+  border: 1px solid #f5d28a;
+  background: #fff7e8;
+  color: #b45309;
 }
 
 .schematic-property-panel__status--success {
@@ -1628,6 +1658,19 @@
   border: 1px solid #b7ebc6;
   background: #edfdf3;
   color: #17663a;
+}
+
+.schematic-property-panel__write-message--pending,
+.schematic-property-panel__write-banner--pending {
+  border: 1px solid #d5c1ff;
+  background: #f5f0ff;
+  color: #6d28d9;
+}
+
+.schematic-property-panel__write-banner--warning {
+  border: 1px solid #f5d28a;
+  background: #fff7e8;
+  color: #b45309;
 }
 
 .schematic-property-panel__write-message--error,

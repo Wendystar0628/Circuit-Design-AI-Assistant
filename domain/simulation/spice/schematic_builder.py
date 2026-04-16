@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from domain.simulation.spice.models import (
     SpiceComponent,
@@ -19,8 +19,24 @@ def make_schematic_document_id(file_path: str) -> str:
     return hashlib.sha1(seed.encode("utf-8")).hexdigest()[:16]
 
 
-def make_schematic_revision(file_path: str, source_text: str) -> str:
-    seed = "|".join([str(file_path or ""), str(source_text or "")])
+def _normalize_revision_dependency_snapshots(dependency_snapshots: Optional[Dict[str, str]] = None) -> List[Tuple[str, str]]:
+    payload = dependency_snapshots if isinstance(dependency_snapshots, dict) else {}
+    normalized: List[Tuple[str, str]] = []
+    for path, snapshot in payload.items():
+        normalized_path = str(path or "").strip()
+        if not normalized_path:
+            continue
+        normalized.append((normalized_path, str(snapshot or "")))
+    normalized.sort(key=lambda item: item[0])
+    return normalized
+
+
+def make_schematic_revision(file_path: str, source_text: str, dependency_snapshots: Optional[Dict[str, str]] = None) -> str:
+    seed_parts = [str(file_path or ""), str(source_text or "")]
+    for dependency_path, dependency_snapshot in _normalize_revision_dependency_snapshots(dependency_snapshots):
+        seed_parts.append(dependency_path)
+        seed_parts.append(dependency_snapshot)
+    seed = "|".join(seed_parts)
     return hashlib.sha1(seed.encode("utf-8")).hexdigest()[:16]
 
 
@@ -30,6 +46,7 @@ class SpiceSchematicBuilder:
         spice_document: Optional[SpiceDocument],
         *,
         source_text: str = "",
+        dependency_snapshots: Optional[Dict[str, str]] = None,
         title: str = "",
     ) -> Dict[str, Any]:
         if spice_document is None:
@@ -43,7 +60,7 @@ class SpiceSchematicBuilder:
         readonly_reasons = self._collect_readonly_reasons(all_components)
         return {
             "document_id": make_schematic_document_id(file_path),
-            "revision": make_schematic_revision(file_path, source_text),
+            "revision": make_schematic_revision(file_path, source_text, dependency_snapshots),
             "file_path": file_path,
             "file_name": file_name,
             "has_schematic": bool(components_payload or spice_document.subcircuits),
@@ -55,12 +72,12 @@ class SpiceSchematicBuilder:
             "readonly_reasons": readonly_reasons,
         }
 
-    def build_empty_document(self, file_path: str = "") -> Dict[str, Any]:
+    def build_empty_document(self, file_path: str = "", dependency_snapshots: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
         normalized_file_path = str(file_path or "")
         file_name = Path(normalized_file_path).name if normalized_file_path else ""
         return {
             "document_id": make_schematic_document_id(normalized_file_path),
-            "revision": make_schematic_revision(normalized_file_path, ""),
+            "revision": make_schematic_revision(normalized_file_path, "", dependency_snapshots),
             "file_path": normalized_file_path,
             "file_name": file_name,
             "has_schematic": False,
@@ -81,6 +98,7 @@ class SpiceSchematicBuilder:
         success: bool = False,
         component_id: str = "",
         field_key: str = "",
+        result_type: str = "",
         error_message: str = "",
     ) -> Dict[str, Any]:
         return {
@@ -90,6 +108,7 @@ class SpiceSchematicBuilder:
             "success": bool(success),
             "component_id": str(component_id or ""),
             "field_key": str(field_key or ""),
+            "result_type": str(result_type or ""),
             "error_message": str(error_message or ""),
         }
 

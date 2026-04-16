@@ -431,6 +431,7 @@ class SimulationFrontendStateSerializer:
             "success": bool(payload.get("success")),
             "component_id": str(payload.get("component_id") or ""),
             "field_key": str(payload.get("field_key") or ""),
+            "result_type": str(payload.get("result_type") or ""),
             "error_message": str(payload.get("error_message") or ""),
         }
 

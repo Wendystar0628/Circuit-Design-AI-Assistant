@@ -339,6 +339,7 @@ export interface SchematicWriteResultState {
   success: boolean
   component_id: string
   field_key: string
+  result_type: string
   error_message: string
 }
 
@@ -535,6 +536,7 @@ export const EMPTY_SCHEMATIC_WRITE_RESULT: SchematicWriteResultState = {
   success: false,
   component_id: '',
   field_key: '',
+  result_type: '',
   error_message: '',
 }
 
@@ -1217,6 +1219,7 @@ export function normalizeSchematicWriteResult(input: unknown): SchematicWriteRes
     success: asBoolean(schematicWriteResult.success),
     component_id: asString(schematicWriteResult.component_id),
     field_key: asString(schematicWriteResult.field_key),
+    result_type: asString(schematicWriteResult.result_type),
     error_message: asString(schematicWriteResult.error_message),
   }
 }

@@ -1,7 +1,13 @@
 import type { ELK as ElkApi, ElkEdgeSection, ElkExtendedEdge, ElkNode, ElkPort } from 'elkjs/lib/elk-api'
 
-import type { SchematicComponentState, SchematicDocumentState, SchematicNetState, SchematicPinState, SchematicSubcircuitState } from '../../types/state'
+import type { SchematicComponentState, SchematicDocumentState, SchematicNetState, SchematicPinState } from '../../types/state'
 import { getSchematicSymbolDefinition, type SchematicPinSide } from './symbolRegistry'
+import { normalizeSchematicDocument } from './schematicDocumentNormalizer'
+import type {
+  SchematicSemanticModel,
+  SemanticComponent,
+  SemanticScopeGroup,
+} from './schematicSemanticModel'
 import type {
   SchematicCanvasViewState,
   SchematicLayoutBounds,
@@ -49,6 +55,7 @@ interface LabelPosition {
 
 interface ComponentBlueprint {
   component: SchematicComponentState
+  orientation: SchematicLayoutOrientation
   nodeId: string
   width: number
   height: number
@@ -81,12 +88,6 @@ interface GroupBlueprint {
   id: string
   label: string
   depth: number
-}
-
-interface ScopeGroupBuilder {
-  path: string[]
-  children: ScopeGroupBuilder[]
-  components: SchematicComponentState[]
 }
 
 let elkInstancePromise: Promise<ElkApi> | null = null
@@ -181,89 +182,12 @@ function getBoundsHeight(bounds: SchematicLayoutBounds): number {
   return Math.max(1, bounds.maxY - bounds.minY)
 }
 
-function buildScopePathKey(scopePath: string[]): string {
-  return scopePath.join(' / ')
-}
-
-function buildGroupId(scopePath: string[]): string {
-  return `scope:${buildScopePathKey(scopePath)}`
-}
-
 function buildPortId(componentId: string, pinName: string): string {
   return `port:${componentId}:${pinName}`
 }
 
 function buildRequestKey(documentId: string, revision: string): string {
   return `${documentId}::${revision}`
-}
-
-function getComponentSortKey(component: SchematicComponentState): string {
-  return [component.scope_path.join('/'), component.instance_name, component.display_name, component.id].join('|')
-}
-
-function getComponentPriority(component: SchematicComponentState): number {
-  const pinRoles = Object.values(component.pin_roles)
-  const hasGround = pinRoles.includes('ground') || component.symbol_kind === 'ground'
-  if (hasGround) {
-    return 90
-  }
-  const hasPower = pinRoles.includes('power') || component.symbol_kind === 'voltage_source' || component.symbol_kind === 'current_source'
-  if (hasPower) {
-    return 10
-  }
-  const hasInput = pinRoles.includes('input')
-  const hasOutput = pinRoles.includes('output')
-  if (hasInput && !hasOutput) {
-    return 20
-  }
-  if (hasOutput && !hasInput) {
-    return 80
-  }
-  return 50
-}
-
-function sortComponents(components: SchematicComponentState[]): SchematicComponentState[] {
-  return [...components].sort((left, right) => {
-    const priorityDelta = getComponentPriority(left) - getComponentPriority(right)
-    if (priorityDelta !== 0) {
-      return priorityDelta
-    }
-    return getComponentSortKey(left).localeCompare(getComponentSortKey(right))
-  })
-}
-
-function ensureScopeGroup(root: ScopeGroupBuilder, scopePath: string[]): ScopeGroupBuilder {
-  let current = root
-  for (let index = 0; index < scopePath.length; index += 1) {
-    const nextPath = scopePath.slice(0, index + 1)
-    const existing = current.children.find((item) => item.path.length === nextPath.length && item.path.every((segment, segmentIndex) => segment === nextPath[segmentIndex]))
-    if (existing) {
-      current = existing
-      continue
-    }
-    const created: ScopeGroupBuilder = {
-      path: nextPath,
-      children: [],
-      components: [],
-    }
-    current.children.push(created)
-    current = created
-  }
-  return current
-}
-
-function buildSubcircuitLabelMap(subcircuits: SchematicSubcircuitState[]): Map<string, string> {
-  const labels = new Map<string, string>()
-  for (const item of subcircuits) {
-    const path = [...item.scope_path, item.name]
-    labels.set(buildScopePathKey(path), item.name)
-  }
-  return labels
-}
-
-function resolveScopeLabel(scopePath: string[], labelMap: Map<string, string>): string {
-  const key = buildScopePathKey(scopePath)
-  return labelMap.get(key) || scopePath[scopePath.length - 1] || 'scope'
 }
 
 function resolveLabelSlot(rawSlot: string, fallback: string): string {
@@ -274,11 +198,8 @@ function resolveLabelSlot(rawSlot: string, fallback: string): string {
   return fallback
 }
 
-function resolveComponentOrientation(component: SchematicComponentState): SchematicLayoutOrientation {
-  if (component.symbol_kind === 'voltage_source' || component.symbol_kind === 'current_source' || component.symbol_kind === 'ground') {
-    return 'down'
-  }
-  return 'right'
+function resolveComponentOrientation(semanticComponent: SemanticComponent): SchematicLayoutOrientation {
+  return semanticComponent.orientationPreference === 'vertical' ? 'down' : 'right'
 }
 
 function resolveLabel(component: SchematicComponentState, kind: 'name' | 'value'): LabelPosition | null {
@@ -580,35 +501,50 @@ function findElkPort(node: ElkNode, portId: string): ElkPort | null {
   return node.ports?.find((item) => item.id === portId) ?? null
 }
 
-function buildGraph(document: SchematicDocumentState) {
-  const subcircuitLabelMap = buildSubcircuitLabelMap(document.subcircuits)
-  const rootGroup: ScopeGroupBuilder = {
-    path: [],
-    children: [],
-    components: [],
-  }
-
-  for (const component of sortComponents(document.components)) {
-    const group = ensureScopeGroup(rootGroup, component.scope_path)
-    group.components.push(component)
-  }
-
+function buildGraph(semantic: SchematicSemanticModel) {
   const componentBlueprints = new Map<string, ComponentBlueprint>()
   const groupBlueprints = new Map<string, GroupBlueprint>()
   const edgeBlueprints = new Map<string, EdgeBlueprint>()
   const portOwnerMap = new Map<string, string>()
 
-  function buildComponentNode(component: SchematicComponentState): ElkNode {
+  const priorityOrder = new Map(semantic.components.map((item, index) => [item.component.id, index]))
+
+  function orderScopedComponentIds(componentIds: string[]): string[] {
+    return [...componentIds].sort((left, right) => {
+      const leftRank = priorityOrder.get(left) ?? Number.MAX_SAFE_INTEGER
+      const rightRank = priorityOrder.get(right) ?? Number.MAX_SAFE_INTEGER
+      return leftRank - rightRank
+    })
+  }
+
+  function requireScopeGroup(scopeGroupId: string): SemanticScopeGroup {
+    const group = semantic.scopeGroupsById.get(scopeGroupId)
+    if (!group) {
+      throw new Error(`[schematicLayout] Semantic scope group missing: ${scopeGroupId}`)
+    }
+    return group
+  }
+
+  function requireSemanticComponent(componentId: string): SemanticComponent {
+    const semanticComponent = semantic.componentsById.get(componentId)
+    if (!semanticComponent) {
+      throw new Error(`[schematicLayout] Semantic component missing: ${componentId}`)
+    }
+    return semanticComponent
+  }
+
+  function buildComponentNode(semanticComponent: SemanticComponent): ElkNode {
+    const component = semanticComponent.component
     const definition = getSchematicSymbolDefinition(component.symbol_kind)
     const width = definition.width + NODE_PADDING.left + NODE_PADDING.right
     const height = definition.height + NODE_PADDING.top + NODE_PADDING.bottom
-    const pins = component.pins.map((pin, index) => {
-      const anchor = definition.getPinAnchor(component, pin, index)
-      const portId = buildPortId(component.id, pin.name)
+    const pins = semanticComponent.pins.map((semanticPin) => {
+      const anchor = definition.getPinAnchor(component, semanticPin.pin, semanticPin.index)
+      const portId = buildPortId(component.id, semanticPin.pin.name)
       portOwnerMap.set(portId, component.id)
       return {
         portId,
-        pin,
+        pin: semanticPin.pin,
         side: anchor.side,
         x: NODE_PADDING.left + anchor.x,
         y: NODE_PADDING.top + anchor.y,
@@ -616,6 +552,7 @@ function buildGraph(document: SchematicDocumentState) {
     })
     componentBlueprints.set(component.id, {
       component,
+      orientation: resolveComponentOrientation(semanticComponent),
       nodeId: component.id,
       width,
       height,
@@ -642,17 +579,17 @@ function buildGraph(document: SchematicDocumentState) {
     }
   }
 
-  function buildGroupNode(group: ScopeGroupBuilder): ElkNode {
-    const childNodes = [
-      ...group.children.map((item) => buildGroupNode(item)),
-      ...group.components.map((component) => buildComponentNode(component)),
-    ]
-    const depth = group.path.length
-    const id = buildGroupId(group.path)
-    const label = resolveScopeLabel(group.path, subcircuitLabelMap)
-    groupBlueprints.set(id, { id, label, depth })
+  function buildScopeGroupNode(scopeGroup: SemanticScopeGroup): ElkNode {
+    const childNodes: ElkNode[] = []
+    for (const childGroupId of scopeGroup.childGroupIds) {
+      childNodes.push(buildScopeGroupNode(requireScopeGroup(childGroupId)))
+    }
+    for (const componentId of orderScopedComponentIds(scopeGroup.componentIds)) {
+      childNodes.push(buildComponentNode(requireSemanticComponent(componentId)))
+    }
+    groupBlueprints.set(scopeGroup.id, { id: scopeGroup.id, label: scopeGroup.label, depth: scopeGroup.depth })
     return {
-      id,
+      id: scopeGroup.id,
       children: childNodes,
       layoutOptions: {
         'elk.padding': toPaddingValue(GROUP_PADDING),
@@ -660,10 +597,14 @@ function buildGraph(document: SchematicDocumentState) {
     }
   }
 
-  const rootChildren = [
-    ...rootGroup.children.map((item) => buildGroupNode(item)),
-    ...rootGroup.components.map((component) => buildComponentNode(component)),
-  ]
+  const rootScopeGroup = requireScopeGroup(semantic.rootScopeGroupId)
+  const rootChildren: ElkNode[] = []
+  for (const childGroupId of rootScopeGroup.childGroupIds) {
+    rootChildren.push(buildScopeGroupNode(requireScopeGroup(childGroupId)))
+  }
+  for (const componentId of orderScopedComponentIds(rootScopeGroup.componentIds)) {
+    rootChildren.push(buildComponentNode(requireSemanticComponent(componentId)))
+  }
 
   const graph: ElkNode = {
     id: 'schematic-root',
@@ -684,8 +625,11 @@ function buildGraph(document: SchematicDocumentState) {
     },
   }
 
-  for (const net of document.nets) {
-    const connections = net.connections.filter((connection) => portOwnerMap.has(buildPortId(connection.component_id, connection.pin_name)))
+  for (const semanticNet of semantic.nets) {
+    if (semanticNet.pinCount < 2) {
+      continue
+    }
+    const connections = semanticNet.net.connections.filter((connection) => portOwnerMap.has(buildPortId(connection.component_id, connection.pin_name)))
     if (connections.length < 2) {
       continue
     }
@@ -693,10 +637,10 @@ function buildGraph(document: SchematicDocumentState) {
     const sourcePortId = buildPortId(firstConnection.component_id, firstConnection.pin_name)
     otherConnections.forEach((connection, index) => {
       const targetPortId = buildPortId(connection.component_id, connection.pin_name)
-      const edgeId = `${net.id}::${sourcePortId}::${targetPortId}::${index}`
+      const edgeId = `${semanticNet.net.id}::${sourcePortId}::${targetPortId}::${index}`
       edgeBlueprints.set(edgeId, {
         edgeId,
-        net,
+        net: semanticNet.net,
         sourcePortId,
         targetPortId,
       })
@@ -740,7 +684,7 @@ function collectComponentLayouts(node: ElkNode, parentX: number, parentY: number
     }
     const layoutComponent: SchematicLayoutComponent = {
       component: componentBlueprint.component,
-      orientation: resolveComponentOrientation(componentBlueprint.component),
+      orientation: componentBlueprint.orientation,
       bounds: {
         x: currentX,
         y: currentY,
@@ -786,11 +730,11 @@ function collectComponentLayouts(node: ElkNode, parentX: number, parentY: number
   }
 }
 
-function buildNetLayouts(document: SchematicDocumentState, edges: ElkExtendedEdge[] | undefined, edgeBlueprints: Map<string, EdgeBlueprint>, portMap: Map<string, SchematicLayoutPin>, components: SchematicLayoutComponent[]): SchematicLayoutNet[] {
+function buildNetLayouts(semantic: SchematicSemanticModel, edges: ElkExtendedEdge[] | undefined, edgeBlueprints: Map<string, EdgeBlueprint>, portMap: Map<string, SchematicLayoutPin>, components: SchematicLayoutComponent[]): SchematicLayoutNet[] {
   const netsById = new Map<string, SchematicLayoutNet>()
-  for (const net of document.nets) {
-    netsById.set(net.id, {
-      net,
+  for (const semanticNet of semantic.nets) {
+    netsById.set(semanticNet.net.id, {
+      net: semanticNet.net,
       segments: [],
       label: null,
     })
@@ -833,15 +777,17 @@ function buildNetLayouts(document: SchematicDocumentState, edges: ElkExtendedEdg
   }
 
   for (const targetNet of netsById.values()) {
-    if (targetNet.net.connections.length === 1) {
+    const semanticNet = semantic.netsById.get(targetNet.net.id)
+    if (semanticNet && semanticNet.pinCount === 1) {
       const onlyConnection = targetNet.net.connections[0]
       const pin = portMap.get(buildPortId(onlyConnection.component_id, onlyConnection.pin_name))
       if (pin) {
+        const stubPoints = buildStubSegment(pin)
         targetNet.segments.push({
           key: `${targetNet.net.id}:stub`,
           kind: 'stub',
-          axis: resolveSegmentAxis(buildStubSegment(pin)),
-          points: buildStubSegment(pin),
+          axis: resolveSegmentAxis(stubPoints),
+          points: stubPoints,
         })
       }
     }
@@ -933,7 +879,8 @@ export async function computeSchematicLayout(document: SchematicDocumentState): 
     }
   }
 
-  const { graph, componentBlueprints, groupBlueprints, edgeBlueprints } = buildGraph(document)
+  const semantic = normalizeSchematicDocument(document)
+  const { graph, componentBlueprints, groupBlueprints, edgeBlueprints } = buildGraph(semantic)
   const elk = await getElkInstance()
   const laidOutGraph = await elk.layout(graph)
   const components: SchematicLayoutComponent[] = []
@@ -944,7 +891,7 @@ export async function computeSchematicLayout(document: SchematicDocumentState): 
     collectComponentLayouts(child, laidOutGraph.x ?? 0, laidOutGraph.y ?? 0, componentBlueprints, groupBlueprints, components, groups, portMap)
   }
 
-  const nets = buildNetLayouts(document, laidOutGraph.edges, edgeBlueprints, portMap, components)
+  const nets = buildNetLayouts(semantic, laidOutGraph.edges, edgeBlueprints, portMap, components)
   const bounds = buildBounds(components, groups, nets)
 
   return {

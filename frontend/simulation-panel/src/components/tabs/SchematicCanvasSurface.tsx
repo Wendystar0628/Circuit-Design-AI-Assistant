@@ -3,7 +3,8 @@ import { useEffect, useRef, useState } from 'react'
 import { useElementSize } from '../../hooks/useElementSize'
 import type { SchematicDocumentState } from '../../types/state'
 import { getSchematicSymbolDefinition, isSchematicComponentReadonly, type SchematicSymbolAppearance } from './symbolRegistry'
-import { SCHEMATIC_NET_LABEL_HEIGHT, getSchematicNetLabelWidth, makeViewTargetWorldPoint, type SchematicCanvasViewState, type SchematicLayoutResult } from './schematicLayout'
+import { SCHEMATIC_NET_LABEL_HEIGHT, getSchematicNetLabelWidth, makeViewTargetWorldPoint } from './schematicLayout'
+import type { SchematicCanvasViewState, SchematicLayoutResult } from './schematicLayoutTypes'
 
 interface SchematicCanvasProps {
   schematicDocument: SchematicDocumentState
@@ -232,7 +233,7 @@ export function SchematicCanvas({
   const emptyStateDescription = !hasSourceFile
     ? '当前结果还没有可供电路页消费的源文件路径。'
     : layoutPending && schematicDocument.has_schematic
-      ? '正在基于最新 schematic_document 计算 ELK 自动布局。'
+      ? '正在基于最新 schematic_document 计算电路布局。'
       : layoutError || schematicDocument.file_name || schematicDocument.title || '当前 schematic_document 未提供可绘制元件。'
 
   return (
@@ -258,10 +259,10 @@ export function SchematicCanvas({
                 return (
                   <g className="schematic-canvas__group" key={group.id}>
                     <rect
-                      x={group.x}
-                      y={group.y}
-                      width={group.width}
-                      height={group.height}
+                      x={group.bounds.x}
+                      y={group.bounds.y}
+                      width={group.bounds.width}
+                      height={group.bounds.height}
                       rx={18}
                       fill={tone.fill}
                       stroke={tone.stroke}
@@ -269,8 +270,8 @@ export function SchematicCanvas({
                       strokeDasharray="7 5"
                     />
                     <text
-                      x={group.x + 16}
-                      y={group.y + 18}
+                      x={group.bounds.x + 16}
+                      y={group.bounds.y + 18}
                       className="schematic-canvas__group-label"
                       fill={tone.text}
                     >
@@ -324,11 +325,14 @@ export function SchematicCanvas({
                 const readonly = isSchematicComponentReadonly(item.component)
                 const appearance = resolveAppearance(selected, hovered, readonly)
                 const symbolDefinition = getSchematicSymbolDefinition(item.component.symbol_kind)
+                const symbolOffsetX = item.symbolBounds.x - item.bounds.x
+                const symbolOffsetY = item.symbolBounds.y - item.bounds.y
                 return (
                   <g
                     key={item.component.id}
-                    transform={`translate(${item.x} ${item.y})`}
+                    transform={`translate(${item.bounds.x} ${item.bounds.y})`}
                     data-schematic-component="true"
+                    data-schematic-orientation={item.orientation}
                     className={`schematic-canvas__component${selected ? ' schematic-canvas__component--selected' : ''}${hovered ? ' schematic-canvas__component--hovered' : ''}${readonly ? ' schematic-canvas__component--readonly' : ''}`}
                     onMouseEnter={() => setHoveredComponentId(item.component.id)}
                     onMouseLeave={() => setHoveredComponentId((current) => (current === item.component.id ? '' : current))}
@@ -346,23 +350,23 @@ export function SchematicCanvas({
                     role="button"
                     aria-label={`选择器件 ${item.component.instance_name || item.component.display_name || item.component.id}`}
                   >
-                    <g transform={`translate(${item.symbolX} ${item.symbolY})`}>
+                    <g transform={`translate(${symbolOffsetX} ${symbolOffsetY})`}>
                       {symbolDefinition.render({
                         component: item.component,
-                        width: item.symbolWidth,
-                        height: item.symbolHeight,
+                        width: item.symbolBounds.width,
+                        height: item.symbolBounds.height,
                         appearance,
                       })}
                     </g>
                     {item.pins.map((pin) => (
                       <g key={`${item.component.id}-${pin.pin.name}`}>
-                        <circle cx={pin.x - item.x} cy={pin.y - item.y} r={4.4} fill={appearance.pinFill} />
+                        <circle cx={pin.x - item.bounds.x} cy={pin.y - item.bounds.y} r={4.4} fill={appearance.pinFill} />
                       </g>
                     ))}
                     {item.nameLabel ? (
                       <text
-                        x={item.nameLabel.x - item.x}
-                        y={item.nameLabel.y - item.y}
+                        x={item.nameLabel.x - item.bounds.x}
+                        y={item.nameLabel.y - item.bounds.y}
                         textAnchor={item.nameLabel.textAnchor}
                         className="schematic-canvas__instance-label"
                         fill={appearance.text}
@@ -372,8 +376,8 @@ export function SchematicCanvas({
                     ) : null}
                     {item.valueLabel ? (
                       <text
-                        x={item.valueLabel.x - item.x}
-                        y={item.valueLabel.y - item.y}
+                        x={item.valueLabel.x - item.bounds.x}
+                        y={item.valueLabel.y - item.bounds.y}
                         textAnchor={item.valueLabel.textAnchor}
                         className="schematic-canvas__value-label"
                         fill={appearance.accent}
@@ -409,7 +413,7 @@ export function SchematicCanvas({
               {layoutPending ? (
                 <div className="surface-state-card">
                   <div className="card-title">布局计算中</div>
-                  <div className="muted-text">只会采纳当前最新 `document_id + revision` 的 ELK 结果。</div>
+                  <div className="muted-text">只会采纳当前最新 `document_id + revision` 的布局结果。</div>
                 </div>
               ) : null}
               {layoutError ? (

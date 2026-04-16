@@ -5,7 +5,8 @@ import type { SchematicComponentState, SchematicDocumentState, SchematicEditable
 import { ResponsivePane } from '../layout/ResponsivePane'
 import { SchematicCanvas } from './SchematicCanvasSurface'
 import { SchematicPropertyPanel } from './SchematicPropertyPanel'
-import { computeSchematicLayout, createEmptySchematicViewState, fitSchematicViewToBounds, type SchematicLayoutResult } from './schematicLayout'
+import { computeSchematicLayout, createEmptySchematicViewState, fitSchematicViewToBounds } from './schematicLayout'
+import type { SchematicLayoutResult } from './schematicLayoutTypes'
 
 interface SchematicTabProps {
   bridge: SimulationBridge | null
@@ -153,7 +154,7 @@ export function SchematicTab({ bridge, schematicDocument, schematicWriteResult }
         setLayoutState((current) => ({
           result: current.result,
           pending: false,
-          error: error instanceof Error ? error.message : 'ELK 布局计算失败。',
+          error: error instanceof Error ? error.message : '电路布局计算失败。',
         }))
       })
 

@@ -2,85 +2,38 @@ import type { ELK as ElkApi, ElkEdgeSection, ElkExtendedEdge, ElkNode, ElkPort }
 
 import type { SchematicComponentState, SchematicDocumentState, SchematicNetState, SchematicPinState, SchematicSubcircuitState } from '../../types/state'
 import { getSchematicSymbolDefinition, type SchematicPinSide } from './symbolRegistry'
+import type {
+  SchematicCanvasViewState,
+  SchematicLayoutBounds,
+  SchematicLayoutComponent,
+  SchematicLayoutGroup,
+  SchematicLayoutLabel,
+  SchematicLayoutNet,
+  SchematicLayoutNetSegment,
+  SchematicLayoutOrientation,
+  SchematicLayoutPin,
+  SchematicLayoutPoint,
+  SchematicLayoutRect,
+  SchematicLayoutResult,
+  SchematicLayoutSegmentAxis,
+} from './schematicLayoutTypes'
 
-export interface SchematicLayoutPoint {
-  x: number
-  y: number
-}
+export type {
+  SchematicCanvasViewState,
+  SchematicLayoutBounds,
+  SchematicLayoutComponent,
+  SchematicLayoutGroup,
+  SchematicLayoutLabel,
+  SchematicLayoutNet,
+  SchematicLayoutNetSegment,
+  SchematicLayoutOrientation,
+  SchematicLayoutPin,
+  SchematicLayoutPoint,
+  SchematicLayoutRect,
+  SchematicLayoutResult,
+} from './schematicLayoutTypes'
 
-export interface SchematicLayoutBounds {
-  minX: number
-  minY: number
-  maxX: number
-  maxY: number
-}
-
-export interface SchematicCanvasViewState {
-  scale: number
-  offsetX: number
-  offsetY: number
-}
-
-export interface SchematicLayoutLabel {
-  text: string
-  x: number
-  y: number
-  textAnchor: 'start' | 'middle' | 'end'
-}
-
-export interface SchematicLayoutPin {
-  id: string
-  pin: SchematicPinState
-  side: SchematicPinSide
-  x: number
-  y: number
-}
-
-export interface SchematicLayoutComponent {
-  component: SchematicComponentState
-  x: number
-  y: number
-  width: number
-  height: number
-  symbolX: number
-  symbolY: number
-  symbolWidth: number
-  symbolHeight: number
-  pins: SchematicLayoutPin[]
-  nameLabel: SchematicLayoutLabel | null
-  valueLabel: SchematicLayoutLabel | null
-}
-
-export interface SchematicLayoutNetSegment {
-  key: string
-  points: SchematicLayoutPoint[]
-}
-
-export interface SchematicLayoutNet {
-  net: SchematicNetState
-  segments: SchematicLayoutNetSegment[]
-  label: SchematicLayoutLabel | null
-}
-
-export interface SchematicLayoutGroup {
-  id: string
-  label: string
-  depth: number
-  x: number
-  y: number
-  width: number
-  height: number
-}
-
-export interface SchematicLayoutResult {
-  requestKey: string
-  documentId: string
-  revision: string
-  components: SchematicLayoutComponent[]
-  nets: SchematicLayoutNet[]
-  groups: SchematicLayoutGroup[]
-  bounds: SchematicLayoutBounds | null
-}
+type LayoutRect = SchematicLayoutRect
 
 interface Padding {
   top: number
@@ -178,15 +131,8 @@ const COMPONENT_LABEL_HEIGHT = 24
 const NET_LABEL_MIN_WIDTH = 54
 const NET_LABEL_HORIZONTAL_PADDING = 18
 export const SCHEMATIC_NET_LABEL_HEIGHT = 26
-const NET_LABEL_WIRE_CLEARANCE = 12
+const NET_LABEL_WIRE_CLEARANCE = 4
 const NET_LABEL_COMPONENT_CLEARANCE = 8
-
-interface LayoutRect {
-  x: number
-  y: number
-  width: number
-  height: number
-}
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max)
@@ -328,6 +274,13 @@ function resolveLabelSlot(rawSlot: string, fallback: string): string {
   return fallback
 }
 
+function resolveComponentOrientation(component: SchematicComponentState): SchematicLayoutOrientation {
+  if (component.symbol_kind === 'voltage_source' || component.symbol_kind === 'current_source' || component.symbol_kind === 'ground') {
+    return 'down'
+  }
+  return 'right'
+}
+
 function resolveLabel(component: SchematicComponentState, kind: 'name' | 'value'): LabelPosition | null {
   if (kind === 'name') {
     const text = component.instance_name || component.display_name || component.id
@@ -426,6 +379,24 @@ function buildOrthogonalFallback(startPoint: SchematicLayoutPoint, endPoint: Sch
   ]
 }
 
+function resolveSegmentAxis(points: SchematicLayoutPoint[]): SchematicLayoutSegmentAxis {
+  if (points.length < 2) {
+    return 'mixed'
+  }
+  const hasHorizontalDelta = points.some((point, index) => index > 0 && point.x !== points[index - 1].x)
+  const hasVerticalDelta = points.some((point, index) => index > 0 && point.y !== points[index - 1].y)
+  if (hasHorizontalDelta && hasVerticalDelta) {
+    return 'mixed'
+  }
+  if (hasHorizontalDelta) {
+    return 'horizontal'
+  }
+  if (hasVerticalDelta) {
+    return 'vertical'
+  }
+  return 'mixed'
+}
+
 function buildStubSegment(pin: SchematicLayoutPin): SchematicLayoutPoint[] {
   if (pin.side === 'left') {
     return [
@@ -477,10 +448,10 @@ function rectsOverlap(left: LayoutRect, right: LayoutRect): boolean {
 
 function buildComponentObstacleRect(component: SchematicLayoutComponent): LayoutRect {
   return {
-    x: component.x + component.symbolX - NET_LABEL_COMPONENT_CLEARANCE,
-    y: component.y + component.symbolY - NET_LABEL_COMPONENT_CLEARANCE,
-    width: component.symbolWidth + NET_LABEL_COMPONENT_CLEARANCE * 2,
-    height: component.symbolHeight + NET_LABEL_COMPONENT_CLEARANCE * 2,
+    x: component.symbolBounds.x - NET_LABEL_COMPONENT_CLEARANCE,
+    y: component.symbolBounds.y - NET_LABEL_COMPONENT_CLEARANCE,
+    width: component.symbolBounds.width + NET_LABEL_COMPONENT_CLEARANCE * 2,
+    height: component.symbolBounds.height + NET_LABEL_COMPONENT_CLEARANCE * 2,
   }
 }
 
@@ -754,6 +725,7 @@ function collectComponentLayouts(node: ElkNode, parentX: number, parentY: number
       const port = findElkPort(node, item.portId)
       const pin: SchematicLayoutPin = {
         id: item.portId,
+        componentId: componentBlueprint.component.id,
         pin: item.pin,
         side: item.side,
         x: currentX + ((port?.x ?? item.x - 4) + 4),
@@ -768,14 +740,19 @@ function collectComponentLayouts(node: ElkNode, parentX: number, parentY: number
     }
     const layoutComponent: SchematicLayoutComponent = {
       component: componentBlueprint.component,
-      x: currentX,
-      y: currentY,
-      width: componentBlueprint.width,
-      height: componentBlueprint.height,
-      symbolX: componentBlueprint.symbolX,
-      symbolY: componentBlueprint.symbolY,
-      symbolWidth: componentBlueprint.symbolWidth,
-      symbolHeight: componentBlueprint.symbolHeight,
+      orientation: resolveComponentOrientation(componentBlueprint.component),
+      bounds: {
+        x: currentX,
+        y: currentY,
+        width: componentBlueprint.width,
+        height: componentBlueprint.height,
+      },
+      symbolBounds: {
+        x: currentX + componentBlueprint.symbolX,
+        y: currentY + componentBlueprint.symbolY,
+        width: componentBlueprint.symbolWidth,
+        height: componentBlueprint.symbolHeight,
+      },
       pins,
       nameLabel: null,
       valueLabel: null,
@@ -795,10 +772,12 @@ function collectComponentLayouts(node: ElkNode, parentX: number, parentY: number
         id: groupBlueprint.id,
         label: groupBlueprint.label,
         depth: groupBlueprint.depth,
-        x: currentX,
-        y: currentY,
-        width: node.width ?? 0,
-        height: node.height ?? 0,
+        bounds: {
+          x: currentX,
+          y: currentY,
+          width: node.width ?? 0,
+          height: node.height ?? 0,
+        },
       })
     }
     for (const child of node.children ?? []) {
@@ -832,6 +811,8 @@ function buildNetLayouts(document: SchematicDocumentState, edges: ElkExtendedEdg
         const points = extractSectionPoints(section)
         targetNet.segments.push({
           key: `${edge.id}:${section.id || index}`,
+          kind: 'route',
+          axis: resolveSegmentAxis(points),
           points,
         })
       })
@@ -845,6 +826,8 @@ function buildNetLayouts(document: SchematicDocumentState, edges: ElkExtendedEdg
     const fallbackPoints = buildOrthogonalFallback({ x: sourcePin.x, y: sourcePin.y }, { x: targetPin.x, y: targetPin.y })
     targetNet.segments.push({
       key: `${edge.id}:fallback`,
+      kind: 'fallback',
+      axis: resolveSegmentAxis(fallbackPoints),
       points: fallbackPoints,
     })
   }
@@ -856,6 +839,8 @@ function buildNetLayouts(document: SchematicDocumentState, edges: ElkExtendedEdg
       if (pin) {
         targetNet.segments.push({
           key: `${targetNet.net.id}:stub`,
+          kind: 'stub',
+          axis: resolveSegmentAxis(buildStubSegment(pin)),
           points: buildStubSegment(pin),
         })
       }
@@ -869,10 +854,10 @@ function buildNetLayouts(document: SchematicDocumentState, edges: ElkExtendedEdg
 function buildBounds(components: SchematicLayoutComponent[], groups: SchematicLayoutGroup[], nets: SchematicLayoutNet[]): SchematicLayoutBounds | null {
   let bounds: SchematicLayoutBounds | null = null
   for (const group of groups) {
-    bounds = includeRect(bounds, group.x, group.y, group.width, group.height)
+    bounds = includeRect(bounds, group.bounds.x, group.bounds.y, group.bounds.width, group.bounds.height)
   }
   for (const component of components) {
-    bounds = includeRect(bounds, component.x, component.y, component.width, component.height)
+    bounds = includeRect(bounds, component.bounds.x, component.bounds.y, component.bounds.width, component.bounds.height)
     if (component.nameLabel) {
       const nameBounds = buildTextLabelRect(
         component.nameLabel,

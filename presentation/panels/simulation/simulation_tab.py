@@ -21,7 +21,7 @@
 
 import copy
 import logging
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 
 from PyQt6.QtCore import QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
@@ -42,10 +42,6 @@ from presentation.panels.simulation.simulation_conversation_attachment_coordinat
 from presentation.panels.simulation.simulation_frontend_state_serializer import SimulationFrontendStateSerializer
 from presentation.panels.simulation.simulation_web_bridge import SimulationWebBridge
 from presentation.panels.simulation.simulation_web_host import SimulationWebHost
-from domain.simulation.spice.file_codec import read_spice_source_file
-from domain.simulation.spice.parser import SpiceParser
-from domain.simulation.spice.schematic_builder import SpiceSchematicBuilder
-from domain.simulation.spice.source_patcher import SpiceSourcePatcher
 from resources.theme import (
     COLOR_BG_PRIMARY,
 )
@@ -94,9 +90,6 @@ class SimulationTab(QWidget):
         self._active_frontend_tab = "metrics"
         self._runtime_status_message = ""
         self._state_serializer = SimulationFrontendStateSerializer()
-        self._schematic_parser = SpiceParser()
-        self._schematic_builder = SpiceSchematicBuilder()
-        self._source_patcher = SpiceSourcePatcher()
         self._authoritative_frontend_state = self._state_serializer.serialize_main_state()
         self._authoritative_schematic_document = self._state_serializer.serialize_schematic_document()
         self._authoritative_schematic_write_result = self._state_serializer.serialize_schematic_write_result()
@@ -104,7 +97,6 @@ class SimulationTab(QWidget):
         self._authoritative_raw_data_viewport = self._state_serializer.serialize_raw_data_viewport()
         self._raw_data_copy_sequence = 0
         self._authoritative_raw_data_copy_result = self._state_serializer.serialize_raw_data_copy_result()
-        self._latest_spice_document = None
         self._history_results_cache: List[dict] = []
         self._bound_web_bridge: Optional[SimulationWebBridge] = None
         
@@ -161,6 +153,12 @@ class SimulationTab(QWidget):
         """连接信号"""
         # ViewModel 属性变更
         self._view_model.property_changed.connect(self._on_property_changed)
+        self._backend_runtime.spice_schematic_document.schematic_document_changed.connect(
+            self._on_runtime_schematic_document_changed
+        )
+        self._backend_runtime.spice_schematic_document.schematic_write_result_changed.connect(
+            self._on_runtime_schematic_write_result_changed
+        )
 
     def get_authoritative_frontend_state(self):
         return copy.deepcopy(self._authoritative_frontend_state)
@@ -170,6 +168,20 @@ class SimulationTab(QWidget):
 
     def get_authoritative_schematic_write_result(self):
         return copy.deepcopy(self._authoritative_schematic_write_result)
+
+    def _on_runtime_schematic_document_changed(self, state: dict) -> None:
+        next_schematic_document = self._state_serializer.serialize_schematic_document(state)
+        if next_schematic_document == self._authoritative_schematic_document:
+            return
+        self._authoritative_schematic_document = next_schematic_document
+        self.schematic_document_changed.emit(copy.deepcopy(self._authoritative_schematic_document))
+
+    def _on_runtime_schematic_write_result_changed(self, state: dict) -> None:
+        next_write_result = self._state_serializer.serialize_schematic_write_result(state)
+        if next_write_result == self._authoritative_schematic_write_result:
+            return
+        self._authoritative_schematic_write_result = next_write_result
+        self.schematic_write_result_changed.emit(copy.deepcopy(self._authoritative_schematic_write_result))
 
     def get_authoritative_raw_data_document(self):
         return copy.deepcopy(self._authoritative_raw_data_document)
@@ -260,61 +272,6 @@ class SimulationTab(QWidget):
             self._backend_runtime.raw_data_table.get_document_payload()
         )
 
-    def _build_authoritative_schematic_document(
-        self,
-        *,
-        file_path: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        resolved_file_path = str(file_path or self._resolve_current_schematic_file_path() or "")
-        if not resolved_file_path:
-            self._latest_spice_document = None
-            return self._state_serializer.serialize_schematic_document(
-                self._schematic_builder.build_empty_document()
-            )
-        try:
-            source_file = read_spice_source_file(resolved_file_path)
-            parsed_document = self._schematic_parser.parse_content(source_file.source_text, resolved_file_path)
-            self._latest_spice_document = parsed_document
-            return self._state_serializer.serialize_schematic_document(
-                self._schematic_builder.build_document(
-                    parsed_document,
-                    source_text=source_file.source_text,
-                )
-            )
-        except FileNotFoundError:
-            self._latest_spice_document = None
-            payload = self._schematic_builder.build_empty_document(resolved_file_path)
-            payload["parse_errors"] = [self._make_schematic_parse_error("未找到源电路文件", resolved_file_path)]
-            return self._state_serializer.serialize_schematic_document(payload)
-        except Exception as exc:
-            self._latest_spice_document = None
-            payload = self._schematic_builder.build_empty_document(resolved_file_path)
-            payload["parse_errors"] = [self._make_schematic_parse_error(f"电路文档构建失败: {exc}", resolved_file_path)]
-            return self._state_serializer.serialize_schematic_document(payload)
-
-    def _build_authoritative_schematic_write_result(
-        self,
-        *,
-        document_id: str = "",
-        revision: str = "",
-        request_id: str = "",
-        success: bool = False,
-        component_id: str = "",
-        field_key: str = "",
-        error_message: str = "",
-    ) -> Dict[str, Any]:
-        return self._state_serializer.serialize_schematic_write_result(
-            self._schematic_builder.build_write_result(
-                document_id=document_id,
-                revision=revision,
-                request_id=request_id,
-                success=success,
-                component_id=component_id,
-                field_key=field_key,
-                error_message=error_message,
-            )
-        )
-
     def _build_authoritative_raw_data_viewport(
         self,
         *,
@@ -362,42 +319,6 @@ class SimulationTab(QWidget):
             return
         self._authoritative_frontend_state = next_state
         self.authoritative_frontend_state_changed.emit(copy.deepcopy(self._authoritative_frontend_state))
-
-    def _update_authoritative_schematic_document(
-        self,
-        *,
-        file_path: Optional[str] = None,
-    ) -> None:
-        next_schematic_document = self._build_authoritative_schematic_document(file_path=file_path)
-        if next_schematic_document == self._authoritative_schematic_document:
-            return
-        self._authoritative_schematic_document = next_schematic_document
-        self.schematic_document_changed.emit(copy.deepcopy(self._authoritative_schematic_document))
-
-    def _emit_authoritative_schematic_write_result(
-        self,
-        *,
-        document_id: str = "",
-        revision: str = "",
-        request_id: str = "",
-        success: bool = False,
-        component_id: str = "",
-        field_key: str = "",
-        error_message: str = "",
-    ) -> None:
-        next_write_result = self._build_authoritative_schematic_write_result(
-            document_id=document_id,
-            revision=revision,
-            request_id=request_id,
-            success=success,
-            component_id=component_id,
-            field_key=field_key,
-            error_message=error_message,
-        )
-        if next_write_result == self._authoritative_schematic_write_result:
-            return
-        self._authoritative_schematic_write_result = next_write_result
-        self.schematic_write_result_changed.emit(copy.deepcopy(self._authoritative_schematic_write_result))
 
     def _update_authoritative_raw_data_document(self):
         next_raw_data_document = self._build_authoritative_raw_data_document()
@@ -453,22 +374,6 @@ class SimulationTab(QWidget):
         if include_raw_data:
             self._update_authoritative_raw_data_document()
             self._update_authoritative_raw_data_viewport()
-
-    def _resolve_current_schematic_file_path(self) -> str:
-        result = self._view_model.current_result
-        if result is None:
-            return ""
-        return str(getattr(result, "file_path", "") or "")
-
-    def _make_schematic_parse_error(self, message: str, source_file: str) -> Dict[str, Any]:
-        return {
-            "message": str(message or ""),
-            "source_file": str(source_file or ""),
-            "line_text": "",
-            "line_index": -1,
-            "column_start": -1,
-            "column_end": -1,
-        }
 
     def _subscribe_events(self):
         """订阅事件"""
@@ -761,64 +666,7 @@ class SimulationTab(QWidget):
     def _on_schematic_value_update_requested(self, payload: dict):
         if not isinstance(payload, dict):
             return
-        file_path = self._resolve_current_schematic_file_path()
-        request_id = str(payload.get("request_id") or "")
-        component_id = str(payload.get("component_id") or "")
-        field_key = str(payload.get("field_key") or "")
-        if not file_path:
-            self._emit_authoritative_schematic_write_result(
-                request_id=request_id,
-                success=False,
-                component_id=component_id,
-                field_key=field_key,
-                error_message="当前没有可写回的源电路文件",
-            )
-            return
-
-        current_document = self._build_authoritative_schematic_document(file_path=file_path)
-        if current_document != self._authoritative_schematic_document:
-            self._authoritative_schematic_document = current_document
-            self.schematic_document_changed.emit(copy.deepcopy(self._authoritative_schematic_document))
-
-        if self._latest_spice_document is None:
-            self._emit_authoritative_schematic_write_result(
-                document_id=str(current_document.get("document_id") or ""),
-                revision=str(current_document.get("revision") or ""),
-                request_id=request_id,
-                success=False,
-                component_id=component_id,
-                field_key=field_key,
-                error_message="当前电路文档不可写回，请先修复解析问题",
-            )
-            return
-
-        patch_result = self._source_patcher.patch_value(
-            file_path=file_path,
-            spice_document=self._latest_spice_document,
-            document_id=str(payload.get("document_id") or ""),
-            revision=str(payload.get("revision") or ""),
-            component_id=component_id,
-            field_key=field_key,
-            new_text=str(payload.get("new_text") or ""),
-            request_id=request_id,
-        )
-
-        latest_document = current_document
-        if patch_result.success and patch_result.changed:
-            latest_document = self._build_authoritative_schematic_document(file_path=file_path)
-            if latest_document != self._authoritative_schematic_document:
-                self._authoritative_schematic_document = latest_document
-                self.schematic_document_changed.emit(copy.deepcopy(self._authoritative_schematic_document))
-
-        self._emit_authoritative_schematic_write_result(
-            document_id=str(latest_document.get("document_id") or patch_result.document_id),
-            revision=str(latest_document.get("revision") or patch_result.revision),
-            request_id=patch_result.request_id,
-            success=patch_result.success,
-            component_id=patch_result.component_id,
-            field_key=patch_result.field_key,
-            error_message=patch_result.error_message,
-        )
+        self._backend_runtime.spice_schematic_document.request_value_update(payload)
 
     def _on_raw_data_viewport_requested(self, payload: dict):
         if not isinstance(payload, dict):
@@ -1030,8 +878,7 @@ class SimulationTab(QWidget):
                 next_active_tab = "op_result"
         self._set_active_frontend_tab(next_active_tab)
         self._refresh_history_results_cache()
-        self._update_authoritative_schematic_document(file_path=str(getattr(result, 'file_path', '') or ''))
-        self._emit_authoritative_schematic_write_result()
+        self._backend_runtime.spice_schematic_document.load_from_result_file(str(getattr(result, 'file_path', '') or ''))
         self._update_frontend_payloads(include_raw_data=True)
 
     def _restore_project_result_after_project_opened(self):
@@ -1104,9 +951,6 @@ class SimulationTab(QWidget):
         self._runtime_status_message = ""
         self._backend_runtime.clear()
         self._view_model.clear()
-        self._latest_spice_document = None
-        self._update_authoritative_schematic_document(file_path="")
-        self._emit_authoritative_schematic_write_result()
         self._update_frontend_payloads(include_raw_data=True)
 
     def reload_latest_result(self):

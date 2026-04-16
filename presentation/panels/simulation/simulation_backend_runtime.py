@@ -6,6 +6,7 @@ from presentation.panels.simulation.analysis_info_panel import AnalysisInfoPanel
 from presentation.panels.simulation.output_log_viewer import OutputLogViewer
 from presentation.panels.simulation.raw_data_table import RawDataTable
 from presentation.panels.simulation.simulation_export_panel import SimulationExportPanel
+from presentation.panels.simulation.spice_schematic_document import SpiceSchematicDocument
 from presentation.panels.simulation.waveform_widget import WaveformWidget
 
 
@@ -25,6 +26,7 @@ class SimulationBackendRuntime(QWidget):
         self._raw_data_table = RawDataTable(self)
         self._output_log_viewer = OutputLogViewer(self)
         self._export_panel = SimulationExportPanel(self._chart_viewer, self._waveform_widget, self)
+        self._spice_schematic_document = SpiceSchematicDocument(self)
 
         self._prime_surface(self._chart_viewer, _PRIMARY_SURFACE_SIZE)
         self._prime_surface(self._waveform_widget, _PRIMARY_SURFACE_SIZE)
@@ -56,6 +58,10 @@ class SimulationBackendRuntime(QWidget):
     def export_panel(self) -> SimulationExportPanel:
         return self._export_panel
 
+    @property
+    def spice_schematic_document(self) -> SpiceSchematicDocument:
+        return self._spice_schematic_document
+
     def clear(self):
         self._chart_viewer.clear()
         self._waveform_widget.reset()
@@ -63,6 +69,7 @@ class SimulationBackendRuntime(QWidget):
         self._raw_data_table.clear()
         self._output_log_viewer.clear()
         self._export_panel.clear()
+        self._spice_schematic_document.clear()
 
     def retranslate_ui(self):
         self._chart_viewer.retranslate_ui()

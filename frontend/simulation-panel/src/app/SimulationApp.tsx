@@ -27,6 +27,7 @@ interface SimulationAppProps {
 
 export function SimulationApp({ state, schematicDocument, schematicWriteResult, rawDataCopyResult, rawDataDocument, rawDataViewport, bridge, bridgeConnected, onTabSelect }: SimulationAppProps) {
   const activeTab = state.surface_tabs.active_tab
+  const shouldMountSchematicSurface = activeTab === 'schematic' || Boolean(schematicDocument.file_path)
   const shouldMountRawDataSurface = activeTab === 'raw_data' || rawDataDocument.has_data
 
   return (
@@ -40,8 +41,8 @@ export function SimulationApp({ state, schematicDocument, schematicWriteResult, 
           <ActiveResultTabRouter activeTab={activeTab} state={state} bridge={bridge} />
         </div>
       )}
-      {activeTab === 'schematic' ? (
-        <div className="tab-surface-shell">
+      {shouldMountSchematicSurface ? (
+        <div className={activeTab === 'schematic' ? 'tab-surface-shell' : 'tab-surface-shell tab-surface-shell--hidden'}>
           <SchematicTab state={state} schematicDocument={schematicDocument} schematicWriteResult={schematicWriteResult} />
         </div>
       ) : null}

@@ -2,7 +2,12 @@ import { useEffect, useRef, useState } from 'react'
 
 import { useElementSize } from '../../hooks/useElementSize'
 import type { SchematicDocumentState } from '../../types/state'
-import { getSchematicSymbolDefinition, isSchematicComponentReadonly, type SchematicSymbolAppearance } from './symbolRegistry'
+import {
+  getSchematicSymbolDefinition,
+  getSchematicSymbolRenderTransform,
+  isSchematicComponentReadonly,
+  type SchematicSymbolAppearance,
+} from './symbolRegistry'
 import { SCHEMATIC_NET_LABEL_HEIGHT, getSchematicNetLabelWidth, makeViewTargetWorldPoint } from './schematicLayout'
 import type { SchematicCanvasViewState, SchematicLayoutResult } from './schematicLayoutTypes'
 
@@ -327,6 +332,11 @@ export function SchematicCanvas({
                 const symbolDefinition = getSchematicSymbolDefinition(item.component.symbol_kind)
                 const symbolOffsetX = item.symbolBounds.x - item.bounds.x
                 const symbolOffsetY = item.symbolBounds.y - item.bounds.y
+                const orientationTransform = getSchematicSymbolRenderTransform(
+                  item.orientation,
+                  symbolDefinition.width,
+                  symbolDefinition.height,
+                )
                 return (
                   <g
                     key={item.component.id}
@@ -351,12 +361,14 @@ export function SchematicCanvas({
                     aria-label={`选择器件 ${item.component.instance_name || item.component.display_name || item.component.id}`}
                   >
                     <g transform={`translate(${symbolOffsetX} ${symbolOffsetY})`}>
-                      {symbolDefinition.render({
-                        component: item.component,
-                        width: item.symbolBounds.width,
-                        height: item.symbolBounds.height,
-                        appearance,
-                      })}
+                      <g transform={orientationTransform}>
+                        {symbolDefinition.render({
+                          component: item.component,
+                          width: symbolDefinition.width,
+                          height: symbolDefinition.height,
+                          appearance,
+                        })}
+                      </g>
                     </g>
                     {item.pins.map((pin) => (
                       <g key={`${item.component.id}-${pin.pin.name}`}>

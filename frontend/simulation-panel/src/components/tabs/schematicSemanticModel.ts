@@ -22,12 +22,6 @@ export type SemanticPinRole =
 
 export type SemanticPinHintedSide = 'left' | 'right' | 'top' | 'bottom' | null
 
-export type SemanticComponentOrientationPreference =
-  | 'horizontal'
-  | 'vertical'
-  | 'either'
-  | 'fixed'
-
 export type SemanticNetCategory =
   | 'ground'
   | 'power'
@@ -48,7 +42,6 @@ export interface SemanticComponent {
   symbolWidth: number
   symbolHeight: number
   pins: SemanticPin[]
-  orientationPreference: SemanticComponentOrientationPreference
   scopeGroupId: string
   placementPriority: number
   isolated: boolean

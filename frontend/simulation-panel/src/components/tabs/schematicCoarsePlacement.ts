@@ -1,6 +1,7 @@
-import type { SchematicLayoutRect } from './schematicLayoutTypes'
+import type { SchematicLayoutOrientation, SchematicLayoutRect } from './schematicLayoutTypes'
 import type { SchematicSemanticModel, SemanticComponent, SemanticScopeGroup } from './schematicSemanticModel'
 import type { SchematicSkeleton, SkeletonCluster } from './schematicSkeletonModel'
+import { getOrientedSymbolDimensions, getSchematicSymbolDefinition } from './symbolRegistry'
 
 const H_STEP = 176
 const V_STEP = 132
@@ -60,25 +61,31 @@ function unionBounds(existing: SchematicLayoutRect | null, next: SchematicLayout
   return { x: minX, y: minY, width: maxX - minX, height: maxY - minY }
 }
 
+function resolveOrientedSymbolSize(
+  semanticComponent: SemanticComponent,
+  orientation: SchematicLayoutOrientation,
+): { symbolWidth: number; symbolHeight: number } {
+  const definition = getSchematicSymbolDefinition(semanticComponent.component.symbol_kind)
+  const oriented = getOrientedSymbolDimensions(definition.width, definition.height, orientation)
+  return { symbolWidth: oriented.width, symbolHeight: oriented.height }
+}
+
 function buildComponentPosition(
   semanticComponent: SemanticComponent,
+  orientation: SchematicLayoutOrientation,
   clusterId: string,
   x: number,
   y: number,
 ): CoarseComponentPosition {
-  const width = semanticComponent.symbolWidth + NODE_PADDING_X * 2
-  const height = semanticComponent.symbolHeight + NODE_PADDING_Y * 2
+  const { symbolWidth, symbolHeight } = resolveOrientedSymbolSize(semanticComponent, orientation)
+  const width = symbolWidth + NODE_PADDING_X * 2
+  const height = symbolHeight + NODE_PADDING_Y * 2
   return {
     componentId: semanticComponent.component.id,
     clusterId,
     scopeGroupId: semanticComponent.scopeGroupId,
     box: makeBox(width, height, x, y),
-    symbolBox: makeBox(
-      semanticComponent.symbolWidth,
-      semanticComponent.symbolHeight,
-      x + NODE_PADDING_X,
-      y + NODE_PADDING_Y,
-    ),
+    symbolBox: makeBox(symbolWidth, symbolHeight, x + NODE_PADDING_X, y + NODE_PADDING_Y),
   }
 }
 
@@ -116,6 +123,7 @@ function placeCluster(
   cluster: SkeletonCluster,
   semantic: SchematicSemanticModel,
   skeleton: SchematicSkeleton,
+  orientationsById: Map<string, SchematicLayoutOrientation>,
   topY: number,
   sink: CoarseComponentPosition[],
 ): number {
@@ -128,13 +136,17 @@ function placeCluster(
   const mainPathCenterX = new Map<string, number>()
   const clusterComponents: CoarseComponentPosition[] = []
 
+  function orientationFor(componentId: string): SchematicLayoutOrientation {
+    return orientationsById.get(componentId) ?? 'right'
+  }
+
   let mainCursor = 0
   for (const componentId of cluster.mainPath.componentIds) {
     const semanticComponent = semantic.componentsById.get(componentId)
     if (!semanticComponent) {
       continue
     }
-    const position = buildComponentPosition(semanticComponent, cluster.id, mainCursor, mainRowY)
+    const position = buildComponentPosition(semanticComponent, orientationFor(componentId), cluster.id, mainCursor, mainRowY)
     mainPathCenterX.set(componentId, position.box.x + position.box.width / 2)
     clusterComponents.push(position)
     mainCursor = position.box.x + position.box.width + (H_STEP - position.box.width)
@@ -147,13 +159,15 @@ function placeCluster(
     if (!semanticComponent) {
       continue
     }
+    const orientation = orientationFor(componentId)
     const neighborX = findMainPathNeighborX(componentId, semantic, skeleton, mainPathCenterX)
     const isSupply = semanticComponent.role === 'supply'
     const laneY = isSupply ? supplyRowY : groundRowY
     const fallbackCursor = isSupply ? supplyCursor : groundCursor
-    const width = semanticComponent.symbolWidth + NODE_PADDING_X * 2
+    const { symbolWidth } = resolveOrientedSymbolSize(semanticComponent, orientation)
+    const width = symbolWidth + NODE_PADDING_X * 2
     const x = neighborX !== null ? neighborX - width / 2 : fallbackCursor
-    const position = buildComponentPosition(semanticComponent, cluster.id, x, laneY)
+    const position = buildComponentPosition(semanticComponent, orientation, cluster.id, x, laneY)
     clusterComponents.push(position)
     if (neighborX === null) {
       const nextCursor = position.box.x + position.box.width + (H_STEP - position.box.width)
@@ -171,10 +185,12 @@ function placeCluster(
     if (!semanticComponent) {
       continue
     }
+    const orientation = orientationFor(componentId)
     const neighborX = findMainPathNeighborX(componentId, semantic, skeleton, mainPathCenterX)
-    const width = semanticComponent.symbolWidth + NODE_PADDING_X * 2
+    const { symbolWidth } = resolveOrientedSymbolSize(semanticComponent, orientation)
+    const width = symbolWidth + NODE_PADDING_X * 2
     const x = neighborX !== null ? neighborX - width / 2 : branchCursor
-    const position = buildComponentPosition(semanticComponent, cluster.id, x, branchRowY)
+    const position = buildComponentPosition(semanticComponent, orientation, cluster.id, x, branchRowY)
     clusterComponents.push(position)
     if (neighborX === null) {
       branchCursor = position.box.x + position.box.width + (H_STEP - position.box.width)
@@ -187,7 +203,7 @@ function placeCluster(
     if (!semanticComponent) {
       continue
     }
-    const position = buildComponentPosition(semanticComponent, cluster.id, isolatedCursor, isolatedRowY)
+    const position = buildComponentPosition(semanticComponent, orientationFor(componentId), cluster.id, isolatedCursor, isolatedRowY)
     clusterComponents.push(position)
     isolatedCursor = position.box.x + position.box.width + (H_STEP - position.box.width)
   }
@@ -279,6 +295,7 @@ function computeScopeGroupBounds(
 export function computeSchematicCoarsePlacement(
   semantic: SchematicSemanticModel,
   skeleton: SchematicSkeleton,
+  orientationsById: Map<string, SchematicLayoutOrientation>,
 ): SchematicCoarsePlacement {
   const componentPositions: CoarseComponentPosition[] = []
   const clusterBounds: CoarseClusterBounds[] = []
@@ -286,7 +303,7 @@ export function computeSchematicCoarsePlacement(
   let currentTop = 0
   for (const cluster of skeleton.clusters) {
     const clusterStart = componentPositions.length
-    const nextTop = placeCluster(cluster, semantic, skeleton, currentTop, componentPositions)
+    const nextTop = placeCluster(cluster, semantic, skeleton, orientationsById, currentTop, componentPositions)
     const placed = componentPositions.slice(clusterStart)
     if (placed.length > 0) {
       let minX = Infinity

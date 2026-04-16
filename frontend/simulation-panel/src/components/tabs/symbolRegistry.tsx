@@ -1,8 +1,11 @@
 import type { ReactNode } from 'react'
 
 import type { SchematicComponentState, SchematicPinState } from '../../types/state'
+import type { SchematicLayoutOrientation, SchematicPinSide } from './schematicLayoutTypes'
 
-export type SchematicPinSide = 'left' | 'right' | 'top' | 'bottom'
+export type { SchematicPinSide } from './schematicLayoutTypes'
+
+export type SchematicSymbolBaseAxis = 'horizontal' | 'vertical'
 
 export interface SchematicSymbolAnchor {
   x: number
@@ -29,8 +32,78 @@ export interface RenderSchematicSymbolProps {
 export interface SchematicSymbolDefinition {
   width: number
   height: number
+  baseAxis: SchematicSymbolBaseAxis
+  supportedOrientations: readonly SchematicLayoutOrientation[]
+  preferredOrientations: readonly SchematicLayoutOrientation[]
   getPinAnchor(component: SchematicComponentState, pin: SchematicPinState, index: number): SchematicSymbolAnchor
   render(props: RenderSchematicSymbolProps): ReactNode
+}
+
+const SIDE_ROTATION_CW: Record<SchematicPinSide, SchematicPinSide> = {
+  left: 'top',
+  top: 'right',
+  right: 'bottom',
+  bottom: 'left',
+}
+
+const SIDE_ROTATION_CCW: Record<SchematicPinSide, SchematicPinSide> = {
+  left: 'bottom',
+  bottom: 'right',
+  right: 'top',
+  top: 'left',
+}
+
+const SIDE_MIRROR_X: Record<SchematicPinSide, SchematicPinSide> = {
+  left: 'right',
+  right: 'left',
+  top: 'top',
+  bottom: 'bottom',
+}
+
+export function getOrientedSymbolDimensions(
+  baseWidth: number,
+  baseHeight: number,
+  orientation: SchematicLayoutOrientation,
+): { width: number; height: number } {
+  if (orientation === 'up' || orientation === 'down') {
+    return { width: baseHeight, height: baseWidth }
+  }
+  return { width: baseWidth, height: baseHeight }
+}
+
+export function transformSchematicSymbolAnchor(
+  baseAnchor: SchematicSymbolAnchor,
+  orientation: SchematicLayoutOrientation,
+  baseWidth: number,
+  baseHeight: number,
+): SchematicSymbolAnchor {
+  switch (orientation) {
+    case 'right':
+      return { x: baseAnchor.x, y: baseAnchor.y, side: baseAnchor.side }
+    case 'left':
+      return { x: baseWidth - baseAnchor.x, y: baseAnchor.y, side: SIDE_MIRROR_X[baseAnchor.side] }
+    case 'down':
+      return { x: baseHeight - baseAnchor.y, y: baseAnchor.x, side: SIDE_ROTATION_CW[baseAnchor.side] }
+    case 'up':
+      return { x: baseAnchor.y, y: baseWidth - baseAnchor.x, side: SIDE_ROTATION_CCW[baseAnchor.side] }
+  }
+}
+
+export function getSchematicSymbolRenderTransform(
+  orientation: SchematicLayoutOrientation,
+  baseWidth: number,
+  baseHeight: number,
+): string {
+  switch (orientation) {
+    case 'right':
+      return ''
+    case 'left':
+      return `translate(${baseWidth} 0) scale(-1 1)`
+    case 'down':
+      return `translate(${baseHeight} 0) rotate(90)`
+    case 'up':
+      return `translate(0 ${baseWidth}) rotate(-90)`
+  }
 }
 
 const PASSIVE_WIDTH = 108
@@ -428,9 +501,27 @@ function resolveMosPinAnchor(component: SchematicComponentState, pin: SchematicP
   return { x: TRANSISTOR_WIDTH / 2, y: TRANSISTOR_HEIGHT, side: 'bottom' }
 }
 
+const PASSIVE_SUPPORTED: readonly SchematicLayoutOrientation[] = ['right', 'left', 'up', 'down']
+const PASSIVE_PREFERRED: readonly SchematicLayoutOrientation[] = ['right', 'down']
+
+const VERTICAL_SOURCE_SUPPORTED: readonly SchematicLayoutOrientation[] = ['right', 'down']
+const VERTICAL_SOURCE_PREFERRED: readonly SchematicLayoutOrientation[] = ['right']
+
+const GROUND_SUPPORTED: readonly SchematicLayoutOrientation[] = ['right']
+const GROUND_PREFERRED: readonly SchematicLayoutOrientation[] = ['right']
+
+const DIRECTIONAL_SUPPORTED: readonly SchematicLayoutOrientation[] = ['right', 'left']
+const DIRECTIONAL_PREFERRED: readonly SchematicLayoutOrientation[] = ['right']
+
+const UNKNOWN_SUPPORTED: readonly SchematicLayoutOrientation[] = ['right']
+const UNKNOWN_PREFERRED: readonly SchematicLayoutOrientation[] = ['right']
+
 const passiveDefinition: SchematicSymbolDefinition = {
   width: PASSIVE_WIDTH,
   height: PASSIVE_HEIGHT,
+  baseAxis: 'horizontal',
+  supportedOrientations: PASSIVE_SUPPORTED,
+  preferredOrientations: PASSIVE_PREFERRED,
   getPinAnchor(component, pin, index) {
     return resolvePassivePinAnchor(component, pin, index)
   },
@@ -457,6 +548,9 @@ const symbolDefinitions: Record<string, SchematicSymbolDefinition> = {
   voltage_source: {
     width: SOURCE_SIZE,
     height: SOURCE_SIZE,
+    baseAxis: 'vertical',
+    supportedOrientations: VERTICAL_SOURCE_SUPPORTED,
+    preferredOrientations: VERTICAL_SOURCE_PREFERRED,
     getPinAnchor(component, pin, index) {
       if (index === 0) {
         return { x: SOURCE_SIZE / 2, y: 0, side: 'top' }
@@ -471,6 +565,9 @@ const symbolDefinitions: Record<string, SchematicSymbolDefinition> = {
   current_source: {
     width: SOURCE_SIZE,
     height: SOURCE_SIZE,
+    baseAxis: 'vertical',
+    supportedOrientations: VERTICAL_SOURCE_SUPPORTED,
+    preferredOrientations: VERTICAL_SOURCE_PREFERRED,
     getPinAnchor(component, pin, index) {
       if (index === 0) {
         return { x: SOURCE_SIZE / 2, y: 0, side: 'top' }
@@ -485,6 +582,9 @@ const symbolDefinitions: Record<string, SchematicSymbolDefinition> = {
   ground: {
     width: SOURCE_SIZE,
     height: SOURCE_SIZE,
+    baseAxis: 'vertical',
+    supportedOrientations: GROUND_SUPPORTED,
+    preferredOrientations: GROUND_PREFERRED,
     getPinAnchor() {
       return { x: SOURCE_SIZE / 2, y: 0, side: 'top' }
     },
@@ -493,6 +593,9 @@ const symbolDefinitions: Record<string, SchematicSymbolDefinition> = {
   subckt_block: {
     width: BLOCK_WIDTH,
     height: BLOCK_HEIGHT,
+    baseAxis: 'horizontal',
+    supportedOrientations: DIRECTIONAL_SUPPORTED,
+    preferredOrientations: DIRECTIONAL_PREFERRED,
     getPinAnchor(component, pin, index) {
       return resolveRectPinAnchor(component, pin, index, BLOCK_WIDTH, BLOCK_HEIGHT)
     },
@@ -501,6 +604,9 @@ const symbolDefinitions: Record<string, SchematicSymbolDefinition> = {
   controlled_source: {
     width: BLOCK_WIDTH,
     height: BLOCK_HEIGHT,
+    baseAxis: 'horizontal',
+    supportedOrientations: DIRECTIONAL_SUPPORTED,
+    preferredOrientations: DIRECTIONAL_PREFERRED,
     getPinAnchor(component, pin, index) {
       return resolveRectPinAnchor(component, pin, index, BLOCK_WIDTH, BLOCK_HEIGHT)
     },
@@ -509,6 +615,9 @@ const symbolDefinitions: Record<string, SchematicSymbolDefinition> = {
   opamp: {
     width: TRIANGLE_WIDTH,
     height: TRIANGLE_HEIGHT,
+    baseAxis: 'horizontal',
+    supportedOrientations: DIRECTIONAL_SUPPORTED,
+    preferredOrientations: DIRECTIONAL_PREFERRED,
     getPinAnchor(component, pin, index) {
       return resolveOpampPinAnchor(component, pin, index)
     },
@@ -517,6 +626,9 @@ const symbolDefinitions: Record<string, SchematicSymbolDefinition> = {
   bjt: {
     width: TRANSISTOR_WIDTH,
     height: TRANSISTOR_HEIGHT,
+    baseAxis: 'horizontal',
+    supportedOrientations: DIRECTIONAL_SUPPORTED,
+    preferredOrientations: DIRECTIONAL_PREFERRED,
     getPinAnchor(component, pin, index) {
       return resolveBjtPinAnchor(component, pin, index)
     },
@@ -525,6 +637,9 @@ const symbolDefinitions: Record<string, SchematicSymbolDefinition> = {
   mos: {
     width: TRANSISTOR_WIDTH,
     height: TRANSISTOR_HEIGHT,
+    baseAxis: 'horizontal',
+    supportedOrientations: DIRECTIONAL_SUPPORTED,
+    preferredOrientations: DIRECTIONAL_PREFERRED,
     getPinAnchor(component, pin, index) {
       return resolveMosPinAnchor(component, pin, index)
     },
@@ -533,6 +648,9 @@ const symbolDefinitions: Record<string, SchematicSymbolDefinition> = {
   unknown: {
     width: BLOCK_WIDTH,
     height: BLOCK_HEIGHT,
+    baseAxis: 'horizontal',
+    supportedOrientations: UNKNOWN_SUPPORTED,
+    preferredOrientations: UNKNOWN_PREFERRED,
     getPinAnchor(component, pin, index) {
       return resolveRectPinAnchor(component, pin, index, BLOCK_WIDTH, BLOCK_HEIGHT)
     },

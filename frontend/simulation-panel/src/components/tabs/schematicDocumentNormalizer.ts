@@ -10,7 +10,6 @@ import {
   ROOT_SCOPE_GROUP_ID,
   type SchematicSemanticModel,
   type SemanticComponent,
-  type SemanticComponentOrientationPreference,
   type SemanticComponentRole,
   type SemanticConnectedComponent,
   type SemanticNet,
@@ -60,24 +59,6 @@ function resolveComponentRole(component: SchematicComponentState): SemanticCompo
       return 'block'
     default:
       return 'unknown'
-  }
-}
-
-function resolveOrientationPreference(role: SemanticComponentRole): SemanticComponentOrientationPreference {
-  switch (role) {
-    case 'passive':
-      return 'horizontal'
-    case 'supply':
-    case 'ground':
-      return 'vertical'
-    case 'active':
-      return 'fixed'
-    case 'amplifier':
-    case 'controlled_source':
-      return 'horizontal'
-    case 'block':
-    case 'unknown':
-      return 'either'
   }
 }
 
@@ -301,7 +282,6 @@ export function normalizeSchematicDocument(document: SchematicDocumentState): Sc
       symbolWidth: definition.width,
       symbolHeight: definition.height,
       pins,
-      orientationPreference: resolveOrientationPreference(role),
       scopeGroupId: group.id,
       placementPriority: resolvePlacementPriority(role, pins),
       isolated: true,

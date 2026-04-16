@@ -1,5 +1,6 @@
 import type { SchematicComponentState, SchematicNetState, SchematicPinState } from '../../types/state'
-import type { SchematicPinSide } from './symbolRegistry'
+
+export type SchematicPinSide = 'left' | 'right' | 'top' | 'bottom'
 
 export type SchematicLayoutOrientation = 'right' | 'left' | 'up' | 'down'
 

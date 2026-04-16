@@ -1,5 +1,5 @@
 import type { SchematicComponentState, SchematicDocumentState, SchematicPinState } from '../../types/state'
-import { getSchematicSymbolDefinition, type SchematicPinSide } from './symbolRegistry'
+import { getSchematicSymbolDefinition, transformSchematicSymbolAnchor, type SchematicPinSide } from './symbolRegistry'
 import { normalizeSchematicDocument } from './schematicDocumentNormalizer'
 import type {
   SchematicSemanticModel,
@@ -9,6 +9,7 @@ import { analyzeSchematicSkeleton } from './schematicSkeletonAnalyzer'
 import type { SchematicSkeleton } from './schematicSkeletonModel'
 import { computeSchematicCoarsePlacement } from './schematicCoarsePlacement'
 import type { SchematicCoarsePlacement } from './schematicCoarsePlacement'
+import { decideSchematicComponentOrientations } from './schematicOrientationDecision'
 import type {
   SchematicCanvasViewState,
   SchematicLayoutBounds,
@@ -127,10 +128,6 @@ function resolveLabelSlot(rawSlot: string, fallback: string): string {
     return normalized
   }
   return fallback
-}
-
-function resolveComponentOrientation(semanticComponent: SemanticComponent): SchematicLayoutOrientation {
-  return semanticComponent.orientationPreference === 'vertical' ? 'down' : 'right'
 }
 
 function resolveLabel(component: SchematicComponentState, kind: 'name' | 'value'): LabelPosition | null {
@@ -419,17 +416,21 @@ function resolveNetLabelPosition(netName: string, segments: SchematicLayoutNetSe
       }
 }
 
-function resolvePinAnchors(semanticComponent: SemanticComponent): ResolvedPinAnchor[] {
+function resolveOrientedPinAnchors(
+  semanticComponent: SemanticComponent,
+  orientation: SchematicLayoutOrientation,
+): ResolvedPinAnchor[] {
   const component = semanticComponent.component
   const definition = getSchematicSymbolDefinition(component.symbol_kind)
   return semanticComponent.pins.map((semanticPin) => {
-    const anchor = definition.getPinAnchor(component, semanticPin.pin, semanticPin.index)
+    const baseAnchor = definition.getPinAnchor(component, semanticPin.pin, semanticPin.index)
+    const orientedAnchor = transformSchematicSymbolAnchor(baseAnchor, orientation, definition.width, definition.height)
     return {
       portId: buildPortId(component.id, semanticPin.pin.name),
       pin: semanticPin.pin,
-      side: anchor.side,
-      anchorX: anchor.x,
-      anchorY: anchor.y,
+      side: orientedAnchor.side,
+      anchorX: orientedAnchor.x,
+      anchorY: orientedAnchor.y,
     }
   })
 }
@@ -437,6 +438,7 @@ function resolvePinAnchors(semanticComponent: SemanticComponent): ResolvedPinAnc
 function buildComponentLayouts(
   semantic: SchematicSemanticModel,
   placement: SchematicCoarsePlacement,
+  orientationsById: Map<string, SchematicLayoutOrientation>,
   portMap: Map<string, SchematicLayoutPin>,
 ): { components: SchematicLayoutComponent[]; groups: SchematicLayoutGroup[] } {
   const components: SchematicLayoutComponent[] = []
@@ -445,7 +447,8 @@ function buildComponentLayouts(
     if (!semanticComponent) {
       continue
     }
-    const pinAnchors = resolvePinAnchors(semanticComponent)
+    const orientation = orientationsById.get(position.componentId) ?? 'right'
+    const pinAnchors = resolveOrientedPinAnchors(semanticComponent, orientation)
     const pins: SchematicLayoutPin[] = pinAnchors.map((anchor) => {
       const pin: SchematicLayoutPin = {
         id: anchor.portId,
@@ -458,7 +461,6 @@ function buildComponentLayouts(
       portMap.set(anchor.portId, pin)
       return pin
     })
-    const orientation: SchematicLayoutOrientation = resolveComponentOrientation(semanticComponent)
     const layoutComponent: SchematicLayoutComponent = {
       component: semanticComponent.component,
       orientation,
@@ -635,9 +637,10 @@ export async function computeSchematicLayout(document: SchematicDocumentState): 
 
   const semantic = normalizeSchematicDocument(document)
   const skeleton = analyzeSchematicSkeleton(semantic)
-  const placement = computeSchematicCoarsePlacement(semantic, skeleton)
+  const orientationsById = decideSchematicComponentOrientations(semantic, skeleton)
+  const placement = computeSchematicCoarsePlacement(semantic, skeleton, orientationsById)
   const portMap = new Map<string, SchematicLayoutPin>()
-  const { components, groups } = buildComponentLayouts(semantic, placement, portMap)
+  const { components, groups } = buildComponentLayouts(semantic, placement, orientationsById, portMap)
   const nets = buildNetLayouts(semantic, skeleton, portMap, components)
   const bounds = buildBounds(components, groups, nets)
 

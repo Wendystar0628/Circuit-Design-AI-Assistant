@@ -520,3 +520,102 @@
 - 通过构建的前端产物
 - 一套更稳定的新布局效果
 - 可用于提交的英文 commit name
+
+---
+
+## 第二阶段：约束求解驱动的布局引擎
+
+第一阶段（第 1-11 步）产出了一条**单一权威**的布局流水线，但 `schematicCoarsePlacement.ts` 内部仍然是**枚举模板 + 手工车道**的思路，在复合电路、差分对、镜像结构、多域电源、级联放大等场景下均会失败（表现为组件摆位错乱、引脚视觉上不连接、电源/地线条带无概念）。第二阶段的目标是把 `schematicCoarsePlacement` **整体替换**为约束求解驱动的实现，并在单一电路惯例规则下让任意拓扑都能得到"专业度合格"的自动布局。
+
+核心设计原则："**无模板，只有可组合的约束**" —— 每条电路语义事实（电源网、地网、I/O 端口、scope 子电路、信号流方向）都翻译成约束喂给求解器，由求解器统一权衡。
+
+### 第 12 步：引入 WebCoLa 约束求解库
+
+目标：为第二阶段提供底层约束布局内核，确保类型、打包、运行时都能稳定工作。
+
+实施点：
+
+- 在 `frontend/simulation-panel` 安装 `webcola` 作为 runtime dependency
+- 同步更新 `package.json` 与 `package-lock.json`，版本锁定
+- 验证 `Layout`、`Node`、`Link`、`Group`、`Constraint` 相关类型 / 构造器在本工程的 vite + TS 环境下可 import 与可用
+- 若 `@types` 不完整，就近补本地类型声明
+- 进行一次空构建，确认 webcola 打包没有额外问题（如 Node API 依赖、动态 eval 等）
+
+开发提示：
+
+- webcola 的主 API 可以在不引入 D3 的情况下独立使用，通过 `import * as cola from 'webcola'` 或 `import { Layout } from 'webcola'` 获得
+- 非 D3 用法下使用 `.start(iter1, iter2, iter3, 0, false)` 最后一个参数设为 `false` 以同步完成迭代
+- 不要引入 `webcola` 的 D3 adaptor 部分，避免连带拉入 d3 依赖
+
+输出：
+
+- 安装并锁定的 webcola 依赖
+- 通过类型检查与构建的最小集成
+
+### 第 13 步：以 `schematicConstraintPlacement.ts` 完全取代 `schematicCoarsePlacement.ts`
+
+目标：用约束求解替换手工车道方案，成为**唯一的**放置权威；旧模块从代码库中根除。
+
+对外契约：新模块保留原来的 `SchematicCoarsePlacement` 输出 shape（`componentPositions` / `componentsById` / `scopeGroupBounds` / `scopeGroupBoundsById` / `clusterBounds` / `overallBounds`），这样 `schematicLayout.ts` 下游（路由器、标签规划器、画布）完全零改动。
+
+实施点：
+
+- 新建 `schematicConstraintPlacement.ts`，提供 `computeSchematicCoarsePlacement(semantic, skeleton, orientations): SchematicCoarsePlacement` 权威入口
+- 模块内部职责分段（同文件或拆为辅助模块皆可）：
+  - **节点构造**：为每个 `SemanticComponent` 构造 WebCoLa 节点，宽高取 `orientation` 旋转后的符号尺寸 + 内边距
+  - **链路构造**：为每个 `SemanticNet` 构造 WebCoLa 链路；链路长度按 `SemanticNetCategory`（power/ground/bias/signal）差异化取值；dangling 网跳过
+  - **约束构造**：
+    - 电源网所连组件 → `alignment(y)` 硬约束（顶部轨道）
+    - 地网所连组件 → `alignment(y)` 硬约束（底部轨道）
+    - 顶部轨道 `y` < 底部轨道 `y` 的 separation 硬约束
+    - I/O 端口（通过 `SemanticPinRole` 识别）→ 左/右边缘的 separation 约束
+  - **分组构造**：`SemanticScopeGroup` 按深度优先映射为 WebCoLa `groups`，含嵌套包含关系
+  - **求解**：使用 `avoidOverlaps(true)` + `handleDisconnected(true)` + 三段迭代 `.start(iter1, iter2, iter3)` 同步完成
+  - **结果封送**：WebCoLa 节点中心坐标 → `box`（左上坐标） + `symbolBox`（符号在内边距中央）；重算 `scopeGroupBounds`、`clusterBounds`、`overallBounds`（不依赖 WebCoLa group 包围盒的精确度）
+  - **兜底收敛**：求解结果后做一次局部重叠消解 pass，保证任意情况下无矩形叠加
+- 删除 `schematicCoarsePlacement.ts` 整个文件
+- `schematicLayout.ts` 改为从新模块 import `computeSchematicCoarsePlacement` 与 `SchematicCoarsePlacement` 类型，别处引用一律更新
+- 全局 `grep` 核查 `schematicCoarsePlacement` 无残留
+
+开发提示：
+
+- **禁止**保留旧 coarse placement 作为 fallback。求解器若不收敛要通过调约束/迭代数解决，不要用旧算法兜底
+- 电源/地轨道可能对"同时接 power 与 ground"的组件（如电源器件本身）造成冲突 —— 此类组件不加入任一 alignment，由求解器自由定位；电源组件本身通常是 supply 角色，依靠连接到其上的其他组件的轨道约束自然落位
+- 孤立子图（`handleDisconnected`）会被 WebCoLa 打包到非重叠区域，无需额外处理
+- 求解器产出的坐标单位与旧方案一致（像素），下游路由器的 stub 长度 / grid 常量不需要跟着变
+- 若对称镜像/差分对的识别成本过高，v1 可以不做；`avoidOverlaps + flowLayout` 已经能把绝大多数日常电路收束到合理布局
+
+输出：
+
+- 权威的 `schematicConstraintPlacement.ts`，以 WebCoLa 为内核
+- `schematicCoarsePlacement.ts` 彻底删除
+- `computeSchematicLayout` 流水线唯一放置路径
+
+### 第 14 步：验证、回归与构建
+
+目标：在真实电路样例上确认第二阶段产出确实比第一阶段有质的提升，且下游路由器/标签/画布无回归。
+
+实施点：
+
+- 在 RLC 低通、BJT 共射放大器、CMOS 反相器、运放反相放大（含反馈）、差分对五种拓扑上目视检查布局
+- 重点验证：
+  - 电源组件是否自然落到顶部轨道，地组件落到底部轨道
+  - 主信号器件是否沿水平方向展开
+  - Scope 子电路是否有可辨识的包围盒（嵌套时不相互切断）
+  - 引脚视觉上与导线是否对齐（router 本身未变，故主要看 placement 产出的坐标是否合理）
+  - 组件包围盒之间无物理重叠
+  - `Fit` / 平移 / 缩放 / 选中依然正常
+- 在 `frontend/simulation-panel` 下执行 `npm run build`，确认 0 错误 0 警告退出
+- 如果某类拓扑出现明显放置异常，**优先调整约束规则与权重**，**不要**通过 hack 单点坐标解决
+- 完成后给出英文 git commit 名称
+
+开发提示：
+
+- WebCoLa 的收敛结果受迭代数与初始位置影响。若某些拓扑效果不稳定，优先排查顺序：约束集完整性 → 链路长度差异化 → 迭代数 → 初始位置种子
+- 本阶段的验收标准是"相对第一阶段有明显提升 + 结构化可读"，而非"已达人工布局水平"；进一步对齐/对称/多域轨道属于后续演进
+
+输出：
+
+- 通过构建的前端产物
+- 一套对任意拓扑都更稳定的新布局效果
+- 可用于提交的英文 commit name

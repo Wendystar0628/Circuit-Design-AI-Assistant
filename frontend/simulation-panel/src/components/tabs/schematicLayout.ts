@@ -7,8 +7,8 @@ import type {
 } from './schematicSemanticModel'
 import { analyzeSchematicSkeleton } from './schematicSkeletonAnalyzer'
 import type { SchematicSkeleton } from './schematicSkeletonModel'
-import { computeSchematicCoarsePlacement } from './schematicCoarsePlacement'
-import type { SchematicCoarsePlacement } from './schematicCoarsePlacement'
+import { computeSchematicCoarsePlacement } from './schematicConstraintPlacement'
+import type { SchematicCoarsePlacement } from './schematicConstraintPlacement'
 import { decideSchematicComponentOrientations } from './schematicOrientationDecision'
 import type {
   SchematicCanvasViewState,

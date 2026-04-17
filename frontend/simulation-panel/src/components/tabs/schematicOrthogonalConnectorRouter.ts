@@ -15,10 +15,14 @@ import type { SchematicNetRoleMap } from './schematicNetRoles'
 // Authoritative pin-to-pin wire router backed by:
 //
 //   Layer 1 — Obstacle model
-//     each SchematicLayoutComponent.symbolBounds becomes an axis-aligned
-//     obstacle, inflated by OBSTACLE_CLEARANCE on every side. Pin vertices
-//     inherit their component's id so that edges incident to a pin are
-//     allowed to pass through the owning component's own obstacle.
+//     each SchematicLayoutComponent.bounds becomes an axis-aligned
+//     obstacle, inflated by OBSTACLE_CLEARANCE on every side. `bounds`
+//     is the union of the component's symbol rectangle and every rail
+//     stub glyph attached to its pins (see `expandComponentBoundsForStubs`
+//     in `schematicLayout.ts`), so both the body and its GND / VCC stubs
+//     repel wires. Pin vertices inherit their component's id so that
+//     edges incident to a pin are allowed to pass through the owning
+//     component's own obstacle.
 //
 //   Layer 2 — Orthogonal visibility graph (OVG)
 //     coordinates are collected from obstacle edges and pin/attachment
@@ -70,6 +74,17 @@ const TREE_REUSE_BONUS_FACTOR = 0.05
 const WIRE_MIN_GAP = 10
 const GRID_SNAP = 4
 const EPSILON = 1e-6
+/**
+ * Tie-breaking reward applied to an A* edge whose destination vertex lies
+ * on a terminal's x- or y-axis line. Must stay strictly below half of
+ * `BEND_PENALTY_COST` so it can never coerce the router to take an extra
+ * bend or a longer detour purely to land on a terminal axis — it only
+ * breaks ties between otherwise equal-cost paths. With this bonus,
+ * Steiner-like tree growth naturally snaps its branch vertices onto a
+ * terminal's column or row, producing clean T-junctions instead of small
+ * "Z jogs" between near-aligned pins.
+ */
+const TERMINAL_AXIS_ALIGNMENT_BONUS = 8
 
 // ---------------------------------------------------------------------------
 // Obstacle model (Layer 1)
@@ -88,7 +103,12 @@ function buildObstacles(components: SchematicLayoutComponent[]): Obstacle[] {
   const obstacles: Obstacle[] = []
   for (let index = 0; index < components.length; index += 1) {
     const component = components[index]
-    const bounds = component.symbolBounds
+    // `bounds` already unions the symbol rectangle with every rail stub
+    // glyph rectangle (see `expandComponentBoundsForStubs`). Using it
+    // here — rather than the raw `symbolBounds` — means the router's
+    // visibility graph automatically excludes cells under GND / VCC
+    // stubs, preventing wires from crossing a stub's three-bar glyph.
+    const bounds = component.bounds
     obstacles.push({
       id: index,
       left: bounds.x - OBSTACLE_CLEARANCE,
@@ -487,12 +507,20 @@ interface AStarResult {
   totalCost: number
 }
 
+interface TerminalAxes {
+  xs: Set<number>
+  ys: Set<number>
+}
+
+const EMPTY_TERMINAL_AXES: TerminalAxes = { xs: new Set<number>(), ys: new Set<number>() }
+
 function findShortestOrthogonalPath(
   ovg: OVG,
   sourceIds: Iterable<number>,
   targetId: number,
   reusedEdgeIndices: Set<number>,
   obstructionPenalty: Map<number, number>,
+  terminalAxes: TerminalAxes = EMPTY_TERMINAL_AXES,
 ): AStarResult | null {
   const heap: SearchEntry[] = []
   const bestCost = new Map<string, number>()
@@ -552,10 +580,24 @@ function findShortestOrthogonalPath(
       const isBend = current.lastAxis !== 'none' && current.lastAxis !== nextAxis
       const reuseBonus = reusedEdgeIndices.has(edge.index) ? TREE_REUSE_BONUS_FACTOR : 1
       const overlapCount = obstructionPenalty.get(edge.index) ?? 0
-      const stepCost =
+      // Landing on a terminal's x- or y-axis line is rewarded with a
+      // small discount so that, given multiple equal-cost routes, the
+      // Steiner-like tree prefers branch vertices that lie directly
+      // above / below / beside a real terminal. This is the mechanism
+      // that converts a "Z jog" (two near-parallel segments joined by a
+      // short orthogonal bridge) into a clean T-junction anchored on
+      // whichever terminal's column / row the branch snapped onto.
+      const destinationVertex = ovg.vertices[neighbor.to]
+      const alignsWithTerminalAxis =
+        terminalAxes.xs.has(destinationVertex.x) || terminalAxes.ys.has(destinationVertex.y)
+      const axisBonus = alignsWithTerminalAxis ? TERMINAL_AXIS_ALIGNMENT_BONUS : 0
+      const stepCost = Math.max(
+        0,
         edge.length * reuseBonus +
-        (isBend ? BEND_PENALTY_COST : 0) +
-        overlapCount * WIRE_OVERLAP_PENALTY_COST
+          (isBend ? BEND_PENALTY_COST : 0) +
+          overlapCount * WIRE_OVERLAP_PENALTY_COST -
+          axisBonus,
+      )
 
       const nextG = current.gCost + stepCost
       const nextKey = stateKey(neighbor.to, nextAxis)
@@ -622,6 +664,16 @@ function growSteinerLikeTree(
   if (terminalVertexIds.length === 0) {
     return null
   }
+  // Collect the x- and y-coordinates of every terminal up front. A* will
+  // reward edges landing on these axis lines so that the tree's branch
+  // vertex naturally snaps onto some terminal's column / row, converting
+  // near-parallel Z-jogs into clean T-junctions.
+  const terminalAxes: TerminalAxes = { xs: new Set<number>(), ys: new Set<number>() }
+  for (const id of terminalVertexIds) {
+    const vertex = ovg.vertices[id]
+    terminalAxes.xs.add(vertex.x)
+    terminalAxes.ys.add(vertex.y)
+  }
   // Pick the terminal closest to the geometric centroid of all terminals as
   // the tree seed. The Prim-like Steiner heuristic below grows outward from
   // the seed, so starting at the centroid minimizes the expected path length
@@ -649,6 +701,7 @@ function growSteinerLikeTree(
         target,
         tree.edgeIndices,
         globalOverlap,
+        terminalAxes,
       )
       if (!result) continue
       if (bestResult === null || result.totalCost < bestResult.path.totalCost) {

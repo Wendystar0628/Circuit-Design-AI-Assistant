@@ -64,6 +64,76 @@ const SCOPE_OUTER_PADDING_Y = 34
 const SCOPE_INNER_PADDING = '[top=28,left=28,bottom=28,right=28]'
 const ROOT_PADDING = '[top=40,left=40,bottom=40,right=40]'
 
+/**
+ * Extra ELK padding allocated on the stub side of any component pin that
+ * terminates in a GND / VCC glyph. Value = `RAIL_STUB_LENGTH` (26 px, the
+ * visual stub extension configured in `schematicLayout.ts`) + a small
+ * margin (10 px) that covers the three-bar ground glyph's half-width and
+ * the power-stub's triangle cap / label. ELK therefore reserves this
+ * space during placement, so downstream passes never have to shove a
+ * neighbor out of the way to avoid a rail glyph.
+ */
+const RAIL_STUB_PADDING = 36
+
+interface RailStubPadding {
+  left: number
+  right: number
+  top: number
+  bottom: number
+}
+
+const ZERO_RAIL_STUB_PADDING: RailStubPadding = { left: 0, right: 0, top: 0, bottom: 0 }
+
+/**
+ * Pre-compute, per component, how much extra padding is needed on each of
+ * its four sides because a pin on that side is connected to a rail (GND
+ * or VCC) and will therefore be drawn as a local stub glyph rather than
+ * as a routed wire. Rail-source components themselves (the `supply` /
+ * `ground` symbols that live on the rail trunks) are excluded: their
+ * pins are the rail itself, not a consumer of one, so no stub is drawn
+ * on them. The result feeds both the ELK node-size computation and the
+ * downstream `symbolBox` placement so the two stay in lock-step.
+ */
+function computeRailStubPaddingByComponent(
+  semantic: SchematicSemanticModel,
+  netRoles: SchematicNetRoleMap,
+): Map<string, RailStubPadding> {
+  const result = new Map<string, RailStubPadding>()
+  for (const component of semantic.components) {
+    result.set(component.component.id, { left: 0, right: 0, top: 0, bottom: 0 })
+  }
+  for (const semanticNet of semantic.nets) {
+    const role = netRoles.get(semanticNet.net.id)
+    if (role !== 'ground_rail' && role !== 'power_rail') continue
+    for (const connection of semanticNet.net.connections) {
+      const component = semantic.componentsById.get(connection.component_id)
+      if (!component) continue
+      if (component.role === 'supply' || component.role === 'ground') continue
+      const semanticPin = component.pins.find((p) => p.pin.name === connection.pin_name)
+      if (!semanticPin) continue
+      const definition = getSchematicSymbolDefinition(component.component.symbol_kind)
+      const anchor = definition.getPinAnchor(component.component, semanticPin.pin, semanticPin.index)
+      const padding = result.get(component.component.id)
+      if (!padding) continue
+      switch (anchor.side) {
+        case 'left':
+          padding.left = Math.max(padding.left, RAIL_STUB_PADDING)
+          break
+        case 'right':
+          padding.right = Math.max(padding.right, RAIL_STUB_PADDING)
+          break
+        case 'top':
+          padding.top = Math.max(padding.top, RAIL_STUB_PADDING)
+          break
+        case 'bottom':
+          padding.bottom = Math.max(padding.bottom, RAIL_STUB_PADDING)
+          break
+      }
+    }
+  }
+  return result
+}
+
 const RAIL_TRUNK_CLEARANCE_Y = 120
 const RAIL_COMPONENT_SPACING_X = 112
 const RAIL_COMPONENT_MIN_MARGIN_X = 32
@@ -223,7 +293,10 @@ function mapPinSideToElkSide(side: SchematicPinSide): string {
   }
 }
 
-function buildComponentElkNode(component: SemanticComponent): ElkNode {
+function buildComponentElkNode(
+  component: SemanticComponent,
+  stubPadding: RailStubPadding,
+): ElkNode {
   const definition = getSchematicSymbolDefinition(component.component.symbol_kind)
   const dimensions = definition.getDimensions(component.component)
   const ports: ElkPort[] = component.pins.map((semanticPin) => {
@@ -237,10 +310,18 @@ function buildComponentElkNode(component: SemanticComponent): ElkNode {
       },
     }
   })
+  // Add per-side padding so ELK reserves space for rail stubs that the
+  // render layer will draw outside the symbol rectangle. Without this,
+  // ELK only sees the symbol-size envelope and may place a neighbor so
+  // close that its wire / body overlaps with our GND or VCC glyph.
+  const padLeft = NODE_PADDING_X + stubPadding.left
+  const padRight = NODE_PADDING_X + stubPadding.right
+  const padTop = NODE_PADDING_Y + stubPadding.top
+  const padBottom = NODE_PADDING_Y + stubPadding.bottom
   return {
     id: component.component.id,
-    width: dimensions.width + NODE_PADDING_X * 2,
-    height: dimensions.height + NODE_PADDING_Y * 2,
+    width: dimensions.width + padLeft + padRight,
+    height: dimensions.height + padTop + padBottom,
     ports,
     layoutOptions: { ...COMPONENT_NODE_LAYOUT_OPTIONS },
   }
@@ -453,6 +534,7 @@ function collectAbsoluteScopeBounds(
 function buildMainComponentPositions(
   mainComponents: SemanticComponent[],
   absoluteNodes: Map<string, AbsolutePositionedNode>,
+  stubPaddingByComponent: Map<string, RailStubPadding>,
 ): SchematicElkComponentPosition[] {
   const positions: SchematicElkComponentPosition[] = []
   for (const component of mainComponents) {
@@ -460,17 +542,28 @@ function buildMainComponentPositions(
     if (!placed) continue
     const definition = getSchematicSymbolDefinition(component.component.symbol_kind)
     const dimensions = definition.getDimensions(component.component)
+    const stubPadding = stubPaddingByComponent.get(component.component.id) ?? ZERO_RAIL_STUB_PADDING
+    // The box ELK returned includes our per-side `NODE_PADDING_* + stub`
+    // allowance. The symbol must sit at the corresponding offset inside
+    // the box so that whichever side carries a rail stub ends up with
+    // `RAIL_STUB_PADDING` pixels of clearance between the symbol edge
+    // and the box edge — exactly the space the renderer needs to draw
+    // the stub glyph without spilling into a neighbor.
+    const padLeft = NODE_PADDING_X + stubPadding.left
+    const padTop = NODE_PADDING_Y + stubPadding.top
+    const padRight = NODE_PADDING_X + stubPadding.right
+    const padBottom = NODE_PADDING_Y + stubPadding.bottom
     const boxX = snapToGrid(placed.absX)
     const boxY = snapToGrid(placed.absY)
-    const boxWidth = placed.node.width ?? dimensions.width + NODE_PADDING_X * 2
-    const boxHeight = placed.node.height ?? dimensions.height + NODE_PADDING_Y * 2
+    const boxWidth = placed.node.width ?? dimensions.width + padLeft + padRight
+    const boxHeight = placed.node.height ?? dimensions.height + padTop + padBottom
     positions.push({
       componentId: component.component.id,
       scopeGroupId: component.scopeGroupId,
       box: { x: boxX, y: boxY, width: boxWidth, height: boxHeight },
       symbolBox: {
-        x: boxX + NODE_PADDING_X,
-        y: boxY + NODE_PADDING_Y,
+        x: boxX + padLeft,
+        y: boxY + padTop,
         width: dimensions.width,
         height: dimensions.height,
       },
@@ -706,6 +799,11 @@ export async function computeSchematicElkLayout(
 
   const { mainComponents, powerRailOnly, groundRailOnly } = partitionByRailRole(semantic)
   const mainComponentIds = new Set(mainComponents.map((item) => item.component.id))
+  // Pre-compute per-component rail stub padding. Used both when building
+  // ELK nodes (so placement reserves space for the glyph) and later when
+  // mapping ELK's output back to symbolBox (so the symbol sits flush
+  // against its non-stub sides and the padded sides carry the stub).
+  const stubPaddingByComponent = computeRailStubPaddingByComponent(semantic, netRoles)
 
   let mainPositions: SchematicElkComponentPosition[]
   let elkScopeBounds: Map<string, SchematicLayoutRect>
@@ -713,7 +811,11 @@ export async function computeSchematicElkLayout(
   if (mainComponents.length > 0) {
     const componentNodesById = new Map<string, ElkNode>()
     for (const component of mainComponents) {
-      componentNodesById.set(component.component.id, buildComponentElkNode(component))
+      const stubPadding = stubPaddingByComponent.get(component.component.id) ?? ZERO_RAIL_STUB_PADDING
+      componentNodesById.set(
+        component.component.id,
+        buildComponentElkNode(component, stubPadding),
+      )
     }
     const rootScope = semantic.scopeGroupsById.get(semantic.rootScopeGroupId)
     if (!rootScope) {
@@ -739,7 +841,7 @@ export async function computeSchematicElkLayout(
     const elk = await getElkInstance()
     const laidOut = await elk.layout(rootNode)
     const absoluteNodes = collectAbsoluteComponentPositions(laidOut, mainComponentIds)
-    mainPositions = buildMainComponentPositions(mainComponents, absoluteNodes)
+    mainPositions = buildMainComponentPositions(mainComponents, absoluteNodes, stubPaddingByComponent)
     elkScopeBounds = collectAbsoluteScopeBounds(laidOut, semantic)
   } else {
     mainPositions = []

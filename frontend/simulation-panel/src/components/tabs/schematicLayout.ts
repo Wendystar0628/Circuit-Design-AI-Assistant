@@ -20,6 +20,7 @@ import type {
   SchematicLayoutPin,
   SchematicLayoutPinStub,
   SchematicLayoutPoint,
+  SchematicLayoutRect,
   SchematicLayoutResult,
 } from './schematicLayoutTypes'
 import { routeSchematicNets } from './schematicOrthogonalConnectorRouter'
@@ -27,6 +28,7 @@ import {
   rotateLayoutClockwise90,
   shouldRotateLayoutToHorizontal,
 } from './schematicLayoutRotation'
+import { alignNetPins } from './schematicPinAlignment'
 import {
   SCHEMATIC_COMPONENT_LABEL_HEIGHT,
   SCHEMATIC_NET_LABEL_HEIGHT,
@@ -106,6 +108,17 @@ function buildRequestKey(documentId: string, revision: string): string {
   return `${documentId}::${revision}`
 }
 
+// Keep this in lock-step with the `GRID_SNAP` constant in
+// `schematicOrthogonalConnectorRouter.ts`. The router snaps every polyline
+// point to this grid; snapping pin coordinates here ensures terminals and
+// route endpoints land on the same lattice so the orthogonal visibility
+// graph does not manufacture near-duplicate columns / rows.
+const PIN_GRID_SNAP = 4
+
+function snapPinCoordinate(value: number): number {
+  return Math.round(value / PIN_GRID_SNAP) * PIN_GRID_SNAP
+}
+
 function resolvePinAnchors(semanticComponent: SemanticComponent): ResolvedPinAnchor[] {
   const component = semanticComponent.component
   const definition = getSchematicSymbolDefinition(component.symbol_kind)
@@ -134,13 +147,19 @@ function buildComponentLayouts(
     }
     const pinAnchors = resolvePinAnchors(semanticComponent)
     const pins: SchematicLayoutPin[] = pinAnchors.map((anchor) => {
+      // Snap each pin's world coordinates to the router's grid so that
+      // sub-grid offsets carried by `anchor.x/y` (e.g. passive pins at
+      // y=30 when GRID_SNAP=4 → residual 2 px off-grid) never leak into
+      // the orthogonal visibility graph as near-duplicate candidate
+      // lines. Without this, two terminals that *should* share a column
+      // can end up 2 px apart and force a spurious micro-jog segment.
       const pin: SchematicLayoutPin = {
         id: anchor.portId,
         componentId: position.componentId,
         pin: anchor.pin,
         side: anchor.side,
-        x: position.symbolBox.x + anchor.anchorX,
-        y: position.symbolBox.y + anchor.anchorY,
+        x: snapPinCoordinate(position.symbolBox.x + anchor.anchorX),
+        y: snapPinCoordinate(position.symbolBox.y + anchor.anchorY),
         stub: null,
       }
       portMap.set(anchor.portId, pin)
@@ -182,6 +201,67 @@ function buildComponentLayouts(
 // ---------------------------------------------------------------------------
 
 const RAIL_STUB_LENGTH = 26
+
+/**
+ * Half-width (perpendicular to the stub axis) of the widest rail glyph —
+ * the three-bar ground symbol or the power-stub triangle + label. Used to
+ * expand each component's `bounds` after stubs are attached so the router
+ * sees the stub glyph as an obstacle and the pin-alignment pass refuses
+ * to shift a neighbor into the space the glyph occupies.
+ */
+const RAIL_STUB_HALF_WIDTH = 12
+
+/**
+ * Return the axis-aligned rectangle that a rail stub glyph + label will
+ * occupy in world space. The rectangle always starts at the pin anchor
+ * and extends outward along the pin's side by `stub.length`, with a
+ * symmetric half-width perpendicular to that axis. This matches what
+ * `renderSchematicPinStub` actually draws — the ground three-bar glyph,
+ * the power cap triangle, and their adjacent labels all fit inside this
+ * rectangle.
+ */
+function computeRailStubBounds(pin: SchematicLayoutPin): SchematicLayoutRect | null {
+  if (!pin.stub) return null
+  const { x, y, side, length } = pin.stub
+  const halfWidth = RAIL_STUB_HALF_WIDTH
+  switch (side) {
+    case 'top':
+      return { x: x - halfWidth, y: y - length, width: halfWidth * 2, height: length }
+    case 'bottom':
+      return { x: x - halfWidth, y, width: halfWidth * 2, height: length }
+    case 'left':
+      return { x: x - length, y: y - halfWidth, width: length, height: halfWidth * 2 }
+    case 'right':
+      return { x, y: y - halfWidth, width: length, height: halfWidth * 2 }
+  }
+}
+
+function unionLayoutRect(a: SchematicLayoutRect, b: SchematicLayoutRect): SchematicLayoutRect {
+  const minX = Math.min(a.x, b.x)
+  const minY = Math.min(a.y, b.y)
+  const maxX = Math.max(a.x + a.width, b.x + b.width)
+  const maxY = Math.max(a.y + a.height, b.y + b.height)
+  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY }
+}
+
+/**
+ * Expand each component's `bounds` to include any rail stub rectangles
+ * attached to its pins. `bounds` is the canonical "occupied area" used by
+ * every downstream pass — the orthogonal router's obstacle builder, the
+ * pin-alignment pass's overlap check, and the final layout bounds. By
+ * folding the stub rectangles into it here, right after the stubs are
+ * attached, all those passes inherit stub-aware collision detection for
+ * free.
+ */
+function expandComponentBoundsForStubs(components: SchematicLayoutComponent[]): void {
+  for (const component of components) {
+    for (const pin of component.pins) {
+      const stubRect = computeRailStubBounds(pin)
+      if (!stubRect) continue
+      component.bounds = unionLayoutRect(component.bounds, stubRect)
+    }
+  }
+}
 
 function attachRailPinStubs(
   semantic: SchematicSemanticModel,
@@ -387,7 +467,20 @@ export async function computeSchematicLayout(document: SchematicDocumentState): 
   const placement = await computeSchematicElkLayout(semantic, netRoles)
   const portMap = new Map<string, SchematicLayoutPin>()
   const { components, groups } = buildComponentLayouts(semantic, placement, portMap)
+  // Snap signal-net pins onto a shared axis before rail stubs or routing
+  // run. This is the authoritative fix for "Z-jog" artifacts between
+  // near-aligned terminals: the downstream router will draw clean straight
+  // lines / T-junctions because its inputs are already co-linear. See
+  // `schematicPinAlignment.ts` for the full rationale.
+  const pinsByNet = buildPinsByNet(semantic, portMap)
+  alignNetPins(components, pinsByNet, netRoles)
   attachRailPinStubs(semantic, netRoles, portMap)
+  // Fold the rail-stub glyph rectangles into each component's `bounds`
+  // so the router's obstacle builder and the final bounds computation
+  // treat the stub as part of the component's occupied area. Must run
+  // after `attachRailPinStubs` (the stub records are the input) and
+  // before `buildNetLayouts` (the router reads these bounds).
+  expandComponentBoundsForStubs(components)
   const nets = buildNetLayouts(semantic, netRoles, portMap, components)
   applySchematicLabelPlans(components, nets)
   const bounds = buildBounds(components, groups, nets)

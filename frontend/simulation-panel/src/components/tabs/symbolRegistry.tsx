@@ -1,7 +1,11 @@
 import type { ReactNode } from 'react'
 
 import type { SchematicComponentState, SchematicPinState } from '../../types/state'
-import type { SchematicLayoutOrientation, SchematicPinSide } from './schematicLayoutTypes'
+import type {
+  SchematicLayoutOrientation,
+  SchematicLayoutPinStub,
+  SchematicPinSide,
+} from './schematicLayoutTypes'
 
 export type { SchematicPinSide } from './schematicLayoutTypes'
 
@@ -599,4 +603,138 @@ const symbolDefinitions: Record<string, SchematicSymbolDefinition> = {
 
 export function getSchematicSymbolDefinition(kind: string): SchematicSymbolDefinition {
   return symbolDefinitions[kind] ?? symbolDefinitions.unknown
+}
+
+// ---------------------------------------------------------------------------
+// Pin stub glyphs (GND / VCC / VEE).
+//
+// Stubs are the industry-standard way to express "this pin connects to a
+// shared rail" without drawing a long wire across the canvas. A stub is a
+// short line leaving the pin in its outward direction, capped by a small
+// symbol (three decreasing bars for GND, a triangle for power) plus an
+// optional text label for named rails.
+//
+// The glyph is a pure geometric function of the stub descriptor (`side`,
+// `x`, `y`, `length`, `label`). No placement is decided here — the layout
+// layer has already pinned the anchor point in world coordinates.
+// ---------------------------------------------------------------------------
+
+export interface SchematicPinStubAppearance {
+  stroke: string
+  fill: string
+  text: string
+}
+
+interface StubAxes {
+  dx: number
+  dy: number
+  perpX: number
+  perpY: number
+}
+
+function resolveStubAxes(side: SchematicPinSide): StubAxes {
+  switch (side) {
+    case 'top':
+      return { dx: 0, dy: -1, perpX: 1, perpY: 0 }
+    case 'bottom':
+      return { dx: 0, dy: 1, perpX: 1, perpY: 0 }
+    case 'left':
+      return { dx: -1, dy: 0, perpX: 0, perpY: 1 }
+    case 'right':
+      return { dx: 1, dy: 0, perpX: 0, perpY: 1 }
+  }
+}
+
+const GND_BAR_WIDTHS: readonly number[] = [18, 12, 6]
+const GND_BAR_SPACING = 3.5
+const GND_STROKE_WIDTH = 1.8
+
+function renderGroundStubGlyph(stub: SchematicLayoutPinStub, axes: StubAxes, appearance: SchematicPinStubAppearance): ReactNode {
+  const tipX = stub.x + axes.dx * stub.length
+  const tipY = stub.y + axes.dy * stub.length
+  return (
+    <g stroke={appearance.stroke} strokeWidth={GND_STROKE_WIDTH} strokeLinecap="round" fill="none">
+      <line x1={stub.x} y1={stub.y} x2={tipX} y2={tipY} />
+      {GND_BAR_WIDTHS.map((width, index) => {
+        const offsetAlong = index * GND_BAR_SPACING
+        const cx = tipX + axes.dx * offsetAlong
+        const cy = tipY + axes.dy * offsetAlong
+        const halfWidth = width / 2
+        return (
+          <line
+            key={index}
+            x1={cx + axes.perpX * halfWidth}
+            y1={cy + axes.perpY * halfWidth}
+            x2={cx - axes.perpX * halfWidth}
+            y2={cy - axes.perpY * halfWidth}
+          />
+        )
+      })}
+    </g>
+  )
+}
+
+const POWER_CAP_SIZE = 8
+const POWER_LABEL_OFFSET = 10
+const POWER_FONT_SIZE = 12
+const POWER_STROKE_WIDTH = 1.8
+
+function powerLabelAnchor(side: SchematicPinSide): 'start' | 'middle' | 'end' {
+  if (side === 'left') return 'end'
+  if (side === 'right') return 'start'
+  return 'middle'
+}
+
+function renderPowerStubGlyph(stub: SchematicLayoutPinStub, axes: StubAxes, appearance: SchematicPinStubAppearance): ReactNode {
+  const tipX = stub.x + axes.dx * stub.length
+  const tipY = stub.y + axes.dy * stub.length
+  // Triangle cap points outward along the stub axis.
+  const apexX = tipX + axes.dx * POWER_CAP_SIZE
+  const apexY = tipY + axes.dy * POWER_CAP_SIZE
+  const leftBaseX = tipX + axes.perpX * (POWER_CAP_SIZE / 2)
+  const leftBaseY = tipY + axes.perpY * (POWER_CAP_SIZE / 2)
+  const rightBaseX = tipX - axes.perpX * (POWER_CAP_SIZE / 2)
+  const rightBaseY = tipY - axes.perpY * (POWER_CAP_SIZE / 2)
+  const labelX = apexX + axes.dx * POWER_LABEL_OFFSET
+  const labelY = apexY + axes.dy * POWER_LABEL_OFFSET
+  return (
+    <g>
+      <line
+        x1={stub.x}
+        y1={stub.y}
+        x2={tipX}
+        y2={tipY}
+        stroke={appearance.stroke}
+        strokeWidth={POWER_STROKE_WIDTH}
+        strokeLinecap="round"
+      />
+      <polygon
+        points={`${apexX},${apexY} ${leftBaseX},${leftBaseY} ${rightBaseX},${rightBaseY}`}
+        fill={appearance.fill}
+        stroke={appearance.stroke}
+        strokeWidth={POWER_STROKE_WIDTH}
+        strokeLinejoin="round"
+      />
+      {stub.label ? (
+        <text
+          x={labelX}
+          y={labelY + (axes.dy > 0 ? POWER_FONT_SIZE : 0)}
+          textAnchor={powerLabelAnchor(stub.side)}
+          fontSize={POWER_FONT_SIZE}
+          fontWeight={600}
+          fill={appearance.text}
+        >
+          {stub.label}
+        </text>
+      ) : null}
+    </g>
+  )
+}
+
+export function renderSchematicPinStub(stub: SchematicLayoutPinStub, appearance: SchematicPinStubAppearance): ReactNode {
+  const axes = resolveStubAxes(stub.side)
+  if (stub.kind === 'ground') {
+    return renderGroundStubGlyph(stub, axes, appearance)
+  }
+  return renderPowerStubGlyph(stub, axes, appearance)
 }

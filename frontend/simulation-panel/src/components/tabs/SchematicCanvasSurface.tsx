@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { useElementSize } from '../../hooks/useElementSize'
 import type { SchematicDocumentState } from '../../types/state'
@@ -6,6 +6,8 @@ import {
   getSchematicSymbolDefinition,
   getSchematicSymbolRenderTransform,
   isSchematicComponentReadonly,
+  renderSchematicPinStub,
+  type SchematicPinStubAppearance,
   type SchematicSymbolAppearance,
 } from './symbolRegistry'
 import { makeViewTargetWorldPoint } from './schematicLayout'
@@ -106,11 +108,21 @@ export function SchematicCanvas({
   onViewportSizeChange,
   onSelectComponent,
 }: SchematicCanvasProps) {
-  const { ref, width, height } = useElementSize<HTMLDivElement>()
+  const { ref: viewportSizeRefCallback, width, height } = useElementSize<HTMLDivElement>()
   const [hoveredComponentId, setHoveredComponentId] = useState('')
   const [panning, setPanning] = useState(false)
   const dragStateRef = useRef<{ startX: number; startY: number; offsetX: number; offsetY: number; moved: boolean } | null>(null)
   const panMovedRef = useRef(false)
+  const viewportNodeRef = useRef<HTMLDivElement | null>(null)
+
+  // Composed ref: delegates to `useElementSize`'s callback ref (which tracks
+  // size via ResizeObserver) while also capturing the DOM node so the native
+  // wheel listener below can target it directly. React accepts callback refs,
+  // so we compose both handlers into one.
+  const assignViewportNode = useCallback((node: HTMLDivElement | null) => {
+    viewportNodeRef.current = node
+    viewportSizeRefCallback(node)
+  }, [viewportSizeRefCallback])
 
   useEffect(() => {
     onViewportSizeChange({ width, height })
@@ -196,23 +208,70 @@ export function SchematicCanvas({
     }
   }
 
-  const handleWheel = (event: React.WheelEvent<HTMLDivElement>) => {
-    if (width <= 0 || height <= 0) {
-      return
+  // --------------------------------------------------------------------------
+  // Native wheel listener, intentionally bypassing React's synthetic event
+  // system. React 17+ attaches `wheel` / `touchstart` / `touchmove` delegated
+  // listeners with `{ passive: true }` as a global performance policy; inside a
+  // passive listener the browser silently drops `event.preventDefault()` and
+  // emits a Chromium warning (elevated to `[Qt Critical]` inside Qt WebEngine).
+  // Without `preventDefault` the default page scroll races with our zoom, so we
+  // must register a non-passive listener via the native API. `useRef` shadows
+  // capture the latest view-state so the listener itself is mounted exactly
+  // once and never torn down per frame.
+  // --------------------------------------------------------------------------
+  const viewStateRef = useRef(viewState)
+  const onViewStateChangeRef = useRef(onViewStateChange)
+  const viewportSizeRef = useRef({ width, height })
+
+  useEffect(() => {
+    viewStateRef.current = viewState
+  }, [viewState])
+  useEffect(() => {
+    onViewStateChangeRef.current = onViewStateChange
+  }, [onViewStateChange])
+  useEffect(() => {
+    viewportSizeRef.current = { width, height }
+  }, [width, height])
+
+  useEffect(() => {
+    const node = viewportNodeRef.current
+    if (node === null) {
+      return undefined
     }
-    event.preventDefault()
-    const nextScale = clamp(viewState.scale * (event.deltaY < 0 ? 1.12 : 1 / 1.12), MIN_SCALE, MAX_SCALE)
-    if (nextScale === viewState.scale) {
-      return
+    const handleNativeWheel = (event: WheelEvent) => {
+      const { width: currentWidth, height: currentHeight } = viewportSizeRef.current
+      if (currentWidth <= 0 || currentHeight <= 0) {
+        return
+      }
+      // Must precede any early return so the browser also suppresses default
+      // scroll for no-op zoom attempts (e.g. already at MIN/MAX scale).
+      event.preventDefault()
+      const currentViewState = viewStateRef.current
+      const nextScale = clamp(
+        currentViewState.scale * (event.deltaY < 0 ? 1.12 : 1 / 1.12),
+        MIN_SCALE,
+        MAX_SCALE,
+      )
+      if (nextScale === currentViewState.scale) {
+        return
+      }
+      const rect = node.getBoundingClientRect()
+      const worldPoint = makeViewTargetWorldPoint(event.clientX, event.clientY, rect, currentViewState)
+      onViewStateChangeRef.current({
+        scale: nextScale,
+        offsetX: event.clientX - rect.left - worldPoint.x * nextScale,
+        offsetY: event.clientY - rect.top - worldPoint.y * nextScale,
+      })
     }
-    const rect = event.currentTarget.getBoundingClientRect()
-    const worldPoint = makeViewTargetWorldPoint(event.clientX, event.clientY, rect, viewState)
-    onViewStateChange({
-      scale: nextScale,
-      offsetX: event.clientX - rect.left - worldPoint.x * nextScale,
-      offsetY: event.clientY - rect.top - worldPoint.y * nextScale,
-    })
-  }
+    node.addEventListener('wheel', handleNativeWheel, { passive: false })
+    return () => {
+      node.removeEventListener('wheel', handleNativeWheel)
+    }
+    // The viewport node becomes available after the first commit via the
+    // composed ref callback; mounting the listener during that first effect
+    // pass is sufficient because the ref target is stable for the component's
+    // lifetime.
+  }, [])
 
   const hasSourceFile = Boolean(schematicDocument.file_path)
   const layoutComponents = layoutResult?.components ?? []
@@ -239,11 +298,10 @@ export function SchematicCanvas({
   return (
     <div className="schematic-canvas">
       <div
-        ref={ref}
+        ref={assignViewportNode}
         className={`schematic-canvas__viewport${panning ? ' schematic-canvas__viewport--dragging' : ''}`}
         onPointerDown={handleViewportPointerDown}
         onClick={handleViewportClick}
-        onWheel={handleWheel}
       >
         {hasRenderableLayout ? (
           <svg className="schematic-canvas__svg" width={svgWidth} height={svgHeight} viewBox={`0 0 ${svgWidth} ${svgHeight}`}>
@@ -372,15 +430,24 @@ export function SchematicCanvas({
                         appearance,
                       })}
                     </g>
-                    {item.pins.map((pin) => (
-                      <circle
-                        key={pin.id}
-                        cx={pin.x}
-                        cy={pin.y}
-                        r={4.4}
-                        fill={appearance.pinFill}
-                      />
-                    ))}
+                    {item.pins.map((pin) => {
+                      const stubAppearance: SchematicPinStubAppearance = {
+                        stroke: appearance.accent,
+                        fill: appearance.fill,
+                        text: appearance.text,
+                      }
+                      return (
+                        <g key={pin.id}>
+                          {pin.stub ? renderSchematicPinStub(pin.stub, stubAppearance) : null}
+                          <circle
+                            cx={pin.x}
+                            cy={pin.y}
+                            r={4.4}
+                            fill={appearance.pinFill}
+                          />
+                        </g>
+                      )
+                    })}
                     {item.nameLabel ? (
                       <text
                         x={item.nameLabel.x}

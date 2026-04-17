@@ -587,6 +587,34 @@ interface SteinerTree {
   edgeIndices: Set<number>
 }
 
+function pickCentroidSeed(ovg: OVG, terminalVertexIds: number[]): number {
+  if (terminalVertexIds.length <= 2) {
+    return terminalVertexIds[0]
+  }
+  let sumX = 0
+  let sumY = 0
+  for (const id of terminalVertexIds) {
+    const vertex = ovg.vertices[id]
+    sumX += vertex.x
+    sumY += vertex.y
+  }
+  const centroidX = sumX / terminalVertexIds.length
+  const centroidY = sumY / terminalVertexIds.length
+  let bestId = terminalVertexIds[0]
+  let bestDistanceSquared = Number.POSITIVE_INFINITY
+  for (const id of terminalVertexIds) {
+    const vertex = ovg.vertices[id]
+    const dx = vertex.x - centroidX
+    const dy = vertex.y - centroidY
+    const distanceSquared = dx * dx + dy * dy
+    if (distanceSquared < bestDistanceSquared) {
+      bestDistanceSquared = distanceSquared
+      bestId = id
+    }
+  }
+  return bestId
+}
+
 function growSteinerLikeTree(
   ovg: OVG,
   terminalVertexIds: number[],
@@ -595,14 +623,22 @@ function growSteinerLikeTree(
   if (terminalVertexIds.length === 0) {
     return null
   }
+  // Pick the terminal closest to the geometric centroid of all terminals as
+  // the tree seed. The Prim-like Steiner heuristic below grows outward from
+  // the seed, so starting at the centroid minimizes the expected path length
+  // for the remaining terminals and pushes the eventual T-junction to the
+  // middle of the net instead of whichever terminal happened to be listed
+  // first. For 3-pin nets (typical `inv_in`-style trunks in amp stages) this
+  // is the difference between a clean star and a detoured chain.
+  const seedId = pickCentroidSeed(ovg, terminalVertexIds)
   const tree: SteinerTree = {
-    vertexIds: new Set<number>([terminalVertexIds[0]]),
+    vertexIds: new Set<number>([seedId]),
     edgeIndices: new Set<number>(),
   }
   const remaining = new Set<number>()
-  for (let i = 1; i < terminalVertexIds.length; i += 1) {
-    if (terminalVertexIds[i] !== terminalVertexIds[0]) {
-      remaining.add(terminalVertexIds[i])
+  for (const id of terminalVertexIds) {
+    if (id !== seedId) {
+      remaining.add(id)
     }
   }
   while (remaining.size > 0) {
@@ -1026,6 +1062,17 @@ export function routeSchematicNets(
         const chain = buildDanglingStubChain(pins[0])
         routedBundles.push({ netId, kind: 'stub', chains: [chain] })
       }
+      continue
+    }
+
+    // Ground and power rails are represented by per-pin local glyph stubs
+    // (GND / VCC / VEE symbols) attached during the layout stage. Drawing a
+    // wire network for them would duplicate that information and reintroduce
+    // the long cross-canvas lines that the local-stub convention exists to
+    // eliminate. The layout pipeline already records the per-pin stubs on
+    // `SchematicLayoutPin.stub`, so rendering stays consistent without any
+    // net segments here.
+    if (role === 'ground_rail' || role === 'power_rail') {
       continue
     }
 

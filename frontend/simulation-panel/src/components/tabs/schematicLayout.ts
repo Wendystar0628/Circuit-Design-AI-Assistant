@@ -19,6 +19,7 @@ import type {
   SchematicLayoutNet,
   SchematicLayoutOrientation,
   SchematicLayoutPin,
+  SchematicLayoutPinStub,
   SchematicLayoutPoint,
   SchematicLayoutResult,
 } from './schematicLayoutTypes'
@@ -143,6 +144,7 @@ function buildComponentLayouts(
         side: anchor.side,
         x: position.symbolBox.x + anchor.anchorX,
         y: position.symbolBox.y + anchor.anchorY,
+        stub: null,
       }
       portMap.set(anchor.portId, pin)
       return pin
@@ -165,6 +167,57 @@ function buildComponentLayouts(
     bounds: { ...entry.bounds },
   }))
   return { components, groups }
+}
+
+// ---------------------------------------------------------------------------
+// Rail pin stubs.
+//
+// Ground and power-rail nets are not drawn as wires. Instead every pin on
+// such a net is terminated locally by a GND / VCC / VEE glyph (a "stub").
+// This is the industry-standard way to express supply connectivity: each
+// pin says where it goes by its symbol, and the shared node is implicit.
+//
+// Stub placement is done purely from pin geometry here so the router has a
+// single, stable input downstream (it just skips rail nets entirely).
+// ---------------------------------------------------------------------------
+
+const RAIL_STUB_LENGTH = 26
+
+function attachRailPinStubs(
+  semantic: SchematicSemanticModel,
+  netRoles: SchematicNetRoleMap,
+  portMap: Map<string, SchematicLayoutPin>,
+): void {
+  for (const semanticNet of semantic.nets) {
+    const role = netRoles.get(semanticNet.net.id)
+    if (role !== 'ground_rail' && role !== 'power_rail') {
+      continue
+    }
+    const stubKind: SchematicLayoutPinStub['kind'] = role === 'ground_rail' ? 'ground' : 'power'
+    // Ground symbols carry no text; power rails carry their normalized net
+    // name (e.g. "VCC"). Trimming mirrors the host's lower-case storage.
+    const label = role === 'power_rail' ? semanticNet.net.name.toUpperCase() : ''
+    for (const connection of semanticNet.net.connections) {
+      const portId = buildPortId(connection.component_id, connection.pin_name)
+      const pin = portMap.get(portId)
+      if (!pin) continue
+      // Do not stub pins on the supply / ground component itself — those
+      // nodes are the source of the rail, not a consumer of it, and the
+      // ELK rail-trunk placement already represents them structurally.
+      const owner = semantic.componentsById.get(pin.componentId)
+      if (owner && (owner.role === 'supply' || owner.role === 'ground')) {
+        continue
+      }
+      pin.stub = {
+        kind: stubKind,
+        label,
+        side: pin.side,
+        x: pin.x,
+        y: pin.y,
+        length: RAIL_STUB_LENGTH,
+      }
+    }
+  }
 }
 
 function buildPinsByNet(
@@ -334,6 +387,7 @@ export async function computeSchematicLayout(document: SchematicDocumentState): 
   const placement = await computeSchematicElkLayout(semantic, netRoles)
   const portMap = new Map<string, SchematicLayoutPin>()
   const { components, groups } = buildComponentLayouts(semantic, placement, portMap)
+  attachRailPinStubs(semantic, netRoles, portMap)
   const nets = buildNetLayouts(semantic, netRoles, portMap, components)
   applySchematicLabelPlans(components, nets)
   const bounds = buildBounds(components, groups, nets)

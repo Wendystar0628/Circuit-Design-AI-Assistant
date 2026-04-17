@@ -99,6 +99,12 @@ const ROOT_LAYOUT_OPTIONS: LayoutOptions = {
   'elk.padding': ROOT_PADDING,
   'elk.separateConnectedComponents': 'true',
   'elk.layered.considerModelOrder.strategy': 'PREFER_EDGES',
+  // Preserve explicit feedback edges (e.g. op-amp output back to inverting
+  // input via a resistor) rather than letting ELK's cycle-breaking reverse
+  // them. Keeping feedback edges as true back-edges lets the layered
+  // algorithm draw them as short U-turns next to the amplifier, which is
+  // the conventional schematic appearance for feedback networks.
+  'elk.layered.feedbackEdges': 'true',
 }
 
 const SCOPE_NODE_LAYOUT_OPTIONS: LayoutOptions = {
@@ -122,11 +128,35 @@ interface RailPartition {
   groundRailOnly: SemanticComponent[]
 }
 
+/**
+ * A `supply` component (e.g. a SPICE `Vcc` source) whose only non-ground
+ * connection is a single-pin `dangling` net contributes no electrical effect
+ * to the circuit — the rail it defines has no consumer. Rendering such a
+ * source creates the "orphan floating on top of the canvas" anti-pattern
+ * shown in the inverting-amplifier test case. We drop it here so the ELK
+ * graph, the rail trunk, and the final render never see it.
+ */
+function isDanglingSupplyComponent(component: SemanticComponent, semantic: SchematicSemanticModel): boolean {
+  if (component.role !== 'supply') return false
+  for (const net of semantic.nets) {
+    if (!net.componentIds.includes(component.component.id)) continue
+    if (net.category === 'ground') continue
+    if (net.pinCount >= 2) {
+      // Found at least one real load, so this supply is genuinely in use.
+      return false
+    }
+  }
+  return true
+}
+
 function partitionByRailRole(semantic: SchematicSemanticModel): RailPartition {
   const mainComponents: SemanticComponent[] = []
   const powerRailOnly: SemanticComponent[] = []
   const groundRailOnly: SemanticComponent[] = []
   for (const component of semantic.components) {
+    if (isDanglingSupplyComponent(component, semantic)) {
+      continue
+    }
     if (component.role === 'supply') {
       powerRailOnly.push(component)
     } else if (component.role === 'ground') {

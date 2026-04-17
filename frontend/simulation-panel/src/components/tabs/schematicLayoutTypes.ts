@@ -40,6 +40,29 @@ export interface SchematicLayoutLabel {
   textAnchor: 'start' | 'middle' | 'end'
 }
 
+/**
+ * Virtual stub symbol anchored to a pin. Used when a net should terminate
+ * locally at the pin with a GND / VCC / VEE glyph instead of running a long
+ * wire back to a shared node label. The stub carries everything the renderer
+ * needs (glyph kind, tip position along the pin's outward direction, display
+ * label) so the layout layer owns placement while the render layer owns
+ * pure drawing.
+ */
+export type SchematicLayoutPinStubKind = 'ground' | 'power'
+
+export interface SchematicLayoutPinStub {
+  kind: SchematicLayoutPinStubKind
+  /** Net name to display next to the glyph (e.g. "VCC", "VEE"). Empty for GND. */
+  label: string
+  /** Direction the glyph extends from the pin anchor. Mirrors `pin.side`. */
+  side: SchematicPinSide
+  /** Anchor point on the pin itself; the glyph is drawn out from here. */
+  x: number
+  y: number
+  /** How far the glyph extends away from the pin along `side`. */
+  length: number
+}
+
 export interface SchematicLayoutPin {
   id: string
   componentId: string
@@ -47,6 +70,8 @@ export interface SchematicLayoutPin {
   side: SchematicPinSide
   x: number
   y: number
+  /** Present when this pin is terminated by a local rail/ground glyph. */
+  stub: SchematicLayoutPinStub | null
 }
 
 export interface SchematicLayoutComponent {

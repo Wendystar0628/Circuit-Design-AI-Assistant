@@ -70,6 +70,12 @@ const RAIL_TRUNK_CLEARANCE_Y = 120
 const RAIL_COMPONENT_SPACING_X = 112
 const RAIL_COMPONENT_MIN_MARGIN_X = 32
 
+// Virtual hub nodes materialize N-pin nets as star edges with a tiny anchor
+// at the Steiner center. Keep the hub small so it barely perturbs spacing but
+// not zero-sized (ELK refuses degenerate geometry in some layout phases).
+const VIRTUAL_HUB_SIZE = 2
+const VIRTUAL_HUB_ID_PREFIX = 'hub:'
+
 const GRID_SNAP = 4
 
 const ROOT_LAYOUT_OPTIONS: LayoutOptions = {
@@ -211,12 +217,36 @@ function buildScopeHierarchy(scope: SemanticScopeGroup, context: ScopeBuildConte
   }
 }
 
+interface ElkEdgeBuild {
+  edges: ElkExtendedEdge[]
+  virtualHubNodes: ElkNode[]
+}
+
+/**
+ * ELK's `layered` algorithm does not accept true hyperedges (edges with more
+ * than two endpoints). To express N-pin nets correctly we use the ELK-approved
+ * technique of inserting a zero-semantic "virtual hub" node per multi-pin net
+ * and connecting every pin to the hub with an ordinary 2-endpoint edge.
+ *
+ * Properties of this encoding:
+ *   - 2-pin nets degenerate to a single direct edge (no hub allocated).
+ *   - N-pin nets produce exactly N spoke edges + 1 virtual hub node, i.e.
+ *     linear in the pin count. This matches the cost of a spanning chain
+ *     while avoiding its order-dependence and its "flatten into N layers"
+ *     visual pathology.
+ *   - The hub converges to the geometric center of its connected components
+ *     under Sugiyama, approximating the Steiner center of the net — which is
+ *     exactly the aesthetic we want for fan-out branches and feedback webs.
+ *   - Hub nodes use `VIRTUAL_HUB_ID_PREFIX` so downstream position collection
+ *     skips them trivially; they never surface in `SchematicLayoutResult`.
+ */
 function buildElkEdges(
   semantic: SchematicSemanticModel,
   netRoles: SchematicNetRoleMap,
   mainComponentIds: Set<string>,
-): ElkExtendedEdge[] {
+): ElkEdgeBuild {
   const edges: ElkExtendedEdge[] = []
+  const virtualHubNodes: ElkNode[] = []
   for (const semanticNet of semantic.nets) {
     const role = netRoles.get(semanticNet.net.id) ?? 'branch'
     // Rails are handled outside ELK; skip them so they don't distort the
@@ -228,16 +258,35 @@ function buildElkEdges(
     if (connections.length < 2) {
       continue
     }
-    // Represent each multi-pin net as a single hyperedge so ELK treats all
-    // endpoints symmetrically (unlike the previous star-hub approximation).
-    edges.push({
-      id: `edge:${semanticNet.net.id}`,
-      sources: [connections[0].portId],
-      targets: connections.slice(1).map((item) => item.portId),
-      layoutOptions: edgeLayoutOptionsForRole(role),
+    const edgeOptions = edgeLayoutOptionsForRole(role)
+    if (connections.length === 2) {
+      edges.push({
+        id: `edge:${semanticNet.net.id}`,
+        sources: [connections[0].portId],
+        targets: [connections[1].portId],
+        layoutOptions: edgeOptions,
+      })
+      continue
+    }
+    const hubId = `${VIRTUAL_HUB_ID_PREFIX}${semanticNet.net.id}`
+    virtualHubNodes.push({
+      id: hubId,
+      width: VIRTUAL_HUB_SIZE,
+      height: VIRTUAL_HUB_SIZE,
+      layoutOptions: {
+        'elk.portConstraints': 'FREE',
+      },
+    })
+    connections.forEach((connection, index) => {
+      edges.push({
+        id: `edge:${semanticNet.net.id}:${index}`,
+        sources: [connection.portId],
+        targets: [hubId],
+        layoutOptions: edgeOptions,
+      })
     })
   }
-  return edges
+  return { edges, virtualHubNodes }
 }
 
 interface ConnectionEndpoint {
@@ -612,7 +661,14 @@ export async function computeSchematicElkLayout(
     if (!rootNode) {
       throw new Error('[schematicElkLayout] Failed to build ELK root node')
     }
-    rootNode.edges = buildElkEdges(semantic, netRoles, mainComponentIds)
+    const { edges, virtualHubNodes } = buildElkEdges(semantic, netRoles, mainComponentIds)
+    rootNode.edges = edges
+    if (virtualHubNodes.length > 0) {
+      // Virtual hubs are attached flat under the root so cross-scope nets
+      // resolve uniformly; `hierarchyHandling: INCLUDE_CHILDREN` in the root
+      // layout options lets ELK route spoke edges into nested scope groups.
+      rootNode.children = [...(rootNode.children ?? []), ...virtualHubNodes]
+    }
 
     const elk = await getElkInstance()
     const laidOut = await elk.layout(rootNode)

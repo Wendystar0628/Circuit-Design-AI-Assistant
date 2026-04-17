@@ -8,7 +8,12 @@ import {
   isSchematicComponentReadonly,
   type SchematicSymbolAppearance,
 } from './symbolRegistry'
-import { SCHEMATIC_NET_LABEL_HEIGHT, getSchematicNetLabelWidth, makeViewTargetWorldPoint } from './schematicLayout'
+import { makeViewTargetWorldPoint } from './schematicLayout'
+import {
+  SCHEMATIC_NET_LABEL_HEIGHT,
+  computeSchematicLabelRect,
+  getSchematicNetLabelWidth,
+} from './schematicLabelPlanner'
 import type { SchematicCanvasViewState, SchematicLayoutResult } from './schematicLayoutTypes'
 
 interface SchematicCanvasProps {
@@ -32,16 +37,6 @@ function clamp(value: number, min: number, max: number): number {
 
 function buildPolylinePoints(points: Array<{ x: number; y: number }>): string {
   return points.map((point) => `${point.x},${point.y}`).join(' ')
-}
-
-function getNetLabelBackdropX(textAnchor: 'start' | 'middle' | 'end', width: number): number {
-  if (textAnchor === 'middle') {
-    return -width / 2
-  }
-  if (textAnchor === 'end') {
-    return -width + 4
-  }
-  return -4
 }
 
 function isInteractiveComponentTarget(target: EventTarget | null): boolean {
@@ -287,6 +282,9 @@ export function SchematicCanvas({
               })}
               {layoutNets.map((net) => {
                 const labelWidth = net.label ? getSchematicNetLabelWidth(net.label.text) : 0
+                const labelRect = net.label
+                  ? computeSchematicLabelRect(net.label, labelWidth, SCHEMATIC_NET_LABEL_HEIGHT, 'middle')
+                  : null
                 return (
                   <g className="schematic-canvas__net" key={net.net.id}>
                     {net.segments.map((segment) => (
@@ -300,20 +298,20 @@ export function SchematicCanvas({
                         strokeLinejoin="round"
                       />
                     ))}
-                    {net.label ? (
-                      <g transform={`translate(${net.label.x} ${net.label.y})`}>
+                    {net.label && labelRect ? (
+                      <g>
                         <rect
                           className="schematic-canvas__net-label-backdrop"
-                          x={getNetLabelBackdropX(net.label.textAnchor, labelWidth)}
-                          y={-SCHEMATIC_NET_LABEL_HEIGHT / 2}
+                          x={labelRect.x}
+                          y={labelRect.y}
                           rx={8}
-                          width={labelWidth}
-                          height={SCHEMATIC_NET_LABEL_HEIGHT}
+                          width={labelRect.width}
+                          height={labelRect.height}
                         />
                         <text
                           className="schematic-canvas__net-label"
-                          x={0}
-                          y={1}
+                          x={net.label.x}
+                          y={net.label.y}
                           textAnchor={net.label.textAnchor}
                           dominantBaseline="middle"
                         >
@@ -330,17 +328,14 @@ export function SchematicCanvas({
                 const readonly = isSchematicComponentReadonly(item.component)
                 const appearance = resolveAppearance(selected, hovered, readonly)
                 const symbolDefinition = getSchematicSymbolDefinition(item.component.symbol_kind)
-                const symbolOffsetX = item.symbolBounds.x - item.bounds.x
-                const symbolOffsetY = item.symbolBounds.y - item.bounds.y
-                const orientationTransform = getSchematicSymbolRenderTransform(
+                const symbolTransform = `translate(${item.symbolBounds.x} ${item.symbolBounds.y}) ${getSchematicSymbolRenderTransform(
                   item.orientation,
                   symbolDefinition.width,
                   symbolDefinition.height,
-                )
+                )}`
                 return (
                   <g
                     key={item.component.id}
-                    transform={`translate(${item.bounds.x} ${item.bounds.y})`}
                     data-schematic-component="true"
                     data-schematic-orientation={item.orientation}
                     className={`schematic-canvas__component${selected ? ' schematic-canvas__component--selected' : ''}${hovered ? ' schematic-canvas__component--hovered' : ''}${readonly ? ' schematic-canvas__component--readonly' : ''}`}
@@ -360,25 +355,36 @@ export function SchematicCanvas({
                     role="button"
                     aria-label={`选择器件 ${item.component.instance_name || item.component.display_name || item.component.id}`}
                   >
-                    <g transform={`translate(${symbolOffsetX} ${symbolOffsetY})`}>
-                      <g transform={orientationTransform}>
-                        {symbolDefinition.render({
-                          component: item.component,
-                          width: symbolDefinition.width,
-                          height: symbolDefinition.height,
-                          appearance,
-                        })}
-                      </g>
+                    <rect
+                      className="schematic-canvas__component-hit"
+                      x={item.bounds.x}
+                      y={item.bounds.y}
+                      width={item.bounds.width}
+                      height={item.bounds.height}
+                      fill="transparent"
+                      pointerEvents="all"
+                    />
+                    <g transform={symbolTransform}>
+                      {symbolDefinition.render({
+                        component: item.component,
+                        width: symbolDefinition.width,
+                        height: symbolDefinition.height,
+                        appearance,
+                      })}
                     </g>
                     {item.pins.map((pin) => (
-                      <g key={`${item.component.id}-${pin.pin.name}`}>
-                        <circle cx={pin.x - item.bounds.x} cy={pin.y - item.bounds.y} r={4.4} fill={appearance.pinFill} />
-                      </g>
+                      <circle
+                        key={pin.id}
+                        cx={pin.x}
+                        cy={pin.y}
+                        r={4.4}
+                        fill={appearance.pinFill}
+                      />
                     ))}
                     {item.nameLabel ? (
                       <text
-                        x={item.nameLabel.x - item.bounds.x}
-                        y={item.nameLabel.y - item.bounds.y}
+                        x={item.nameLabel.x}
+                        y={item.nameLabel.y}
                         textAnchor={item.nameLabel.textAnchor}
                         className="schematic-canvas__instance-label"
                         fill={appearance.text}
@@ -388,8 +394,8 @@ export function SchematicCanvas({
                     ) : null}
                     {item.valueLabel ? (
                       <text
-                        x={item.valueLabel.x - item.bounds.x}
-                        y={item.valueLabel.y - item.bounds.y}
+                        x={item.valueLabel.x}
+                        y={item.valueLabel.y}
                         textAnchor={item.valueLabel.textAnchor}
                         className="schematic-canvas__value-label"
                         fill={appearance.accent}

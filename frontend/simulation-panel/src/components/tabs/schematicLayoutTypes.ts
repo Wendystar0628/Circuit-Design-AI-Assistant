@@ -4,7 +4,7 @@ export type SchematicPinSide = 'left' | 'right' | 'top' | 'bottom'
 
 export type SchematicLayoutOrientation = 'right' | 'left' | 'up' | 'down'
 
-export type SchematicLayoutSegmentKind = 'route' | 'fallback' | 'stub'
+export type SchematicLayoutSegmentKind = 'route' | 'stub'
 
 export type SchematicLayoutSegmentAxis = 'horizontal' | 'vertical' | 'mixed'
 

@@ -21,7 +21,7 @@ import type {
   SchematicLayoutPoint,
   SchematicLayoutResult,
 } from './schematicLayoutTypes'
-import { routeSchematicNets } from './schematicOrthogonalRouter'
+import { routeSchematicNets } from './schematicOrthogonalConnectorRouter'
 import {
   SCHEMATIC_COMPONENT_LABEL_HEIGHT,
   SCHEMATIC_NET_LABEL_HEIGHT,

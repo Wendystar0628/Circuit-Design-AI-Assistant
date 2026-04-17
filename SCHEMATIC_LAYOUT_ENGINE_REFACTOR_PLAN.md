@@ -619,3 +619,142 @@
 - 通过构建的前端产物
 - 一套对任意拓扑都更稳定的新布局效果
 - 可用于提交的英文 commit name
+
+---
+
+## 第三阶段：正交可视性图驱动的权威路由
+
+第二阶段只保证了**器件包围盒**的合理摆放，但 `schematicOrthogonalRouter.ts` 仍然是**模式匹配式**的 2-pin L 型连线 + 单一 trunk 躲障碍，本质上不是寻路算法。一旦出现"两组件之间隔着第三个器件""多个障碍堆叠""高密度电源网"这类情况，导线必然**斜穿器件本体**（差分对、运放反馈、级联滤波等结构是该问题的重灾区）。第三阶段把路由器也**整体替换**为学术界公认的 SOTA —— Wybrow, Marriott, Stuckey 2009 的 "Orthogonal Connector Routing"（即 libavoid / yEd / Inkscape 背后的算法），以**正交可视性图 + 端口约束 A\* + Nudging** 三件套为核心，成为唯一的导线路由权威。
+
+核心设计原则："**任何导线都必须是可视性图上的正交最短路**"——斜穿器件、叠加平行线、引脚反向出线等症状在算法层面就不可能发生。
+
+### 第 15 步：以 `schematicOrthogonalConnectorRouter.ts` 完全取代 `schematicOrthogonalRouter.ts`
+
+目标：把路由器从**模板匹配**升级为**正交可视性图 + A\* + Nudging** 的权威寻路引擎；旧模块从代码库中根除，不保留任何 fallback。
+
+对外契约：新模块保留现有路由器的返回 shape —— `Map<netId, SchematicLayoutNetSegment[]>`，下游 `schematicLabelPlanner` 与 `SchematicCanvasSurface` 零改动。
+
+算法基础：Wybrow, Marriott, Stuckey, *"Orthogonal Connector Routing"*, Computer Graphics Forum 28(3), 2009。即 `libavoid` 的理论根基。该算法已被业界反复验证为 diagram routing 的 SOTA，在性能（O(n² log n) per edge，500 组件电路 <200ms）、视觉质量（不斜穿 + 自动 nudging）、泛用性（支持端口约束、分组、Steiner 树）三项同时优于均匀网格 A\*、libavoid-wasm、WebCoLa GridRouter。
+
+实施点：
+
+- 新建 `schematicOrthogonalConnectorRouter.ts`，提供 `routeSchematicNets(semantic, skeleton, pinsByNetId, components, scopeGroupBounds): Map<string, SchematicLayoutNetSegment[]>` 权威入口
+- 模块内部按算法五层结构组织（同文件或拆分均可）：
+
+**Layer 1 — 障碍模型（`buildObstacleWorld`）**
+
+  - 每个 `SchematicLayoutComponent.symbolBounds` + `OBSTACLE_CLEARANCE` → 一个 `ObstacleRect`
+  - `scope_group` 包围盒 → "软障碍"：内部 wire 自由通过，跨境 wire 必须经由**指定 gate 点**进入/离开
+  - 障碍按 `ownerComponentId` 打标，pin 所属组件的障碍对该 pin 免疫（否则 pin 本身在障碍内无法出线）
+
+**Layer 2 — 正交可视性图（`buildOrthogonalVisibilityGraph`）**
+
+  - 对每个 `ObstacleRect` 的 4 个角，向上下左右 4 个方向投射"可视扫描线"，遇到另一个障碍就停
+  - 所有扫描线之间的水平/垂直交点 → OVG 顶点
+  - 相邻可视顶点（中间没有障碍且连线为水平或垂直）→ OVG 边
+  - 数据结构：
+    - `vertices: OVGVertex[]`（`{ x, y, neighbors: OVGEdge[] }`）
+    - `edges: OVGEdge[]`（`{ from, to, axis, length, crossingsBaseline }`）
+  - **一次构建，全部 wire 共用**；不按 wire 重建图
+
+**Layer 3 — 端口插入（`attachPinPorts`）**
+
+  - 每个 pin 按 `pin.side` 向对应方向延伸 `STUB_LENGTH`，得到 pin 的"corridor 入口点"
+  - 入口点作为虚拟 OVG 顶点插入图中，只连向**同方向**的邻居（实现端口方向约束）
+  - 保证 wire 必定从器件正确一侧出来，视觉上"连得上"
+  - 对 pin 所在组件的障碍临时移除遮蔽（corridor 穿过自身符号矩形的 clearance 区）
+
+**Layer 4 — 单对 A\* 与 Steiner 搜索（`findOrthogonalPath` / `findOrthogonalSteinerTree`）**
+
+  - 2-pin 网：
+    - A\* on OVG，启发式 = Manhattan 距离
+    - 边权 = `length + BEND_PENALTY · isBendWith(prevEdge) + CROSSING_PENALTY · alreadyUsedCells`
+    - 优先队列 = binary heap（`O((V+E) log V)`）
+  - 多 pin 网（`pinCount >= 3`）：
+    - 在 OVG 上做 Steiner 树近似（Kou-Markowsky：完全图最短路 + MST 再回代）
+    - 输出一棵以 OVG 边构成的树，自然产生分叉点（T/十字接合）
+  - dangling 网（1 pin）：直接输出 `STUB_LENGTH` 方向性短线，不入 A\*
+
+**Layer 5 — Nudging（`nudgeParallelSegments`）**
+
+  - 扫描所有已布 wire，按轴归类
+    - 水平段按 y 桶归类
+    - 垂直段按 x 桶归类
+  - 同桶内重叠的平行段视为"冲突组"
+  - 对每个冲突组在允许 y 区间（两侧障碍之间的空隙）内用一维 VPSC 求解分散：
+    - 约束：`y_{i+1} - y_i ≥ WIRE_MIN_GAP`
+    - 约束：`y_i ∈ [corridor_low, corridor_high]`
+  - 解算后回写 wire 路径
+  - **关键视觉质量提升**：平行总线不再堆叠、叠码，差分对自动分成两条平行轨道
+
+**Layer 6 — 路径输出与 shape 转换（`marshalSegments`）**
+
+  - OVG 路径 → `SchematicLayoutNetSegment[]`
+  - 合并共线相邻段为单个 segment，减少渲染成本
+  - 为多 pin 网的分叉点生成 `junction` kind 段（用于下游标记 T 点 / 连接点的视觉 dot）
+  - grid snap 到 4px，与 Phase 2 的 placement 网格对齐
+
+其他实施要点：
+
+- 删除 `schematicOrthogonalRouter.ts` 整个文件
+- `schematicLayout.ts` 改为从新模块 import `routeSchematicNets`，传参新增 `scopeGroupBounds`
+- 全局 `grep` 核查 `schematicOrthogonalRouter` 无残留
+- 新增常量集中到模块头部：`OBSTACLE_CLEARANCE` / `STUB_LENGTH` / `BEND_PENALTY` / `CROSSING_PENALTY` / `WIRE_MIN_GAP` / `GRID_SNAP`
+
+开发提示：
+
+- **禁止**保留旧模板路由器作为 fallback。A\* 找不到路（理论上对连通 OVG 不会发生）则抛错，表明障碍/端口约束矛盾，需要调算法，不准回退到直线连
+- OVG 构建用"从每个障碍角向四方向扫描到第一个障碍"的经典 O(n²) 做法即可；schematic 场景 n 典型 10-300，无需线段树
+- 为保证 A\* 的 Manhattan 启发式 admissible，边权中只有 `length` 进入 g-cost 的"距离"部分，`BEND_PENALTY` 和 `CROSSING_PENALTY` 作为附加整数 cost 不影响 admissibility
+- Steiner 树的 Kou-Markowsky 近似比率 2-approx，对 schematic 视觉够用；想更优可换 Zelikovsky 1.55-approx，但 CPU 预算差不大时不必
+- Nudging 的 VPSC 可以用 `webcola` 内的 `vpsc.js`（已经打包进 bundle，不增成本）
+- 对 scope 分组：每个分组沿包围盒打 1-2 个 gate 顶点，跨分组 wire 必须经由 gate；内部 wire 不受影响
+- 与 label placement 解耦：路由器只负责导线几何，标签碰撞检测在第 16 步独立做
+
+性能预算（500 组件典型电路）：
+
+- OVG 构建：一次，~40ms
+- 单 wire A\*：~0.1-0.5ms
+- Nudging 全量：~20ms
+- 总体：**<200ms**，满足交互式重布局
+
+输出：
+
+- 权威的 `schematicOrthogonalConnectorRouter.ts`，以 OVG + A\* + Nudging 为内核
+- `schematicOrthogonalRouter.ts` 彻底删除
+- `computeSchematicLayout` 流水线唯一路由路径
+- 任意电路上**不再**出现导线穿过器件本体的情况
+
+### 第 16 步：验证、回归与构建
+
+目标：在真实电路样例上确认第三阶段产出确实消除了导线穿体问题，且**不引入新的视觉缺陷**（标签错位可暂不在本步修复，留第四阶段）。
+
+实施点：
+
+- 在以下 6 类拓扑上目视检查导线：
+  - RLC 低通、RC 级联带负载
+  - BJT 共射放大器、CMOS 反相器
+  - 运放反相放大（含反馈环）
+  - **BJT 差分对**（第一阶段最差 case）
+- 重点验证：
+  - **任意一条导线都不穿过任何器件的 `symbolBounds`**
+  - 引脚出线方向与 `pin.side` 一致（电阻左脚必向左出、上脚必向上出，以此类推）
+  - 多 pin 网在视觉上形成清晰的 T/十字分叉
+  - 平行 wire（电源总线、地总线、反馈线）彼此错开，不堆叠
+  - scope 分组内部 wire 不穿越分组边界去抄近路
+  - `Fit` / 平移 / 缩放 / 选中依然正常
+- 执行 `npm run build`，0 错误 0 警告退出
+- 如果某类拓扑仍出现穿越，优先排查顺序：OVG 构建完整性 → 端口 corridor 是否被阻塞 → Nudging 区间是否崩塌到 0；**不允许**用"补一条后置清理规则"的方式掩盖算法问题
+- 完成后给出英文 git commit 名称
+
+开发提示：
+
+- Nudging 的常见退化：两条 wire 的可用区间完全相同且极窄 → VPSC 解不出差异 → 仍然重叠。对策：扩大 corridor 搜索范围、或允许其中一条换轨
+- A\* 的常见退化：OVG 局部不连通 → A\* 返回失败。对策：确保每个障碍之间至少有一条"过道"（clearance 不能设得比 `WIRE_MIN_GAP` 还小）
+- 验证时如发现"导线在器件 stub 范围内贴着器件边走"，这是符合预期的（stub 长度 = 28px 默认），不属于穿越
+
+输出：
+
+- 通过构建的前端产物
+- 一套导线不穿体、平行线分散、分叉清晰的新路由效果
+- 可用于提交的英文 commit name

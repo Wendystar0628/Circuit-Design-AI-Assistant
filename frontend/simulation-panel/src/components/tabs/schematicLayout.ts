@@ -5,11 +5,12 @@ import type {
   SchematicSemanticModel,
   SemanticComponent,
 } from './schematicSemanticModel'
-import { analyzeSchematicSkeleton } from './schematicSkeletonAnalyzer'
-import type { SchematicSkeleton } from './schematicSkeletonModel'
-import { computeSchematicCoarsePlacement } from './schematicConstraintPlacement'
-import type { SchematicCoarsePlacement } from './schematicConstraintPlacement'
-import { decideSchematicComponentOrientations } from './schematicOrientationDecision'
+import { classifySchematicNetRoles } from './schematicNetRoles'
+import type { SchematicNetRoleMap } from './schematicNetRoles'
+import {
+  computeSchematicElkLayout,
+  type SchematicElkLayout,
+} from './schematicElkLayout'
 import type {
   SchematicCanvasViewState,
   SchematicLayoutBounds,
@@ -123,8 +124,7 @@ function resolveOrientedPinAnchors(
 
 function buildComponentLayouts(
   semantic: SchematicSemanticModel,
-  placement: SchematicCoarsePlacement,
-  orientationsById: Map<string, SchematicLayoutOrientation>,
+  placement: SchematicElkLayout,
   portMap: Map<string, SchematicLayoutPin>,
 ): { components: SchematicLayoutComponent[]; groups: SchematicLayoutGroup[] } {
   const components: SchematicLayoutComponent[] = []
@@ -133,7 +133,7 @@ function buildComponentLayouts(
     if (!semanticComponent) {
       continue
     }
-    const orientation = orientationsById.get(position.componentId) ?? 'right'
+    const orientation = position.orientation
     const pinAnchors = resolveOrientedPinAnchors(semanticComponent, orientation)
     const pins: SchematicLayoutPin[] = pinAnchors.map((anchor) => {
       const pin: SchematicLayoutPin = {
@@ -187,12 +187,12 @@ function buildPinsByNet(
 
 function buildNetLayouts(
   semantic: SchematicSemanticModel,
-  skeleton: SchematicSkeleton,
+  netRoles: SchematicNetRoleMap,
   portMap: Map<string, SchematicLayoutPin>,
   components: SchematicLayoutComponent[],
 ): SchematicLayoutNet[] {
   const pinsByNet = buildPinsByNet(semantic, portMap)
-  const routedSegments = routeSchematicNets(semantic, skeleton, pinsByNet, components)
+  const routedSegments = routeSchematicNets(semantic, netRoles, pinsByNet, components)
   const nets: SchematicLayoutNet[] = []
   for (const semanticNet of semantic.nets) {
     const segments = routedSegments.get(semanticNet.net.id) ?? []
@@ -299,6 +299,22 @@ export function makeViewTargetWorldPoint(clientX: number, clientY: number, rect:
   }
 }
 
+/**
+ * Authoritative schematic layout pipeline.
+ *
+ * 1. Normalize the document into a stable `SchematicSemanticModel`.
+ * 2. Classify each net's role (ground / power / signal trunk / branch / dangling).
+ * 3. Run ELK (`computeSchematicElkLayout`) to place components along a
+ *    left-to-right signal flow, emitting rail components into dedicated
+ *    top/bottom trunks that do not distort the main layered graph.
+ * 4. Build the final component + group layout geometry from ELK's output.
+ * 5. Route nets through the orthogonal-visibility-graph + A* + nudging
+ *    pipeline (`routeSchematicNets`).
+ * 6. Plan component and net labels, then compute overall bounds.
+ *
+ * There is a single authority at every stage — no fallbacks, no alternative
+ * placement strategies, no pre-placement orientation guessing.
+ */
 export async function computeSchematicLayout(document: SchematicDocumentState): Promise<SchematicLayoutResult> {
   const requestKey = buildRequestKey(document.document_id, document.revision)
   if (!document.has_schematic || document.components.length === 0) {
@@ -314,12 +330,11 @@ export async function computeSchematicLayout(document: SchematicDocumentState): 
   }
 
   const semantic = normalizeSchematicDocument(document)
-  const skeleton = analyzeSchematicSkeleton(semantic)
-  const orientationsById = decideSchematicComponentOrientations(semantic, skeleton)
-  const placement = computeSchematicCoarsePlacement(semantic, skeleton, orientationsById)
+  const netRoles = classifySchematicNetRoles(semantic)
+  const placement = await computeSchematicElkLayout(semantic, netRoles)
   const portMap = new Map<string, SchematicLayoutPin>()
-  const { components, groups } = buildComponentLayouts(semantic, placement, orientationsById, portMap)
-  const nets = buildNetLayouts(semantic, skeleton, portMap, components)
+  const { components, groups } = buildComponentLayouts(semantic, placement, portMap)
+  const nets = buildNetLayouts(semantic, netRoles, portMap, components)
   applySchematicLabelPlans(components, nets)
   const bounds = buildBounds(components, groups, nets)
 

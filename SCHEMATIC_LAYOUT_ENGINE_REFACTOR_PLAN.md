@@ -54,7 +54,8 @@
 
 - 当前 `schematicDocument` 仍然是唯一权威输入，前端不能发明第二份文档真相
 - 本次不能保留旧设计兼容层，替换后旧的非权威路径应直接删除
-- 不允许继续让 ELK 作为实际布局核心，只做“外面包一层新接口、里面还是 ELK”不符合本次要求
+- ~~不允许继续让 ELK 作为实际布局核心，只做"外面包一层新接口、里面还是 ELK"不符合本次要求~~
+  **该约束已于第四阶段推翻**：经过第一、二、三阶段对自研 placement 的实证检验（手工车道 → WebCola 约束 → 三者叠加），均无法在复合电路、差分对、镜像结构、多域电源、级联放大等场景下稳定产出"信号流水线"形态的布局。回溯之前的 ELK 实现后发现其失败源于误用（`FIXED_POS` 冻死端口 + 未配置 `direction=RIGHT` + 未区分 power/signal 边），而非 ELK 本身不适合电路图。第四阶段确立 **ELK 为唯一 placement 权威**，用正确配置发挥其 Sugiyama 分层算法对信号链电路的天然优势。
 - 本次暂不实现基于 schematic 几何数据的绘制
 - 本次暂不引入手工拖拽布局编辑
 - 每次真实代码修改后都需要重新构建 `simulation-panel`
@@ -757,4 +758,95 @@
 
 - 通过构建的前端产物
 - 一套导线不穿体、平行线分散、分叉清晰的新路由效果
+- 可用于提交的英文 commit name
+
+---
+
+## 第四阶段：ELK 作为唯一 Placement 权威
+
+第三阶段把导线质量推到了正交可视性图 + A\* + Nudging 的 SOTA 水平，但 placement 层依然是自研的 WebCola 约束求解。实地验证（LC 低通、BJT 共射、CMOS 反相器、运放反相放大、差分对、多级放大、LTspice 参考图）发现：WebCola 是 **force-directed + 约束** 模型，它永远**不懂信号流方向**——给它再多约束，它也只是把元件团成球状稳态。对比 LTspice 人手画出的双级 opamp（V1→R1/C1→U1→R3→U2→R4/C3→R7 的严格左右流水线），这是 Sugiyama 分层算法的直接解形，**力模型无法逼近**。
+
+与此同时考古发现：项目曾经存在 ELK 实现（commit `13a2804` 之前），但因三个使用错误而被误判为"不适合电路图"：
+
+- `elk.portConstraints: FIXED_POS` 冻死端口像素坐标，完全关闭了 ELK 的 port-side sensing
+- 未配置 `elk.direction: RIGHT`，ELK 默认方向 `UNDEFINED`，没有"信号流从左到右"的语义提示
+- 未区分 power/ground 与 signal 边，所有 net 无差别喂给 layered，导致 VCC 线横穿主画面
+
+第四阶段推翻第 3.2 节的 ELK 禁令，基于下述事实重新引入 ELK：
+
+- ELK 的 `layered` 算法就是 Sugiyama 变体，**Image 7 形态的直接解法**，经 Eclipse IDE / Kieler 生产级验证 10+ 年
+- elkjs 是 ELK 的官方 TypeScript 端口，同构异步 API，可通过 `import('elkjs/lib/elk.bundled.js')` 懒加载，bundle 体积 1.4MB 走独立 chunk
+- 用正确的 ELK 配置（`FIXED_SIDE` 替代 `FIXED_POS`、`direction=RIGHT`、`nodePlacement.strategy=BRANDES_KOEPF`、`hierarchyHandling=INCLUDE_CHILDREN`、rail 组件从 ELK 图中剔除转为后置 trunk 处理）可以直接获得"信号链左右展开 + scope group 嵌套包围"的结构化布局
+
+### 第 17 步：用 `schematicElkLayout.ts` 整体替换 `schematicConstraintPlacement.ts`
+
+目标：把 placement 层从 force-directed 升级为 ELK 分层算法；旧模块从代码库中根除，不留 fallback。
+
+实施点：
+
+- 安装 `elkjs` runtime 依赖，卸载 `webcola` 依赖
+- 新建 `schematicElkLayout.ts`，提供 `computeSchematicElkLayout(semantic, netRoles): Promise<SchematicElkLayout>` 异步权威入口
+- 模块内部职责分段：
+  - **Rail 分离**：`supply` / `ground` 角色的组件**不加入 ELK 图**，留待后置处理。理由：把它们喂给 layered 算法会被 ELK 试图塞进信号层级中，扭曲主画面
+  - **ELK 节点构造**：每个主组件 → `ElkNode`（含符号宽高 + 内边距）；每个 pin → `ElkPort`，通过 `elk.port.side` 把 `symbolRegistry.getPinAnchor()` 得到的 side 告知 ELK；`elk.portConstraints: FIXED_SIDE`（只固定侧别，位置在侧内自由分布）
+  - **Scope 层级**：`SemanticScopeGroup` 递归映射为 ELK `children` 嵌套；`elk.hierarchyHandling: INCLUDE_CHILDREN` 让跨 scope 的 edge 正确穿透
+  - **Edge 构造**：每条 `power_rail` / `ground_rail` / `dangling` **跳过**（不喂给 ELK），其他每条 net 作为一条 `ElkExtendedEdge` hyperedge（首 pin 为 source，剩余 pin 为 targets），避免过去 "star hub" 随机 hub 的偏差；`signal_trunk` 边给更高的 shortness / straightness priority
+  - **主 layoutOptions**：`algorithm=layered` + `direction=RIGHT` + `nodePlacement.strategy=BRANDES_KOEPF` + `nodePlacement.bk.fixedAlignment=BALANCED` + `crossingMinimization.strategy=LAYER_SWEEP` + `layering.strategy=NETWORK_SIMPLEX` + `separateConnectedComponents=true`
+  - **求解**：`await elk.layout(root)`
+  - **绝对坐标收集**：递归遍历 ELK 输出的嵌套 children，对组件节点记录 `(absX, absY)`，对 scope 节点记录 bounds
+  - **Rail 后置处理**：`supply` 组件在 main bounds 上方 `RAIL_TRUNK_CLEARANCE_Y` 处水平成排；`ground` 组件在下方同样处理；每个 rail 组件的 x 由它与 main 组件的连接关系平均值决定（有连接时），辅以 1-D sweep 保证最小间距；结果是顶底两条干净的 trunk
+  - **Scope bounds**：以 ELK 自己的 scope 节点 bounds 为种子，并合并后置 rail 组件的影响，最后做外 padding
+- 改写 `schematicLayout.ts` 主流水线为：`normalize → classifyNetRoles → computeSchematicElkLayout → buildComponentLayouts → routeSchematicNets → applyLabels → buildBounds`；删除 `decideSchematicComponentOrientations` 调用（orientation 来自 placement 直接产出，首版统一 `'right'`，下一次迭代可加 post-placement 反推）
+- 删除 `schematicConstraintPlacement.ts`、`schematicSkeletonAnalyzer.ts`、`schematicSkeletonModel.ts`、`schematicOrientationDecision.ts` 四个文件——它们的语义已由 ELK + 新的轻量 `schematicNetRoles.ts` 完全覆盖
+- 精简 `symbolRegistry.tsx`：删除 `supportedOrientations` / `preferredOrientations` / `baseAxis` / `getOrientedSymbolDimensions` / `SchematicSymbolBaseAxis` 等不再被任何权威路径消费的字段和导出
+- 重构 `schematicOrthogonalConnectorRouter.ts` 签名：`routeSchematicNets(semantic, netRoles, pinsByNetId, components)`——剥离 `SchematicSkeleton` 类型依赖，改用轻量 `SchematicNetRoleMap = ReadonlyMap<string, SchematicNetRole>`
+- 内嵌 1-D VPSC-style `resolveOneDimensionalOverlap` 到路由器内部，替换 `webcola.removeOverlapInOneDimension`，切断对 webcola 的最后一个依赖
+
+开发提示：
+
+- **禁止**保留任何自研 placement 算法作为 fallback。ELK 失败必须抛错暴露根因，不允许回退
+- elkjs 通过 Web Worker 加载，生产打包下自动独立成 chunk；`vite build` 警告的 1.4MB 体积属预期，无需 `chunkSizeWarningLimit` 豁免
+- ELK 的 `FIXED_SIDE` 与 `getPinAnchor()` 产出的 side 必须一致。因此 pin side 是"ELK 的输入"，不再是"ELK 的输出"——这回归了 `symbolRegistry` 作为符号几何权威的原始定位
+- 单一异步链路：因 ELK 是 Promise-based，`computeSchematicLayout` 本来就是 `async`，调用侧不需要改动
+- Rail 独立处理意味着电源/地组件不参与 ELK 的 crossingMinimization，单独排出的效果比让 ELK "吞"下它们更可控；后续如需电源组件也进入 ELK 流程，可用 `elk.layered.layerConstraint: FIRST/LAST` 再加回
+
+输出：
+
+- 权威的 `schematicElkLayout.ts`，以 `elkjs` + `layered` + `BRANDES_KOEPF` + 后置 rail trunk 为内核
+- 删除的旧文件：`schematicConstraintPlacement.ts` / `schematicSkeletonAnalyzer.ts` / `schematicSkeletonModel.ts` / `schematicOrientationDecision.ts`
+- 新增轻量模块：`schematicNetRoles.ts`（单一职责 net role 分类器，约 60 行）
+- `symbolRegistry.tsx` 精简后去除约 30 行不再有语义的 orientation 元数据
+- `package.json` 净变化：`-webcola`, `+elkjs@^0.9.3`
+- 路由器与 webcola 完全解耦（内嵌 1-D 分散求解）
+- `computeSchematicLayout` 流水线：单一权威 placement + 单一权威 router + 零 fallback
+
+### 第 18 步：验证、回归与构建
+
+目标：在真实电路样例上确认第四阶段产出确实在信号流拓扑上逼近 LTspice 手画水准，且下游零回归。
+
+实施点：
+
+- 在以下 7 类拓扑上目视检查布局：
+  - RLC 低通
+  - RC 级联带负载
+  - BJT 共射放大器（含 RC/RE 偏置网络）
+  - CMOS 反相器
+  - 运放反相放大（含反馈环）
+  - BJT 差分对
+  - 双级运放 + 反馈（LTspice Image 7 形态）
+- 重点验证：
+  - 主信号链组件沿 X 轴严格递增（`direction=RIGHT` 生效）
+  - 电源组件浮顶、地组件浮底，形成两条干净的 trunk
+  - Scope 子电路有可辨识的嵌套包围盒（ELK hierarchyHandling 生效）
+  - Pin 出线方向与 `pin.side` 一致
+  - 导线不穿器件本体（路由器已在第三阶段保证）
+  - 平行 wire 彼此错开（内嵌 nudging 生效）
+  - `Fit` / 平移 / 缩放 / 选中回归
+- 执行 `npm run build`，0 error 退出；警告仅限 ELK chunk 体积（符合预期）
+- 如果某类拓扑出现异常，**优先调整 ELK layoutOptions**（`spacing.nodeNode` / `layered.spacing.nodeNodeBetweenLayers` / `nodePlacement.bk.fixedAlignment`），**不允许**在下游加补丁掩盖问题
+
+输出：
+
+- 通过构建的前端产物
+- 一套贴近 LTspice 手画质量的 placement 效果
 - 可用于提交的英文 commit name

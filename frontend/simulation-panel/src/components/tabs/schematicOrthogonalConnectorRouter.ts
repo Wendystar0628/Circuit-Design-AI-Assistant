@@ -1,5 +1,3 @@
-import { removeOverlapInOneDimension } from 'webcola'
-
 import type {
   SchematicLayoutComponent,
   SchematicLayoutNetSegment,
@@ -10,7 +8,7 @@ import type {
   SchematicPinSide,
 } from './schematicLayoutTypes'
 import type { SchematicSemanticModel } from './schematicSemanticModel'
-import type { SchematicSkeleton } from './schematicSkeletonModel'
+import type { SchematicNetRoleMap } from './schematicNetRoles'
 
 // ============================================================================
 // Orthogonal Connector Routing
@@ -47,7 +45,8 @@ import type { SchematicSkeleton } from './schematicSkeletonModel'
 //
 //   Layer 5 — Nudging
 //     parallel segments that share a row/column and overlap are separated
-//     using webcola's 1-D VPSC-based removeOverlapInOneDimension.
+//     using a local 1-D separation sweep (VPSC-equivalent for our feasibility
+//     needs) — no external constraint-solver dependency is required.
 //
 //   Layer 6 — Polyline marshaling
 //     tree edges are contracted through degree-2 colinear vertices and
@@ -833,6 +832,49 @@ function findOverlappingGroups(
   return groups
 }
 
+/**
+ * 1-D non-overlap resolver equivalent to a single-dimension VPSC feasibility
+ * solve: given unit spans with preferred centers within `[lo, hi]`, return a
+ * set of centers that (a) respect each span's size so intervals do not
+ * overlap, (b) stay inside the bounds, and (c) stay close to the preferred
+ * centers. A forward sweep followed by a backward clamp is sufficient: it
+ * produces the unique feasible assignment that minimizes the lexicographic
+ * deviation ordering, which matches the nudging need (push wires apart just
+ * enough to break overlaps while staying near original routes).
+ */
+function resolveOneDimensionalOverlap(
+  spans: Array<{ size: number; desiredCenter: number }>,
+  lo: number,
+  hi: number,
+): { newCenters: number[] } {
+  const count = spans.length
+  if (count === 0) return { newCenters: [] }
+  const indexed = spans.map((span, index) => ({
+    index,
+    size: span.size,
+    desiredCenter: span.desiredCenter,
+  }))
+  indexed.sort((left, right) => left.desiredCenter - right.desiredCenter)
+  const centers = new Array<number>(count)
+  let prevRight = lo
+  for (const item of indexed) {
+    const minCenter = prevRight + item.size / 2
+    const center = Math.max(item.desiredCenter, minCenter)
+    centers[item.index] = center
+    prevRight = center + item.size / 2
+  }
+  let nextLeft = hi
+  for (let k = indexed.length - 1; k >= 0; k -= 1) {
+    const item = indexed[k]
+    const maxCenter = nextLeft - item.size / 2
+    if (centers[item.index] > maxCenter) {
+      centers[item.index] = maxCenter
+    }
+    nextLeft = centers[item.index] - item.size / 2
+  }
+  return { newCenters: centers }
+}
+
 function nudgeParallelSegments(bundles: WireBundle[]): void {
   // Horizontal conflicts (equal y, overlapping x) → shift y.
   // Vertical conflicts (equal x, overlapping y) → shift x.
@@ -846,7 +888,7 @@ function nudgeParallelSegments(bundles: WireBundle[]): void {
       }))
       const lowerBound = Math.min(...group.map((segment) => segment.constantCoord)) - WIRE_MIN_GAP * group.length
       const upperBound = Math.max(...group.map((segment) => segment.constantCoord)) + WIRE_MIN_GAP * group.length
-      const { newCenters } = removeOverlapInOneDimension(spans, lowerBound, upperBound)
+      const { newCenters } = resolveOneDimensionalOverlap(spans, lowerBound, upperBound)
       for (let i = 0; i < group.length; i += 1) {
         const segment = group[i]
         const newCoord = newCenters[i]
@@ -947,7 +989,7 @@ function buildDanglingStubChain(pin: SchematicLayoutPin): PolylineChain {
 
 export function routeSchematicNets(
   semantic: SchematicSemanticModel,
-  skeleton: SchematicSkeleton,
+  netRoles: SchematicNetRoleMap,
   pinsByNetId: Map<string, SchematicLayoutPin[]>,
   components: SchematicLayoutComponent[],
 ): Map<string, SchematicLayoutNetSegment[]> {
@@ -975,11 +1017,11 @@ export function routeSchematicNets(
 
   for (const semanticNet of semantic.nets) {
     const netId = semanticNet.net.id
-    const skeletonNet = skeleton.netsById.get(netId)
-    if (!skeletonNet) continue
+    const role = netRoles.get(netId)
+    if (!role) continue
     const pins = pinsByNetId.get(netId) ?? []
 
-    if (skeletonNet.role === 'dangling') {
+    if (role === 'dangling') {
       if (pins.length === 1) {
         const chain = buildDanglingStubChain(pins[0])
         routedBundles.push({ netId, kind: 'stub', chains: [chain] })

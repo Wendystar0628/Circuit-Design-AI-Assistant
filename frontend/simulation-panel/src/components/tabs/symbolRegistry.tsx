@@ -2,7 +2,6 @@ import type { ReactNode } from 'react'
 
 import type { SchematicComponentState, SchematicPinState } from '../../types/state'
 import type {
-  SchematicLayoutOrientation,
   SchematicLayoutPinStub,
   SchematicPinSide,
 } from './schematicLayoutTypes'
@@ -36,62 +35,6 @@ export interface SchematicSymbolDefinition {
   height: number
   getPinAnchor(component: SchematicComponentState, pin: SchematicPinState, index: number): SchematicSymbolAnchor
   render(props: RenderSchematicSymbolProps): ReactNode
-}
-
-const SIDE_ROTATION_CW: Record<SchematicPinSide, SchematicPinSide> = {
-  left: 'top',
-  top: 'right',
-  right: 'bottom',
-  bottom: 'left',
-}
-
-const SIDE_ROTATION_CCW: Record<SchematicPinSide, SchematicPinSide> = {
-  left: 'bottom',
-  bottom: 'right',
-  right: 'top',
-  top: 'left',
-}
-
-const SIDE_MIRROR_X: Record<SchematicPinSide, SchematicPinSide> = {
-  left: 'right',
-  right: 'left',
-  top: 'top',
-  bottom: 'bottom',
-}
-
-export function transformSchematicSymbolAnchor(
-  baseAnchor: SchematicSymbolAnchor,
-  orientation: SchematicLayoutOrientation,
-  baseWidth: number,
-  baseHeight: number,
-): SchematicSymbolAnchor {
-  switch (orientation) {
-    case 'right':
-      return { x: baseAnchor.x, y: baseAnchor.y, side: baseAnchor.side }
-    case 'left':
-      return { x: baseWidth - baseAnchor.x, y: baseAnchor.y, side: SIDE_MIRROR_X[baseAnchor.side] }
-    case 'down':
-      return { x: baseHeight - baseAnchor.y, y: baseAnchor.x, side: SIDE_ROTATION_CW[baseAnchor.side] }
-    case 'up':
-      return { x: baseAnchor.y, y: baseWidth - baseAnchor.x, side: SIDE_ROTATION_CCW[baseAnchor.side] }
-  }
-}
-
-export function getSchematicSymbolRenderTransform(
-  orientation: SchematicLayoutOrientation,
-  baseWidth: number,
-  baseHeight: number,
-): string {
-  switch (orientation) {
-    case 'right':
-      return ''
-    case 'left':
-      return `translate(${baseWidth} 0) scale(-1 1)`
-    case 'down':
-      return `translate(${baseHeight} 0) rotate(90)`
-    case 'up':
-      return `translate(0 ${baseWidth}) rotate(-90)`
-  }
 }
 
 const PASSIVE_WIDTH = 108

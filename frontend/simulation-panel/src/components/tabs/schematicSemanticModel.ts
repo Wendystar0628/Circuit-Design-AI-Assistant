@@ -39,13 +39,9 @@ export interface SemanticPin {
 export interface SemanticComponent {
   component: SchematicComponentState
   role: SemanticComponentRole
-  symbolWidth: number
-  symbolHeight: number
   pins: SemanticPin[]
   scopeGroupId: string
   placementPriority: number
-  isolated: boolean
-  connectedComponentId: string
 }
 
 export interface SemanticNet {
@@ -54,7 +50,6 @@ export interface SemanticNet {
   pinCount: number
   componentIds: string[]
   scopeGroupId: string
-  connectedComponentId: string
 }
 
 export interface SemanticScopeGroup {
@@ -67,13 +62,6 @@ export interface SemanticScopeGroup {
   componentIds: string[]
 }
 
-export interface SemanticConnectedComponent {
-  id: string
-  componentIds: string[]
-  netIds: string[]
-  nonTrivial: boolean
-}
-
 export interface SchematicSemanticModel {
   components: SemanticComponent[]
   componentsById: Map<string, SemanticComponent>
@@ -82,5 +70,4 @@ export interface SchematicSemanticModel {
   scopeGroups: SemanticScopeGroup[]
   scopeGroupsById: Map<string, SemanticScopeGroup>
   rootScopeGroupId: string
-  connectedComponents: SemanticConnectedComponent[]
 }

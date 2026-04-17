@@ -95,7 +95,7 @@ function toAxisXValue(value: number, logX: boolean): number | null {
   return Number.isFinite(transformed) ? transformed : null
 }
 
-function toAxisYValue(value: number, axisKey: string, logY: boolean): number | null {
+function toAxisYValue(value: number, logY: boolean): number | null {
   if (!Number.isFinite(value)) {
     return null
   }
@@ -113,7 +113,7 @@ function toDisplayXValue(value: number, logX: boolean): number {
   return logX ? 10 ** value : value
 }
 
-function toDisplayYValue(value: number, axisKey: string, logY: boolean): number {
+function toDisplayYValue(value: number, logY: boolean): number {
   if (!logY) {
     return value
   }
@@ -249,7 +249,7 @@ export function SeriesSvgChart({
     if (valueY === null) {
       return null
     }
-    const axisValue = toAxisYValue(valueY, axisKey, isAxisLogEnabled(axisKey, logY, rightLogY))
+    const axisValue = toAxisYValue(valueY, isAxisLogEnabled(axisKey, logY, rightLogY))
     if (axisValue === null) {
       return null
     }
@@ -279,8 +279,8 @@ export function SeriesSvgChart({
       svgX: clampedSvgX,
       svgY: clampedSvgY,
       displayX: toDisplayXValue(xAxisValue, logX),
-      leftDisplayY: toDisplayYValue(leftAxisValue, 'left', logY),
-      rightDisplayY: rightAxisValue === null ? null : toDisplayYValue(rightAxisValue, 'right', rightLogY),
+      leftDisplayY: toDisplayYValue(leftAxisValue, logY),
+      rightDisplayY: rightAxisValue === null ? null : toDisplayYValue(rightAxisValue, rightLogY),
     }
   }
 

@@ -685,10 +685,6 @@ function asRange(value: unknown): number[] | null {
   return [asNumber(start), asNumber(end)]
 }
 
-function asNullableString(value: unknown): string | null {
-  return typeof value === 'string' ? value : null
-}
-
 function asNumberArray(value: unknown): number[] {
   if (!Array.isArray(value)) {
     return []

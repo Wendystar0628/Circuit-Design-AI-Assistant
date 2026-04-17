@@ -5,13 +5,11 @@ import type {
   SchematicPinState,
   SchematicSubcircuitState,
 } from '../../types/state'
-import { getSchematicSymbolDefinition } from './symbolRegistry'
 import {
   ROOT_SCOPE_GROUP_ID,
   type SchematicSemanticModel,
   type SemanticComponent,
   type SemanticComponentRole,
-  type SemanticConnectedComponent,
   type SemanticNet,
   type SemanticNetCategory,
   type SemanticPin,
@@ -20,8 +18,8 @@ import {
   type SemanticScopeGroup,
 } from './schematicSemanticModel'
 import {
+  PRIMITIVE_SYMBOL_KIND,
   classifySchematicPrimitiveSubckts,
-  primitiveKindToSymbolKind,
   type SchematicPrimitiveSubcktInfo,
   type SchematicPrimitiveSubcktMap,
 } from './schematicSubcktClassifier'
@@ -195,60 +193,6 @@ function resolveNetCategory(net: SchematicNetState, pinCount: number): SemanticN
   return 'signal'
 }
 
-interface DisjointSet {
-  parent: Map<string, string>
-  rank: Map<string, number>
-}
-
-function createDisjointSet(): DisjointSet {
-  return {
-    parent: new Map(),
-    rank: new Map(),
-  }
-}
-
-function ensureDsuNode(dsu: DisjointSet, id: string): void {
-  if (!dsu.parent.has(id)) {
-    dsu.parent.set(id, id)
-    dsu.rank.set(id, 0)
-  }
-}
-
-function dsuFind(dsu: DisjointSet, id: string): string {
-  ensureDsuNode(dsu, id)
-  let root = id
-  while (dsu.parent.get(root)! !== root) {
-    root = dsu.parent.get(root)!
-  }
-  let cursor = id
-  while (cursor !== root) {
-    const next = dsu.parent.get(cursor)!
-    dsu.parent.set(cursor, root)
-    cursor = next
-  }
-  return root
-}
-
-function dsuUnion(dsu: DisjointSet, a: string, b: string): void {
-  const rootA = dsuFind(dsu, a)
-  const rootB = dsuFind(dsu, b)
-  if (rootA === rootB) {
-    return
-  }
-  const rankA = dsu.rank.get(rootA) ?? 0
-  const rankB = dsu.rank.get(rootB) ?? 0
-  if (rankA < rankB) {
-    dsu.parent.set(rootA, rootB)
-    return
-  }
-  if (rankA > rankB) {
-    dsu.parent.set(rootB, rootA)
-    return
-  }
-  dsu.parent.set(rootB, rootA)
-  dsu.rank.set(rootA, rankA + 1)
-}
-
 function sortSemanticComponents(components: SemanticComponent[]): SemanticComponent[] {
   return [...components].sort((left, right) => {
     const priorityDelta = left.placementPriority - right.placementPriority
@@ -347,7 +291,6 @@ function applyPrimitiveOverrides(
   component: SchematicComponentState,
   primitive: SchematicPrimitiveSubcktInfo,
 ): SchematicComponentState {
-  const overriddenSymbolKind = primitiveKindToSymbolKind(primitive.kind)
   const overriddenPortSideHints: Record<string, string> = { ...component.port_side_hints }
   for (const pin of component.pins) {
     const roleHint = primitive.portRoleHints[pin.name]
@@ -359,7 +302,7 @@ function applyPrimitiveOverrides(
   }
   return {
     ...component,
-    symbol_kind: overriddenSymbolKind,
+    symbol_kind: PRIMITIVE_SYMBOL_KIND,
     port_side_hints: overriddenPortSideHints,
   }
 }
@@ -410,29 +353,19 @@ export function normalizeSchematicDocument(document: SchematicDocumentState): Sc
     const effectiveComponent = primitive
       ? applyPrimitiveOverrides(sortPinsForPrimitive(rawComponent, primitive), primitive)
       : rawComponent
-    const definition = getSchematicSymbolDefinition(effectiveComponent.symbol_kind)
     const role = resolveComponentRole(effectiveComponent)
     const pins = buildSemanticPins(effectiveComponent)
     const group = ensureScopeGroupChain(scopeGroupsById, effectiveComponent.scope_path, labelMap)
     const semanticComponent: SemanticComponent = {
       component: effectiveComponent,
       role,
-      symbolWidth: definition.width,
-      symbolHeight: definition.height,
       pins,
       scopeGroupId: group.id,
       placementPriority: resolvePlacementPriority(role, pins),
-      isolated: true,
-      connectedComponentId: effectiveComponent.id,
     }
     componentsById.set(effectiveComponent.id, semanticComponent)
     rawComponents.push(semanticComponent)
     group.componentIds.push(effectiveComponent.id)
-  }
-
-  const dsu = createDisjointSet()
-  for (const semanticComponent of rawComponents) {
-    ensureDsuNode(dsu, semanticComponent.component.id)
   }
 
   const netsById = new Map<string, SemanticNet>()
@@ -449,63 +382,19 @@ export function normalizeSchematicDocument(document: SchematicDocumentState): Sc
     const pinCount = validConnections.length
     const category = resolveNetCategory(rawNet, pinCount)
     const netGroup = ensureScopeGroupChain(scopeGroupsById, rawNet.scope_path, labelMap)
-    for (let index = 1; index < componentIds.length; index += 1) {
-      dsuUnion(dsu, componentIds[0], componentIds[index])
-    }
-    const connectedComponentId = componentIds.length > 0 ? dsuFind(dsu, componentIds[0]) : `net:${rawNet.id}`
     const semanticNet: SemanticNet = {
       net: rawNet,
       category,
       pinCount,
       componentIds,
       scopeGroupId: netGroup.id,
-      connectedComponentId,
     }
     netsById.set(rawNet.id, semanticNet)
     rawNets.push(semanticNet)
   }
 
-  const connectedComponentsMap = new Map<string, SemanticConnectedComponent>()
-  const componentConnectionCount = new Map<string, number>()
-
-  for (const semanticComponent of rawComponents) {
-    const clusterId = dsuFind(dsu, semanticComponent.component.id)
-    semanticComponent.connectedComponentId = clusterId
-    if (!connectedComponentsMap.has(clusterId)) {
-      connectedComponentsMap.set(clusterId, {
-        id: clusterId,
-        componentIds: [],
-        netIds: [],
-        nonTrivial: false,
-      })
-    }
-    connectedComponentsMap.get(clusterId)!.componentIds.push(semanticComponent.component.id)
-    componentConnectionCount.set(semanticComponent.component.id, 0)
-  }
-
-  for (const semanticNet of rawNets) {
-    if (semanticNet.pinCount < 2 || semanticNet.componentIds.length === 0) {
-      continue
-    }
-    const clusterId = dsuFind(dsu, semanticNet.componentIds[0])
-    semanticNet.connectedComponentId = clusterId
-    const cluster = connectedComponentsMap.get(clusterId)
-    if (cluster) {
-      cluster.netIds.push(semanticNet.net.id)
-      cluster.nonTrivial = true
-    }
-    for (const componentId of semanticNet.componentIds) {
-      componentConnectionCount.set(componentId, (componentConnectionCount.get(componentId) ?? 0) + 1)
-    }
-  }
-
-  for (const semanticComponent of rawComponents) {
-    semanticComponent.isolated = (componentConnectionCount.get(semanticComponent.component.id) ?? 0) === 0
-  }
-
   const sortedComponents = sortSemanticComponents(rawComponents)
   const scopeGroups = Array.from(scopeGroupsById.values())
-  const connectedComponents = Array.from(connectedComponentsMap.values())
 
   return {
     components: sortedComponents,
@@ -515,6 +404,5 @@ export function normalizeSchematicDocument(document: SchematicDocumentState): Sc
     scopeGroups,
     scopeGroupsById,
     rootScopeGroupId: ROOT_SCOPE_GROUP_ID,
-    connectedComponents,
   }
 }

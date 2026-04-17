@@ -86,7 +86,6 @@ type ComponentLabelSlot = 'top' | 'bottom' | 'left' | 'right'
 
 function pickComponentSlots(component: SchematicLayoutComponent): { name: ComponentLabelSlot; value: ComponentLabelSlot } {
   const symbolKind = component.component.symbol_kind
-  const orientation = component.orientation
   if (symbolKind === 'opamp' || symbolKind === 'subckt_block' || symbolKind === 'controlled_source') {
     return { name: 'top', value: 'bottom' }
   }
@@ -97,9 +96,6 @@ function pickComponentSlots(component: SchematicLayoutComponent): { name: Compon
     return { name: 'top', value: 'bottom' }
   }
   if (symbolKind === 'voltage_source' || symbolKind === 'current_source') {
-    return { name: 'right', value: 'left' }
-  }
-  if (orientation === 'up' || orientation === 'down') {
     return { name: 'right', value: 'left' }
   }
   return { name: 'top', value: 'bottom' }
@@ -160,7 +156,6 @@ function classifySegmentPriority(segment: SchematicLayoutNetSegment): number {
   if (segment.key.endsWith(':trunk')) return 4
   if (segment.key.endsWith(':direct')) return 3
   if (segment.key.includes(':tap:')) return 2
-  if (segment.kind === 'stub') return 1
   return 1
 }
 

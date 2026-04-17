@@ -1,5 +1,5 @@
 import type { SchematicDocumentState, SchematicPinState } from '../../types/state'
-import { getSchematicSymbolDefinition, transformSchematicSymbolAnchor, type SchematicPinSide } from './symbolRegistry'
+import { getSchematicSymbolDefinition, type SchematicPinSide } from './symbolRegistry'
 import { normalizeSchematicDocument } from './schematicDocumentNormalizer'
 import type {
   SchematicSemanticModel,
@@ -17,13 +17,16 @@ import type {
   SchematicLayoutComponent,
   SchematicLayoutGroup,
   SchematicLayoutNet,
-  SchematicLayoutOrientation,
   SchematicLayoutPin,
   SchematicLayoutPinStub,
   SchematicLayoutPoint,
   SchematicLayoutResult,
 } from './schematicLayoutTypes'
 import { routeSchematicNets } from './schematicOrthogonalConnectorRouter'
+import {
+  rotateLayoutClockwise90,
+  shouldRotateLayoutToHorizontal,
+} from './schematicLayoutRotation'
 import {
   SCHEMATIC_COMPONENT_LABEL_HEIGHT,
   SCHEMATIC_NET_LABEL_HEIGHT,
@@ -42,7 +45,6 @@ export type {
   SchematicLayoutLabel,
   SchematicLayoutNet,
   SchematicLayoutNetSegment,
-  SchematicLayoutOrientation,
   SchematicLayoutPin,
   SchematicLayoutPoint,
   SchematicLayoutRect,
@@ -104,21 +106,17 @@ function buildRequestKey(documentId: string, revision: string): string {
   return `${documentId}::${revision}`
 }
 
-function resolveOrientedPinAnchors(
-  semanticComponent: SemanticComponent,
-  orientation: SchematicLayoutOrientation,
-): ResolvedPinAnchor[] {
+function resolvePinAnchors(semanticComponent: SemanticComponent): ResolvedPinAnchor[] {
   const component = semanticComponent.component
   const definition = getSchematicSymbolDefinition(component.symbol_kind)
   return semanticComponent.pins.map((semanticPin) => {
-    const baseAnchor = definition.getPinAnchor(component, semanticPin.pin, semanticPin.index)
-    const orientedAnchor = transformSchematicSymbolAnchor(baseAnchor, orientation, definition.width, definition.height)
+    const anchor = definition.getPinAnchor(component, semanticPin.pin, semanticPin.index)
     return {
       portId: buildPortId(component.id, semanticPin.pin.name),
       pin: semanticPin.pin,
-      side: orientedAnchor.side,
-      anchorX: orientedAnchor.x,
-      anchorY: orientedAnchor.y,
+      side: anchor.side,
+      anchorX: anchor.x,
+      anchorY: anchor.y,
     }
   })
 }
@@ -134,8 +132,7 @@ function buildComponentLayouts(
     if (!semanticComponent) {
       continue
     }
-    const orientation = position.orientation
-    const pinAnchors = resolveOrientedPinAnchors(semanticComponent, orientation)
+    const pinAnchors = resolvePinAnchors(semanticComponent)
     const pins: SchematicLayoutPin[] = pinAnchors.map((anchor) => {
       const pin: SchematicLayoutPin = {
         id: anchor.portId,
@@ -151,7 +148,10 @@ function buildComponentLayouts(
     })
     const layoutComponent: SchematicLayoutComponent = {
       component: semanticComponent.component,
-      orientation,
+      // Layout defaults to unrotated; the global rotate-to-horizontal pass
+      // at the end of `computeSchematicLayout` may flip this to 90 for
+      // every component if the finished drawing is too tall.
+      rotation: 0,
       bounds: { ...position.box },
       symbolBounds: { ...position.symbolBox },
       pins,
@@ -392,13 +392,22 @@ export async function computeSchematicLayout(document: SchematicDocumentState): 
   applySchematicLabelPlans(components, nets)
   const bounds = buildBounds(components, groups, nets)
 
+  // Final global orientation pass: if the finished drawing is substantially
+  // taller than it is wide (a common outcome for short/deep signal chains
+  // such as a single-stage amplifier), rotate the whole layout 90° clockwise
+  // so it fills the canvas horizontally. The pass is rigid — it moves every
+  // coordinate uniformly and flips a single per-component `rotation` flag,
+  // leaving topology, label slots, routing, and group hierarchy untouched.
+  const baseLayout = { components, nets, groups, bounds }
+  const finalLayout = shouldRotateLayoutToHorizontal(bounds) ? rotateLayoutClockwise90(baseLayout) : baseLayout
+
   return {
     requestKey,
     documentId: document.document_id,
     revision: document.revision,
-    components,
-    nets,
-    groups,
-    bounds,
+    components: finalLayout.components,
+    nets: finalLayout.nets,
+    groups: finalLayout.groups,
+    bounds: finalLayout.bounds,
   }
 }

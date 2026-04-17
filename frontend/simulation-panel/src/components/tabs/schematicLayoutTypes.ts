@@ -2,10 +2,6 @@ import type { SchematicComponentState, SchematicNetState, SchematicPinState } fr
 
 export type SchematicPinSide = 'left' | 'right' | 'top' | 'bottom'
 
-export type SchematicLayoutOrientation = 'right' | 'left' | 'up' | 'down'
-
-export type SchematicLayoutSegmentKind = 'route' | 'stub'
-
 export type SchematicLayoutSegmentAxis = 'horizontal' | 'vertical' | 'mixed'
 
 export interface SchematicLayoutPoint {
@@ -74,9 +70,23 @@ export interface SchematicLayoutPin {
   stub: SchematicLayoutPinStub | null
 }
 
+/**
+ * Per-component rotation applied by the global "rotate-to-horizontal" pass.
+ *
+ * This is NOT a per-component layout degree of freedom that the placer
+ * chooses — it is strictly a uniform flag that is either `0` for every
+ * component or `90` (clockwise) for every component, depending on whether
+ * the finished drawing was too tall for the canvas and therefore got
+ * rotated as a whole. Keeping it on each component (rather than on the
+ * `SchematicLayoutResult`) lets the renderer apply the matching symbol
+ * transform locally without needing to pipe a separate rotation flag
+ * through every render site.
+ */
+export type SchematicLayoutComponentRotation = 0 | 90
+
 export interface SchematicLayoutComponent {
   component: SchematicComponentState
-  orientation: SchematicLayoutOrientation
+  rotation: SchematicLayoutComponentRotation
   bounds: SchematicLayoutRect
   symbolBounds: SchematicLayoutRect
   pins: SchematicLayoutPin[]
@@ -86,7 +96,6 @@ export interface SchematicLayoutComponent {
 
 export interface SchematicLayoutNetSegment {
   key: string
-  kind: SchematicLayoutSegmentKind
   axis: SchematicLayoutSegmentAxis
   points: SchematicLayoutPoint[]
 }

@@ -4,7 +4,6 @@ import { useElementSize } from '../../hooks/useElementSize'
 import type { SchematicDocumentState } from '../../types/state'
 import {
   getSchematicSymbolDefinition,
-  getSchematicSymbolRenderTransform,
   isSchematicComponentReadonly,
   renderSchematicPinStub,
   type SchematicPinStubAppearance,
@@ -386,16 +385,25 @@ export function SchematicCanvas({
                 const readonly = isSchematicComponentReadonly(item.component)
                 const appearance = resolveAppearance(selected, hovered, readonly)
                 const symbolDefinition = getSchematicSymbolDefinition(item.component.symbol_kind)
-                const symbolTransform = `translate(${item.symbolBounds.x} ${item.symbolBounds.y}) ${getSchematicSymbolRenderTransform(
-                  item.orientation,
-                  symbolDefinition.width,
-                  symbolDefinition.height,
-                )}`
+                // The layout pipeline has already rotated every coordinate
+                // (pins, stubs, labels, net endpoints) into the final world
+                // position. What is still oriented the "original" way is the
+                // symbol glyph itself — the path data inside
+                // `symbolDefinition.render()` is drawn against the untouched
+                // `symbolDefinition.width` × `symbolDefinition.height` local
+                // space. When `item.rotation === 90`, we compose a 90°
+                // clockwise rotation around the top-left of the local symbol
+                // box so the glyph aligns with the already-rotated pin
+                // anchors; the `translate` then re-anchors that rotated box
+                // at the correct spot in world space.
+                const symbolTransform =
+                  item.rotation === 90
+                    ? `translate(${item.symbolBounds.x + item.symbolBounds.width} ${item.symbolBounds.y}) rotate(90)`
+                    : `translate(${item.symbolBounds.x} ${item.symbolBounds.y})`
                 return (
                   <g
                     key={item.component.id}
                     data-schematic-component="true"
-                    data-schematic-orientation={item.orientation}
                     className={`schematic-canvas__component${selected ? ' schematic-canvas__component--selected' : ''}${hovered ? ' schematic-canvas__component--hovered' : ''}${readonly ? ' schematic-canvas__component--readonly' : ''}`}
                     onMouseEnter={() => setHoveredComponentId(item.component.id)}
                     onMouseLeave={() => setHoveredComponentId((current) => (current === item.component.id ? '' : current))}

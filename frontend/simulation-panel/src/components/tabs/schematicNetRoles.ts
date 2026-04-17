@@ -1,4 +1,4 @@
-import type { SchematicSemanticModel, SemanticComponent, SemanticNet } from './schematicSemanticModel'
+import type { SchematicSemanticModel, SemanticNet } from './schematicSemanticModel'
 
 /**
  * Net role classification used by the orthogonal router to select the
@@ -44,42 +44,4 @@ function classifyOneNet(net: SemanticNet): SchematicNetRole {
     return 'signal_trunk'
   }
   return 'branch'
-}
-
-/**
- * Identify "local feedback" nets: a net that touches two or more distinct
- * pins of the same active amplifier component (typically an op-amp's output
- * fed back to one of its inputs via an RC network). Such nets should route
- * as a short U-turn next to the amplifier rather than flowing like a normal
- * left-to-right signal edge, so the ELK layout pipeline gives them higher
- * shortness / straightness priority and the feedback components converge
- * next to their amplifier rather than being scattered across the canvas.
- */
-export function identifySchematicFeedbackNets(semantic: SchematicSemanticModel): Set<string> {
-  const feedbackNetIds = new Set<string>()
-  for (const net of semantic.nets) {
-    if (net.pinCount < 2) continue
-    const pinsPerComponent = new Map<string, number>()
-    for (const connection of net.net.connections) {
-      const count = pinsPerComponent.get(connection.component_id) ?? 0
-      pinsPerComponent.set(connection.component_id, count + 1)
-    }
-    for (const [componentId, count] of pinsPerComponent) {
-      if (count < 2) continue
-      const component = semantic.componentsById.get(componentId)
-      if (!component) continue
-      if (isFeedbackAnchorComponent(component)) {
-        feedbackNetIds.add(net.net.id)
-        break
-      }
-    }
-  }
-  return feedbackNetIds
-}
-
-function isFeedbackAnchorComponent(component: SemanticComponent): boolean {
-  // Only active amplifying components act as feedback anchors; a passive
-  // component with two pins on the same net is simply shorted, not a
-  // feedback loop.
-  return component.role === 'amplifier' || component.role === 'active' || component.role === 'controlled_source'
 }

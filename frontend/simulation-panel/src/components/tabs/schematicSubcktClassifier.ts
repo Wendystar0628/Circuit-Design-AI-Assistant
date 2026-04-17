@@ -4,15 +4,15 @@ import type { SchematicSubcircuitState } from '../../types/state'
  * Primitive subckt classifier.
  *
  * SPICE `.subckt` definitions are sometimes just a hand-rolled macro for a
- * well-known analog primitive (an op-amp, a comparator, etc.). The circuit
- * author does not want to see the macro's guts (a single VCVS `E1` inside a
- * dashed scope box); they want the industry-standard symbol.
+ * well-known analog primitive (typically an op-amp). The circuit author
+ * does not want to see the macro's guts (a single VCVS `E1` inside a dashed
+ * scope box); they want the industry-standard symbol.
  *
  * This module identifies such primitive subckts purely from the `.subckt`
  * name and its published port arity. The downstream normalizer uses the
  * result to black-box primitive instances: internal components / nets /
  * scope groups are dropped from the semantic model, and each `X` call site
- * is rewritten to render as the canonical symbol (e.g. an op-amp triangle).
+ * is rewritten to render as the canonical symbol (the op-amp triangle).
  *
  * Classification is name-pattern driven. The matching rules intentionally
  * err on the side of being generous with names (any `*opamp*`, any
@@ -21,12 +21,7 @@ import type { SchematicSubcircuitState } from '../../types/state'
  * requires a truly hostile naming scheme.
  */
 
-export type SchematicPrimitiveSubcktKind =
-  | 'opamp'
-  | 'comparator'
-
 export interface SchematicPrimitiveSubcktInfo {
-  kind: SchematicPrimitiveSubcktKind
   name: string
   scopePathKey: string
   portNames: readonly string[]
@@ -52,12 +47,6 @@ const OPAMP_NAME_PATTERNS: readonly RegExp[] = [
   /^ad\d{3,4}[a-z]?$/i, // AD820, AD8066, ...
   /^opa\d{3,4}[a-z]?$/i, // OPA2134, OPA134, ...
   /^mcp\d{3,4}[a-z]?$/i, // MCP6001, ...
-]
-
-const COMPARATOR_NAME_PATTERNS: readonly RegExp[] = [
-  /^ideal[_-]?comparator$/i,
-  /^comparator\d*$/i,
-  /^lm\d{2,4}comp$/i,
 ]
 
 function scopePathKey(path: readonly string[]): string {
@@ -125,17 +114,6 @@ function classifyOneSubckt(
   }
   if (matchAny(rawName, OPAMP_NAME_PATTERNS) && subckt.port_names.length >= 3) {
     return {
-      kind: 'opamp',
-      name: rawName,
-      scopePathKey: scopePathKey([...subckt.scope_path, subckt.name]),
-      portNames: subckt.port_names,
-      componentIds: subckt.component_ids,
-      portRoleHints: inferOpampPortRoles(subckt.port_names),
-    }
-  }
-  if (matchAny(rawName, COMPARATOR_NAME_PATTERNS) && subckt.port_names.length >= 3) {
-    return {
-      kind: 'comparator',
       name: rawName,
       scopePathKey: scopePathKey([...subckt.scope_path, subckt.name]),
       portNames: subckt.port_names,
@@ -160,17 +138,9 @@ export function classifySchematicPrimitiveSubckts(
 }
 
 /**
- * Map a primitive kind to the renderer's canonical `symbol_kind` tag.
- * Keeping this indirection in one place avoids spreading string constants
- * across the pipeline.
+ * Renderer's canonical `symbol_kind` tag for every primitive subckt. Every
+ * match currently maps to the op-amp triangle — the only primitive symbol
+ * this build recognizes. Keeping this indirection isolated means adding a
+ * new primitive (e.g. a real comparator glyph) happens in exactly one place.
  */
-export function primitiveKindToSymbolKind(kind: SchematicPrimitiveSubcktKind): string {
-  switch (kind) {
-    case 'opamp':
-      return 'opamp'
-    case 'comparator':
-      // Comparators share the op-amp triangle in this build; a dedicated
-      // comparator symbol can be introduced later if needed.
-      return 'opamp'
-  }
-}
+export const PRIMITIVE_SYMBOL_KIND = 'opamp'

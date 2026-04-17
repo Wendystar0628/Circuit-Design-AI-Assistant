@@ -4,7 +4,6 @@ import type {
   SchematicLayoutPin,
   SchematicLayoutPoint,
   SchematicLayoutSegmentAxis,
-  SchematicLayoutSegmentKind,
   SchematicPinSide,
 } from './schematicLayoutTypes'
 import type { SchematicSemanticModel } from './schematicSemanticModel'
@@ -736,7 +735,6 @@ function extractPolylineChains(
     const startVertex = ovg.vertices[startVertexId]
     points.push({ x: startVertex.x, y: startVertex.y })
 
-    let prevVertexId = startVertexId
     let currentEdge = firstEdge
     consumedEdges.add(currentEdge.index)
     let nextVertexId = currentEdge.from === startVertexId ? currentEdge.to : currentEdge.from
@@ -749,7 +747,6 @@ function extractPolylineChains(
       const forward = links.find((link) => link.edge.index !== currentEdge.index && !consumedEdges.has(link.edge.index))
       if (!forward) break
       consumedEdges.add(forward.edge.index)
-      prevVertexId = nextVertexId
       currentEdge = forward.edge
       nextVertexId = forward.to
       nextVertex = ovg.vertices[nextVertexId]
@@ -781,7 +778,6 @@ function extractPolylineChains(
 
 interface WireBundle {
   netId: string
-  kind: SchematicLayoutSegmentKind
   chains: PolylineChain[]
 }
 
@@ -964,7 +960,6 @@ function snapChainPoints(chains: PolylineChain[]): void {
 function chainsToNetSegments(
   netId: string,
   chains: PolylineChain[],
-  kind: SchematicLayoutSegmentKind,
 ): SchematicLayoutNetSegment[] {
   const segments: SchematicLayoutNetSegment[] = []
   for (let index = 0; index < chains.length; index += 1) {
@@ -972,8 +967,7 @@ function chainsToNetSegments(
     const pruned = removeCollinearRedundancy(chain.points)
     if (pruned.length < 2) continue
     segments.push({
-      key: `${netId}:${kind}:${index}`,
-      kind,
+      key: `${netId}:route:${index}`,
       axis: classifyChainAxis(pruned),
       points: pruned,
     })
@@ -1005,18 +999,6 @@ function removeCollinearRedundancy(points: SchematicLayoutPoint[]): SchematicLay
     deduped.push(current)
   }
   return deduped
-}
-
-function buildDanglingStubChain(pin: SchematicLayoutPin): PolylineChain {
-  const direction = directionVector(pin.side)
-  const tip = {
-    x: pin.x + direction.dx * STUB_LENGTH,
-    y: pin.y + direction.dy * STUB_LENGTH,
-  }
-  return {
-    axis: direction.dx !== 0 ? 'horizontal' : 'vertical',
-    points: [{ x: pin.x, y: pin.y }, tip],
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1057,11 +1039,10 @@ export function routeSchematicNets(
     if (!role) continue
     const pins = pinsByNetId.get(netId) ?? []
 
+    // Dangling nets (pinCount <= 1) carry no electrical meaning; drawing a
+    // short "ghost wire" for them would misrepresent the schematic. They are
+    // dropped from the routed output entirely.
     if (role === 'dangling') {
-      if (pins.length === 1) {
-        const chain = buildDanglingStubChain(pins[0])
-        routedBundles.push({ netId, kind: 'stub', chains: [chain] })
-      }
       continue
     }
 
@@ -1097,7 +1078,7 @@ export function routeSchematicNets(
     }
 
     const chains = extractPolylineChains(ovg, tree)
-    routedBundles.push({ netId, kind: 'route', chains })
+    routedBundles.push({ netId, chains })
   }
 
   nudgeParallelSegments(routedBundles)
@@ -1106,7 +1087,7 @@ export function routeSchematicNets(
   }
 
   for (const bundle of routedBundles) {
-    const segments = chainsToNetSegments(bundle.netId, bundle.chains, bundle.kind)
+    const segments = chainsToNetSegments(bundle.netId, bundle.chains)
     if (segments.length > 0) {
       result.set(bundle.netId, segments)
     }

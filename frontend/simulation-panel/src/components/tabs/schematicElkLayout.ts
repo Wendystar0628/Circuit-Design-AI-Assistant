@@ -1,7 +1,6 @@
 import type { ELK, ElkNode, ElkPort, ElkExtendedEdge, LayoutOptions } from 'elkjs/lib/elk-api'
 
 import type {
-  SchematicLayoutOrientation,
   SchematicLayoutRect,
   SchematicPinSide,
 } from './schematicLayoutTypes'
@@ -21,7 +20,6 @@ import { getSchematicSymbolDefinition } from './symbolRegistry'
 export interface SchematicElkComponentPosition {
   componentId: string
   scopeGroupId: string
-  orientation: SchematicLayoutOrientation
   box: SchematicLayoutRect
   symbolBox: SchematicLayoutRect
 }
@@ -97,8 +95,17 @@ const ROOT_LAYOUT_OPTIONS: LayoutOptions = {
   'elk.spacing.edgeEdge': '12',
   'elk.spacing.portPort': '16',
   'elk.padding': ROOT_PADDING,
+  // Keep disconnected sub-circuits side-by-side on the horizontal axis so a
+  // test bench with multiple independent stages still reads left-to-right
+  // rather than stacking them vertically as "separate rows".
   'elk.separateConnectedComponents': 'true',
   'elk.layered.considerModelOrder.strategy': 'PREFER_EDGES',
+  // Target aspect ratio of the final drawing. Our canvas is always much
+  // wider than it is tall, so we bias the Sugiyama packer to produce a
+  // horizontally elongated result — otherwise ELK happily compresses the
+  // graph into a tall narrow column, wasting the horizontal canvas area
+  // and forcing long vertical wire runs across the main signal band.
+  'elk.aspectRatio': '2.0',
   // Preserve explicit feedback edges (e.g. op-amp output back to inverting
   // input via a resistor) rather than letting ELK's cycle-breaking reverse
   // them. Keeping feedback edges as true back-edges lets the layered
@@ -129,24 +136,46 @@ interface RailPartition {
 }
 
 /**
- * A `supply` component (e.g. a SPICE `Vcc` source) whose only non-ground
- * connection is a single-pin `dangling` net contributes no electrical effect
- * to the circuit — the rail it defines has no consumer. Rendering such a
- * source creates the "orphan floating on top of the canvas" anti-pattern
- * shown in the inverting-amplifier test case. We drop it here so the ELK
- * graph, the rail trunk, and the final render never see it.
+ * Classify every supply component into exactly one of three buckets:
+ *
+ *   - `drop` : Completely unused. Every non-ground net the supply touches is
+ *              dangling (pinCount <= 1), meaning the rail it defines has no
+ *              consumer. Rendering it would produce an "orphan on the canvas"
+ *              artefact (e.g. a dangling `Vcc` that only feeds an op-amp
+ *              subckt which is itself abstracted away).
+ *
+ *   - `rail` : Genuine power rail. Every non-ground net it touches is
+ *              classified as `power` (VCC / VDD / VEE / ...). These belong
+ *              on the dedicated rail trunk above / below the main band.
+ *
+ *   - `main` : Signal-domain source. It drives at least one `signal` / `bias`
+ *              net, i.e. it is an input stimulus (e.g. the SPICE `Vin` source
+ *              in an amplifier test bench). Treating it as a rail would push
+ *              the stimulus to the top of the canvas and detach it from its
+ *              load, which is the exact root-cause of the "everything stacked
+ *              vertically" anti-pattern we were seeing. Signal sources must
+ *              flow through ELK so they anchor the left end of the horizontal
+ *              signal chain.
  */
-function isDanglingSupplyComponent(component: SemanticComponent, semantic: SchematicSemanticModel): boolean {
-  if (component.role !== 'supply') return false
+type SupplyPlacement = 'drop' | 'rail' | 'main'
+
+function classifySupplyPlacement(component: SemanticComponent, semantic: SchematicSemanticModel): SupplyPlacement {
+  let hasLivePower = false
+  let hasLiveSignalOrBias = false
   for (const net of semantic.nets) {
     if (!net.componentIds.includes(component.component.id)) continue
     if (net.category === 'ground') continue
-    if (net.pinCount >= 2) {
-      // Found at least one real load, so this supply is genuinely in use.
-      return false
+    if (net.pinCount < 2) continue
+    if (net.category === 'power') {
+      hasLivePower = true
+    } else {
+      // signal / bias / (any future non-power non-ground live net)
+      hasLiveSignalOrBias = true
     }
   }
-  return true
+  if (hasLiveSignalOrBias) return 'main'
+  if (hasLivePower) return 'rail'
+  return 'drop'
 }
 
 function partitionByRailRole(semantic: SchematicSemanticModel): RailPartition {
@@ -154,12 +183,17 @@ function partitionByRailRole(semantic: SchematicSemanticModel): RailPartition {
   const powerRailOnly: SemanticComponent[] = []
   const groundRailOnly: SemanticComponent[] = []
   for (const component of semantic.components) {
-    if (isDanglingSupplyComponent(component, semantic)) {
+    if (component.role === 'supply') {
+      const placement = classifySupplyPlacement(component, semantic)
+      if (placement === 'drop') continue
+      if (placement === 'rail') {
+        powerRailOnly.push(component)
+      } else {
+        mainComponents.push(component)
+      }
       continue
     }
-    if (component.role === 'supply') {
-      powerRailOnly.push(component)
-    } else if (component.role === 'ground') {
+    if (component.role === 'ground') {
       groundRailOnly.push(component)
     } else {
       mainComponents.push(component)
@@ -431,7 +465,6 @@ function buildMainComponentPositions(
     positions.push({
       componentId: component.component.id,
       scopeGroupId: component.scopeGroupId,
-      orientation: 'right',
       box: { x: boxX, y: boxY, width: boxWidth, height: boxHeight },
       symbolBox: {
         x: boxX + NODE_PADDING_X,
@@ -575,7 +608,6 @@ function placeRailRow(
     output.push({
       componentId: entry.component.component.id,
       scopeGroupId: entry.component.scopeGroupId,
-      orientation: 'right',
       box: { x: boxX, y: boxY, width: entry.width, height: entry.height },
       symbolBox: {
         x: boxX + NODE_PADDING_X,

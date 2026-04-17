@@ -15,13 +15,10 @@ import type {
   SchematicLayoutBounds,
   SchematicLayoutComponent,
   SchematicLayoutGroup,
-  SchematicLayoutLabel,
   SchematicLayoutNet,
-  SchematicLayoutNetSegment,
   SchematicLayoutOrientation,
   SchematicLayoutPin,
   SchematicLayoutPoint,
-  SchematicLayoutRect,
   SchematicLayoutResult,
 } from './schematicLayoutTypes'
 import { routeSchematicNets } from './schematicOrthogonalRouter'

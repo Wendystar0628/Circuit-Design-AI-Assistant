@@ -29,6 +29,7 @@ import {
   shouldRotateLayoutToHorizontal,
 } from './schematicLayoutRotation'
 import { alignNetPins } from './schematicPinAlignment'
+import { RAIL_STUB_LENGTH, computeRailStubBounds } from './schematicRailStub'
 import {
   SCHEMATIC_COMPONENT_LABEL_HEIGHT,
   SCHEMATIC_NET_LABEL_HEIGHT,
@@ -199,42 +200,6 @@ function buildComponentLayouts(
 // Stub placement is done purely from pin geometry here so the router has a
 // single, stable input downstream (it just skips rail nets entirely).
 // ---------------------------------------------------------------------------
-
-const RAIL_STUB_LENGTH = 26
-
-/**
- * Half-width (perpendicular to the stub axis) of the widest rail glyph —
- * the three-bar ground symbol or the power-stub triangle + label. Used to
- * expand each component's `bounds` after stubs are attached so the router
- * sees the stub glyph as an obstacle and the pin-alignment pass refuses
- * to shift a neighbor into the space the glyph occupies.
- */
-const RAIL_STUB_HALF_WIDTH = 12
-
-/**
- * Return the axis-aligned rectangle that a rail stub glyph + label will
- * occupy in world space. The rectangle always starts at the pin anchor
- * and extends outward along the pin's side by `stub.length`, with a
- * symmetric half-width perpendicular to that axis. This matches what
- * `renderSchematicPinStub` actually draws — the ground three-bar glyph,
- * the power cap triangle, and their adjacent labels all fit inside this
- * rectangle.
- */
-function computeRailStubBounds(pin: SchematicLayoutPin): SchematicLayoutRect | null {
-  if (!pin.stub) return null
-  const { x, y, side, length } = pin.stub
-  const halfWidth = RAIL_STUB_HALF_WIDTH
-  switch (side) {
-    case 'top':
-      return { x: x - halfWidth, y: y - length, width: halfWidth * 2, height: length }
-    case 'bottom':
-      return { x: x - halfWidth, y, width: halfWidth * 2, height: length }
-    case 'left':
-      return { x: x - length, y: y - halfWidth, width: length, height: halfWidth * 2 }
-    case 'right':
-      return { x, y: y - halfWidth, width: length, height: halfWidth * 2 }
-  }
-}
 
 function unionLayoutRect(a: SchematicLayoutRect, b: SchematicLayoutRect): SchematicLayoutRect {
   const minX = Math.min(a.x, b.x)

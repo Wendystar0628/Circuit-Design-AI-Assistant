@@ -8,6 +8,7 @@ import type {
 } from './schematicLayoutTypes'
 import type { SchematicSemanticModel } from './schematicSemanticModel'
 import type { SchematicNetRoleMap } from './schematicNetRoles'
+import { computeRailStubBounds } from './schematicRailStub'
 
 // ============================================================================
 // Orthogonal Connector Routing
@@ -15,14 +16,26 @@ import type { SchematicNetRoleMap } from './schematicNetRoles'
 // Authoritative pin-to-pin wire router backed by:
 //
 //   Layer 1 — Obstacle model
-//     each SchematicLayoutComponent.bounds becomes an axis-aligned
-//     obstacle, inflated by OBSTACLE_CLEARANCE on every side. `bounds`
-//     is the union of the component's symbol rectangle and every rail
-//     stub glyph attached to its pins (see `expandComponentBoundsForStubs`
-//     in `schematicLayout.ts`), so both the body and its GND / VCC stubs
-//     repel wires. Pin vertices inherit their component's id so that
-//     edges incident to a pin are allowed to pass through the owning
-//     component's own obstacle.
+//     each SchematicLayoutComponent contributes two kinds of axis-aligned
+//     obstacles, both inflated by OBSTACLE_CLEARANCE on every side and
+//     both tagged with the owning component's id:
+//
+//       (a) the symbol rectangle (`symbolBounds`) — the visible component
+//           body. Pin anchors sit on its edges so that from a pin's point
+//           of view the obstacle is only a shallow "own-territory" the
+//           owner exemption can let the first outbound edge traverse.
+//       (b) one rectangle per rail stub glyph (GND / VCC), sized by
+//           `computeRailStubBounds` from `schematicRailStub.ts`. These
+//           make the stub glyphs and their labels first-class obstacles
+//           so wires routed for *other* nets never cross a component's
+//           own power / ground symbol.
+//
+//     Critically, `SchematicLayoutComponent.bounds` is NOT used here:
+//     it includes ELK's node padding (the spacing cushion ELK reserved
+//     for a neighbor), which is empty space, not a real barrier, and
+//     treating it as solid was observed to bury every pin vertex ≥20 px
+//     deep inside its own obstacle, making the outbound attachment edge
+//     impossible to build and blanking out the entire wire network.
 //
 //   Layer 2 — Orthogonal visibility graph (OVG)
 //     coordinates are collected from obstacle edges and pin/attachment
@@ -101,22 +114,39 @@ interface Obstacle {
 
 function buildObstacles(components: SchematicLayoutComponent[]): Obstacle[] {
   const obstacles: Obstacle[] = []
-  for (let index = 0; index < components.length; index += 1) {
-    const component = components[index]
-    // `bounds` already unions the symbol rectangle with every rail stub
-    // glyph rectangle (see `expandComponentBoundsForStubs`). Using it
-    // here — rather than the raw `symbolBounds` — means the router's
-    // visibility graph automatically excludes cells under GND / VCC
-    // stubs, preventing wires from crossing a stub's three-bar glyph.
-    const bounds = component.bounds
+  for (const component of components) {
+    // Obstacle (a): the symbol body. Must be `symbolBounds`, not
+    // `component.bounds`, because `bounds` also includes ELK's node
+    // padding — an empty spacing cushion we do NOT want the router to
+    // treat as solid. Using the padded bounds here would trap every
+    // pin vertex inside its own obstacle and block attachment edges
+    // from escaping, which would erase the whole wire network.
+    const symbol = component.symbolBounds
     obstacles.push({
-      id: index,
-      left: bounds.x - OBSTACLE_CLEARANCE,
-      right: bounds.x + bounds.width + OBSTACLE_CLEARANCE,
-      top: bounds.y - OBSTACLE_CLEARANCE,
-      bottom: bounds.y + bounds.height + OBSTACLE_CLEARANCE,
+      id: obstacles.length,
+      left: symbol.x - OBSTACLE_CLEARANCE,
+      right: symbol.x + symbol.width + OBSTACLE_CLEARANCE,
+      top: symbol.y - OBSTACLE_CLEARANCE,
+      bottom: symbol.y + symbol.height + OBSTACLE_CLEARANCE,
       ownerComponentId: component.component.id,
     })
+    // Obstacle (b): one rectangle per pin that carries a rail stub. The
+    // stub glyph (GND bars / VCC cap + label) is a real visual barrier
+    // that other nets must not cross; we tag it with the owning
+    // component id so the glyph's own pin is still allowed to emit an
+    // edge across it (otherwise the pin would be trapped).
+    for (const pin of component.pins) {
+      const stubRect = computeRailStubBounds(pin)
+      if (!stubRect) continue
+      obstacles.push({
+        id: obstacles.length,
+        left: stubRect.x - OBSTACLE_CLEARANCE,
+        right: stubRect.x + stubRect.width + OBSTACLE_CLEARANCE,
+        top: stubRect.y - OBSTACLE_CLEARANCE,
+        bottom: stubRect.y + stubRect.height + OBSTACLE_CLEARANCE,
+        ownerComponentId: component.component.id,
+      })
+    }
   }
   return obstacles
 }

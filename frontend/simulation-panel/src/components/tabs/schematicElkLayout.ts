@@ -225,6 +225,7 @@ function mapPinSideToElkSide(side: SchematicPinSide): string {
 
 function buildComponentElkNode(component: SemanticComponent): ElkNode {
   const definition = getSchematicSymbolDefinition(component.component.symbol_kind)
+  const dimensions = definition.getDimensions(component.component)
   const ports: ElkPort[] = component.pins.map((semanticPin) => {
     const anchor = definition.getPinAnchor(component.component, semanticPin.pin, semanticPin.index)
     return {
@@ -238,8 +239,8 @@ function buildComponentElkNode(component: SemanticComponent): ElkNode {
   })
   return {
     id: component.component.id,
-    width: definition.width + NODE_PADDING_X * 2,
-    height: definition.height + NODE_PADDING_Y * 2,
+    width: dimensions.width + NODE_PADDING_X * 2,
+    height: dimensions.height + NODE_PADDING_Y * 2,
     ports,
     layoutOptions: { ...COMPONENT_NODE_LAYOUT_OPTIONS },
   }
@@ -458,10 +459,11 @@ function buildMainComponentPositions(
     const placed = absoluteNodes.get(component.component.id)
     if (!placed) continue
     const definition = getSchematicSymbolDefinition(component.component.symbol_kind)
+    const dimensions = definition.getDimensions(component.component)
     const boxX = snapToGrid(placed.absX)
     const boxY = snapToGrid(placed.absY)
-    const boxWidth = placed.node.width ?? definition.width + NODE_PADDING_X * 2
-    const boxHeight = placed.node.height ?? definition.height + NODE_PADDING_Y * 2
+    const boxWidth = placed.node.width ?? dimensions.width + NODE_PADDING_X * 2
+    const boxHeight = placed.node.height ?? dimensions.height + NODE_PADDING_Y * 2
     positions.push({
       componentId: component.component.id,
       scopeGroupId: component.scopeGroupId,
@@ -469,8 +471,8 @@ function buildMainComponentPositions(
       symbolBox: {
         x: boxX + NODE_PADDING_X,
         y: boxY + NODE_PADDING_Y,
-        width: definition.width,
-        height: definition.height,
+        width: dimensions.width,
+        height: dimensions.height,
       },
     })
   }
@@ -594,8 +596,9 @@ function placeRailRow(
   let cursorX = mainBounds.x + RAIL_COMPONENT_MIN_MARGIN_X
   for (const component of ordered) {
     const definition = getSchematicSymbolDefinition(component.component.symbol_kind)
-    const width = definition.width + NODE_PADDING_X * 2
-    const height = definition.height + NODE_PADDING_Y * 2
+    const dimensions = definition.getDimensions(component.component)
+    const width = dimensions.width + NODE_PADDING_X * 2
+    const height = dimensions.height + NODE_PADDING_Y * 2
     const preferred = anchors.get(component.component.id) ?? cursorX
     const centerX = Math.max(preferred, cursorX + width / 2)
     layout.push({ component, centerX, width, height })
@@ -603,6 +606,7 @@ function placeRailRow(
   }
   for (const entry of layout) {
     const definition = getSchematicSymbolDefinition(entry.component.component.symbol_kind)
+    const dimensions = definition.getDimensions(entry.component.component)
     const boxX = snapToGrid(entry.centerX - entry.width / 2)
     const boxY = snapToGrid(direction === 'up' ? centerY - entry.height : centerY)
     output.push({
@@ -612,8 +616,8 @@ function placeRailRow(
       symbolBox: {
         x: boxX + NODE_PADDING_X,
         y: boxY + NODE_PADDING_Y,
-        width: definition.width,
-        height: definition.height,
+        width: dimensions.width,
+        height: dimensions.height,
       },
     })
   }

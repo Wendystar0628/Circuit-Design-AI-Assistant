@@ -307,6 +307,109 @@ function applyPrimitiveOverrides(
   }
 }
 
+/**
+ * Pre-compute a `(componentId, pinName) → SemanticNetCategory` lookup so
+ * the component-normalization pass can decide a passive's intrinsic
+ * orientation (horizontal vs vertical) based purely on local pin-to-net
+ * information, without needing to re-walk `document.nets` per component.
+ */
+function buildPinToNetCategoryMap(
+  document: SchematicDocumentState,
+  absorption: PrimitiveAbsorptionContext,
+): Map<string, SemanticNetCategory> {
+  const map = new Map<string, SemanticNetCategory>()
+  for (const rawNet of document.nets) {
+    const scopeKey = scopePathKey(rawNet.scope_path)
+    if (absorption.internalScopeKeys.has(scopeKey)) continue
+    const validConnections = rawNet.connections.filter(
+      (connection) => !absorption.internalComponentIds.has(connection.component_id),
+    )
+    const category = resolveNetCategory(rawNet, validConnections.length)
+    for (const connection of validConnections) {
+      map.set(buildPinToNetKey(connection.component_id, connection.pin_name), category)
+    }
+  }
+  return map
+}
+
+function buildPinToNetKey(componentId: string, pinName: string): string {
+  return `${componentId}::${pinName}`
+}
+
+const PASSIVE_SYMBOL_KINDS: ReadonlySet<string> = new Set([
+  'resistor',
+  'capacitor',
+  'inductor',
+  'diode',
+])
+
+/**
+ * Force the port-side hints on a two-terminal passive so that any pin
+ * sitting on a power / ground rail faces the corresponding trunk:
+ *
+ *   - `power` net  → hint `top`    (reaches the top power trunk)
+ *   - `ground` net → hint `bottom` (reaches the bottom ground trunk)
+ *
+ * The opposite terminal is hinted to the opposite face, which triggers
+ * `symbolRegistry.getPassiveDimensions` to return a vertical
+ * (60×108) footprint and the renderer to draw a vertical silhouette.
+ * Passives with no rail terminal (pure signal-chain couplers like a
+ * bypass capacitor between two biasing nodes) are left untouched so
+ * they stay horizontal along the left-to-right signal flow.
+ *
+ * This is a *pre-layout* authority: the finalized hints flow into every
+ * downstream stage — `getPinAnchor().side` sets `elk.port.side`, which
+ * in turn makes ELK pack the component vertically, which in turn makes
+ * the router attach the rail stub on a straight short segment instead
+ * of a U-turn around the component body.
+ */
+function applyPassivePortSideHints(
+  component: SchematicComponentState,
+  pinToNetCategory: Map<string, SemanticNetCategory>,
+): SchematicComponentState {
+  if (!PASSIVE_SYMBOL_KINDS.has(component.symbol_kind)) {
+    return component
+  }
+  if (component.pins.length !== 2) {
+    return component
+  }
+  const pin0 = component.pins[0]
+  const pin1 = component.pins[1]
+  const category0 = pinToNetCategory.get(buildPinToNetKey(component.id, pin0.name))
+  const category1 = pinToNetCategory.get(buildPinToNetKey(component.id, pin1.name))
+
+  let side0: 'top' | 'bottom' | null = null
+  let side1: 'top' | 'bottom' | null = null
+  // Power takes precedence over ground on the *same* pin (a pin on
+  // a power net is forced to `top`), and power/ground on pin 0 takes
+  // precedence over pin 1's rail for choosing which terminal sits
+  // where. Non-rail terminals always take the opposite face.
+  if (category0 === 'power') {
+    side0 = 'top'
+    side1 = 'bottom'
+  } else if (category0 === 'ground') {
+    side0 = 'bottom'
+    side1 = 'top'
+  } else if (category1 === 'power') {
+    side1 = 'top'
+    side0 = 'bottom'
+  } else if (category1 === 'ground') {
+    side1 = 'bottom'
+    side0 = 'top'
+  }
+  if (side0 === null || side1 === null) {
+    return component
+  }
+  return {
+    ...component,
+    port_side_hints: {
+      ...component.port_side_hints,
+      [pin0.name]: side0,
+      [pin1.name]: side1,
+    },
+  }
+}
+
 function sortPinsForPrimitive(
   component: SchematicComponentState,
   primitive: SchematicPrimitiveSubcktInfo,
@@ -341,6 +444,9 @@ export function normalizeSchematicDocument(document: SchematicDocumentState): Sc
   ensureScopeGroupChain(scopeGroupsById, [], labelMap)
 
   const absorption = buildPrimitiveAbsorptionContext(document)
+  // Pre-compute the pin→net-category lookup once; it stays valid for the
+  // whole pass since neither `document.nets` nor `absorption` mutate.
+  const pinToNetCategory = buildPinToNetCategoryMap(document, absorption)
 
   const componentsById = new Map<string, SemanticComponent>()
   const rawComponents: SemanticComponent[] = []
@@ -350,9 +456,14 @@ export function normalizeSchematicDocument(document: SchematicDocumentState): Sc
       continue
     }
     const primitive = absorption.instanceByComponentId.get(rawComponent.id)
-    const effectiveComponent = primitive
+    const primitiveOverridden = primitive
       ? applyPrimitiveOverrides(sortPinsForPrimitive(rawComponent, primitive), primitive)
       : rawComponent
+    // Force rail-facing hints on two-terminal passives so that a pin on
+    // VCC/GND naturally faces the corresponding trunk. Applied after any
+    // primitive override so that op-amp / BJT / MOS hints (which come
+    // from the primitive classifier) are never clobbered by this pass.
+    const effectiveComponent = applyPassivePortSideHints(primitiveOverridden, pinToNetCategory)
     const role = resolveComponentRole(effectiveComponent)
     const pins = buildSemanticPins(effectiveComponent)
     const group = ensureScopeGroupChain(scopeGroupsById, effectiveComponent.scope_path, labelMap)

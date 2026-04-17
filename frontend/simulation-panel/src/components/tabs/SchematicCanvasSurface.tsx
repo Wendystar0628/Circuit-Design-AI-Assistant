@@ -431,12 +431,15 @@ export function SchematicCanvas({
                       pointerEvents="all"
                     />
                     <g transform={symbolTransform}>
-                      {symbolDefinition.render({
-                        component: item.component,
-                        width: symbolDefinition.width,
-                        height: symbolDefinition.height,
-                        appearance,
-                      })}
+                      {(() => {
+                        const dimensions = symbolDefinition.getDimensions(item.component)
+                        return symbolDefinition.render({
+                          component: item.component,
+                          width: dimensions.width,
+                          height: dimensions.height,
+                          appearance,
+                        })
+                      })()}
                     </g>
                     {item.pins.map((pin) => {
                       const stubAppearance: SchematicPinStubAppearance = {

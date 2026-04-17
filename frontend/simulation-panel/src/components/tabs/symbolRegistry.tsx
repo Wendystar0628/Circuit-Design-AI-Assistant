@@ -30,9 +30,27 @@ export interface RenderSchematicSymbolProps {
   appearance: SchematicSymbolAppearance
 }
 
-export interface SchematicSymbolDefinition {
+export interface SchematicSymbolDimensions {
   width: number
   height: number
+}
+
+/**
+ * Symbol definitions expose their outer bounding-box size as a function of
+ * the component rather than as a constant. Most symbols (op-amp, BJT, MOS,
+ * source, etc.) still return fixed numbers — the dynamic form exists so
+ * that two-port passives (R / C / L / D) can flip between a horizontal
+ * 108×60 footprint and a vertical 60×108 footprint depending on whether
+ * they terminate on a power / ground rail. This matters because when a
+ * passive has one terminal on a rail, forcing it horizontal pushes the
+ * rail stub out of a left/right pin and then the router has no choice but
+ * to U-turn that stub 180° up to the top / bottom rail trunk. Letting the
+ * passive be vertical in that case places the stub directly on the
+ * top / bottom face, which the router can connect with a straight short
+ * segment.
+ */
+export interface SchematicSymbolDefinition {
+  getDimensions(component: SchematicComponentState): SchematicSymbolDimensions
   getPinAnchor(component: SchematicComponentState, pin: SchematicPinState, index: number): SchematicSymbolAnchor
   render(props: RenderSchematicSymbolProps): ReactNode
 }
@@ -165,76 +183,132 @@ function resolveRectPinAnchor(component: SchematicComponentState, pin: Schematic
   return distributeAlongSide(side, placement.order, placement.total, width, height)
 }
 
+/**
+ * A two-port passive is drawn vertically (60×108) whenever at least one
+ * of its terminals is explicitly hinted toward a `top` / `bottom` side
+ * by the normalizer — this happens when that terminal lands on a power
+ * or ground net, because such a terminal must face the rail trunk above
+ * or below the main band. All other passives stay horizontal (108×60)
+ * so they read naturally along a left-to-right signal chain.
+ */
+function isPassiveVertical(component: SchematicComponentState): boolean {
+  if (component.pins.length !== 2) return false
+  for (const pin of component.pins) {
+    const hint = component.port_side_hints[pin.name]
+    if (hint === 'top' || hint === 'bottom') {
+      return true
+    }
+  }
+  return false
+}
+
+function getPassiveDimensions(component: SchematicComponentState): SchematicSymbolDimensions {
+  if (isPassiveVertical(component)) {
+    return { width: PASSIVE_HEIGHT, height: PASSIVE_WIDTH }
+  }
+  return { width: PASSIVE_WIDTH, height: PASSIVE_HEIGHT }
+}
+
 function resolvePassivePinAnchor(component: SchematicComponentState, pin: SchematicPinState, index: number): SchematicSymbolAnchor {
+  const { width, height } = getPassiveDimensions(component)
   if (component.pins.length <= 1) {
-    return { x: PASSIVE_WIDTH / 2, y: 0, side: 'top' }
+    return { x: width / 2, y: 0, side: 'top' }
   }
-  if (index === 0) {
-    return { x: 0, y: PASSIVE_HEIGHT / 2, side: 'left' }
+  // Two-terminal passives always sit on opposite faces: a left/right pair
+  // for horizontal components, a top/bottom pair for vertical ones. The
+  // general `resolveRectPinAnchor` — which reads `port_side_hints` for
+  // each pin and otherwise falls back to index-based left/right — produces
+  // exactly that pattern once the normalizer has set the hints.
+  return resolveRectPinAnchor(component, pin, index, width, height)
+}
+
+/**
+ * Body of a passive symbol drawn in its native horizontal orientation
+ * (`width` > `height`). Every individual passive reuses
+ * `renderPassiveBody` to adapt to a vertical bounding box by rotating the
+ * whole body 90° in a single place, so each symbol author only describes
+ * the horizontal silhouette.
+ */
+function renderPassiveBody(
+  width: number,
+  height: number,
+  draw: (w: number, h: number) => ReactNode,
+): ReactNode {
+  if (height > width) {
+    // Vertical layout: draw the horizontal silhouette on a swapped canvas
+    // of size (height × width), then rotate it 90° clockwise about the
+    // origin and slide right by `width` so it lands back inside the
+    // vertical bounding box (0..width, 0..height).
+    return <g transform={`translate(${width} 0) rotate(90)`}>{draw(height, width)}</g>
   }
-  if (index === 1) {
-    return { x: PASSIVE_WIDTH, y: PASSIVE_HEIGHT / 2, side: 'right' }
-  }
-  return resolveRectPinAnchor(component, pin, index, PASSIVE_WIDTH, PASSIVE_HEIGHT)
+  return draw(width, height)
 }
 
-function renderResistor({ appearance }: RenderSchematicSymbolProps): ReactNode {
-  const y = PASSIVE_HEIGHT / 2
-  return (
-    <g>
-      {renderLeadLine(0, y, 18, y, appearance.stroke)}
-      <polyline
-        points={`18,${y} 28,${y - 10} 38,${y + 10} 48,${y - 10} 58,${y + 10} 68,${y - 10} 78,${y + 10} 90,${y}`}
-        fill="none"
-        stroke={appearance.stroke}
-        strokeWidth={2.2}
-        strokeLinejoin="round"
-        strokeLinecap="round"
-      />
-      {renderLeadLine(90, y, PASSIVE_WIDTH, y, appearance.stroke)}
-    </g>
-  )
+function renderResistor({ width, height, appearance }: RenderSchematicSymbolProps): ReactNode {
+  return renderPassiveBody(width, height, (w, h) => {
+    const y = h / 2
+    return (
+      <g>
+        {renderLeadLine(0, y, 18, y, appearance.stroke)}
+        <polyline
+          points={`18,${y} 28,${y - 10} 38,${y + 10} 48,${y - 10} 58,${y + 10} 68,${y - 10} 78,${y + 10} 90,${y}`}
+          fill="none"
+          stroke={appearance.stroke}
+          strokeWidth={2.2}
+          strokeLinejoin="round"
+          strokeLinecap="round"
+        />
+        {renderLeadLine(90, y, w, y, appearance.stroke)}
+      </g>
+    )
+  })
 }
 
-function renderCapacitor({ appearance }: RenderSchematicSymbolProps): ReactNode {
-  const y = PASSIVE_HEIGHT / 2
-  return (
-    <g>
-      {renderLeadLine(0, y, 34, y, appearance.stroke)}
-      <line x1={38} y1={12} x2={38} y2={PASSIVE_HEIGHT - 12} stroke={appearance.stroke} strokeWidth={2.2} />
-      <line x1={70} y1={12} x2={70} y2={PASSIVE_HEIGHT - 12} stroke={appearance.stroke} strokeWidth={2.2} />
-      {renderLeadLine(74, y, PASSIVE_WIDTH, y, appearance.stroke)}
-    </g>
-  )
+function renderCapacitor({ width, height, appearance }: RenderSchematicSymbolProps): ReactNode {
+  return renderPassiveBody(width, height, (w, h) => {
+    const y = h / 2
+    return (
+      <g>
+        {renderLeadLine(0, y, 34, y, appearance.stroke)}
+        <line x1={38} y1={12} x2={38} y2={h - 12} stroke={appearance.stroke} strokeWidth={2.2} />
+        <line x1={70} y1={12} x2={70} y2={h - 12} stroke={appearance.stroke} strokeWidth={2.2} />
+        {renderLeadLine(74, y, w, y, appearance.stroke)}
+      </g>
+    )
+  })
 }
 
-function renderInductor({ appearance }: RenderSchematicSymbolProps): ReactNode {
-  const y = PASSIVE_HEIGHT / 2
-  return (
-    <g>
-      {renderLeadLine(0, y, 20, y, appearance.stroke)}
-      <path
-        d={`M20 ${y} C26 ${y - 15}, 34 ${y - 15}, 40 ${y} C46 ${y - 15}, 54 ${y - 15}, 60 ${y} C66 ${y - 15}, 74 ${y - 15}, 80 ${y} C86 ${y - 15}, 94 ${y - 15}, 100 ${y}`}
-        fill="none"
-        stroke={appearance.stroke}
-        strokeWidth={2.2}
-        strokeLinecap="round"
-      />
-      {renderLeadLine(100, y, PASSIVE_WIDTH, y, appearance.stroke)}
-    </g>
-  )
+function renderInductor({ width, height, appearance }: RenderSchematicSymbolProps): ReactNode {
+  return renderPassiveBody(width, height, (w, h) => {
+    const y = h / 2
+    return (
+      <g>
+        {renderLeadLine(0, y, 20, y, appearance.stroke)}
+        <path
+          d={`M20 ${y} C26 ${y - 15}, 34 ${y - 15}, 40 ${y} C46 ${y - 15}, 54 ${y - 15}, 60 ${y} C66 ${y - 15}, 74 ${y - 15}, 80 ${y} C86 ${y - 15}, 94 ${y - 15}, 100 ${y}`}
+          fill="none"
+          stroke={appearance.stroke}
+          strokeWidth={2.2}
+          strokeLinecap="round"
+        />
+        {renderLeadLine(100, y, w, y, appearance.stroke)}
+      </g>
+    )
+  })
 }
 
-function renderDiode({ appearance }: RenderSchematicSymbolProps): ReactNode {
-  const y = PASSIVE_HEIGHT / 2
-  return (
-    <g>
-      {renderLeadLine(0, y, 24, y, appearance.stroke)}
-      <polygon points={`24,12 24,${PASSIVE_HEIGHT - 12} 66,${y}`} fill={appearance.fill} stroke={appearance.stroke} strokeWidth={2.2} />
-      <line x1={72} y1={10} x2={72} y2={PASSIVE_HEIGHT - 10} stroke={appearance.stroke} strokeWidth={2.2} />
-      {renderLeadLine(72, y, PASSIVE_WIDTH, y, appearance.stroke)}
-    </g>
-  )
+function renderDiode({ width, height, appearance }: RenderSchematicSymbolProps): ReactNode {
+  return renderPassiveBody(width, height, (w, h) => {
+    const y = h / 2
+    return (
+      <g>
+        {renderLeadLine(0, y, 24, y, appearance.stroke)}
+        <polygon points={`24,12 24,${h - 12} 66,${y}`} fill={appearance.fill} stroke={appearance.stroke} strokeWidth={2.2} />
+        <line x1={72} y1={10} x2={72} y2={h - 10} stroke={appearance.stroke} strokeWidth={2.2} />
+        {renderLeadLine(72, y, w, y, appearance.stroke)}
+      </g>
+    )
+  })
 }
 
 function renderVoltageSource({ appearance }: RenderSchematicSymbolProps): ReactNode {
@@ -433,13 +507,19 @@ function resolveMosPinAnchor(component: SchematicComponentState, pin: SchematicP
 }
 
 const passiveDefinition: SchematicSymbolDefinition = {
-  width: PASSIVE_WIDTH,
-  height: PASSIVE_HEIGHT,
+  getDimensions(component) {
+    return getPassiveDimensions(component)
+  },
   getPinAnchor(component, pin, index) {
     return resolvePassivePinAnchor(component, pin, index)
   },
   render: renderResistor,
 }
+
+const sourceDimensions: SchematicSymbolDimensions = { width: SOURCE_SIZE, height: SOURCE_SIZE }
+const blockDimensions: SchematicSymbolDimensions = { width: BLOCK_WIDTH, height: BLOCK_HEIGHT }
+const triangleDimensions: SchematicSymbolDimensions = { width: TRIANGLE_WIDTH, height: TRIANGLE_HEIGHT }
+const transistorDimensions: SchematicSymbolDimensions = { width: TRANSISTOR_WIDTH, height: TRANSISTOR_HEIGHT }
 
 const symbolDefinitions: Record<string, SchematicSymbolDefinition> = {
   resistor: {
@@ -459,8 +539,7 @@ const symbolDefinitions: Record<string, SchematicSymbolDefinition> = {
     render: renderDiode,
   },
   voltage_source: {
-    width: SOURCE_SIZE,
-    height: SOURCE_SIZE,
+    getDimensions: () => sourceDimensions,
     getPinAnchor(component, pin, index) {
       if (index === 0) {
         return { x: SOURCE_SIZE / 2, y: 0, side: 'top' }
@@ -473,8 +552,7 @@ const symbolDefinitions: Record<string, SchematicSymbolDefinition> = {
     render: renderVoltageSource,
   },
   current_source: {
-    width: SOURCE_SIZE,
-    height: SOURCE_SIZE,
+    getDimensions: () => sourceDimensions,
     getPinAnchor(component, pin, index) {
       if (index === 0) {
         return { x: SOURCE_SIZE / 2, y: 0, side: 'top' }
@@ -487,56 +565,49 @@ const symbolDefinitions: Record<string, SchematicSymbolDefinition> = {
     render: renderCurrentSource,
   },
   ground: {
-    width: SOURCE_SIZE,
-    height: SOURCE_SIZE,
+    getDimensions: () => sourceDimensions,
     getPinAnchor() {
       return { x: SOURCE_SIZE / 2, y: 0, side: 'top' }
     },
     render: renderGround,
   },
   subckt_block: {
-    width: BLOCK_WIDTH,
-    height: BLOCK_HEIGHT,
+    getDimensions: () => blockDimensions,
     getPinAnchor(component, pin, index) {
       return resolveRectPinAnchor(component, pin, index, BLOCK_WIDTH, BLOCK_HEIGHT)
     },
     render: renderBlock,
   },
   controlled_source: {
-    width: BLOCK_WIDTH,
-    height: BLOCK_HEIGHT,
+    getDimensions: () => blockDimensions,
     getPinAnchor(component, pin, index) {
       return resolveRectPinAnchor(component, pin, index, BLOCK_WIDTH, BLOCK_HEIGHT)
     },
     render: renderControlledSource,
   },
   opamp: {
-    width: TRIANGLE_WIDTH,
-    height: TRIANGLE_HEIGHT,
+    getDimensions: () => triangleDimensions,
     getPinAnchor(component, pin, index) {
       return resolveOpampPinAnchor(component, pin, index)
     },
     render: renderOpamp,
   },
   bjt: {
-    width: TRANSISTOR_WIDTH,
-    height: TRANSISTOR_HEIGHT,
+    getDimensions: () => transistorDimensions,
     getPinAnchor(component, pin, index) {
       return resolveBjtPinAnchor(component, pin, index)
     },
     render: renderBjt,
   },
   mos: {
-    width: TRANSISTOR_WIDTH,
-    height: TRANSISTOR_HEIGHT,
+    getDimensions: () => transistorDimensions,
     getPinAnchor(component, pin, index) {
       return resolveMosPinAnchor(component, pin, index)
     },
     render: renderMos,
   },
   unknown: {
-    width: BLOCK_WIDTH,
-    height: BLOCK_HEIGHT,
+    getDimensions: () => blockDimensions,
     getPinAnchor(component, pin, index) {
       return resolveRectPinAnchor(component, pin, index, BLOCK_WIDTH, BLOCK_HEIGHT)
     },

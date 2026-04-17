@@ -386,8 +386,35 @@ function enforcePinDirectionConstraints(
     if (!neighbors) {
       continue
     }
-    const restricted = neighbors.filter((entry) => entry.to === binding.attachmentVertexId)
-    ovg.adjacency.set(binding.pinVertexId, restricted)
+    const pinVertex = ovg.vertices[binding.pinVertexId]
+    const direction = directionVector(pin.side)
+    const allowed: OVGNeighbor[] = []
+    const disallowed: number[] = []
+    for (const entry of neighbors) {
+      const neighbor = ovg.vertices[entry.to]
+      let inDirection = false
+      if (direction.dx !== 0) {
+        if (neighbor.y === pinVertex.y) {
+          inDirection = direction.dx > 0 ? neighbor.x > pinVertex.x : neighbor.x < pinVertex.x
+        }
+      } else if (neighbor.x === pinVertex.x) {
+        inDirection = direction.dy > 0 ? neighbor.y > pinVertex.y : neighbor.y < pinVertex.y
+      }
+      if (inDirection) {
+        allowed.push(entry)
+      } else {
+        disallowed.push(entry.to)
+      }
+    }
+    ovg.adjacency.set(binding.pinVertexId, allowed)
+    for (const neighborId of disallowed) {
+      const list = ovg.adjacency.get(neighborId)
+      if (!list) continue
+      ovg.adjacency.set(
+        neighborId,
+        list.filter((other) => other.to !== binding.pinVertexId),
+      )
+    }
   }
 }
 

@@ -427,21 +427,92 @@ function classifyBjtPin(pin: SchematicPinState, index: number): 'base' | 'collec
   return 'emitter'
 }
 
-function classifyMosPin(pin: SchematicPinState, index: number): 'gate' | 'drain' | 'source' | 'bulk' {
+/**
+ * Classify a MOS pin by its semantic electrode role, using the same
+ * canonical order `resolveMosPinAnchor` uses. After the normalizer's
+ * `hideMosBulkPin` pass the MOS component always presents exactly 3
+ * pins to the rendering layer — any extra index therefore represents
+ * an accidental extra pin we render as a gate fallback rather than
+ * omit (to keep the symbol visibly consistent).
+ */
+function classifyMosPin(pin: SchematicPinState, index: number): 'gate' | 'drain' | 'source' {
   if (pin.role === 'input' || index === 0) return 'gate'
   if (index === 1) return 'drain'
   if (index === 2) return 'source'
-  return 'bulk'
+  return 'gate'
+}
+
+/**
+ * Canonical MOS variant tag supplied by the backend. Parser fills this
+ * from the `.model` lookup (`NMOS` / `PMOS`); the fallback `"mos"` only
+ * appears when no matching `.model` card exists, in which case we
+ * render the generic (NMOS-style) silhouette.
+ */
+type MosChannelVariant = 'nmos' | 'pmos'
+
+function resolveMosVariant(component: SchematicComponentState): MosChannelVariant {
+  return component.symbol_variant === 'pmos' ? 'pmos' : 'nmos'
+}
+
+type BjtChannelVariant = 'npn' | 'pnp'
+
+function resolveBjtVariant(component: SchematicComponentState): BjtChannelVariant {
+  return component.symbol_variant === 'pnp' ? 'pnp' : 'npn'
+}
+
+/**
+ * Compute the three vertices of a solid-filled BJT emitter arrow
+ * positioned along the emitter slant from the base bar to the emitter
+ * terminal. For NPN the tip sits at the emitter terminal (pointing
+ * outward, indicating conventional current flowing out of the emitter);
+ * for PNP it sits near the base-bar end of the slant (pointing inward,
+ * indicating current into the emitter). In both cases the triangle is
+ * oriented perpendicular to the slant so it reads as a consistent
+ * textbook arrowhead regardless of the slant's angle.
+ */
+function bjtEmitterArrowPoints(
+  slantStart: { x: number; y: number },
+  slantEnd: { x: number; y: number },
+  variant: BjtChannelVariant,
+): string {
+  const dx = slantEnd.x - slantStart.x
+  const dy = slantEnd.y - slantStart.y
+  const len = Math.sqrt(dx * dx + dy * dy) || 1
+  const ux = dx / len
+  const uy = dy / len
+  const px = -uy
+  const py = ux
+  const arrowLength = 10
+  const arrowHalfWidth = 4
+  const tip = variant === 'npn'
+    ? slantEnd
+    : { x: slantStart.x + ux * 4, y: slantStart.y + uy * 4 }
+  const backDirection = variant === 'npn' ? -1 : 1
+  const baseCenter = {
+    x: tip.x + backDirection * ux * arrowLength,
+    y: tip.y + backDirection * uy * arrowLength,
+  }
+  const wing1 = {
+    x: baseCenter.x + px * arrowHalfWidth,
+    y: baseCenter.y + py * arrowHalfWidth,
+  }
+  const wing2 = {
+    x: baseCenter.x - px * arrowHalfWidth,
+    y: baseCenter.y - py * arrowHalfWidth,
+  }
+  return `${tip.x},${tip.y} ${wing1.x},${wing1.y} ${wing2.x},${wing2.y}`
 }
 
 function renderBjt({ component, appearance }: RenderSchematicSymbolProps): ReactNode {
-  // Textbook NPN layout: a circle envelope, a vertical base bar inside
+  // Textbook BJT layout: a circle envelope, a vertical base bar inside
   // the circle on its left, and two slanted leads going from the ends
   // of the base bar to the upper-right and lower-right of the circle
-  // (the collector and emitter electrode terminals). Pin leads are then
-  // drawn from each pin's anchor on the bounding box to whichever of
-  // the three interior terminals the pin is semantically connected to,
-  // so the symbol is always visibly continuous with the terminal dots.
+  // (the collector and emitter electrode terminals). Per-pin L-shaped
+  // leads connect each pin anchor to its interior terminal. The only
+  // NPN vs PNP difference is the emitter-arrow direction: NPN points
+  // outward (tip at emitter terminal), PNP points inward (tip near the
+  // base bar), matching the IEEE convention for bulk-channel doping.
+  const variant = resolveBjtVariant(component)
   const cx = TRANSISTOR_WIDTH * 0.56
   const cy = TRANSISTOR_HEIGHT / 2
   const r = 22
@@ -449,6 +520,7 @@ function renderBjt({ component, appearance }: RenderSchematicSymbolProps): React
   const baseTerminal = { x: cx - r, y: cy }
   const collectorTerminal = { x: cx + 14, y: cy - 17 }
   const emitterTerminal = { x: cx + 14, y: cy + 17 }
+  const emitterSlantStart = { x: baseBarX, y: cy + 8 }
   const leads = component.pins.map((pin, index) => {
     const anchor = resolveBjtPinAnchor(component, pin, index)
     const role = classifyBjtPin(pin, index)
@@ -468,9 +540,7 @@ function renderBjt({ component, appearance }: RenderSchematicSymbolProps): React
     <g>
       {leads}
       <circle cx={cx} cy={cy} r={r} fill={appearance.fill} stroke={appearance.stroke} strokeWidth={2.2} />
-      {/* Vertical base bar inside the circle */}
       <line x1={baseBarX} y1={cy - 12} x2={baseBarX} y2={cy + 12} stroke={appearance.stroke} strokeWidth={2.4} />
-      {/* Collector slant: from upper end of base bar to upper-right terminal */}
       <line
         x1={baseBarX}
         y1={cy - 8}
@@ -479,7 +549,6 @@ function renderBjt({ component, appearance }: RenderSchematicSymbolProps): React
         stroke={appearance.stroke}
         strokeWidth={2.2}
       />
-      {/* Emitter slant: from lower end of base bar to lower-right terminal */}
       <line
         x1={baseBarX}
         y1={cy + 8}
@@ -488,50 +557,67 @@ function renderBjt({ component, appearance }: RenderSchematicSymbolProps): React
         stroke={appearance.stroke}
         strokeWidth={2.2}
       />
-      {/* NPN arrow on the emitter slant, tip at the emitter terminal */}
-      <polyline
-        points={`${cx + 3},${cy + 10} ${emitterTerminal.x},${emitterTerminal.y} ${cx + 2},${cy + 20}`}
-        fill="none"
+      <polygon
+        points={bjtEmitterArrowPoints(emitterSlantStart, emitterTerminal, variant)}
+        fill={appearance.stroke}
         stroke={appearance.stroke}
-        strokeWidth={2.2}
-        strokeLinecap="round"
+        strokeWidth={1}
         strokeLinejoin="round"
       />
     </g>
   )
 }
 
+/**
+ * Compute the three vertices of the MOSFET source arrow. The arrow
+ * sits on the source stub with its tip pointing inward (toward the
+ * channel bar) for both NMOS and PMOS — this matches the simplified
+ * 3-terminal textbook convention used in the reference image where
+ * the arrow's position (top stub vs bottom stub) alone carries the
+ * N-channel / P-channel distinction. Placed as a solid-filled
+ * polygon so it reads clearly at every zoom level.
+ */
+function mosSourceArrowPoints(channelX: number, stubEndX: number, sourceStubY: number): string {
+  // Tip near channel side of the stub; base near stub end (far side),
+  // so the chevron unambiguously points into the channel.
+  const tipX = channelX + 6
+  const baseX = Math.min(channelX + 14, stubEndX - 2)
+  const halfHeight = 4
+  return `${tipX},${sourceStubY} ${baseX},${sourceStubY - halfHeight} ${baseX},${sourceStubY + halfHeight}`
+}
+
 function renderMos({ component, appearance }: RenderSchematicSymbolProps): ReactNode {
-  // Textbook enhancement-mode MOSFET layout, rotated so gate enters from
-  // the left: horizontal gate lead stub → small insulator gap → vertical
-  // gate bar → channel bar to its right → drain stub (upper) and source
-  // stub (lower) jutting right out of the channel. Per-pin L-shaped
-  // leads connect each pin anchor to its electrode terminal so the
-  // terminal dots are never visually detached from the symbol.
+  // Textbook 3-terminal MOSFET (body pin already stripped by the
+  // normalizer's `hideMosBulkPin`). Layout is gate-on-the-left: a
+  // horizontal gate lead stub → insulator gap → vertical gate bar →
+  // vertical channel bar on its right → short drain / source stubs
+  // jutting out of the channel top and bottom. NMOS vs PMOS only
+  // changes *which* end carries the source — for NMOS source is at
+  // the bottom (conventional for an n-channel device pulling current
+  // down to GND); for PMOS source is at the top (pulling up to VDD).
+  // The source arrow always points toward the channel; its vertical
+  // position alone distinguishes the two variants.
+  const variant = resolveMosVariant(component)
   const cy = TRANSISTOR_HEIGHT / 2
   const channelX = TRANSISTOR_WIDTH * 0.58
   const gateBarX = channelX - 12
   const gateLeadInnerX = gateBarX - 8
   const channelTop = 16
   const channelBottom = TRANSISTOR_HEIGHT - 16
-  const drainStubY = 20
-  const sourceStubY = TRANSISTOR_HEIGHT - 20
+  const topStubY = 20
+  const bottomStubY = TRANSISTOR_HEIGHT - 20
   const stubEndX = channelX + 18
+  // NMOS → source on bottom; PMOS → source on top.
+  const sourceStubY = variant === 'pmos' ? topStubY : bottomStubY
+  const drainStubY = variant === 'pmos' ? bottomStubY : topStubY
   const gateTerminal = { x: 16, y: cy }
   const drainTerminal = { x: stubEndX, y: drainStubY }
   const sourceTerminal = { x: stubEndX, y: sourceStubY }
-  const bulkTerminal = { x: channelX, y: cy }
   const leads = component.pins.map((pin, index) => {
     const anchor = resolveMosPinAnchor(component, pin, index)
     const role = classifyMosPin(pin, index)
     const terminal =
-      role === 'gate'
-        ? gateTerminal
-        : role === 'drain'
-          ? drainTerminal
-          : role === 'source'
-            ? sourceTerminal
-            : bulkTerminal
+      role === 'gate' ? gateTerminal : role === 'drain' ? drainTerminal : sourceTerminal
     return (
       <polyline
         key={`lead-${pin.name}`}
@@ -545,23 +631,16 @@ function renderMos({ component, appearance }: RenderSchematicSymbolProps): React
   return (
     <g>
       {leads}
-      {/* Gate lead inside the symbol (horizontal), stops short of gate bar to leave insulator gap */}
       <line x1={gateTerminal.x} y1={cy} x2={gateLeadInnerX} y2={cy} stroke={appearance.stroke} strokeWidth={2.2} />
-      {/* Vertical gate bar (separated from channel by the insulator gap) */}
       <line x1={gateBarX} y1={channelTop + 2} x2={gateBarX} y2={channelBottom - 2} stroke={appearance.stroke} strokeWidth={2.2} />
-      {/* Vertical channel bar */}
       <line x1={channelX} y1={channelTop} x2={channelX} y2={channelBottom} stroke={appearance.stroke} strokeWidth={2.2} />
-      {/* Drain stub (upper) */}
       <line x1={channelX} y1={drainStubY} x2={stubEndX} y2={drainStubY} stroke={appearance.stroke} strokeWidth={2.2} />
-      {/* Source stub (lower) */}
       <line x1={channelX} y1={sourceStubY} x2={stubEndX} y2={sourceStubY} stroke={appearance.stroke} strokeWidth={2.2} />
-      {/* Source arrow: open chevron pointing out along the source stub */}
-      <polyline
-        points={`${channelX + 8},${sourceStubY - 10} ${stubEndX},${sourceStubY} ${channelX + 5},${sourceStubY + 4}`}
-        fill="none"
+      <polygon
+        points={mosSourceArrowPoints(channelX, stubEndX, sourceStubY)}
+        fill={appearance.stroke}
         stroke={appearance.stroke}
-        strokeWidth={2.2}
-        strokeLinecap="round"
+        strokeWidth={1}
         strokeLinejoin="round"
       />
     </g>
@@ -631,12 +710,25 @@ function resolveMosPinAnchor(component: SchematicComponentState, pin: SchematicP
   if (pin.role === 'input' || index === 0) {
     return { x: 0, y: TRANSISTOR_HEIGHT / 2, side: 'left' }
   }
+  // PMOS is the vertical mirror of NMOS: for NMOS the drain sits at
+  // the top and the source at the bottom (n-channel pulls current
+  // down to GND); for PMOS they swap (p-channel pulls up to VDD).
+  // Mirroring the pin anchors keeps the schematic visually correct
+  // whether the net above the device is VDD or GND.
+  const variant = resolveMosVariant(component)
+  const drainAtTop = variant !== 'pmos'
   if (index === 1) {
-    return { x: TRANSISTOR_WIDTH, y: 12, side: 'right' }
+    return drainAtTop
+      ? { x: TRANSISTOR_WIDTH, y: 12, side: 'right' }
+      : { x: TRANSISTOR_WIDTH, y: TRANSISTOR_HEIGHT - 12, side: 'right' }
   }
   if (index === 2) {
-    return { x: TRANSISTOR_WIDTH, y: TRANSISTOR_HEIGHT - 12, side: 'right' }
+    return drainAtTop
+      ? { x: TRANSISTOR_WIDTH, y: TRANSISTOR_HEIGHT - 12, side: 'right' }
+      : { x: TRANSISTOR_WIDTH, y: 12, side: 'right' }
   }
+  // Fallback for any unexpected extra pin (shouldn't occur after the
+  // body-pin strip in the normalizer, but keep a deterministic anchor).
   return { x: TRANSISTOR_WIDTH / 2, y: TRANSISTOR_HEIGHT, side: 'bottom' }
 }
 

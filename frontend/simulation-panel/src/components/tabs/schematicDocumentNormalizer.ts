@@ -410,6 +410,60 @@ function applyPassivePortSideHints(
   }
 }
 
+/**
+ * Schematic visual convention: MOSFETs are drawn as 3-terminal devices
+ * (gate / drain / source), with the body/substrate terminal implicit —
+ * it is understood to be tied to source or to the appropriate supply.
+ * SPICE however requires a 4-node `M` card (`Mx D G S B <model>`), so
+ * the backend parser has to emit all four pins and their net
+ * connections to stay correct for ngspice.
+ *
+ * This function reconciles the two views at the schematic-semantic
+ * boundary: for any `symbol_kind === 'mos'` component it drops the
+ * body pin (`index === 3`) from `pins` and scrubs the port-side hint
+ * for that pin name. The removal is local to the normalized semantic
+ * model — the underlying `SchematicDocumentState` is untouched — so
+ * downstream rendering, layout, and routing see exactly 3 pins while
+ * the SPICE netlist continues to carry the body node.
+ *
+ * The `pin_name` referenced by `document.nets` connections is handled
+ * separately inside `normalizeSchematicDocument` (see the call to
+ * `buildVisiblePinNames`): any net connection pointing at a dropped
+ * body pin is filtered out of the semantic net so it never drives
+ * layout or routing. If the body net happens to have only the MOS
+ * body as its single connection, it becomes a zero-pin net and the
+ * router naturally skips it.
+ */
+const MOS_VISIBLE_PIN_COUNT = 3
+
+function hideMosBulkPin(component: SchematicComponentState): SchematicComponentState {
+  if (component.symbol_kind !== 'mos') return component
+  if (component.pins.length <= MOS_VISIBLE_PIN_COUNT) return component
+  const hiddenPin = component.pins[MOS_VISIBLE_PIN_COUNT]
+  const visiblePins = component.pins.slice(0, MOS_VISIBLE_PIN_COUNT)
+  const nextPortSideHints = { ...component.port_side_hints }
+  delete nextPortSideHints[hiddenPin.name]
+  return {
+    ...component,
+    pins: visiblePins,
+    port_side_hints: nextPortSideHints,
+  }
+}
+
+/**
+ * Build a lookup of `componentId → Set<visible pin name>` from the
+ * semantic components that survived normalization (including the MOS
+ * body-pin stripping performed by `hideMosBulkPin`). Used to filter
+ * out net connections whose target pin is no longer visible.
+ */
+function buildVisiblePinNames(components: SemanticComponent[]): Map<string, Set<string>> {
+  const map = new Map<string, Set<string>>()
+  for (const entry of components) {
+    map.set(entry.component.id, new Set(entry.component.pins.map((pin) => pin.name)))
+  }
+  return map
+}
+
 function sortPinsForPrimitive(
   component: SchematicComponentState,
   primitive: SchematicPrimitiveSubcktInfo,
@@ -463,7 +517,11 @@ export function normalizeSchematicDocument(document: SchematicDocumentState): Sc
     // VCC/GND naturally faces the corresponding trunk. Applied after any
     // primitive override so that op-amp / BJT / MOS hints (which come
     // from the primitive classifier) are never clobbered by this pass.
-    const effectiveComponent = applyPassivePortSideHints(primitiveOverridden, pinToNetCategory)
+    const railHinted = applyPassivePortSideHints(primitiveOverridden, pinToNetCategory)
+    // Strip the MOSFET body pin so downstream layout / routing / render
+    // all see a 3-terminal MOS (textbook convention) while the backend
+    // still emits the full 4-node `M` card for SPICE simulation.
+    const effectiveComponent = hideMosBulkPin(railHinted)
     const role = resolveComponentRole(effectiveComponent)
     const pins = buildSemanticPins(effectiveComponent)
     const group = ensureScopeGroupChain(scopeGroupsById, effectiveComponent.scope_path, labelMap)
@@ -482,19 +540,41 @@ export function normalizeSchematicDocument(document: SchematicDocumentState): Sc
   const netsById = new Map<string, SemanticNet>()
   const rawNets: SemanticNet[] = []
 
+  // Drop any net connection whose pin was removed by a prior
+  // normalization step (most notably the MOSFET body pin). Without
+  // this scrubbing the body net would still reference a phantom pin
+  // and the router would fail to match the pin id during stub
+  // routing, generating layout errors.
+  const visiblePinNames = buildVisiblePinNames(rawComponents)
+
   for (const rawNet of document.nets) {
     const netScopeKey = scopePathKey(rawNet.scope_path)
     if (absorption.internalScopeKeys.has(netScopeKey)) {
       // Internal net of a primitive subckt — dropped along with its body.
       continue
     }
-    const validConnections = rawNet.connections.filter((connection) => componentsById.has(connection.component_id))
+    const validConnections = rawNet.connections.filter((connection) => {
+      if (!componentsById.has(connection.component_id)) return false
+      const pinSet = visiblePinNames.get(connection.component_id)
+      if (!pinSet) return false
+      return pinSet.has(connection.pin_name)
+    })
     const componentIds = Array.from(new Set(validConnections.map((connection) => connection.component_id)))
     const pinCount = validConnections.length
     const category = resolveNetCategory(rawNet, pinCount)
     const netGroup = ensureScopeGroupChain(scopeGroupsById, rawNet.scope_path, labelMap)
+    // Replace `rawNet.connections` with the filtered list at the
+    // SemanticNet boundary so downstream consumers that walk
+    // `semanticNet.net.connections` directly (e.g. ELK edge builders,
+    // rail-stub padding, pin-per-net maps) never see a connection
+    // pointing at a hidden pin. Spreading over `rawNet` preserves id,
+    // name, scope_path, and every other raw field untouched.
+    const scrubbedNet = {
+      ...rawNet,
+      connections: validConnections,
+    }
     const semanticNet: SemanticNet = {
-      net: rawNet,
+      net: scrubbedNet,
       category,
       pinCount,
       componentIds,

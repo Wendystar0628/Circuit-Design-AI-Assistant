@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 import hashlib
 import re
 from pathlib import Path
@@ -18,6 +19,52 @@ from domain.simulation.spice.models import (
     SpiceToken,
     TokenSpan,
 )
+
+
+@functools.lru_cache(maxsize=1)
+def _load_bundled_model_variants() -> Dict[str, str]:
+    """Scan every bundled device-model file under
+    ``resources/models/cmp/`` exactly once per process and return a
+    ``model_name → variant`` mapping (``nmos`` / ``pmos`` / ``npn`` /
+    ``pnp``). The result is memoized because ``standard.mos`` alone
+    defines hundreds of models and the schematic is rendered on every
+    editor refresh.
+
+    Users rarely put ``.model`` cards into their ``.cir`` files —
+    ``SpiceExecutor._inject_model_libraries`` pulls the definitions
+    from the bundled library at simulation time. For the schematic to
+    know NMOS vs PMOS at *render* time (before simulation runs) we
+    have to consult the same library ourselves. Local ``.model``
+    cards in the user's ``.cir`` always take precedence over the
+    bundled defaults — see the merge in ``parse_content``.
+
+    Swallows every I/O error silently: if the library is missing or
+    unreadable we simply fall back to the generic ``mos`` / ``bjt``
+    symbol, which is no worse than before this feature existed.
+    """
+    result: Dict[str, str] = {}
+    try:
+        from resources.resource_loader import get_spice_cmp_dir
+        cmp_dir = get_spice_cmp_dir()
+    except Exception:
+        return result
+    if not cmp_dir.exists():
+        return result
+    for entry in cmp_dir.iterdir():
+        if not entry.is_file():
+            continue
+        try:
+            text = entry.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            continue
+        partial = SpiceParser._collect_model_variants(text.splitlines(keepends=True))
+        for key, value in partial.items():
+            # `setdefault` so that if two bundled files disagree on the
+            # same model name, the first one wins deterministically
+            # (iteration order on `iterdir()` is filesystem-defined but
+            # stable per run for a given directory layout).
+            result.setdefault(key, value)
+    return result
 
 
 _COMPONENT_SYMBOL_KINDS: Dict[str, str] = {
@@ -55,6 +102,22 @@ class SpiceParser:
         subcircuit_stack: List[SpiceSubcircuit] = []
         lines = content.splitlines(keepends=True)
         absolute_offset = 0
+
+        # Pass 1: pre-scan every `.model` card so we know, for each
+        # model name referenced by a Q / M component, whether that model
+        # represents an N-channel or P-channel / NPN or PNP device. This
+        # information is the only trustworthy source for the schematic's
+        # NMOS vs PMOS (and NPN vs PNP) rendering choice — ngspice
+        # itself reads the same .model card at simulation time, so by
+        # mirroring that lookup here we keep schematic and simulator in
+        # lock-step without asking the user to hint anything.
+        #
+        # Local `.model` cards in the current file take precedence over
+        # the bundled standard-library defaults so users can always
+        # override a bundled part by redefining it inline.
+        local_variants = self._collect_model_variants(lines)
+        bundled_variants = _load_bundled_model_variants()
+        model_variants: Dict[str, str] = {**bundled_variants, **local_variants}
 
         for line_index, raw_line in enumerate(lines):
             line_text = raw_line.rstrip("\r\n")
@@ -102,6 +165,7 @@ class SpiceParser:
                 scope_path=[item.name for item in subcircuit_stack],
                 line_index=line_index,
                 absolute_offset=absolute_offset,
+                model_variants=model_variants,
             )
             if component is not None:
                 if subcircuit_stack:
@@ -149,6 +213,7 @@ class SpiceParser:
         scope_path: List[str],
         line_index: int,
         absolute_offset: int,
+        model_variants: Dict[str, str],
     ) -> Optional[SpiceComponent]:
         source_span = self._make_line_span(line_index, line_text, absolute_offset)
         tokens = self._tokenize_line(line_text, line_index, absolute_offset)
@@ -158,7 +223,7 @@ class SpiceParser:
         instance_name = tokens[0].text
         prefix = instance_name[0].upper()
         symbol_kind = _COMPONENT_SYMBOL_KINDS.get(prefix, "unknown")
-        descriptor = self._describe_component(prefix, tokens)
+        descriptor = self._describe_component(prefix, tokens, model_variants)
         node_tokens = descriptor["node_tokens"]
         node_ids = [token.text for token in node_tokens]
         pin_roles: Dict[str, str] = descriptor["pin_roles"]
@@ -194,7 +259,88 @@ class SpiceParser:
         )
         return component
 
-    def _describe_component(self, prefix: str, tokens: List[SpiceToken]) -> Dict[str, object]:
+    @staticmethod
+    def _collect_model_variants(lines: List[str]) -> Dict[str, str]:
+        """Scan every `.model` card once and return a mapping of model
+        name → canonical variant tag (``nmos`` / ``pmos`` / ``npn`` /
+        ``pnp``). Anything else (diode models, custom macros) is
+        intentionally excluded so callers can treat a missing entry as
+        "no transistor-variant info available" and fall back to a
+        neutral symbol.
+
+        A `.model` card in SPICE looks like::
+
+            .model <name> <TYPE> (<params...>)
+
+        with the type token optionally hugging the opening parenthesis
+        (``PMOS(`` is as valid as ``PMOS (``). We split whitespace and
+        strip a trailing ``(`` off the type token to cover both forms;
+        continuation lines (``+ ...``) only carry parameters and are
+        ignored because the device type is always on the header line.
+
+        Two device-type dialects are recognized:
+
+        * **Standard SPICE**: the type token itself is ``NMOS`` /
+          ``PMOS`` / ``NPN`` / ``PNP``.
+        * **LTspice VDMOS**: the type token is ``VDMOS`` and the
+          parameter list carries either ``pchan`` (→ PMOS) or no
+          channel keyword (→ NMOS by default). This is the format
+          used by the bundled ``resources/models/cmp/standard.mos``
+          file, so supporting it is what lets parts like BSS84 /
+          BSS123 resolve to the right schematic glyph.
+        """
+        variants: Dict[str, str] = {}
+        type_to_variant = {
+            "NMOS": "nmos",
+            "PMOS": "pmos",
+            "NPN": "npn",
+            "PNP": "pnp",
+        }
+        for raw_line in lines:
+            stripped = raw_line.strip()
+            if not stripped:
+                continue
+            lowered = stripped.lower()
+            if not lowered.startswith(".model"):
+                continue
+            pieces = stripped.split()
+            if len(pieces) < 3:
+                continue
+            model_name = pieces[1]
+            # Split on "(" so we canonicalize three spellings of the type
+            # token in one step:
+            #   "PMOS"          -> ["PMOS"]
+            #   "PMOS("         -> ["PMOS", ""]
+            #   "PMOS(LEVEL=1)" -> ["PMOS", "LEVEL=1)"]
+            # The first element is always the pure type name, which is
+            # what we want to look up in `type_to_variant`.
+            raw_type = pieces[2].split("(", 1)[0].upper()
+            variant = type_to_variant.get(raw_type)
+            if variant is not None:
+                variants[model_name] = variant
+                continue
+            if raw_type == "VDMOS":
+                # LTspice VDMOS: default is N-channel, becomes P-channel
+                # only when the parameter list contains the `pchan`
+                # keyword (as a whole word). Case-insensitive to tolerate
+                # `PCHAN`, `Pchan`, etc. Inspect the rest of the line
+                # (`pieces[2:]`) because `pchan` may appear on the same
+                # line as the type token or on a continuation — but
+                # continuation lines are already ignored so we only see
+                # the header here.
+                rest_text = " ".join(pieces[2:]).lower()
+                if re.search(r"\bpchan\b", rest_text):
+                    variants[model_name] = "pmos"
+                else:
+                    variants[model_name] = "nmos"
+        return variants
+
+    def _describe_component(
+        self,
+        prefix: str,
+        tokens: List[SpiceToken],
+        model_variants: Dict[str, str],
+    ) -> Dict[str, object]:
         if prefix in {"R", "C", "L"}:
             node_tokens = tokens[1:3]
             node_names = [token.text for token in node_tokens]
@@ -256,10 +402,18 @@ class SpiceParser:
                 node_names[2]: "emitter",
             } if len(node_names) == 3 else {}
             model_name = tokens[4].text if len(tokens) > 4 else ""
+            # Resolve the BJT channel variant from the .model lookup
+            # built in pass 1. Falls back to the generic "bjt" marker
+            # when no .model card was found (e.g. user-provided netlist
+            # fragments without models), so downstream renderers can
+            # still pick a neutral default.
+            variant = model_variants.get(model_name, "")
+            if variant not in ("npn", "pnp"):
+                variant = "bjt"
             return {
                 "node_tokens": node_tokens,
                 "pin_roles": pin_roles,
-                "symbol_variant": "bjt",
+                "symbol_variant": variant,
                 "polarity_marks": {},
                 "port_order": ["collector", "base", "emitter"],
                 "render_hints": {"orientation": "right"},
@@ -276,10 +430,16 @@ class SpiceParser:
                 node_names[3]: "body",
             } if len(node_names) == 4 else {}
             model_name = tokens[5].text if len(tokens) > 5 else ""
+            # Same pattern as Q: resolve NMOS vs PMOS from the .model
+            # lookup. Falls back to "mos" when no .model card was
+            # found so callers can still render a neutral default.
+            variant = model_variants.get(model_name, "")
+            if variant not in ("nmos", "pmos"):
+                variant = "mos"
             return {
                 "node_tokens": node_tokens,
                 "pin_roles": pin_roles,
-                "symbol_variant": "mos",
+                "symbol_variant": variant,
                 "polarity_marks": {},
                 "port_order": ["drain", "gate", "source", "body"],
                 "render_hints": {"orientation": "right"},

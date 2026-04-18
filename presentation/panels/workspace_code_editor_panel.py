@@ -609,7 +609,7 @@ class CodeEditorPanel(QWidget):
         else:
             content = entry.buffer_content if entry.buffer_content is not None else self._read_file_text(entry.path)
         try:
-            state = self._save_content_via_pending_service(entry.path, content)
+            state = self._write_manual_save_to_disk(entry.path, content)
             entry.is_dirty = False
             entry.buffer_content = None
             if entry.identity_path == self._active_identity_path and self._shared_code_editor is not None:
@@ -625,11 +625,28 @@ class CodeEditorPanel(QWidget):
                 self.logger.error(f"Failed to save file: {entry.path}, error: {exc}")
             return False
 
-    def _save_content_via_pending_service(self, path: str, content: str) -> Dict[str, Any]:
+    def _write_manual_save_to_disk(self, path: str, content: str) -> Dict[str, Any]:
+        """Persist a manual user save without routing through the
+        pending-edit review pipeline.
+
+        Manual saves (Ctrl+S in the code editor) represent the user's
+        own authored content, so they must never materialise a diff
+        confirmation prompt. The write therefore goes through
+        ``FileManager`` directly, and if the same path still carries a
+        pending record from an earlier agent edit we accept it here to
+        keep its baseline synchronised with what the user just saved.
+        This is the only sanctioned write path for human-driven edits;
+        never reintroduce a dual ``record_manual_save`` entry on the
+        pending service.
+        """
+        manager = self.file_manager
+        if manager is None:
+            raise RuntimeError("FileManager not available")
+        manager.write_file(path, content)
         service = self.pending_workspace_edit_service
         if service is None:
-            raise RuntimeError("PendingWorkspaceEditService not available")
-        return service.record_manual_save(path, content)
+            return {}
+        return service.accept_file_edits(path)
 
     def save_file(self) -> bool:
         return self._save_entry(self._get_active_entry())

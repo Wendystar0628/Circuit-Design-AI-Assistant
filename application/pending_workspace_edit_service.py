@@ -84,16 +84,57 @@ class PendingWorkspaceEditService(QObject):
         tool_name: str = "",
         tool_call_id: str = "",
     ) -> Dict[str, Any]:
+        """Persist an agent-originated edit and register it as a pending
+        review entry so the UI can surface a diff for user approval.
+
+        This is the **only** entry point that creates pending records.
+        Manual saves (code-editor Ctrl+S, inline schematic value edits,
+        etc.) must write via ``FileManager`` directly and, if a pending
+        record already existed for the same path, clear it through
+        ``accept_file_edits`` \u2014 never route a human edit through here.
+        """
+        display_path = normalize_absolute_path(path)
+        abs_path = self._normalize_path(display_path)
+        project_root = self._get_project_root(display_path)
+        if not project_root or self._is_internal_path(abs_path, project_root):
+            return self.get_state()
         source = {
             "kind": "agent",
             "tool_name": tool_name,
             "tool_call_id": tool_call_id,
         }
-        return self._record_saved_text(path, new_content, source)
-
-    def record_manual_save(self, path: str, new_content: str) -> Dict[str, Any]:
-        source = {"kind": "manual"}
-        return self._record_saved_text(path, new_content, source)
+        with self._lock:
+            record = self._records.get(abs_path)
+            if record is None:
+                file_exists = os.path.isfile(abs_path)
+                baseline_content = self._read_disk_text(abs_path) if file_exists else ""
+                record = {
+                    "relative_path": self._to_relative_path(display_path, project_root),
+                    "display_path": display_path,
+                    "baseline_exists": file_exists,
+                    "baseline_content": baseline_content,
+                    "sources": [],
+                }
+            self._write_text(abs_path, new_content)
+            current_exists = os.path.isfile(abs_path)
+            current_content = self._read_disk_text(abs_path) if current_exists else ""
+            if self._has_changes(
+                bool(record["baseline_exists"]),
+                str(record["baseline_content"] or ""),
+                current_exists,
+                current_content,
+            ):
+                sources = list(record.get("sources", []))
+                if not sources or sources[-1] != source:
+                    sources.append(dict(source))
+                record["sources"] = sources
+                record["relative_path"] = self._to_relative_path(display_path, project_root)
+                record["display_path"] = display_path
+                self._records[abs_path] = record
+            else:
+                self._records.pop(abs_path, None)
+            self._save_storage_locked()
+        return self._emit_state_changed()
 
     def accept_all_edits(self) -> Dict[str, Any]:
         with self._lock:
@@ -270,50 +311,6 @@ class PendingWorkspaceEditService(QObject):
             return
         if str(data.get("action", "") or "") == "rollback":
             self.reload_from_storage()
-
-    def _record_saved_text(
-        self,
-        path: str,
-        new_content: str,
-        source: Dict[str, Any],
-    ) -> Dict[str, Any]:
-        display_path = normalize_absolute_path(path)
-        abs_path = self._normalize_path(display_path)
-        project_root = self._get_project_root(display_path)
-        if not project_root or self._is_internal_path(abs_path, project_root):
-            return self.get_state()
-        with self._lock:
-            record = self._records.get(abs_path)
-            if record is None:
-                file_exists = os.path.isfile(abs_path)
-                baseline_content = self._read_disk_text(abs_path) if file_exists else ""
-                record = {
-                    "relative_path": self._to_relative_path(display_path, project_root),
-                    "display_path": display_path,
-                    "baseline_exists": file_exists,
-                    "baseline_content": baseline_content,
-                    "sources": [],
-                }
-            self._write_text(abs_path, new_content)
-            current_exists = os.path.isfile(abs_path)
-            current_content = self._read_disk_text(abs_path) if current_exists else ""
-            if self._has_changes(
-                bool(record["baseline_exists"]),
-                str(record["baseline_content"] or ""),
-                current_exists,
-                current_content,
-            ):
-                sources = list(record.get("sources", []))
-                if not sources or sources[-1] != source:
-                    sources.append(dict(source))
-                record["sources"] = sources
-                record["relative_path"] = self._to_relative_path(display_path, project_root)
-                record["display_path"] = display_path
-                self._records[abs_path] = record
-            else:
-                self._records.pop(abs_path, None)
-            self._save_storage_locked()
-        return self._emit_state_changed()
 
     def _reject_file_locked(self, abs_path: str) -> None:
         record = self._records.get(abs_path)

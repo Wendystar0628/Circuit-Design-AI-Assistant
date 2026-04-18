@@ -30,6 +30,7 @@ ReAct 循环控制器
 import json
 import logging
 import asyncio
+from contextlib import aclosing
 from dataclasses import dataclass
 from typing import Any, Callable, Coroutine, Dict, List, Optional, Union
 
@@ -227,18 +228,23 @@ class AgentLoop:
         on_event: Optional[AgentEventCallback],
         step_index: int,
     ) -> TurnResult:
-        """
-        流式调用 LLM 并累积结果
+        """流式调用 LLM 并累积结果。
 
-        对照 pi-mono agent-loop.ts streamAssistantResponse() 第 238-331 行。
-
-        Args:
-            messages: 当前消息历史
-            schemas: 工具 schema 列表
-            on_event: 事件回调
-
-        Returns:
-            TurnResult: 本轮累积的内容、工具调用等
+        停止/清理策略（权威路径）：
+        - 本方法是 LLM 流的**唯一**消费者，也是停止检查的唯一位置。
+          下游 ``client.chat_stream`` 不感知停止语义。
+        - 每处理完一个 chunk 后检查 ``_stop_requested``，发现停止立即
+          ``break`` 退出消费循环。
+        - 用 ``contextlib.aclosing`` 包住 ``chat_stream`` 返回的
+          async generator，``break`` 路径和异常路径都会在当前
+          await 链上同步 ``aclose()``，触发 ``GeneratorExit`` 被注入
+          ``yield chunk`` 处；``chat_stream`` 内的 ``async with`` 闭包
+          （httpx AsyncClient / response stream）级联执行 ``__aexit__``；
+          ``_iterate_response`` 内的 ``aclosing(aiter_text)`` 也级联
+          执行。全部清理都在 event loop 活跃期内完成，根除
+          ``RuntimeError: no running event loop``。
+        - ``_raise_if_stop_requested`` 在 ``aclosing`` 的 ``__aexit__``
+          之后才抛 ``CancelledError``，保证资源先清理后传播。
         """
         turn = TurnResult()
 
@@ -258,13 +264,10 @@ class AgentLoop:
             model=self._model,
             tools=schemas if schemas else None,
             thinking=self._thinking,
-            stop_requested=self._stop_requested,
         )
-        stream_completed = False
 
-        try:
-            async for chunk in stream_gen:
-                # 处理思考内容
+        async with aclosing(stream_gen) as safe_stream:
+            async for chunk in safe_stream:
                 if chunk.reasoning_content:
                     turn.reasoning_content += chunk.reasoning_content
                     await self._emit(on_event, EVENT_STREAM_CHUNK, {
@@ -273,7 +276,6 @@ class AgentLoop:
                         "text": chunk.reasoning_content,
                     })
 
-                # 处理回答内容
                 if chunk.content:
                     turn.content += chunk.content
                     await self._emit(on_event, EVENT_STREAM_CHUNK, {
@@ -282,24 +284,18 @@ class AgentLoop:
                         "text": chunk.content,
                     })
 
-                # 保存 usage
                 if chunk.usage:
                     turn.usage = chunk.usage
 
-                # 保存工具调用和完成原因
                 if chunk.tool_calls:
                     turn.tool_calls = chunk.tool_calls
                 if chunk.finish_reason:
                     turn.finish_reason = chunk.finish_reason
-            stream_completed = True
-            self._raise_if_stop_requested()
-        finally:
-            if not stream_completed and hasattr(stream_gen, 'aclose'):
-                try:
-                    await stream_gen.aclose()
-                except Exception:
-                    pass
 
+                if self._stop_requested and self._stop_requested():
+                    break
+
+        self._raise_if_stop_requested()
         return turn
 
     # ============================================================

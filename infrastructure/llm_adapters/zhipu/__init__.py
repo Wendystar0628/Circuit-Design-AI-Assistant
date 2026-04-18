@@ -44,7 +44,6 @@ from infrastructure.llm_adapters.zhipu.zhipu_response_parser import ZhipuRespons
 from infrastructure.llm_adapters.zhipu.zhipu_stream_handler import (
     ZhipuStreamHandler,
     StreamState,
-    collect_stream,
 )
 
 # 模型配置已迁移到 ModelRegistry
@@ -60,5 +59,4 @@ __all__ = [
     # 流式处理器（供高级用户使用）
     "ZhipuStreamHandler",
     "StreamState",
-    "collect_stream",
 ]

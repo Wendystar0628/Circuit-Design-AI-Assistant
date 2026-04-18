@@ -22,6 +22,7 @@ API 文档参考：
 """
 
 import logging
+from contextlib import aclosing
 from typing import Any, AsyncIterator, Dict, List, Optional
 
 import httpx
@@ -313,23 +314,18 @@ class ZhipuClient(BaseLLMClient):
         thinking: bool = DEFAULT_ENABLE_THINKING,
         **kwargs,
     ) -> AsyncIterator[StreamChunk]:
+        """流式对话（异步生成器）。
+
+        停止策略：
+        - 本方法对"停止请求"一无所知，停止由最外层消费者（agent_loop）
+          负责检测并对本 generator 调 ``aclose()``。
+        - ``stream_iterator`` 用 ``contextlib.aclosing`` 包管，上游 aclose
+          会在当前 await 链上级联关闭 ``_iterate_response`` 及其内嵌的
+          ``response.aiter_text()``，避免孤儿 async gen 被 GC 时因
+          事件循环已停触发 ``RuntimeError: no running event loop``。
         """
-        流式对话（异步生成器）
-        
-        Args:
-            messages: 消息列表
-            model: 模型名称
-            tools: 工具定义列表
-            thinking: 是否启用深度思考
-            **kwargs: 其他参数
-            
-        Yields:
-            StreamChunk: 流式响应块
-        """
-        stop_requested = kwargs.pop("stop_requested", None)
         use_model = model or self.model
-        
-        # 构建请求体
+
         request_body = self._request_builder.build_chat_request(
             messages=messages,
             model=use_model,
@@ -338,18 +334,15 @@ class ZhipuClient(BaseLLMClient):
             tools=tools,
             **kwargs
         )
-        
-        # 确定超时时间（流式请求使用更长的超时）
+
         timeout = DEFAULT_THINKING_TIMEOUT if thinking else self.timeout
-        
-        # 记录请求体（调试用）
+
         self._logger.debug(
             f"Sending stream request: model={request_body.get('model')}, "
             f"thinking={request_body.get('thinking')}, "
             f"max_tokens={request_body.get('max_tokens')}"
         )
-        
-        # 使用显式的响应对象管理，确保在生成器关闭时正确清理
+
         try:
             async with self._create_async_client() as client:
                 async with client.stream(
@@ -357,10 +350,8 @@ class ZhipuClient(BaseLLMClient):
                     self.CHAT_ENDPOINT,
                     json=request_body,
                 ) as response:
-                    # 检查 HTTP 状态码
                     if response.status_code != 200:
                         body = await response.aread()
-                        # 记录详细错误信息
                         self._logger.error(
                             f"Stream API error: status={response.status_code}, "
                             f"model={request_body.get('model')}, "
@@ -371,25 +362,18 @@ class ZhipuClient(BaseLLMClient):
                             response.status_code,
                             body.decode("utf-8")
                         )
-                    
-                    # 使用流式处理器处理响应
-                    stream_iterator = self._stream_handler.create_stream_iterator(
-                        response,
-                        stop_requested=stop_requested,
-                    )
-                    async for chunk in stream_iterator:
-                        yield chunk
-                    
+
+                    stream_iterator = self._stream_handler.create_stream_iterator(response)
+                    async with aclosing(stream_iterator) as safe_iter:
+                        async for chunk in safe_iter:
+                            yield chunk
+
         except httpx.TimeoutException as e:
             self._logger.error(f"Stream timeout: {e}")
             raise APIError(f"Stream timeout: {e}")
         except httpx.RequestError as e:
             self._logger.error(f"Stream error: {e}")
             raise APIError(f"Stream error: {e}")
-        except GeneratorExit:
-            # 生成器被关闭（调用者调用了 aclose()）
-            self._logger.debug("Stream generator closed by caller")
-            raise
     
     def get_model_info(self, model: Optional[str] = None) -> ModelInfo:
         """

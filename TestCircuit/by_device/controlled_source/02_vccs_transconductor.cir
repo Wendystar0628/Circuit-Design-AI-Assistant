@@ -1,0 +1,25 @@
+* VCCS (G) Transconductance Stage AC Response
+* A G-type voltage-controlled current source drives a parallel
+* R-C load, implementing a linear transconductor with a single
+* pole set by Rl*Cl. The AC sweep captures the transconductance
+* gain (gm * Rl in the midband) and the first-order roll-off.
+* Devices exercised: V (AC source), R, C, G (VCCS).
+
+.title VCCS Transconductor AC Response
+
+* --- AC test input ---
+Vin in 0 AC 1
+
+* --- Transconductance: I_out = 0.001 * V(in), steered into 'out' ---
+G1 out 0 in 0 1m
+
+* --- Parallel RC load at the output sets the pole ---
+Rload out 0 10k
+Cload out 0 10n
+
+* --- Analysis ---
+.ac dec 20 10 10Meg
+
+.MEASURE AC g_mid FIND vdb(out) AT=100
+
+.end

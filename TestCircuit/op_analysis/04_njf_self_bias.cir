@@ -1,0 +1,28 @@
+* NJF Self-Bias Operating Point
+* Classic JFET self-bias: gate held at ground via a large resistor,
+* source lifted by Rs so that VGS = -ID * Rs stays inside the
+* device's active region without any separate bias supply. .op
+* reports the settled drain current and pinch-off condition.
+* Devices exercised: V, R, J (NJF bundled 2N3819).
+
+.title NJF Self-Bias
+
+* --- Supply ---
+Vdd vdd 0 DC 12
+
+* --- Gate-to-ground bias resistor (high-Z input reference) ---
+Rg gate 0 1Meg
+
+* --- Drain load ---
+Rd vdd drain 4.7k
+
+* --- Source self-bias resistor ---
+Rs src 0 2.2k
+
+* --- JFET (drain / gate / source) ---
+J1 drain gate src 2N3819
+
+* --- Analysis: DC operating point ---
+.op
+
+.end

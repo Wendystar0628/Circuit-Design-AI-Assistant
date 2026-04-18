@@ -1,0 +1,32 @@
+* Symmetric Diode Clipper
+* Two 1N4148 diodes clamped between +0.7 V and -0.7 V against
+* opposite-polarity DC references. A large sine is clipped to
+* the textbook symmetric flat-top waveform.
+* Devices exercised: V (×3 - AC + 2 DC refs), R, D (×2).
+
+.title Symmetric Diode Clipper
+
+* --- AC input and symmetric clipping references ---
+Vin   in    0     SIN(0 3 1k)
+Vpos  vpos  0     DC 0.7
+Vneg  vneg  0     DC -0.7
+
+* --- Series resistor so the diodes have something to drop against ---
+Rs    in    out   1k
+
+* --- Upper clamp: conducts when V(out) > Vpos ---
+Dp    out   vpos  1N4148
+
+* --- Lower clamp: conducts when V(out) < Vneg ---
+Dn    vneg  out   1N4148
+
+* --- Output load ---
+Rload out   0     100k
+
+* --- Analysis: several input cycles ---
+.tran 10u 5m
+
+.MEASURE TRAN v_clip_pos MAX V(out)
+.MEASURE TRAN v_clip_neg MIN V(out)
+
+.end

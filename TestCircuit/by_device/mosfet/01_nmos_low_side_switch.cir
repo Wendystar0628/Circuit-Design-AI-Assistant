@@ -1,0 +1,27 @@
+* NMOS Low-Side Switch with Inductive-Resistive Load
+* A BSS123 NMOS driven by a logic-level pulse sinks current through
+* a resistor/inductor combination from VDD. Shows on-state
+* saturation drop and the small inductor kickback spike as the
+* device turns off.
+* Devices exercised: V, R, L, M (NMOS bundled BSS123).
+
+.title NMOS Low-Side Switch
+
+* --- Supply and 5 V pulse drive ---
+Vdd vdd 0 DC 10
+Vin gate 0 PULSE(0 5 0 100n 100n 5u 10u)
+
+* --- Series R-L load from VDD to the drain ---
+Rload vdd n1 100
+Lload n1  drain 1m
+
+* --- Low-side NMOS switch ---
+M1 drain gate 0 0 BSS123
+
+* --- Analysis ---
+.tran 100n 30u
+
+.MEASURE TRAN v_ds_on  FIND V(drain) AT=12u
+.MEASURE TRAN v_ds_max MAX V(drain)
+
+.end

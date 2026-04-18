@@ -1,0 +1,30 @@
+* BJT Differential Pair with Tail Current Source
+* Symmetric NPN long-tailed pair biased by an ideal tail current
+* source Itail. With both inputs tied to the same common-mode
+* voltage, .op should show the tail current splitting equally
+* between Q1 and Q2 (IC1 ~ IC2 ~ Itail/2) and matching collector
+* voltages.
+* Devices exercised: V, I (current source), R, Q (NPN bundled 2N3904, x2).
+
+.title BJT Differential Pair Operating Point
+
+* --- Supplies and common-mode input ---
+Vdd vdd 0    DC 10
+Vss vss 0    DC -10
+Vcm cm  0    DC 0
+
+* --- Collector loads ---
+Rc1 vdd col1 10k
+Rc2 vdd col2 10k
+
+* --- Tail current source pulling down to Vss ---
+Itail tail vss DC 1m
+
+* --- Differential pair ---
+Q1 col1 cm tail 2N3904
+Q2 col2 cm tail 2N3904
+
+* --- Analysis: DC operating point ---
+.op
+
+.end

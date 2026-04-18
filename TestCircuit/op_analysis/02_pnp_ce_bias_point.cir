@@ -1,0 +1,26 @@
+* PNP Common-Emitter Bias Point
+* Dual of the NPN common-emitter stage, biased off a negative rail.
+* Running .op reveals the quiescent collector current and VEC to
+* confirm the 2N3906 sits in its active region.
+* Devices exercised: V, R, Q (PNP bundled 2N3906).
+
+.title PNP Common-Emitter Bias Point
+
+* --- Negative supply ---
+Vss vss 0 DC -12
+
+* --- Voltage-divider base bias referenced to Vss ---
+Rb1 vss base 68k
+Rb2 base 0   12k
+
+* --- Collector load (to -Vss) and emitter degeneration ---
+Rc vss col  4.7k
+Re emit 0   1k
+
+* --- PNP device ---
+Q1 col base emit 2N3906
+
+* --- Analysis: DC operating point ---
+.op
+
+.end

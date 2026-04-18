@@ -1,0 +1,28 @@
+* BJT Current Mirror Operating Point
+* A reference current is forced into a diode-connected Q1; matched
+* Q2 mirrors that current into its own collector load. .op confirms
+* the mirrored current (IC(Q2)) tracks the reference Iref and that
+* both devices sit at the same VBE.
+* Devices exercised: V, I (current source), R, Q (NPN bundled 2N3904).
+
+.title BJT Current Mirror
+
+* --- Supply ---
+Vdd vdd 0 DC 10
+
+* --- Reference current into the diode-connected transistor ---
+Iref vdd ref DC 1m
+
+* --- Mirror output load (Q2 sources current into Rout) ---
+Rout vdd mirror 5k
+
+* --- Diode-connected Q1 sets the reference VBE ---
+Q1 ref ref 0 2N3904
+
+* --- Matched Q2 produces the mirrored current ---
+Q2 mirror ref 0 2N3904
+
+* --- Analysis: DC operating point ---
+.op
+
+.end

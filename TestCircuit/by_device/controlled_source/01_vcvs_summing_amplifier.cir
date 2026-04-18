@@ -1,0 +1,36 @@
+* VCVS (E) Summing Amplifier
+* Demonstrates the SPICE E card as a weighted summer. Two
+* independent sine inputs are combined through a VCVS whose
+* control pair is wired to "(in1,0)" and gained by 2, plus a
+* second VCVS adding in2 with gain 1, and the two stage outputs
+* summed through a follower VCVS. The whole chain is DC-coupled
+* so the transient waveform shows the analytic sum of the inputs.
+* Devices exercised: V, R, E (VCVS x3).
+
+.title VCVS Summing Amplifier
+
+* --- Two sinusoidal inputs at different frequencies ---
+Vin1 in1 0 SIN(0 0.5 1k)
+Vin2 in2 0 SIN(0 0.3 3k)
+
+* --- Weighted copies of each input ---
+E1 w1  0 in1 0 2.0
+E2 w2  0 in2 0 1.0
+
+* --- Passive sum node (resistive averager) ---
+Rsum1 w1 sum 10k
+Rsum2 w2 sum 10k
+
+* --- Buffer the sum node with unity-gain VCVS ---
+Ebuf out 0 sum 0 1.0
+
+* --- Output load ---
+Rload out 0 10k
+
+* --- Analysis: several beat periods ---
+.tran 10u 5m
+
+.MEASURE TRAN v_out_max MAX V(out)
+.MEASURE TRAN v_out_min MIN V(out)
+
+.end

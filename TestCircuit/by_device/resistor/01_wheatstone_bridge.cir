@@ -1,0 +1,25 @@
+* Wheatstone Bridge Operating Point
+* Classic 4-arm resistor bridge with a 5 V excitation and a
+* slightly unbalanced arm (Rx = 990). .op reveals the differential
+* output voltage across the bridge diagonal (v(a) - v(b)) so the
+* user can observe how a small arm imbalance shows up as a
+* millivolt-scale readout.
+* Devices exercised: V, R.
+
+.title Wheatstone Bridge Operating Point
+
+* --- Excitation ---
+Vexc exc 0 DC 5
+
+* --- Top two arms ---
+R1 exc a 1k
+R2 exc b 1k
+
+* --- Bottom two arms (R4 is the slightly-off sensor leg) ---
+R3 a   0 1k
+R4 b   0 990
+
+* --- Analysis ---
+.op
+
+.end

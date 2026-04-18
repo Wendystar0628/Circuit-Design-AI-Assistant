@@ -1,0 +1,26 @@
+* NPN Emitter Follower Bias Point
+* Textbook NPN emitter follower (common-collector) with a simple
+* 2:1 base divider and a resistive emitter load. .op reports the
+* base, emitter and collector voltages so the user can verify the
+* ~0.7 V VBE drop between base and emitter.
+* Devices exercised: V, R, Q (NPN bundled 2N3904).
+
+.title NPN Emitter Follower
+
+* --- Supply ---
+Vdd vdd 0 DC 12
+
+* --- Base bias divider (mid-rail) ---
+Rb1 vdd base 10k
+Rb2 base 0   10k
+
+* --- Emitter load ---
+Re  emit 0   4.7k
+
+* --- NPN device (collector tied directly to Vdd) ---
+Q1  vdd base emit 2N3904
+
+* --- Analysis: DC operating point ---
+.op
+
+.end

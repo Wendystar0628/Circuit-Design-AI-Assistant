@@ -1,0 +1,19 @@
+* RC Discharge Waveform
+* Capacitor pre-charged to 5 V through IC= and then released through
+* a series resistor back to ground, producing the textbook decaying
+* exponential with tau = R*C = 10 ms.
+* Devices exercised: R, C (with initial condition).
+
+.title RC Discharge Waveform
+
+* --- Series RC between the charged node and ground ---
+R1 cap 0 10k
+C1 cap 0 1u IC=5
+
+* --- Use UIC so the capacitor initial condition is honored ---
+.tran 100u 50m UIC
+
+.MEASURE TRAN v_final FIND V(cap) AT=45m
+.MEASURE TRAN t_tau   WHEN V(cap)=1.839 FALL=1
+
+.end

@@ -1,0 +1,34 @@
+* 2-Input CMOS NAND Gate
+* Classic CMOS NAND topology: two PMOS pull-up devices in parallel
+* between VDD and the output, two NMOS pull-down devices in series
+* between the output and ground. Two independent logic pulses drive
+* the inputs so the transient waveform covers all four input states.
+* Devices exercised: V, M (PMOS BSS84 x2 + NMOS BSS123 x2), C.
+
+.title CMOS 2-Input NAND Gate
+
+* --- Supply ---
+Vdd vdd 0 DC 5
+
+* --- Two logic-level inputs (different pulse periods show all 4 states) ---
+Va a 0 PULSE(0 5 0 50n 50n 2u  4u)
+Vb b 0 PULSE(0 5 0 50n 50n 1u  2u)
+
+* --- PMOS pull-ups in parallel (drain-to-drain on the output) ---
+Mpa out a vdd vdd BSS84
+Mpb out b vdd vdd BSS84
+
+* --- NMOS pull-downs in series (a between out and mid, b between mid and gnd) ---
+Mna out a mid mid BSS123
+Mnb mid b 0   0   BSS123
+
+* --- Output capacitive load ---
+Cload out 0 5p
+
+* --- Analysis: cover a full period of the slower input ---
+.tran 10n 8u
+
+.MEASURE TRAN v_out_high MAX V(out)
+.MEASURE TRAN v_out_low  MIN V(out)
+
+.end

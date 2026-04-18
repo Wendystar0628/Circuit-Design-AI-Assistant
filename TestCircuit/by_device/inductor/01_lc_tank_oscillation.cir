@@ -1,0 +1,22 @@
+* Lossy LC Tank Ringing
+* A parallel LC tank with a small series loss resistance is excited
+* by an initial capacitor charge (IC=). The inductor seed current
+* is zero so all the stored energy sits in the capacitor and then
+* oscillates back and forth, producing a lightly-damped sine wave
+* at f0 = 1 / (2*pi*sqrt(L*C)) ~ 5.03 kHz.
+* Devices exercised: R, L, C (with initial condition).
+
+.title LC Tank Oscillation
+
+* --- Tank elements: capacitor starts at 1 V ---
+C1 tank 0 1u IC=1
+L1 tank n1 1m
+R1 n1   0 1
+
+* --- Analysis: several oscillation periods ---
+.tran 5u 5m UIC
+
+.MEASURE TRAN v_peak MAX V(tank)
+.MEASURE TRAN v_late FIND V(tank) AT=4.8m
+
+.end

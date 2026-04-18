@@ -1,0 +1,27 @@
+* NPN Common-Emitter Bias Point
+* Voltage-divider-biased NPN common-emitter stage. The .op analysis
+* solves the DC operating point so the user can verify that the
+* transistor is in the forward-active region (VCE around VDD/2) and
+* that the quiescent collector current matches design intent.
+* Devices exercised: V, R, Q (NPN bundled 2N3904).
+
+.title NPN Common-Emitter Bias Point
+
+* --- Supply ---
+Vdd vdd 0 DC 12
+
+* --- Voltage-divider base bias ---
+Rb1 vdd base 68k
+Rb2 base 0   12k
+
+* --- Collector load and emitter degeneration ---
+Rc vdd col  4.7k
+Re emit 0   1k
+
+* --- NPN device ---
+Q1 col base emit 2N3904
+
+* --- Analysis: DC operating point ---
+.op
+
+.end

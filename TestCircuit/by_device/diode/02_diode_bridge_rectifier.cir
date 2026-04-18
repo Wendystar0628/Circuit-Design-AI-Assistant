@@ -1,0 +1,32 @@
+* Full-Wave Diode Bridge Rectifier
+* Four-diode bridge converting a floating AC source into a
+* pulsating DC waveform on a resistive load. An output smoothing
+* capacitor flattens the ripple. The ground reference is on the
+* negative DC output so the bridge inputs float above ground.
+* Devices exercised: V, R, C, D (×4).
+
+.title Full-Wave Bridge Rectifier
+
+* --- Floating AC source between the two bridge inputs ---
+Vac  ac_hi  ac_lo  SIN(0 10 50)
+
+* --- Diode bridge: routes each half-cycle to the same polarity ---
+D1  ac_hi  pos  1N4148
+D2  ac_lo  pos  1N4148
+D3  neg    ac_hi 1N4148
+D4  neg    ac_lo 1N4148
+
+* --- Tie the negative bridge node to ground as the DC reference ---
+Rgnd neg 0 1
+
+* --- Smoothing filter on the rectified output ---
+Cfilt pos 0 100u
+Rload pos 0 1k
+
+* --- Analysis: several line cycles after the cap fills up ---
+.tran 200u 100m
+
+.MEASURE TRAN v_peak MAX V(pos)
+.MEASURE TRAN v_avg  AVG V(pos) FROM=60m TO=100m
+
+.end

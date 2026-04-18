@@ -1,0 +1,33 @@
+* NJF Cascode Bias Point
+* Two-stack JFET cascode: a lower J1 in common-source provides the
+* gain while an upper J2 in common-gate shields J1's drain from
+* swinging, boosting output impedance. Gates are biased from a
+* simple fixed divider so .op exposes the stacked operating point.
+* Devices exercised: V, R, J (NJF bundled 2N3819, x2).
+
+.title NJF Cascode Operating Point
+
+* --- Supply ---
+Vdd vdd 0 DC 15
+
+* --- Gate bias divider: G2 mid-rail, G1 at ground via self-bias Rs ---
+Rg1 0 g1 1Meg
+Rg2 vdd g2 22k
+Rg3 g2  0 47k
+
+* --- Load at the very top of the cascode ---
+Rd vdd drain_top 4.7k
+
+* --- Source self-bias on J1 ---
+Rs src 0 680
+
+* --- Lower JFET (common-source): drain / gate / source ---
+J1 drain_mid g1 src 2N3819
+
+* --- Upper JFET (common-gate): drain / gate / source ---
+J2 drain_top g2 drain_mid 2N3819
+
+* --- Analysis: DC operating point ---
+.op
+
+.end

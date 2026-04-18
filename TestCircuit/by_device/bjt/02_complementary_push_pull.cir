@@ -1,0 +1,28 @@
+* Complementary NPN/PNP Class-B Push-Pull Output Stage
+* 2N3904 and 2N3906 paired as a classic class-B emitter-follower
+* output stage driven by a common sinusoid. Shows the crossover
+* distortion notch around zero where neither device is on.
+* Devices exercised: V (supplies + input), R, Q (NPN 2N3904 + PNP 2N3906).
+
+.title Class-B Complementary Push-Pull
+
+* --- Split supplies and shared sinusoidal input ---
+Vdd vdd 0 DC 12
+Vss vss 0 DC -12
+Vin in  0 SIN(0 3 1k)
+
+* --- Top half: NPN sinks from Vdd when V(in) is positive ---
+Qnpn vdd in out 2N3904
+
+* --- Bottom half: PNP sources to Vss when V(in) is negative ---
+Qpnp vss in out 2N3906
+
+* --- Load on the shared emitter node ---
+Rload out 0 100
+
+* --- Analysis ---
+.tran 10u 5m
+
+.MEASURE TRAN v_out_pp PP V(out) FROM=1m TO=5m
+
+.end

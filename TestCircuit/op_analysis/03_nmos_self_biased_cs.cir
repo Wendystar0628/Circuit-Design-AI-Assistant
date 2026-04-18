@@ -1,0 +1,27 @@
+* NMOS Self-Biased Common Source Operating Point
+* A BSS123 n-channel MOSFET in a classic self-biased common-source
+* configuration. The large gate divider sets VGS > Vth while a source
+* resistor stabilizes the quiescent drain current. .op exposes ID,
+* VGS, VDS and the small-signal gm / gds for the operating point.
+* Devices exercised: V, R, M (NMOS bundled BSS123).
+
+.title NMOS Self-Biased Common Source
+
+* --- Supply ---
+Vdd vdd 0 DC 5
+
+* --- Gate bias divider (high impedance) ---
+Rg1 vdd gate 2.2Meg
+Rg2 gate 0   1Meg
+
+* --- Drain load and source degeneration ---
+Rd vdd drain 2.2k
+Rs src  0    220
+
+* --- NMOS device (drain / gate / source / body) ---
+M1 drain gate src src BSS123
+
+* --- Analysis: DC operating point ---
+.op
+
+.end

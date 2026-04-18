@@ -22,7 +22,6 @@ API 文档参考：
 """
 
 import logging
-from contextlib import aclosing
 from typing import Any, AsyncIterator, Dict, List, Optional
 
 import httpx
@@ -170,24 +169,14 @@ class ZhipuClient(BaseLLMClient):
         streaming: bool = False,
         tools: Optional[List[Dict[str, Any]]] = None,
         thinking: bool = DEFAULT_ENABLE_THINKING,
-        **kwargs,
     ) -> ChatResponse:
-        """
-        发送对话请求（非流式，同步）
-        
-        Args:
-            messages: 消息列表
-            model: 模型名称（可选，使用实例默认模型）
-            streaming: 是否流式输出（此方法应为 False）
-            tools: 工具定义列表
-            thinking: 是否启用深度思考
-            **kwargs: 其他参数
-            
-        Returns:
-            ChatResponse: 对话响应
+        """发送对话请求（非流式，同步）。
+
+        签名无 ``**kwargs``：所有 wire 参数必须经过显式命名参数
+        暴露，杜绝上游误传字段泄漏到 API 请求体。
         """
         use_model = model or self.model
-        
+
         # 构建请求体
         request_body = self._request_builder.build_chat_request(
             messages=messages,
@@ -195,7 +184,6 @@ class ZhipuClient(BaseLLMClient):
             stream=False,
             thinking=thinking,
             tools=tools,
-            **kwargs
         )
         
         # 确定超时时间
@@ -243,86 +231,24 @@ class ZhipuClient(BaseLLMClient):
             self._logger.error(f"Request error: {e}")
             raise APIError(f"Request error: {e}")
     
-    async def chat_async(
-        self,
-        messages: List[Dict[str, Any]],
-        model: Optional[str] = None,
-        tools: Optional[List[Dict[str, Any]]] = None,
-        thinking: bool = DEFAULT_ENABLE_THINKING,
-        **kwargs,
-    ) -> ChatResponse:
-        """
-        发送对话请求（非流式，异步）
-        
-        Args:
-            messages: 消息列表
-            model: 模型名称
-            tools: 工具定义列表
-            thinking: 是否启用深度思考
-            **kwargs: 其他参数
-            
-        Returns:
-            ChatResponse: 对话响应
-        """
-        use_model = model or self.model
-        
-        # 构建请求体
-        request_body = self._request_builder.build_chat_request(
-            messages=messages,
-            model=use_model,
-            stream=False,
-            thinking=thinking,
-            tools=tools,
-            **kwargs
-        )
-        
-        # 确定超时时间
-        timeout = DEFAULT_THINKING_TIMEOUT if thinking else self.timeout
-        
-        # 发送请求
-        try:
-            async with self._create_async_client() as client:
-                response = await client.post(
-                    self.CHAT_ENDPOINT,
-                    json=request_body,
-                    timeout=timeout,
-                )
-            
-                # 检查 HTTP 状态码
-                if response.status_code != 200:
-                    self._response_parser.handle_http_error(
-                        response.status_code,
-                        response.text
-                    )
-                
-                # 解析响应
-                return self._response_parser.parse_response(response.json())
-            
-        except httpx.TimeoutException as e:
-            self._logger.error(f"Request timeout: {e}")
-            raise APIError(f"Request timeout: {e}")
-        except httpx.RequestError as e:
-            self._logger.error(f"Request error: {e}")
-            raise APIError(f"Request error: {e}")
-
-    
     async def chat_stream(
         self,
         messages: List[Dict[str, Any]],
         model: Optional[str] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         thinking: bool = DEFAULT_ENABLE_THINKING,
-        **kwargs,
     ) -> AsyncIterator[StreamChunk]:
         """流式对话（异步生成器）。
 
-        停止策略：
-        - 本方法对"停止请求"一无所知，停止由最外层消费者（agent_loop）
-          负责检测并对本 generator 调 ``aclose()``。
-        - ``stream_iterator`` 用 ``contextlib.aclosing`` 包管，上游 aclose
-          会在当前 await 链上级联关闭 ``_iterate_response`` 及其内嵌的
-          ``response.aiter_text()``，避免孤儿 async gen 被 GC 时因
-          事件循环已停触发 ``RuntimeError: no running event loop``。
+        取消协议见 ``BaseLLMClient.chat_stream``：本方法对"停止"
+        语义**完全无感**。上层通过 ``asyncio.Task.cancel()`` 取消
+        整个生成任务，``CancelledError`` 在 httpx socket 最深的
+        ``await`` 处抛出，沿下方 ``async with`` 栈以异常传播路径
+        正常展开，httpx 通过 ``AsyncShieldCancellation`` 完成
+        ``response.aclose()``——整条路径不碰 async generator 的
+        ``aclose``/GeneratorExit 协议。
+
+        签名无 ``**kwargs``：所有 wire 参数必须通过显式命名参数引入。
         """
         use_model = model or self.model
 
@@ -332,7 +258,6 @@ class ZhipuClient(BaseLLMClient):
             stream=True,
             thinking=thinking,
             tools=tools,
-            **kwargs
         )
 
         timeout = DEFAULT_THINKING_TIMEOUT if thinking else self.timeout
@@ -363,10 +288,8 @@ class ZhipuClient(BaseLLMClient):
                             body.decode("utf-8")
                         )
 
-                    stream_iterator = self._stream_handler.create_stream_iterator(response)
-                    async with aclosing(stream_iterator) as safe_iter:
-                        async for chunk in safe_iter:
-                            yield chunk
+                    async for chunk in self._stream_handler.iterate_response(response):
+                        yield chunk
 
         except httpx.TimeoutException as e:
             self._logger.error(f"Stream timeout: {e}")
@@ -411,155 +334,6 @@ class ZhipuClient(BaseLLMClient):
             supports_tools=True,
             supports_thinking=False,
         )
-    
-    # ============================================================
-    # 便捷方法
-    # ============================================================
-    
-    async def chat_with_thinking(
-        self,
-        messages: List[Dict[str, Any]],
-        model: Optional[str] = None,
-        **kwargs,
-    ) -> ChatResponse:
-        """
-        启用深度思考的对话（便捷方法）
-        
-        Args:
-            messages: 消息列表
-            model: 模型名称
-            **kwargs: 其他参数
-            
-        Returns:
-            ChatResponse: 包含思考过程的响应
-        """
-        return await self.chat_async(
-            messages=messages,
-            model=model,
-            thinking=True,
-            **kwargs
-        )
-    
-    async def chat_with_tools(
-        self,
-        messages: List[Dict[str, Any]],
-        tools: List[Dict[str, Any]],
-        model: Optional[str] = None,
-        **kwargs,
-    ) -> ChatResponse:
-        """
-        带工具调用的对话（便捷方法）
-        
-        Args:
-            messages: 消息列表
-            tools: 工具定义列表
-            model: 模型名称
-            **kwargs: 其他参数
-            
-        Returns:
-            ChatResponse: 可能包含工具调用的响应
-        """
-        return await self.chat_async(
-            messages=messages,
-            model=model,
-            tools=tools,
-            thinking=False,  # 工具调用通常不需要深度思考
-            **kwargs
-        )
-    
-    async def chat_stream_with_thinking(
-        self,
-        messages: List[Dict[str, Any]],
-        model: Optional[str] = None,
-        **kwargs,
-    ) -> AsyncIterator[StreamChunk]:
-        """
-        启用深度思考的流式对话（便捷方法）
-        
-        Args:
-            messages: 消息列表
-            model: 模型名称
-            **kwargs: 其他参数
-            
-        Yields:
-            StreamChunk: 流式响应块（包含思考过程）
-        """
-        async for chunk in self.chat_stream(
-            messages=messages,
-            model=model,
-            thinking=True,
-            **kwargs
-        ):
-            yield chunk
-    
-    # ============================================================
-    # ExternalServiceManager 集成
-    # ============================================================
-    
-    async def call(
-        self,
-        request: Dict[str, Any],
-        **kwargs
-    ) -> ChatResponse:
-        """
-        ExternalServiceManager 调用入口
-        
-        此方法供 ExternalServiceManager.call_service() 使用，
-        自动获得重试、熔断、统计能力。
-        
-        Args:
-            request: 请求参数字典，包含：
-                - messages: 消息列表
-                - model: 模型名称（可选）
-                - thinking: 是否启用深度思考（可选）
-                - tools: 工具定义列表（可选）
-                - stream: 是否流式（可选，此方法忽略）
-            **kwargs: 其他参数
-            
-        Returns:
-            ChatResponse: 对话响应
-        """
-        messages = request.get("messages", [])
-        model = request.get("model")
-        thinking = request.get("thinking", DEFAULT_ENABLE_THINKING)
-        tools = request.get("tools")
-        
-        return await self.chat_async(
-            messages=messages,
-            model=model,
-            thinking=thinking,
-            tools=tools,
-            **kwargs
-        )
-    
-    async def call_stream(
-        self,
-        request: Dict[str, Any],
-        **kwargs
-    ) -> AsyncIterator[StreamChunk]:
-        """
-        ExternalServiceManager 流式调用入口
-        
-        Args:
-            request: 请求参数字典
-            **kwargs: 其他参数
-            
-        Yields:
-            StreamChunk: 流式响应块
-        """
-        messages = request.get("messages", [])
-        model = request.get("model")
-        thinking = request.get("thinking", DEFAULT_ENABLE_THINKING)
-        tools = request.get("tools")
-        
-        async for chunk in self.chat_stream(
-            messages=messages,
-            model=model,
-            thinking=thinking,
-            tools=tools,
-            **kwargs
-        ):
-            yield chunk
 
 
 # ============================================================

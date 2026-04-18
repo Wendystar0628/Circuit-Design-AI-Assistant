@@ -138,8 +138,6 @@ class ConversationViewModel(QObject):
     can_send_changed = pyqtSignal(bool)          # 可发送状态变化
     compress_suggested = pyqtSignal()            # 建议压缩上下文
     new_conversation_suggested = pyqtSignal()    # 建议开启新对话
-    stop_requested = pyqtSignal()                # 停止请求已发出
-    stop_completed = pyqtSignal(dict)            # 停止完成 (result)
     
     def __init__(self, parent: Optional[QObject] = None):
         """初始化 ViewModel"""
@@ -152,11 +150,11 @@ class ConversationViewModel(QObject):
         self._can_send: bool = True
         self._active_agent_steps: List[AgentStep] = []
         self._active_suggestion_message_id: Optional[str] = None
-        
-        # 停止控制相关
-        self._stop_controller = None
-        self._current_task_id: Optional[str] = None  # 当前 LLM 任务 ID
-        
+        # 当前活跃 LLM 任务 ID。用于过滤旧任务的信号；任务生命周期由
+        # ``LLMExecutor`` 的 ``asyncio.Task`` 独占持有——VM 不再保存
+        # 任何额外的停止状态。
+        self._current_task_id: Optional[str] = None
+
         # 延迟获取的服务
         self._context_manager = None
         self._event_bus = None
@@ -296,18 +294,6 @@ class ConversationViewModel(QObject):
         return self._llm_runtime_config_manager
     
     @property
-    def stop_controller(self):
-        """延迟获取停止控制器"""
-        if self._stop_controller is None:
-            try:
-                from shared.service_locator import ServiceLocator
-                from shared.service_names import SVC_STOP_CONTROLLER
-                self._stop_controller = ServiceLocator.get_optional(SVC_STOP_CONTROLLER)
-            except Exception:
-                pass
-        return self._stop_controller
-
-    @property
     def conversation_rollback_service(self):
         if self._conversation_rollback_service is None:
             try:
@@ -360,13 +346,6 @@ class ConversationViewModel(QObject):
                 if self.logger:
                     self.logger.warning("无法导入事件类型，事件订阅跳过")
 
-        try:
-            if self.stop_controller:
-                self.stop_controller.stop_requested.connect(self._on_stop_requested_signal)
-                self.stop_controller.stop_completed.connect(self._on_stop_completed_signal)
-        except Exception:
-            pass
-    
     def _unsubscribe_events(self) -> None:
         """取消事件订阅"""
         if self.event_bus is not None:
@@ -392,13 +371,6 @@ class ConversationViewModel(QObject):
             except ImportError:
                 pass
 
-        try:
-            if self.stop_controller:
-                self.stop_controller.stop_requested.disconnect(self._on_stop_requested_signal)
-                self.stop_controller.stop_completed.disconnect(self._on_stop_completed_signal)
-        except Exception:
-            pass
-    
     # ============================================================
     # 消息加载和转换
     # ============================================================
@@ -648,17 +620,14 @@ class ConversationViewModel(QObject):
             final_step.stop_reason = stop_reason
 
     def _start_agent_run(self) -> None:
-        """开始一次新的 Agent 运行。"""
+        """开始一次新的 Agent 运行。
+
+        ``asyncio.Task`` 句柄由 ``LLMExecutor.execute_agent`` 本身
+        持有——VM 仅保留 ``task_id`` 以过滤旧任务信号。
+        """
         self._is_loading = True
         self._clear_active_agent_steps(emit_signal=False)
-        
-        # 生成任务 ID 并保存
         self._current_task_id = f"llm_{uuid.uuid4().hex[:8]}"
-        
-        # 注册任务到 StopController，允许用户停止
-        if self.stop_controller:
-            self.stop_controller.register_task(self._current_task_id)
-        
         self.can_send_changed.emit(False)
         self.load_messages()
     
@@ -846,8 +815,6 @@ class ConversationViewModel(QObject):
                 self._is_loading = False
                 self._current_task_id = None
                 self._active_suggestion_message_id = None
-                if self.stop_controller:
-                    self.stop_controller.reset()
                 self.load_messages()
                 self.can_send_changed.emit(True)
                 return True, ""
@@ -931,11 +898,11 @@ class ConversationViewModel(QObject):
             task_id = self._current_task_id or f"llm_{uuid.uuid4().hex[:8]}"
             self._current_task_id = task_id
             
-            # 连接 LLMExecutor 信号
+            # 连接 LLMExecutor 信号。generation_finished 是终局信号，
+            # 包含 outcome=completed/stopped/error 三种分支，一处分派。
             llm_executor.agent_turn_started.connect(self._on_agent_turn_started)
             llm_executor.stream_chunk.connect(self._on_llm_stream_chunk)
-            llm_executor.generation_complete.connect(self._on_llm_generation_complete)
-            llm_executor.generation_error.connect(self._on_llm_generation_error)
+            llm_executor.generation_finished.connect(self._on_generation_finished)
             llm_executor.tool_execution_started.connect(self._on_tool_execution_started)
             llm_executor.tool_execution_finished.connect(self._on_tool_execution_finished)
             
@@ -999,37 +966,66 @@ class ConversationViewModel(QObject):
             if llm_executor:
                 llm_executor.agent_turn_started.disconnect(self._on_agent_turn_started)
                 llm_executor.stream_chunk.disconnect(self._on_llm_stream_chunk)
-                llm_executor.generation_complete.disconnect(self._on_llm_generation_complete)
-                llm_executor.generation_error.disconnect(self._on_llm_generation_error)
+                llm_executor.generation_finished.disconnect(self._on_generation_finished)
                 llm_executor.tool_execution_started.disconnect(self._on_tool_execution_started)
                 llm_executor.tool_execution_finished.disconnect(self._on_tool_execution_finished)
         except Exception:
             pass
-    
-    def _on_llm_generation_complete(
+
+    # ============================================================
+    # 生成终局事件分派
+    # ============================================================
+
+    def _on_generation_finished(
         self,
         task_id: str,
-        result: Dict[str, Any]
+        result: Dict[str, Any],
     ) -> None:
-        """
-        处理 LLM 生成完成
-        
-        Args:
-            task_id: 任务 ID
-            result: 生成结果
+        """LLM 生成终局事件统一入口。
+
+        ``result["outcome"]`` 有三种：
+        - ``"completed"``: 正常完成，持久化完整 assistant message。
+        - ``"stopped"``:  用户点停止后 task 被 cancel，持久化
+          ``_active_agent_steps`` 里已累积的 partial content。
+        - ``"error"``:    生成出错，同样持久化 partial content，
+          log 错误。
         """
         if task_id != self._current_task_id:
             return
 
-        # 断开信号连接（避免重复处理）
         self._disconnect_llm_executor_signals()
-        
-        # 提取结果
+
+        from domain.llm.llm_executor import (
+            OUTCOME_COMPLETED,
+            OUTCOME_STOPPED,
+            OUTCOME_ERROR,
+        )
+
+        outcome = result.get("outcome")
+        if outcome == OUTCOME_COMPLETED:
+            self._finalize_completed(task_id, result)
+        elif outcome == OUTCOME_STOPPED:
+            self._finalize_partial(task_id, stop_reason="user_requested")
+        elif outcome == OUTCOME_ERROR:
+            error_msg = result.get("error_message", "未知错误")
+            if self.logger:
+                self.logger.error(
+                    f"LLM generation error: task_id={task_id}, error={error_msg}"
+                )
+            self._finalize_partial(task_id, stop_reason="error")
+        else:
+            if self.logger:
+                self.logger.warning(
+                    f"Unknown generation outcome: task_id={task_id}, result={result}"
+                )
+            self._finalize_partial(task_id, stop_reason="unknown")
+
+    def _finalize_completed(self, task_id: str, result: Dict[str, Any]) -> None:
+        """完整完成：写入 assistant message 并触发压缩。"""
         content = result.get("content", "")
         reasoning_content = result.get("reasoning_content", "")
         usage = result.get("usage")
-        is_partial = result.get("is_partial", False)
-        self._mark_active_steps_complete(is_partial=is_partial)
+        self._mark_active_steps_complete(is_partial=False)
 
         has_tool_activity = any(step.tool_calls for step in self._active_agent_steps)
         has_web_search_activity = any(
@@ -1047,7 +1043,6 @@ class ConversationViewModel(QObject):
             else:
                 content = "本轮工具调用已结束，但模型未返回最终文本答复。请参考下方工具执行记录。"
 
-        # 添加助手消息到 ContextManager
         if self.context_manager and content:
             self.context_manager.add_assistant_message(
                 content,
@@ -1055,72 +1050,78 @@ class ConversationViewModel(QObject):
                 usage=usage,
                 agent_steps=agent_steps,
             )
-        
-        # 更新状态
-        self._is_loading = False
-        self._current_task_id = None  # 清除任务 ID
-        
-        # 重置 StopController 状态为 IDLE
-        if self.stop_controller:
-            self.stop_controller.reset()
 
-        self._clear_active_agent_steps(emit_signal=False)
-        
-        # 从 ContextManager 重新加载消息
-        self.load_messages()
-        
-        # 自动保存会话
-        self._auto_save_session()
+        self._settle_generation()
 
         if self.context_compression_service:
             self.context_compression_service.schedule_auto_compress(
                 source="llm_generation_complete"
             )
-        
-        self.can_send_changed.emit(True)
-        
+
         if self.logger:
             self.logger.info(
                 f"LLM generation complete: task_id={task_id}, "
-                f"content_len={len(content)}, is_partial={is_partial}")
-    
-    def _on_llm_generation_error(self, task_id: str, error_msg: str) -> None:
-        """
-        处理 LLM 生成错误
-        
-        Args:
-            task_id: 任务 ID
-            error_msg: 错误消息
-        """
-        if task_id != self._current_task_id:
-            return
+                f"content_len={len(content)}"
+            )
 
-        # 断开信号连接
-        self._disconnect_llm_executor_signals()
-        
-        self._handle_llm_error(error_msg)
-    
-    def _handle_llm_error(self, error_msg: str) -> None:
+    def _finalize_partial(self, task_id: str, *, stop_reason: str) -> None:
+        """部分完成：把流式累积的 partial content 持久化。
+
+        覆盖 stop / error 两条路径——两者都不提供完整结果，但已经
+        流入 ``_active_agent_steps`` 的内容必须落盘。
         """
-        处理 LLM 错误
-        
-        Args:
-            error_msg: 错误消息
+        partial_content = ""
+        if self._active_agent_steps:
+            self._mark_active_steps_complete(is_partial=True, stop_reason=stop_reason)
+            final_step = self._active_agent_steps[-1]
+            if final_step.content:
+                partial_content = final_step.content
+
+        if partial_content or self._active_agent_steps:
+            self._save_partial_response(partial_content, stop_reason)
+
+        self._settle_generation()
+
+        if self.logger:
+            self.logger.info(
+                f"LLM generation finalised as partial: task_id={task_id}, "
+                f"stop_reason={stop_reason}, content_len={len(partial_content)}"
+            )
+
+    def _settle_generation(self) -> None:
+        """生成结束后的通用收尾：清理状态、刷新 UI、重绘消息列表。"""
+        self._is_loading = False
+        self._current_task_id = None
+        self._clear_active_agent_steps(emit_signal=False)
+        self.load_messages()
+        self._auto_save_session()
+        self.can_send_changed.emit(True)
+
+    def _handle_llm_error(self, error_msg: str) -> None:
+        """处理**尚未进入生成流**的上游失败。
+
+        典型场景：LLM 客户端/模型配置未就绪、``trigger_llm_call``
+        进入前就抛异常。此时 ``_active_agent_steps`` 为空，没有
+        partial content 要落盘——只需把错误提示写进消息并复位
+        loading 状态。
+
+        注意：生成启动后的 error / stop 走
+        ``_on_generation_finished`` → ``_finalize_partial`` 路径。
         """
         if self.logger:
-            self.logger.error(f"LLM error: {error_msg}")
-        
-        # 更新状态
-        self._is_loading = False
-        self._current_task_id = None  # 清除任务 ID
-        self._mark_active_steps_complete(is_partial=bool(self._active_agent_steps), stop_reason="error")
-        
-        # 重置 StopController
-        if self.stop_controller:
-            self.stop_controller.reset()
-        
-        self._clear_active_agent_steps(emit_signal=True)
-        self.can_send_changed.emit(True)
+            self.logger.error(f"LLM upstream failure: {error_msg}")
+
+        if self.context_manager and error_msg:
+            try:
+                self.context_manager.add_assistant_message(
+                    error_msg,
+                    is_partial=True,
+                    stop_reason="upstream_error",
+                )
+            except Exception:
+                pass
+
+        self._settle_generation()
     
     # ============================================================
     # Agent 工具事件处理
@@ -1366,8 +1367,6 @@ class ConversationViewModel(QObject):
             self._is_loading = False
             self._current_task_id = None
             self._active_suggestion_message_id = None
-            if self.stop_controller:
-                self.stop_controller.reset()
             self.can_send_changed.emit(True)
         
         # 重新加载消息（ContextManager 状态已由 SessionStateManager 同步）
@@ -1382,116 +1381,47 @@ class ConversationViewModel(QObject):
     # ============================================================
     # 停止控制
     # ============================================================
-    
+
     def request_stop(self) -> bool:
-        """
-        请求停止当前生成
-        
-        通过 StopController 发起停止请求。
-        
-        Returns:
-            bool: 是否成功发起停止请求
+        """请求停止当前生成。
+
+        授权路径：直接调用 ``LLMExecutor.request_stop()`` 触发
+        ``asyncio.Task.cancel()``——``CancelledError`` 沿 SDK 栈
+        展开后，``LLMExecutor`` 会发 ``generation_finished`` 信号
+        (outcome=stopped)，VM 在 ``_on_generation_finished`` 里落盘
+        partial content 并恢复 UI。
         """
         if not self._is_loading:
             if self.logger:
                 self.logger.debug("No active generation to stop")
             return False
-        
-        if self.stop_controller:
-            try:
-                from shared.stop_controller import StopReason
-                success = self.stop_controller.request_stop(StopReason.USER_REQUESTED)
-                if success:
-                    if self.logger:
-                        self.logger.info("Stop requested by user")
-                return success
-            except Exception as e:
+
+        try:
+            from shared.service_locator import ServiceLocator
+            from shared.service_names import SVC_LLM_EXECUTOR
+
+            llm_executor = ServiceLocator.get_optional(SVC_LLM_EXECUTOR)
+            if not llm_executor:
                 if self.logger:
-                    self.logger.error(f"Failed to request stop: {e}")
+                    self.logger.warning("LLMExecutor not available for stop")
                 return False
-        
-        if self.logger:
-            self.logger.warning("StopController not available")
-        return False
 
-    def _on_stop_requested_signal(self, task_id: str, reason: str) -> None:
-        """
-        处理 StopController 的停止请求信号。
-        """
-        if task_id and task_id != self._current_task_id:
-            return
-
-        if self.logger:
-            self.logger.debug(f"Stop requested: task_id={task_id}, reason={reason}")
-
-        self.stop_requested.emit()
-
-    def _on_stop_completed_signal(self, task_id: str, result_data: Dict[str, Any]) -> None:
-        """
-        处理 StopController 的停止完成信号
-        
-        处理部分响应，更新消息列表，恢复 UI 状态。
-        
-        关键步骤：
-        1. 处理部分响应（保存或丢弃）
-        2. 清空运行时 step 状态
-        3. 发出信号通知 UI 恢复
-        """
-        reason = result_data.get("reason", "")
-        is_partial = result_data.get("is_partial", True)
-        partial_content = result_data.get("partial_content", "")
-
-        if task_id and task_id != self._current_task_id:
-            return
-        
-        if self.logger:
-            self.logger.info(
-                f"Stop completed: task_id={task_id}, reason={reason}, "
-                f"is_partial={is_partial}, content_len={len(partial_content)}"
-            )
- 
-        self._disconnect_llm_executor_signals()
-        
-        if is_partial and self._active_agent_steps:
-            self._mark_active_steps_complete(is_partial=True, stop_reason=reason)
-            final_step = self._active_agent_steps[-1]
-            if final_step.content:
-                partial_content = final_step.content
- 
-        saved = False
-        if partial_content or self._active_agent_steps:
-            self._save_partial_response(partial_content, reason)
-            self._auto_save_session()
-            saved = True
-        
-        # 清空运行时 step 状态
-        self._is_loading = False
-        self._current_task_id = None  # 清除任务 ID
-        self._clear_active_agent_steps(emit_signal=False)
-        if saved:
-            self.load_messages()
-        else:
-            self._emit_display_state_changed()
-        
-        # 发出信号
-        result = {
-            "task_id": task_id,
-            "reason": reason,
-            "is_partial": is_partial,
-            "saved": saved,
-        }
-        self.stop_completed.emit(result)
-        
-        # 发出可发送状态变化信号，恢复发送按钮
-        self.can_send_changed.emit(True)
+            success = llm_executor.request_stop()
+            if success and self.logger:
+                self.logger.info("Stop requested by user")
+            return success
+        except Exception as exc:
+            if self.logger:
+                self.logger.error(f"Failed to request stop: {exc}")
+            return False
     
     def _save_partial_response(self, content: str, reason: str) -> None:
-        """
-        保存部分响应为消息
-        
-        Args:
-            content: 部分响应内容
-            reason: 停止原因
+        """把已经流入 ``_active_agent_steps`` 的 partial 内容写入
+        ``ContextManager``。
+
+        ``_settle_generation`` 随后会 ``load_messages()`` 重建
+        ``self._messages``，因此这里**只写 ContextManager**，
+        不直接 append UI 列表（避免重复）。
         """
         if not content and self._active_agent_steps:
             last_step = self._active_agent_steps[-1]
@@ -1503,19 +1433,7 @@ class ConversationViewModel(QObject):
             latest_reasoning = self._active_agent_steps[-1].reasoning_content
 
         serialized_steps = self._serialize_agent_steps()
-        
-        # 创建消息（设置 is_partial 和 stop_reason 供消息渲染层展示中断标记）
-        msg = DisplayMessage(
-            id=str(uuid.uuid4()),
-            role=ROLE_ASSISTANT,
-            content=content,
-            agent_steps=self._deserialize_agent_steps(serialized_steps),
-        )
-        
-        # 添加到消息列表
-        self._messages.append(msg)
-        
-        # 同步到 ContextManager（标记为部分响应）
+
         if self.context_manager:
             try:
                 self.context_manager.add_assistant_message(
@@ -1528,7 +1446,7 @@ class ConversationViewModel(QObject):
             except Exception as e:
                 if self.logger:
                     self.logger.warning(f"Failed to save partial response to context: {e}")
-        
+
         if self.logger:
             self.logger.info(f"Saved partial response: {len(content)} chars")
 

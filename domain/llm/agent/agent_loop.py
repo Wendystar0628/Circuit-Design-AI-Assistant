@@ -30,7 +30,6 @@ ReAct 循环控制器
 import json
 import logging
 import asyncio
-from contextlib import aclosing
 from dataclasses import dataclass
 from typing import Any, Callable, Coroutine, Dict, List, Optional, Union
 
@@ -107,27 +106,22 @@ class AgentLoop:
         context: ToolContext,
         model: str,
         thinking: bool = False,
-        stop_requested: Optional[Callable[[], bool]] = None,
         max_turns: int = MAX_TURNS,
     ):
-        """
-        初始化 Agent 循环
+        """初始化 Agent 循环。
 
-        Args:
-            client: LLM 客户端实例
-            registry: 工具注册表（已注册所有工具）
-            context: 工具执行上下文
-            model: 模型名称
-            thinking: 是否启用深度思考
-            stop_requested: 停止检查函数
-            max_turns: 最大循环轮次
+        取消协议：本类**不感知停止语义**。停止由上层
+        (``LLMExecutor.request_stop``) 通过 ``asyncio.Task.cancel()``
+        发起。``CancelledError`` 从最深 await 处（httpx socket）
+        抛出，沿 ``async with`` 栈异常展开，最终由本方法的
+        ``except asyncio.CancelledError: raise`` 向
+        ``LLMExecutor`` 传播。
         """
         self._client = client
         self._registry = registry
         self._context = context
         self._model = model
         self._thinking = thinking
-        self._stop_requested = stop_requested
         self._max_turns = max_turns
         self._logger = logging.getLogger(__name__)
 
@@ -153,7 +147,6 @@ class AgentLoop:
 
         try:
             for turn in range(self._max_turns):
-                self._raise_if_stop_requested()
                 step_index = turn + 1
                 result.total_turns = step_index
                 await self._emit(on_event, EVENT_TURN_START, {
@@ -164,8 +157,6 @@ class AgentLoop:
                 turn_result = await self._stream_llm_response(
                     messages, schemas, on_event, step_index
                 )
-
-                self._raise_if_stop_requested()
 
                 # ---- 2. 构建 assistant 消息并追加到历史 ----
                 assistant_msg = self._build_assistant_message(turn_result)
@@ -184,7 +175,6 @@ class AgentLoop:
                     break
 
                 # ---- 4. 执行工具调用 ----
-                self._raise_if_stop_requested()
                 tool_results = await self._execute_tool_calls(
                     turn_result.tool_calls, on_event, step_index
                 )
@@ -230,25 +220,23 @@ class AgentLoop:
     ) -> TurnResult:
         """流式调用 LLM 并累积结果。
 
-        停止/清理策略（权威路径）：
-        - 本方法是 LLM 流的**唯一**消费者，也是停止检查的唯一位置。
-          下游 ``client.chat_stream`` 不感知停止语义。
-        - 每处理完一个 chunk 后检查 ``_stop_requested``，发现停止立即
-          ``break`` 退出消费循环。
-        - 用 ``contextlib.aclosing`` 包住 ``chat_stream`` 返回的
-          async generator，``break`` 路径和异常路径都会在当前
-          await 链上同步 ``aclose()``，触发 ``GeneratorExit`` 被注入
-          ``yield chunk`` 处；``chat_stream`` 内的 ``async with`` 闭包
-          （httpx AsyncClient / response stream）级联执行 ``__aexit__``；
-          ``_iterate_response`` 内的 ``aclosing(aiter_text)`` 也级联
-          执行。全部清理都在 event loop 活跃期内完成，根除
-          ``RuntimeError: no running event loop``。
-        - ``_raise_if_stop_requested`` 在 ``aclosing`` 的 ``__aexit__``
-          之后才抛 ``CancelledError``，保证资源先清理后传播。
+        本方法对"停止"语义**完全无感**。取消由 ``LLMExecutor`` 对
+        持有的 ``asyncio.Task`` 调 ``cancel()`` 发起，``CancelledError``
+        会从 httpx 最深的 await（socket.recv）抛出，沿 ``chat_stream``
+        内部的 ``async with`` 栈异常展开，httpx 通过
+        ``AsyncShieldCancellation`` 完成 ``response.aclose()``
+        的同步清理。本 ``async for`` 自然收到 ``CancelledError``
+        并向上传播到 ``run()`` 的 ``except CancelledError: raise``
+        分支——由调用方 ``LLMExecutor`` 把 ``CancelledError`` 转换
+        为 ``generation_finished(outcome="stopped")``。
+
+        该设计**不走** async generator 的 ``aclose``-GeneratorExit
+        路径，从而规避 httpcore 1.x + anyio 4 + qasync 下
+        ``HTTP11ConnectionByteStream.__aiter__`` 的 ``except
+        BaseException: await self.aclose()`` handler 中重入 anyio
+        lock 失败所导致的 ``RuntimeError: no running event loop``。
         """
         turn = TurnResult()
-
-        self._raise_if_stop_requested()
 
         tool_names = []
         for schema in schemas:
@@ -259,43 +247,36 @@ class AgentLoop:
             f"Agent turn request tools: count={len(tool_names)}, tools={tool_names}"
         )
 
-        stream_gen = self._client.chat_stream(
+        async for chunk in self._client.chat_stream(
             messages=messages,
             model=self._model,
             tools=schemas if schemas else None,
             thinking=self._thinking,
-        )
+        ):
+            if chunk.reasoning_content:
+                turn.reasoning_content += chunk.reasoning_content
+                await self._emit(on_event, EVENT_STREAM_CHUNK, {
+                    "step_index": step_index,
+                    "chunk_type": "reasoning",
+                    "text": chunk.reasoning_content,
+                })
 
-        async with aclosing(stream_gen) as safe_stream:
-            async for chunk in safe_stream:
-                if chunk.reasoning_content:
-                    turn.reasoning_content += chunk.reasoning_content
-                    await self._emit(on_event, EVENT_STREAM_CHUNK, {
-                        "step_index": step_index,
-                        "chunk_type": "reasoning",
-                        "text": chunk.reasoning_content,
-                    })
+            if chunk.content:
+                turn.content += chunk.content
+                await self._emit(on_event, EVENT_STREAM_CHUNK, {
+                    "step_index": step_index,
+                    "chunk_type": "content",
+                    "text": chunk.content,
+                })
 
-                if chunk.content:
-                    turn.content += chunk.content
-                    await self._emit(on_event, EVENT_STREAM_CHUNK, {
-                        "step_index": step_index,
-                        "chunk_type": "content",
-                        "text": chunk.content,
-                    })
+            if chunk.usage:
+                turn.usage = chunk.usage
 
-                if chunk.usage:
-                    turn.usage = chunk.usage
+            if chunk.tool_calls:
+                turn.tool_calls = chunk.tool_calls
+            if chunk.finish_reason:
+                turn.finish_reason = chunk.finish_reason
 
-                if chunk.tool_calls:
-                    turn.tool_calls = chunk.tool_calls
-                if chunk.finish_reason:
-                    turn.finish_reason = chunk.finish_reason
-
-                if self._stop_requested and self._stop_requested():
-                    break
-
-        self._raise_if_stop_requested()
         return turn
 
     # ============================================================
@@ -324,7 +305,6 @@ class AgentLoop:
         results = []
 
         for tc_raw in tool_calls:
-            self._raise_if_stop_requested()
             # 解析工具调用信息
             try:
                 tc_info = ToolCallInfo.from_api_format(tc_raw)
@@ -357,11 +337,6 @@ class AgentLoop:
             results.append(result)
 
         return results
-
-    def _raise_if_stop_requested(self) -> None:
-        """在活跃停止请求下中断 Agent 循环。"""
-        if self._stop_requested and self._stop_requested():
-            raise asyncio.CancelledError()
 
     async def _execute_single_tool(self, tc_info: ToolCallInfo) -> ToolResult:
         """

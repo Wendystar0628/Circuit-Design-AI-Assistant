@@ -150,22 +150,23 @@ class BaseLLMClient(ABC):
         streaming: bool = False,
         tools: Optional[List[Dict[str, Any]]] = None,
         thinking: bool = False,
-        **kwargs,
     ) -> ChatResponse:
-        """
-        发送对话请求（非流式）
-        
+        """发送对话请求（非流式）。
+
+        No ``**kwargs``: any new wire parameter must be added as an
+        explicit named argument so unknown fields cannot silently leak
+        into the provider request body.
+
         Args:
             messages: 消息列表
             model: 模型名称（可选，使用实例默认模型）
             streaming: 是否流式输出（此方法应为 False）
             tools: 工具定义列表
             thinking: 是否启用深度思考
-            **kwargs: 其他参数
-            
+
         Returns:
             ChatResponse: 对话响应
-            
+
         Raises:
             APIError: API 调用错误
             AuthError: 认证错误
@@ -182,18 +183,37 @@ class BaseLLMClient(ABC):
         model: Optional[str] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         thinking: bool = False,
-        **kwargs,
     ) -> AsyncIterator[StreamChunk]:
-        """
-        流式对话（异步生成器）
-        
+        """流式对话（异步生成器）。
+
+        Cancellation protocol (authoritative):
+        - Stop is **not** an SDK concern. The caller (``AgentLoop`` →
+          ``LLMExecutor``) owns cancellation by calling
+          ``asyncio.Task.cancel()`` on the active generation task.
+          ``CancelledError`` is injected at the deepest live
+          ``await`` point (httpx's ``socket.recv``) and unwinds
+          through the implementation's ``async with`` stack via the
+          normal exception-propagation path. httpx/httpcore shield
+          their own cleanup with ``AsyncShieldCancellation``, so
+          ``response.aclose()`` runs synchronously on the live event
+          loop.
+        - Implementations MUST NOT open side-channels (``cancel_event``
+          arguments, background watcher tasks, ``aclose()`` overrides)
+          — those were required only to work around bugs in an older,
+          aclose-based stop design that was abandoned.
+        - Consumers MUST NOT call ``aclose()`` on the returned
+          generator as a stop mechanism. Cancellation goes through
+          the asyncio Task, not through the async-generator protocol.
+        - ``**kwargs`` is deliberately absent: every wire parameter
+          must be explicit so unknown fields cannot leak into the
+          provider request body.
+
         Args:
             messages: 消息列表
             model: 模型名称
             tools: 工具定义列表
             thinking: 是否启用深度思考
-            **kwargs: 其他参数
-            
+
         Yields:
             StreamChunk: 流式响应块
         """

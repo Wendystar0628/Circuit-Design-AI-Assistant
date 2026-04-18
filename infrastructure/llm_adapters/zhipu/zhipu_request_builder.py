@@ -63,24 +63,14 @@ class ZhipuRequestBuilder:
         max_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
         response_format: Optional[Dict[str, Any]] = None,
-        **kwargs
     ) -> Dict[str, Any]:
-        """
-        构建对话请求体
-        
-        Args:
-            messages: 消息列表
-            model: 模型名称
-            stream: 是否流式输出
-            thinking: 是否启用深度思考
-            tools: 工具定义列表
-            max_tokens: 最大输出 tokens
-            temperature: 温度参数
-            response_format: 结构化输出格式
-            **kwargs: 其他参数
-            
-        Returns:
-            符合智谱 API 规范的请求体字典
+        """构建对话请求体。
+
+        签名故意不接受 ``**kwargs``：旧实现的 ``for key, value in
+        kwargs.items(): body[key] = value`` 透传通道让任何上游误传
+        的未知字段都会污染 wire 请求体，造成过 API schema 的泄漏
+        （例如 ``stop_requested`` 泄漏到 JSON）。新字段必须作为
+        显式命名参数引入。
         """
         model = model or ZHIPU_PROVIDER.default_model
 
@@ -116,12 +106,7 @@ class ZhipuRequestBuilder:
         # 应用结构化输出配置
         if response_format:
             body = self._apply_structured_output(body, response_format)
-        
-        # 合并其他参数
-        for key, value in kwargs.items():
-            if value is not None and key not in body:
-                body[key] = value
-        
+
         # 记录请求体日志（调试用）
         tool_names = []
         for tool in body.get("tools", []) or []:
@@ -208,38 +193,6 @@ class ZhipuRequestBuilder:
         # ModelRegistry 不可用时，返回原模型（可能导致 API 错误）
         self._logger.warning(f"Cannot determine vision model for {model}")
         return model
-    
-    def build_tool_request(
-        self,
-        messages: List[Dict[str, Any]],
-        tools: List[Dict[str, Any]],
-        model: Optional[str] = None,
-        stream: bool = True,
-        thinking: bool = False,
-        **kwargs
-    ) -> Dict[str, Any]:
-        """
-        构建工具调用请求体
-        
-        Args:
-            messages: 消息列表
-            tools: 工具定义列表
-            model: 模型名称
-            stream: 是否流式输出
-            thinking: 是否启用深度思考
-            **kwargs: 其他参数
-            
-        Returns:
-            符合智谱 API 规范的请求体字典
-        """
-        return self.build_chat_request(
-            messages=messages,
-            model=model,
-            stream=stream,
-            thinking=thinking,
-            tools=tools,
-            **kwargs
-        )
     
     def _normalize_messages(
         self,

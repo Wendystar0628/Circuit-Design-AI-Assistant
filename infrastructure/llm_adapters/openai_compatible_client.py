@@ -1,6 +1,6 @@
 import json
 import logging
-from typing import Any, AsyncIterator, Callable, Dict, List, Optional
+from typing import Any, AsyncIterator, Dict, List, Optional
 
 import httpx
 
@@ -84,8 +84,15 @@ class OpenAICompatibleClient(BaseLLMClient):
         stream: bool,
         tools: Optional[List[Dict[str, Any]]],
         thinking: bool,
-        **kwargs,
     ) -> Dict[str, Any]:
+        """Build an OpenAI-compatible request body.
+
+        Deliberately **no** ``**kwargs`` fallthrough: any new wire
+        parameter must be added as an explicit named argument so
+        unknown fields cannot silently leak into the request payload
+        and break the provider's schema (the previous design let
+        ``stop_requested`` bleed all the way into the JSON body).
+        """
         use_model = model or self.model
         if not use_model:
             raise APIError("Model is required")
@@ -99,10 +106,6 @@ class OpenAICompatibleClient(BaseLLMClient):
         }
         if tools:
             request_body["tools"] = tools
-
-        for key, value in kwargs.items():
-            if value is not None:
-                request_body[key] = value
 
         if thinking and self.supports_thinking(actual_model):
             request_body.setdefault("temperature", 0.6)
@@ -250,9 +253,8 @@ class OpenAICompatibleClient(BaseLLMClient):
         streaming: bool = False,
         tools: Optional[List[Dict[str, Any]]] = None,
         thinking: bool = False,
-        **kwargs,
     ) -> ChatResponse:
-        request_body = self._build_request_body(messages, model, False, tools, thinking, **kwargs)
+        request_body = self._build_request_body(messages, model, False, tools, thinking)
         client = self._get_sync_client()
         try:
             response = client.post(self.CHAT_ENDPOINT, json=request_body)
@@ -299,10 +301,17 @@ class OpenAICompatibleClient(BaseLLMClient):
         model: Optional[str] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         thinking: bool = False,
-        **kwargs,
     ) -> AsyncIterator[StreamChunk]:
-        stop_requested = kwargs.pop("stop_requested", None)
-        request_body = self._build_request_body(messages, model, True, tools, thinking, **kwargs)
+        """Stream chat chunks from an OpenAI-compatible endpoint.
+
+        This method is **stop-agnostic** — see
+        ``BaseLLMClient.chat_stream`` for the cancellation contract.
+        The caller cancels the owning ``asyncio.Task``; the resulting
+        ``CancelledError`` unwinds through the ``async with`` stack
+        below via normal exception propagation, and httpx cleans up
+        the connection under ``AsyncShieldCancellation``.
+        """
+        request_body = self._build_request_body(messages, model, True, tools, thinking)
         accumulated_tool_calls: Dict[int, Dict[str, Any]] = {}
         try:
             async with self._create_async_client() as client:
@@ -317,65 +326,69 @@ class OpenAICompatibleClient(BaseLLMClient):
                         )
                         self._handle_http_error(error_response)
 
-                    if self._is_stop_requested(stop_requested):
-                        return
-
                     async for line in response.aiter_lines():
-                        if self._is_stop_requested(stop_requested):
-                            return
-                        if not line:
-                            continue
-                        if not line.startswith("data:"):
-                            continue
-                        payload_text = line[5:].strip()
-                        if not payload_text:
-                            continue
-                        if payload_text == "[DONE]":
-                            yield StreamChunk(
-                                is_finished=True,
-                                tool_calls=self._finalize_tool_calls(accumulated_tool_calls),
-                            )
-                            continue
-                        try:
-                            payload = json.loads(payload_text)
-                        except json.JSONDecodeError as exc:
-                            raise ResponseParseError(f"Invalid streaming payload: {exc}") from exc
-
-                        choices = payload.get("choices")
-                        if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
-                            continue
-                        choice = choices[0]
-                        delta = choice.get("delta") if isinstance(choice.get("delta"), dict) else {}
-                        self._merge_tool_call_delta(accumulated_tool_calls, delta.get("tool_calls"))
-
-                        content = self._extract_text(delta.get("content"))
-                        reasoning_content = self._extract_text(delta.get("reasoning_content"))
-                        if reasoning_content is None:
-                            reasoning_content = self._extract_text(delta.get("reasoning"))
-
-                        finish_reason = choice.get("finish_reason")
-                        usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else None
-                        if content or reasoning_content or finish_reason or usage:
-                            yield StreamChunk(
-                                content=content,
-                                reasoning_content=reasoning_content,
-                                is_finished=bool(finish_reason),
-                                usage=usage,
-                                tool_calls=self._finalize_tool_calls(accumulated_tool_calls) if finish_reason else None,
-                                finish_reason=finish_reason,
-                            )
+                        stream_chunk = self._parse_sse_line(line, accumulated_tool_calls)
+                        if stream_chunk is not None:
+                            yield stream_chunk
         except httpx.TimeoutException as exc:
             raise APIError(f"Stream timeout: {exc}") from exc
         except httpx.RequestError as exc:
             raise APIError(f"Stream error: {exc}") from exc
 
-    def _is_stop_requested(self, callback: Any) -> bool:
-        if not callable(callback):
-            return False
+    def _parse_sse_line(
+        self,
+        line: str,
+        accumulated_tool_calls: Dict[int, Dict[str, Any]],
+    ) -> Optional[StreamChunk]:
+        """Parse a single SSE ``data: ...`` line into a ``StreamChunk``.
+
+        Returns ``None`` for lines that don't carry a streamable
+        delta (keep-alives, empty lines, non-``data:`` comments).
+        Tool-call deltas are accumulated into ``accumulated_tool_calls``
+        so the caller sees a complete ``tool_calls`` list on the
+        finish-reason chunk.
+        """
+        if not line:
+            return None
+        if not line.startswith("data:"):
+            return None
+        payload_text = line[5:].strip()
+        if not payload_text:
+            return None
+        if payload_text == "[DONE]":
+            return StreamChunk(
+                is_finished=True,
+                tool_calls=self._finalize_tool_calls(accumulated_tool_calls),
+            )
         try:
-            return bool(callback())
-        except Exception:
-            return False
+            payload = json.loads(payload_text)
+        except json.JSONDecodeError as exc:
+            raise ResponseParseError(f"Invalid streaming payload: {exc}") from exc
+
+        choices = payload.get("choices")
+        if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+            return None
+        choice = choices[0]
+        delta = choice.get("delta") if isinstance(choice.get("delta"), dict) else {}
+        self._merge_tool_call_delta(accumulated_tool_calls, delta.get("tool_calls"))
+
+        content = self._extract_text(delta.get("content"))
+        reasoning_content = self._extract_text(delta.get("reasoning_content"))
+        if reasoning_content is None:
+            reasoning_content = self._extract_text(delta.get("reasoning"))
+
+        finish_reason = choice.get("finish_reason")
+        usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else None
+        if not (content or reasoning_content or finish_reason or usage):
+            return None
+        return StreamChunk(
+            content=content,
+            reasoning_content=reasoning_content,
+            is_finished=bool(finish_reason),
+            usage=usage,
+            tool_calls=self._finalize_tool_calls(accumulated_tool_calls) if finish_reason else None,
+            finish_reason=finish_reason,
+        )
 
     def get_model_info(self, model: Optional[str] = None) -> ModelInfo:
         use_model = model or self.model

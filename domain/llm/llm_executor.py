@@ -1,38 +1,40 @@
 # LLM Executor - LLM Call Execution Engine
-"""
-LLM 调用执行器
+"""LLM 调用执行器。
 
 职责：
 - 封装 Agent 模式 LLM 调用
-- 处理流式响应、工具调用和错误
+- 处理流式响应、工具调用
 - 通过 Qt 信号向对话主链转发结果
 
-初始化顺序：
-- Phase 3.6，依赖 ConfigManager、CredentialManager（见 bootstrap._init_llm_client）
+取消协议（权威设计）：
+    asyncio.Task 是活跃生成的**唯一事实源**。
+    ``request_stop()`` 直接对保存的 task 调 ``cancel()``，
+    让 ``CancelledError`` 从 httpx 最深 await（socket.recv）处抛出，
+    沿 ``chat_stream`` 内部的 ``async with`` 栈以异常路径正常展开，
+    httpx 通过 ``AsyncShieldCancellation`` 完成同步清理。
 
-设计原则：
-- 使用 @asyncSlot() 装饰器，使异步方法可被 Qt 信号直接调用
-- 协程在主线程的 asyncio 循环中执行
-- 通过 ExternalServiceManager 获取 LLM 客户端
+    这**彻底避开**了 async generator 的 ``aclose``-GeneratorExit 路径
+    （在 httpcore 1.x + anyio 4 + qasync 下会崩溃）。
 
-使用示例（信号模式）：
+    所有生成结束（无论完成、被停止、还是出错）都从**同一个信号**
+    ``generation_finished`` 发出，消费者（ConversationViewModel）
+    通过 ``outcome`` 字段分派处理——没有多个 signal，没有 race。
+
+使用示例：
     executor = LLMExecutor()
-    executor.stream_chunk.connect(on_stream_chunk)
-    executor.generation_complete.connect(on_complete)
-    
-    await executor.execute_agent(
-        task_id="task_1",
-        messages=[{"role": "user", "content": "Hello"}],
-        model="glm-4-plus",
-        thinking=True
-    )
+    executor.generation_finished.connect(on_finished)
+    executor.execute_agent("task_1", messages, "glm-4-plus")
+    # 用户点停止按钮：
+    executor.request_stop()
 """
+
+from __future__ import annotations
 
 import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 
-from PyQt6.QtCore import QObject, pyqtSignal
+from PyQt6.QtCore import QObject, pyqtSignal, pyqtSlot
 from qasync import asyncSlot
 
 from infrastructure.llm_adapters.base_client import (
@@ -45,77 +47,91 @@ from infrastructure.llm_adapters.base_client import (
 )
 
 
-# ============================================================
-# LLMExecutor 类
-# ============================================================
+# Generation outcome enumeration (strings, not Enum, for easier
+# cross-signal serialisation).
+OUTCOME_COMPLETED = "completed"
+OUTCOME_STOPPED = "stopped"
+OUTCOME_ERROR = "error"
+
 
 class LLMExecutor(QObject):
-    """
-    LLM 调用执行器
-    
-    封装 Agent 模式 LLM 调用，处理流式响应。
-    
-    提供信号模式：通过 execute_agent() 方法，结果通过信号返回。
-    
+    """LLM 调用执行器。
+
     Signals:
-        stream_chunk(str, dict): 流式数据块
-            - task_id: 任务标识
-            - chunk_data: {"type": "reasoning"|"content", "text": str}
-        generation_complete(str, dict): 生成完成
-            - task_id: 任务标识
-            - result: {"content": str, "reasoning_content": str, "usage": dict}
-        generation_error(str, str): 生成错误
-            - task_id: 任务标识
-            - error_msg: 错误消息
+        agent_turn_started(task_id, step_index)
+        stream_chunk(task_id, step_index, chunk_type, chunk_data)
+        tool_execution_started(task_id, step_index, tool_call_id, tool_name, arguments)
+        tool_execution_finished(task_id, step_index, tool_call_id, tool_name, result_content, is_error, details)
+        generation_finished(task_id, result)
+            result is a dict with keys:
+              - ``outcome``: one of ``"completed"``, ``"stopped"``, ``"error"``
+              - completed: ``content``, ``reasoning_content``, ``usage``,
+                ``total_turns``, ``tool_calls_count``
+              - stopped: (no extra fields; partial content lives in the
+                ViewModel's accumulated agent steps)
+              - error: ``error_message``
     """
-    
-    # 信号定义
-    agent_turn_started = pyqtSignal(str, int)  # (task_id, step_index)
-    stream_chunk = pyqtSignal(str, int, str, dict)  # (task_id, step_index, chunk_type, chunk_data)
-    generation_complete = pyqtSignal(str, dict)  # (task_id, result)
-    generation_error = pyqtSignal(str, str)  # (task_id, error_msg)
-    tool_execution_started = pyqtSignal(str, int, str, str, dict)  # (task_id, step_index, tool_call_id, tool_name, arguments)
-    tool_execution_finished = pyqtSignal(str, int, str, str, str, bool, dict)  # (task_id, step_index, tool_call_id, tool_name, result_content, is_error, details)
-    
+
+    agent_turn_started = pyqtSignal(str, int)
+    stream_chunk = pyqtSignal(str, int, str, dict)
+    tool_execution_started = pyqtSignal(str, int, str, str, dict)
+    tool_execution_finished = pyqtSignal(str, int, str, str, str, bool, dict)
+    generation_finished = pyqtSignal(str, dict)
+
     def __init__(self, parent: Optional[QObject] = None):
-        """初始化 LLM 执行器"""
         super().__init__(parent)
-        
-        # 延迟获取的服务
         self._logger = None
-        self._stop_controller = None
-    
+        self._active_task: Optional[asyncio.Task] = None
+        self._active_task_id: Optional[str] = None
+
     # ============================================================
     # 延迟获取服务
     # ============================================================
-    
+
     @property
     def logger(self):
-        """延迟获取 Logger"""
         if self._logger is None:
             try:
                 from infrastructure.utils.logger import get_logger
                 self._logger = get_logger("llm_executor")
             except Exception as e:
-                logging.getLogger(__name__).warning(f"Failed to load custom logger, using stdlib: {e}")
+                logging.getLogger(__name__).warning(
+                    f"Failed to load custom logger, using stdlib: {e}"
+                )
                 self._logger = logging.getLogger(__name__)
         return self._logger
-    
+
+    # ============================================================
+    # 公共接口
+    # ============================================================
+
     @property
-    def stop_controller(self):
-        """延迟获取 StopController"""
-        if self._stop_controller is None:
-            try:
-                from shared.service_locator import ServiceLocator
-                from shared.service_names import SVC_STOP_CONTROLLER
-                self._stop_controller = ServiceLocator.get_optional(SVC_STOP_CONTROLLER)
-            except Exception as e:
-                logging.getLogger(__name__).warning(f"Failed to load StopController: {e}")
-        return self._stop_controller
-    
-    # ============================================================
-    # Agent 模式执行
-    # ============================================================
+    def is_generating(self) -> bool:
+        """当前是否有活跃的生成 task。"""
+        task = self._active_task
+        return task is not None and not task.done()
+
+    @pyqtSlot()
+    def request_stop(self) -> bool:
+        """取消当前活跃的生成 task。
+
+        这是**唯一**的停止入口。通过 ``task.cancel()`` 让
+        ``CancelledError`` 从最深 await 点（httpx socket）抛出，
+        沿 async with 栈异常展开，httpx 在
+        ``AsyncShieldCancellation`` 保护下完成清理。
+
+        Returns:
+            ``True`` 若有活跃 task 被成功请求取消；``False`` 若当前无生成。
+        """
+        task = self._active_task
+        if task is None or task.done():
+            if self.logger:
+                self.logger.debug("request_stop called but no active task")
+            return False
+        task.cancel()
+        if self.logger:
+            self.logger.info(f"Stop requested for task: {self._active_task_id}")
+        return True
 
     @asyncSlot()
     async def execute_agent(
@@ -124,61 +140,33 @@ class LLMExecutor(QObject):
         messages: List[Dict[str, Any]],
         model: str,
         thinking: bool = False,
-    ) -> Optional[Dict[str, Any]]:
-        """
-        以 Agent 模式执行 LLM 调用（带工具自动调用循环）
+    ) -> None:
+        """以 Agent 模式执行 LLM 调用（带工具自动调用循环）。
 
-        流程：
-        1. 获取 LLM 客户端
-        2. 创建 ToolRegistry 并注册所有可用工具
-        3. 构建 Agent 系统提示词（含工具列表和指南）
-        4. 运行 AgentLoop 的 ReAct 循环
-        5. 通过信号通知 UI 流式更新和工具执行事件
-
-        LLM 在每轮回复中自行决定是否调用工具。
-        若不调用工具，循环结束，行为等同普通对话。
-
-        Args:
-            task_id: 任务标识
-            messages: 消息列表（不含 Agent 系统提示词，由本方法注入）
-            model: 模型名称
-            thinking: 是否启用深度思考
-
-        Returns:
-            dict: 生成结果，失败返回 None
+        本方法由 qasync 包装为 asyncio.Task 运行。方法入口记录
+        ``current_task()`` 作为活跃 task 句柄，退出前在 ``finally``
+        里清空——这保证 ``request_stop`` 看到的 task 一定还活着。
         """
         if self.logger:
             self.logger.info(
                 f"Starting Agent execution: task_id={task_id}, model={model}"
             )
 
+        self._active_task = asyncio.current_task()
+        self._active_task_id = task_id
+
         try:
-            # 获取 LLM 客户端
             client = self._get_llm_client(model)
             if not client:
-                error_msg = f"LLM client not available for model: {model}"
-                self.generation_error.emit(task_id, error_msg)
-                return None
+                self._emit_error(task_id, f"LLM client not available for model: {model}")
+                return
 
-            # 停止检查点
-            if self._check_stop_requested():
-                if self.logger:
-                    self.logger.info(
-                        f"Stop requested before Agent loop: task_id={task_id}"
-                    )
-                raise asyncio.CancelledError()
-
-            # 获取项目根目录
-            project_root = self._get_project_root()
-
-            # 创建工具上下文和注册表（通过工厂集中注册所有工具）
             from domain.llm.agent.types import ToolContext
             from domain.llm.agent.tool_factory import create_default_tools
             from domain.llm.agent.agent_loop import AgentLoop
-            from domain.llm.agent.agent_prompt_builder import (
-                build_agent_system_prompt,
-            )
+            from domain.llm.agent.agent_prompt_builder import build_agent_system_prompt
 
+            project_root = self._get_project_root()
             context = ToolContext(
                 project_root=project_root,
                 rag_query_service=self._get_rag_query_service(),
@@ -188,13 +176,11 @@ class LLMExecutor(QObject):
             if self.logger:
                 self.logger.info(f"Agent tools registered: {registry.get_names()}")
 
-            # 构建 Agent 系统提示词（自包含，不依赖旧的身份提示词系统）
             system_prompt = build_agent_system_prompt(
                 registry=registry,
                 project_root=project_root,
             )
 
-            # 注入系统提示词到消息列表
             if messages and messages[0].get("role") == "system":
                 messages[0]["content"] = system_prompt
             else:
@@ -203,14 +189,12 @@ class LLMExecutor(QObject):
                     "content": system_prompt,
                 })
 
-            # 创建并运行 Agent 循环
             loop = AgentLoop(
                 client=client,
                 registry=registry,
                 context=context,
                 model=model,
                 thinking=thinking,
-                stop_requested=self._check_stop_requested,
             )
 
             agent_result = await loop.run(
@@ -226,11 +210,11 @@ class LLMExecutor(QObject):
                     self.logger.error(
                         f"Agent execution failed: task_id={task_id}, error={error_msg}"
                     )
-                self.generation_error.emit(task_id, error_msg)
-                return None
+                self._emit_error(task_id, error_msg)
+                return
 
-            # 构建最终结果
             result = {
+                "outcome": OUTCOME_COMPLETED,
                 "content": agent_result.content,
                 "reasoning_content": (
                     agent_result.reasoning_content
@@ -241,9 +225,6 @@ class LLMExecutor(QObject):
                 "tool_calls_count": agent_result.tool_calls_count,
             }
 
-            # 发射完成信号
-            self.generation_complete.emit(task_id, result)
-
             if self.logger:
                 self.logger.info(
                     f"Agent execution completed: task_id={task_id}, "
@@ -252,42 +233,39 @@ class LLMExecutor(QObject):
                     f"content_len={len(agent_result.content)}"
                 )
 
-            return result
+            self.generation_finished.emit(task_id, result)
 
         except asyncio.CancelledError:
             if self.logger:
-                self.logger.info(
-                    f"Agent execution cancelled: task_id={task_id}"
-                )
-
-            if self.stop_controller:
-                self.stop_controller.complete_stop({
-                    "is_partial": True,
-                    "cleanup_success": True,
-                })
-
-            return None
-
+                self.logger.info(f"Agent execution cancelled: task_id={task_id}")
+            self.generation_finished.emit(task_id, {"outcome": OUTCOME_STOPPED})
+            # Swallow CancelledError — this task was cancelled on
+            # purpose by request_stop(), it is not an error.
         except Exception as e:
             error_msg = self._format_error_message(e)
             if self.logger:
                 self.logger.error(
                     f"Agent execution failed: task_id={task_id}, error={error_msg}"
                 )
-            self.generation_error.emit(task_id, error_msg)
-            return None
+            self._emit_error(task_id, error_msg)
+        finally:
+            self._active_task = None
+            self._active_task_id = None
+
+    # ============================================================
+    # Agent 事件转发
+    # ============================================================
+
+    def _emit_error(self, task_id: str, error_msg: str) -> None:
+        self.generation_finished.emit(task_id, {
+            "outcome": OUTCOME_ERROR,
+            "error_message": error_msg,
+        })
 
     def _handle_agent_event(
         self, task_id: str, event_type: str, data: Dict[str, Any]
     ) -> None:
-        """
-        处理 AgentLoop 的事件回调，转发为 Qt 信号和 EventBus 事件
-
-        Args:
-            task_id: 任务标识
-            event_type: 事件类型
-            data: 事件数据
-        """
+        """把 AgentLoop 的事件回调转发为 Qt 信号。"""
         if event_type == "turn_start":
             step_index = int(data.get("step_index", 0) or 0)
             if step_index > 0:
@@ -335,13 +313,11 @@ class LLMExecutor(QObject):
                     details,
                 )
 
-    def _get_project_root(self) -> str:
-        """
-        获取当前项目根目录
+    # ============================================================
+    # 辅助方法
+    # ============================================================
 
-        Returns:
-            str: 项目根目录路径，未打开项目时返回当前工作目录
-        """
+    def _get_project_root(self) -> str:
         try:
             from shared.service_locator import ServiceLocator
             from shared.service_names import SVC_PROJECT_SERVICE
@@ -367,31 +343,7 @@ class LLMExecutor(QObject):
                 self.logger.debug(f"Failed to get RAG query service: {e}")
             return None
 
-    # ============================================================
-    # 辅助方法
-    # ============================================================
-    
-    def _check_stop_requested(self) -> bool:
-        """
-        检查是否请求停止
-        
-        Returns:
-            bool: True 表示已请求停止
-        """
-        if self.stop_controller:
-            return self.stop_controller.is_stop_requested()
-        return False
-    
     def _get_llm_client(self, model: str) -> Optional[BaseLLMClient]:
-        """
-        获取 LLM 客户端
-        
-        Args:
-            model: 模型名称
-            
-        Returns:
-            BaseLLMClient: LLM 客户端实例，未找到返回 None
-        """
         try:
             from shared.service_locator import ServiceLocator
             from shared.service_names import SVC_LLM_CLIENT
@@ -401,22 +353,15 @@ class LLMExecutor(QObject):
                 return current_client
         except Exception as e:
             if self.logger:
-                self.logger.debug(f"Failed to get active LLM client from ServiceLocator: {e}")
+                self.logger.debug(
+                    f"Failed to get active LLM client from ServiceLocator: {e}"
+                )
 
         if self.logger:
             self.logger.error(f"No active LLM client is registered for model: {model}")
         return None
-    
+
     def _format_error_message(self, error: Exception) -> str:
-        """
-        格式化错误消息
-        
-        Args:
-            error: 异常对象
-            
-        Returns:
-            str: 格式化的错误消息
-        """
         if isinstance(error, AuthError):
             return f"认证失败: {str(error)}"
         elif isinstance(error, RateLimitError):
@@ -431,10 +376,9 @@ class LLMExecutor(QObject):
             return f"未知错误: {str(error)}"
 
 
-# ============================================================
-# 模块导出
-# ============================================================
-
 __all__ = [
     "LLMExecutor",
+    "OUTCOME_COMPLETED",
+    "OUTCOME_STOPPED",
+    "OUTCOME_ERROR",
 ]

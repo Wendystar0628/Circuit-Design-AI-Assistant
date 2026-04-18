@@ -2,23 +2,20 @@
 """智谱 GLM 流式输出处理器。
 
 职责边界：
-- 纯粹从一个 httpx 流式响应读取 SSE 行、增量解析为 ``StreamChunk``。
-- 不感知任何"停止请求"语义。停止是**消费者端**的职责；消费者通过对
-  async generator 调用 ``aclose()`` 即可触发本处理器的级联清理。
-
-关键清理策略：
-- ``_iterate_response`` 内部把 ``response.aiter_text()`` 用
-  ``contextlib.aclosing`` 包住。一旦上游（``chat_stream``/``agent_loop``）
-  对本 generator 调 ``aclose()``，``GeneratorExit`` 会被注入到 ``yield``
-  处，``aclosing`` 的 ``__aexit__`` 会把 ``aiter_text()`` 这个嵌套
-  async gen 也级联 aclose，避免在 event loop 退出后由 GC 触发孤儿
-  清理（那会引发 ``RuntimeError: no running event loop``）。
+- 纯粹从一个 httpx 流式响应读取 SSE 行并增量解析为 ``StreamChunk``。
+- **不感知取消语义**。取消由 ``ZhipuClient.chat_stream`` 通过
+  watcher + ``response.aclose()`` 处理；当 response 被外部关闭时，
+  ``response.aiter_text()`` 下一次 await 会抛 ``httpx.HTTPError``，
+  由 ``chat_stream`` 的 try/except 吞掉作为正常结束。
+- 不使用 ``contextlib.aclosing``：整个设计刻意避免 async generator
+  的 aclose 路径（它在 qasync + anyio + httpcore 组合下会触发
+  ``async generator ignored GeneratorExit`` 与 ``RuntimeError: no
+  running event loop``）。
 """
 
 from __future__ import annotations
 
 import logging
-from contextlib import aclosing
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Dict, List, Optional
 
@@ -28,8 +25,7 @@ from infrastructure.llm_adapters.zhipu.zhipu_response_parser import ZhipuRespons
 
 @dataclass
 class StreamState:
-    """流式输出累积状态。仅 ``_iterate_response`` 和 ``_process_line``
-    内部使用，对外不作为接口语义暴露。"""
+    """流式输出累积状态。"""
 
     content_buffer: str = ""
     reasoning_buffer: str = ""
@@ -49,40 +45,36 @@ class ZhipuStreamHandler:
         self._logger = logging.getLogger(__name__)
         self._parser = ZhipuResponseParser()
 
-    def create_stream_iterator(self, response) -> AsyncIterator[StreamChunk]:
-        """从 httpx 流式响应创建 ``StreamChunk`` 异步迭代器。"""
-        return self._iterate_response(response)
-
-    async def _iterate_response(self, response) -> AsyncIterator[StreamChunk]:
+    async def iterate_response(self, response) -> AsyncIterator[StreamChunk]:
         """迭代 httpx 流式响应，累积 SSE 行并产出 ``StreamChunk``。
 
-        ``response.aiter_text()`` 用 ``aclosing`` 包管，保证本 generator
-        被 ``aclose()`` 时，``aiter_text`` 这个嵌套 gen 也能在当前 await
-        链上被级联清理，不会遗留给 GC。
+        异常不在本地吞：
+        - ``httpx.HTTPError`` / ``httpx.StreamError`` 表示 response 已
+          被外部关闭（cancel 路径），由调用者 ``chat_stream`` 处理。
+        - 其他异常向上冒泡。
         """
         state = StreamState()
         buffer = ""
-        async with aclosing(response.aiter_text()) as text_iter:
-            async for chunk in text_iter:
-                buffer += chunk
-                while "\n" in buffer:
-                    line, buffer = buffer.split("\n", 1)
-                    stream_chunk = self._process_line(line, state)
-                    if stream_chunk:
-                        yield stream_chunk
-
-            # 处理剩余缓冲区
-            if buffer.strip():
-                stream_chunk = self._process_line(buffer, state)
+        async for chunk in response.aiter_text():
+            buffer += chunk
+            while "\n" in buffer:
+                line, buffer = buffer.split("\n", 1)
+                stream_chunk = self._process_line(line, state)
                 if stream_chunk:
                     yield stream_chunk
 
-            # 保证以 finished 标记收尾
-            if not state.is_finished:
-                yield StreamChunk(
-                    is_finished=True,
-                    usage=state.usage,
-                )
+        # 处理剩余缓冲区
+        if buffer.strip():
+            stream_chunk = self._process_line(buffer, state)
+            if stream_chunk:
+                yield stream_chunk
+
+        # 若服务端未显式发 finished 标记，补一个
+        if not state.is_finished:
+            yield StreamChunk(
+                is_finished=True,
+                usage=state.usage,
+            )
 
     def _process_line(
         self,

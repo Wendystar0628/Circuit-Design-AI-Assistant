@@ -621,19 +621,7 @@ def _delayed_init():
             _logger.info("Phase 3.5.2.1 MetricTargetService 初始化完成")
 
         # --------------------------------------------------------
-        # 3.5.3 StopController 初始化
-        # 依赖：Logger、EventBus
-        # 职责：全局停止状态管理，协调多组件停止操作
-        # --------------------------------------------------------
-        from shared.stop_controller import StopController
-        from shared.service_names import SVC_STOP_CONTROLLER
-        stop_controller = StopController()
-        ServiceLocator.register(SVC_STOP_CONTROLLER, stop_controller)
-        if _logger:
-            _logger.info("Phase 3.5.3 StopController 初始化完成")
-
-        # --------------------------------------------------------
-        # 3.5.4 ExecutorRegistry 初始化
+        # 3.5.3 ExecutorRegistry 初始化
         # 依赖：Logger
         # 职责：注册仿真执行器（SpiceExecutor、PythonExecutor）
         # --------------------------------------------------------

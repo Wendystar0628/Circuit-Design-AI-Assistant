@@ -44,9 +44,6 @@ SVC_CPU_TASK_EXECUTOR = "cpu_task_executor"
 # 国际化管理器 - 多语言支持
 SVC_I18N_MANAGER = "i18n_manager"
 
-# 停止控制器 - 全局停止状态管理
-SVC_STOP_CONTROLLER = "stop_controller"
-
 # LLM 执行器 - LLM 调用执行引擎
 SVC_LLM_EXECUTOR = "llm_executor"
 
@@ -184,7 +181,6 @@ __all__ = [
     "SVC_ASYNC_TASK_REGISTRY",
     "SVC_CPU_TASK_EXECUTOR",
     "SVC_I18N_MANAGER",
-    "SVC_STOP_CONTROLLER",
     "SVC_LLM_EXECUTOR",
     # 基础设施层
     "SVC_CREDENTIAL_MANAGER",

@@ -497,8 +497,6 @@ class ConversationPanel(QWidget):
         self._view_model.new_conversation_suggested.connect(
             self._on_new_conversation_suggested
         )
-        self._view_model.stop_requested.connect(self._on_stop_requested_signal)
-        self._view_model.stop_completed.connect(self._on_stop_completed)
 
     # ============================================================
     # 初始化和清理
@@ -821,31 +819,6 @@ class ConversationPanel(QWidget):
         self._sync_input_action_state()
 
     @pyqtSlot()
-    def _on_stop_requested_signal(self) -> None:
-        """处理停止请求信号（来自 ViewModel）"""
-        if self._composer_action_mode != ACTION_MODE_STOPPING:
-            self._composer_action_mode = ACTION_MODE_STOPPING
-        self._sync_input_action_state()
-        if self.logger:
-            self.logger.debug("Stop requested, UI updated")
-
-    @pyqtSlot(dict)
-    def _on_stop_completed(self, result: dict) -> None:
-        """
-        处理停止完成信号（来自 ViewModel）
-
-        此时 ViewModel 已经：
-        1. 处理了部分响应
-        2. 发出了 can_send_changed(True) 信号
-
-        这里只需要刷新显示。
-        """
-        if self.logger:
-            saved = result.get("saved", False)
-            self.logger.info(f"Stop completed, partial saved: {saved}")
-        self._sync_input_action_state()
-
-    @pyqtSlot()
     def _on_new_conversation_suggested(self) -> None:
         """处理建议新开对话"""
         self._open_notice_dialog(
@@ -869,11 +842,20 @@ class ConversationPanel(QWidget):
 
     @pyqtSlot()
     def _on_stop_requested(self) -> None:
+        """Composer 停止按钮点击路径。
+
+        取消工作由 ``ConversationViewModel.request_stop()`` 直接
+        驱动 ``LLMExecutor`` 上的 task cancel；这里只负责把 UI
+        切到 STOPPING 态，等 ``generation_finished`` 抵达后
+        ``can_send_changed(True)`` 会让按钮恢复。
+        """
         if self._rollback_in_progress or self._send_in_progress:
             return
         if self.view_model is None or not self.view_model.is_loading:
             return
-        self.view_model.request_stop()
+        if self.view_model.request_stop():
+            self._composer_action_mode = ACTION_MODE_STOPPING
+            self._sync_input_action_state()
 
     def _on_history_session_open_requested(self, session_id: str) -> None:
         if not session_id:

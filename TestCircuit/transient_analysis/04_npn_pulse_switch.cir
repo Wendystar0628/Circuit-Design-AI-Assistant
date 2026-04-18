@@ -1,0 +1,27 @@
+* NPN Transistor Switch with Pulse Drive
+* A 2N3904 driven hard on/off by a logic-level pulse. The collector
+* pulls a resistive load to VDD when the device is off and sinks it
+* to near ground when saturated. Useful for checking switching
+* waveforms and saturation voltage.
+* Devices exercised: V, R, Q (NPN bundled 2N3904).
+
+.title NPN Pulse Switch
+
+* --- Supply and 5 V logic-level pulse drive ---
+Vdd vdd 0  DC 5
+Vin in  0  PULSE(0 5 0 100n 100n 5u 10u)
+
+* --- Base current limiter, collector load ---
+Rb in  base 10k
+Rc vdd col  1k
+
+* --- Switching transistor ---
+Q1 col base 0 2N3904
+
+* --- Analysis: several switching cycles ---
+.tran 50n 50u
+
+.MEASURE TRAN v_col_low  MIN V(col)
+.MEASURE TRAN v_col_high MAX V(col)
+
+.end

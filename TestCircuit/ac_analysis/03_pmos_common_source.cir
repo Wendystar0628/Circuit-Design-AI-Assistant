@@ -1,0 +1,34 @@
+* PMOS Common-Source Amplifier AC Response
+* BSS84 p-channel MOSFET common-source stage biased off a -5 V rail
+* and AC-coupled to a resistive load. Gate is biased with a large
+* resistor divider to put the device in saturation so the AC sweep
+* shows a clean midband gain.
+* Devices exercised: V, R, C, M (PMOS bundled BSS84).
+
+.title PMOS Common-Source AC Response
+
+* --- Negative supply and AC test source ---
+Vss vss 0 DC -5
+Vin in  0 AC 1
+
+* --- Gate DC bias network (forms a divider from Vss to ground) ---
+Rg1 vss gate 1Meg
+Rg2 gate 0   1Meg
+
+* --- Drain load resistor on the -5 V rail ---
+Rd vss drain 10k
+
+* --- AC coupling in and out ---
+Cin  in    gate  1u
+Cout drain out   1u
+Rload out 0 100k
+
+* --- PMOS device (drain / gate / source / body) ---
+M1 drain gate 0 0 BSS84
+
+* --- Analysis ---
+.ac dec 20 1 100Meg
+
+.MEASURE AC av_midband FIND vdb(out) AT=10k
+
+.end

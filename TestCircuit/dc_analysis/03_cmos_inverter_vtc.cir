@@ -1,0 +1,26 @@
+* CMOS Inverter Voltage Transfer Characteristic (VTC)
+* Sweeps the gate voltage of a BSS84/BSS123 pair from 0 V to VDD
+* and records the output node, producing the textbook S-curve used
+* to extract VIL, VIH, VOL, VOH and the switching threshold.
+* Devices exercised: V, M (NMOS bundled BSS123, PMOS bundled BSS84).
+
+.title CMOS Inverter Voltage Transfer Characteristic
+
+* --- Supply and swept input ---
+Vdd vdd 0 DC 5
+Vin in  0 DC 0
+
+* --- PMOS (source tied to VDD, drain to output) ---
+M1 out in vdd vdd BSS84
+
+* --- NMOS (source tied to GND, drain to output) ---
+M2 out in 0   0   BSS123
+
+* --- Analysis: sweep Vin across the full supply rail ---
+.dc Vin 0 5 0.01
+
+.MEASURE DC v_th WHEN V(out)=2.5 FALL=1
+.MEASURE DC v_oh FIND V(out) AT=0
+.MEASURE DC v_ol FIND V(out) AT=5
+
+.end

@@ -1,0 +1,32 @@
+* VCVS + Subcircuit Buffer Cascade
+* Demonstrates an E-type voltage-controlled voltage source driving a
+* subcircuit-based unity-gain buffer. The VCVS provides 10x gain and
+* the buffer isolates the load. Showcases E (controlled source) and
+* X (subcircuit instance) in a single transient-friendly cascade.
+* Devices exercised: V, R, E (VCVS), X (subcircuit instance).
+
+.title VCVS + Subckt Buffer Cascade
+
+* --- 50 mV / 1 kHz sine input ---
+Vin in 0 SIN(0 0.05 1k)
+
+* --- 10x voltage-controlled voltage source ---
+Eamp amp 0 in 0 10
+
+* --- Ideal unity-gain buffer implemented as a subcircuit ---
+.subckt IDEAL_BUFFER bin bout
+Ebuf bout 0 bin 0 1.0
+.ends IDEAL_BUFFER
+
+Xbuf  amp buf_out IDEAL_BUFFER
+
+* --- Load on the buffer output ---
+Rload buf_out 0 10k
+
+* --- Analysis: capture several cycles ---
+.tran 10u 5m
+
+.MEASURE TRAN v_amp_pp     PP V(amp)     FROM=1m TO=5m
+.MEASURE TRAN v_buf_out_pp PP V(buf_out) FROM=1m TO=5m
+
+.end

@@ -1,0 +1,22 @@
+* RC Step Response
+* A series RC driven by a 5 V step edge to visualize the classic
+* exponential charging curve. The time constant tau = R*C = 1 ms
+* sets the settling time around 5 ms.
+* Devices exercised: V, R, C.
+
+.title RC Step Response
+
+* --- Step source (0 V -> 5 V at t = 100 us) ---
+Vin in 0 PULSE(0 5 100u 1u 1u 20m 40m)
+
+* --- RC network ---
+R1 in  cap 1k
+C1 cap 0   1u
+
+* --- Analysis: capture several time constants ---
+.tran 10u 10m
+
+.MEASURE TRAN v_final FIND V(cap) AT=9m
+.MEASURE TRAN t_rise_90 WHEN V(cap)=4.5 RISE=1
+
+.end

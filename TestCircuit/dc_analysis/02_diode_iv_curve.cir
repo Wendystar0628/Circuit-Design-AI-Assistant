@@ -1,0 +1,19 @@
+* Diode I-V Curve
+* Classic diode forward-characteristic DC sweep. A series resistor
+* limits the forward current so the sweep stays within safe bounds
+* while the diode enters conduction past ~0.6 V.
+* Devices exercised: V, R, D (bundled 1N4148).
+
+.title Diode I-V Curve
+
+* --- Source ---
+Vin in 0 DC 0
+
+* --- Series limiter + diode under test ---
+Rlim in   anode  100
+D1   anode 0     1N4148
+
+* --- Analysis: sweep Vin from 0 V to 2 V ---
+.dc Vin 0 2 0.01
+
+.end

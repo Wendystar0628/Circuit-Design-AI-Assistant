@@ -1,0 +1,36 @@
+* PNP Common-Emitter Amplifier AC Response
+* Voltage-divider-biased PNP stage using a 2N3906 on a -12 V rail.
+* AC response sweeps from 1 Hz to 100 MHz, exposing the low-frequency
+* coupling-capacitor roll-off and the high-frequency pole dictated by
+* device junction capacitances.
+* Devices exercised: V, R, C, Q (PNP bundled 2N3906).
+
+.title PNP Common-Emitter AC Response
+
+* --- Negative supply and AC test source ---
+Vss vss 0 DC -12
+Vin in  0 AC 1
+
+* --- Base voltage divider from Vss ---
+Rb1 vss base 68k
+Rb2 base 0   12k
+
+* --- Collector load (to -Vss) and emitter degeneration ---
+Rc vss col 4.7k
+Re emit 0  1k
+Ce emit 0  22u
+
+* --- AC coupling ---
+Cin  in  base 10u
+Cout col out  10u
+Rload out 0   47k
+
+* --- PNP device (collector / base / emitter) ---
+Q1 col base emit 2N3906
+
+* --- Analysis ---
+.ac dec 20 1 100Meg
+
+.MEASURE AC av_midband FIND vdb(out) AT=10k
+
+.end

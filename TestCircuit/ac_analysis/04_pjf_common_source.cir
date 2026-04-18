@@ -1,0 +1,36 @@
+* PJF (P-channel JFET) Common-Source Amplifier AC Response
+* A 2N5460 p-channel JFET in a common-source configuration with
+* self-bias via the source resistor. AC sweep captures the midband
+* voltage gain and the capacitive roll-offs at both ends of the band.
+* Devices exercised: V, R, C, J (PJF bundled 2N5460).
+
+.title PJF Common-Source AC Response
+
+* --- Negative supply and AC test source ---
+Vss vss 0 DC -12
+Vin in  0 AC 1
+
+* --- Gate bias via large resistor to ground (high-Z) ---
+Rg 0 gate 1Meg
+
+* --- Self-bias source resistor (bypassed by Cs) ---
+Rs src vss 2.2k
+Cs src vss 22u
+
+* --- Drain load resistor (from drain up to ground reference) ---
+Rd drain 0 4.7k
+
+* --- AC coupling ---
+Cin  in    gate  1u
+Cout drain out   1u
+Rload out 0 100k
+
+* --- JFET under test (drain / gate / source) ---
+J1 drain gate src 2N5460
+
+* --- Analysis ---
+.ac dec 20 1 100Meg
+
+.MEASURE AC av_midband FIND vdb(out) AT=10k
+
+.end

@@ -1,0 +1,31 @@
+* Op-Amp Buffer Noise (subcircuit instance)
+* Noise referred to the input of a unity-gain buffer implemented as
+* an X-subcircuit. The subcircuit is a simple VCVS so the measured
+* output noise comes entirely from the surrounding resistors' thermal
+* noise, giving a clean check of .noise + .subckt integration.
+* Devices exercised: V, R, X (subcircuit instance), E (VCVS inside subckt).
+
+.title Op-Amp Buffer Noise
+
+* --- AC test source ---
+Vin in 0 AC 1
+
+* --- Source-resistance seen by the buffer input ---
+Rsrc in buf_in 1k
+
+* --- Ideal unity-gain buffer subcircuit ---
+.subckt IDEAL_OPAMP_BUFFER bin bout
+Ebuf bout 0 bin 0 1.0
+.ends IDEAL_OPAMP_BUFFER
+
+Xbuf buf_in out IDEAL_OPAMP_BUFFER
+
+* --- Output load ---
+Rload out 0 10k
+
+* --- Noise analysis ---
+.noise V(out) Vin dec 20 1 10Meg
+
+.MEASURE NOISE total_onoise INTEG onoise FROM=1 TO=10Meg
+
+.end

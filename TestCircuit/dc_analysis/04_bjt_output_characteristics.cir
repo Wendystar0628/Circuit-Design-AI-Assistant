@@ -1,0 +1,23 @@
+* NPN BJT Output Characteristics (Ic vs Vce, stepped Ib)
+* Classical IC–VCE family-of-curves DC sweep: the collector-emitter
+* voltage is swept while the base current is stepped through a few
+* representative levels. An independent current source Ib sets the
+* base drive so we exercise I (current source) in addition to the V
+* and Q primitives.
+* Devices exercised: V, I (current source), Q (NPN bundled 2N3904).
+
+.title NPN BJT Output Characteristics
+
+* --- Base bias current (stepped by nested .dc) ---
+Ib 0 base DC 10u
+
+* --- Collector supply (primary sweep) ---
+Vce col 0 DC 0
+
+* --- Emitter tied to ground so Vce = V(col) - 0 ---
+Q1 col base 0 2N3904
+
+* --- Analysis: primary sweep Vce, nested step Ib ---
+.dc Vce 0 10 0.05 Ib 10u 50u 10u
+
+.end

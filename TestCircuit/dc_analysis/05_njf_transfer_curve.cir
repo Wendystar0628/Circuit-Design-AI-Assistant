@@ -1,0 +1,24 @@
+* N-Channel JFET Transfer Curve (Id vs Vgs)
+* DC sweep of the gate voltage around the pinch-off region while
+* the drain is held above saturation. Produces the characteristic
+* Id(Vgs) curve used to extract Vto and IDSS.
+* Devices exercised: V, R, J (NJF bundled 2N3819).
+
+.title NJF Transfer Curve
+
+* --- Drain supply (constant) ---
+Vdd vdd 0 DC 10
+
+* --- Gate sweep voltage ---
+Vgs gate 0 DC 0
+
+* --- Drain series resistor turns the JFET into a familiar self-biased stage ---
+Rd vdd drain 1k
+
+* --- JFET under test (drain / gate / source) ---
+J1 drain gate 0 2N3819
+
+* --- Analysis: sweep Vgs across the device's active region ---
+.dc Vgs -3 0 0.02
+
+.end

@@ -1,0 +1,23 @@
+* Diode Half-Wave Rectifier with RC Smoothing
+* A 50 Hz AC source is rectified by a single diode and smoothed
+* by a parallel RC load. Transient capture shows the classic
+* ripple waveform on the load.
+* Devices exercised: V, D (bundled 1N4148), R, C.
+
+.title Diode Half-Wave Rectifier
+
+* --- AC line source, 50 Hz, 5 Vpk ---
+Vac ac_in 0 SIN(0 5 50)
+
+* --- Rectifier + smoothing load ---
+D1    ac_in  rect  1N4148
+Rload rect   0     10k
+Cload rect   0     100u
+
+* --- Analysis: cover 5 full line cycles after smoothing kicks in ---
+.tran 100u 100m
+
+.MEASURE TRAN v_peak MAX V(rect)
+.MEASURE TRAN v_avg  AVG V(rect) FROM=60m TO=100m
+
+.end

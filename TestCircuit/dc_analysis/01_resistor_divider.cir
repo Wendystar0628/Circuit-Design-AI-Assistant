@@ -1,0 +1,18 @@
+* Resistor Divider DC Sweep
+* Simplest possible DC sweep: a 2:1 resistor divider whose tap
+* voltage is recorded as the input voltage is swept.
+* Devices exercised: V (voltage source), R (resistor).
+
+.title Resistor Divider DC Sweep
+
+* --- Source (swept by .dc) ---
+Vin in 0 DC 0
+
+* --- 2:1 divider ---
+R1 in  tap 10k
+R2 tap 0   10k
+
+* --- Analysis: sweep Vin from 0 V to 10 V in 100 mV steps ---
+.dc Vin 0 10 0.1
+
+.end

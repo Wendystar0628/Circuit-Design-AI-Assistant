@@ -1,0 +1,28 @@
+* NJF Source Follower Tracking a Sine Input
+* A 2N3819 N-channel JFET wired as a unity-gain source follower. An
+* AC-coupled sine input drives the high-impedance gate and the source
+* follows the input with a small DC offset set by the self-bias.
+* Devices exercised: V, R, C, J (NJF bundled 2N3819).
+
+.title NJF Source Follower
+
+* --- Supply and 100 mV / 1 kHz sine input ---
+Vdd vdd 0 DC 10
+Vin in  0 SIN(0 0.1 1k)
+
+* --- Gate bias (high-impedance to ground) ---
+Rg 0  gate 1Meg
+Cg in gate 1u
+
+* --- Source follower resistor ---
+Rs sfollow 0 5k
+
+* --- JFET (drain / gate / source) ---
+J1 vdd gate sfollow 2N3819
+
+* --- Analysis: capture several cycles of the 1 kHz signal ---
+.tran 10u 5m
+
+.MEASURE TRAN v_out_pp PP V(sfollow) FROM=1m TO=5m
+
+.end

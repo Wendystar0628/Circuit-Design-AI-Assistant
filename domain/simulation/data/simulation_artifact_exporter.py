@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from domain.simulation.data.op_result_data_builder import op_result_data_builder
+from domain.simulation.data.png_metadata import inject_png_text_chunks
 from domain.simulation.data.simulation_output_reader import simulation_output_reader
 from domain.simulation.data.waveform_data_service import waveform_data_service
 from domain.simulation.models.simulation_result import SimulationResult
@@ -79,6 +80,88 @@ class SimulationArtifactExporter:
             "actual_x_range": self._serialize_range(result.actual_x_range),
         }
 
+    # ------------------------------------------------------------------
+    # Circuit-linkage header helpers
+    #
+    # Every artifact we write — JSON, CSV, TXT, PNG — carries enough
+    # metadata for an agent (or any downstream consumer) to trace the
+    # file back to the originating circuit. JSON gets it via
+    # ``metadata.*``; the other three formats use the helpers below so
+    # there is a single authoritative source.
+    # ------------------------------------------------------------------
+
+    def build_linkage_entries(self, result: SimulationResult, artifact_type: str) -> List[tuple[str, str]]:
+        """Canonical key/value pairs that link an artifact to its
+        source circuit. Order is preserved so headers read top-down.
+        """
+        file_path = str(getattr(result, "file_path", "") or "")
+        file_name = Path(file_path).name if file_path else ""
+        return [
+            ("artifact_type", str(artifact_type or "")),
+            ("circuit_file", file_name),
+            ("file_path", file_path),
+            ("analysis_type", str(getattr(result, "analysis_type", "") or "")),
+            ("executor", str(getattr(result, "executor", "") or "")),
+            ("timestamp", str(getattr(result, "timestamp", "") or "")),
+        ]
+
+    def build_text_header_block(self, result: SimulationResult, artifact_type: str) -> str:
+        """Return a ``# key: value``-style header block (with trailing
+        blank line) suitable for prefixing TXT and CSV artifacts.
+
+        The ``#`` prefix is chosen because:
+        - TXT: ngspice output and op-result tables never start with
+          ``#`` themselves, so the block is unambiguous.
+        - CSV: pandas/duckdb/polars all honour ``comment='#'``; Excel
+          will render the lines as data but still surfaces the link.
+        """
+        lines = [f"# {key}: {value}" for key, value in self.build_linkage_entries(result, artifact_type)]
+        return "\n".join(lines) + "\n\n"
+
+    def build_png_text_chunks(self, result: SimulationResult, artifact_type: str) -> Dict[str, str]:
+        """Return tEXt chunk payload for PNG injection. Empty values
+        are dropped — PNG tEXt requires non-empty keyword/value pairs
+        to actually carry meaning.
+        """
+        return {
+            key: value
+            for key, value in self.build_linkage_entries(result, artifact_type)
+            if value
+        }
+
+    def write_text_with_header(
+        self,
+        path: str | Path,
+        result: SimulationResult,
+        artifact_type: str,
+        body: str,
+    ) -> None:
+        Path(path).write_text(
+            self.build_text_header_block(result, artifact_type) + (body or ""),
+            encoding="utf-8",
+        )
+
+    def write_csv_with_header(
+        self,
+        path: str | Path,
+        result: SimulationResult,
+        artifact_type: str,
+        columns: List[str],
+        rows: List[Dict[str, Any]],
+    ) -> None:
+        with Path(path).open("w", newline="", encoding="utf-8") as handle:
+            handle.write(self.build_text_header_block(result, artifact_type))
+            writer = csv.writer(handle)
+            writer.writerow(columns)
+            for row in rows:
+                writer.writerow([row.get(column, "") for column in columns])
+
+    def inject_png_linkage(self, path: str | Path, result: SimulationResult, artifact_type: str) -> bool:
+        """Rewrite a PNG file in place with canonical circuit-linkage
+        tEXt chunks. Returns ``True`` if the file was touched.
+        """
+        return inject_png_text_chunks(path, self.build_png_text_chunks(result, artifact_type))
+
     def export_metrics(self, export_root: Path, result: SimulationResult, metrics: List[Any]) -> List[str]:
         """Export the current ``DisplayMetric`` list as CSV + JSON side
         by side. Columns are restricted to fields that actually carry
@@ -100,11 +183,7 @@ class SimulationArtifactExporter:
             "target",
         ]
         rows = [self._metric_to_row(metric) for metric in metrics]
-        with csv_path.open("w", newline="", encoding="utf-8") as handle:
-            writer = csv.writer(handle)
-            writer.writerow(columns)
-            for row in rows:
-                writer.writerow([row.get(column, "") for column in columns])
+        self.write_csv_with_header(csv_path, result, "metrics", columns, rows)
 
         self._write_json(json_path, self.build_artifact_payload(
             result=result,
@@ -140,7 +219,12 @@ class SimulationArtifactExporter:
             },
             data=payload,
         ))
-        text_path.write_text(self._build_analysis_info_text(payload), encoding="utf-8")
+        self.write_text_with_header(
+            text_path,
+            result,
+            "analysis_info",
+            self._build_analysis_info_text(payload),
+        )
         return [str(json_path), str(text_path)]
 
     def export_raw_data(self, export_root: Path, result: SimulationResult) -> List[str]:
@@ -155,11 +239,7 @@ class SimulationArtifactExporter:
         rows = self._build_snapshot_rows(snapshot)
         series = self._build_snapshot_series(snapshot)
 
-        with csv_path.open("w", newline="", encoding="utf-8") as handle:
-            writer = csv.writer(handle)
-            writer.writerow(columns)
-            for row in rows:
-                writer.writerow([row.get(column, "") for column in columns])
+        self.write_csv_with_header(csv_path, result, "raw_data", columns, rows)
 
         self._write_json(json_path, self.build_artifact_payload(
             result,
@@ -177,9 +257,6 @@ class SimulationArtifactExporter:
                 "rows": rows,
                 "series": series,
             },
-            extra_metadata={
-                "result_path": snapshot.result_path if snapshot is not None else result.file_path,
-            },
         ))
         return [str(csv_path), str(json_path)]
 
@@ -189,7 +266,7 @@ class SimulationArtifactExporter:
         json_path = category_dir / "output_log.json"
 
         raw_output = getattr(result, "raw_output", None) or ""
-        text_path.write_text(raw_output, encoding="utf-8")
+        self.write_text_with_header(text_path, result, "output_log", raw_output)
 
         log_lines = simulation_output_reader.get_output_log_from_text(raw_output)
         error_count = sum(1 for line in log_lines if line.is_error())
@@ -224,7 +301,12 @@ class SimulationArtifactExporter:
         text_path = category_dir / "op_result.txt"
 
         payload = op_result_data_builder.build(result)
-        text_path.write_text(op_result_data_builder.build_text(result), encoding="utf-8")
+        self.write_text_with_header(
+            text_path,
+            result,
+            "op_result",
+            op_result_data_builder.build_text(result),
+        )
         self._write_json(json_path, self.build_artifact_payload(
             result,
             "op_result",
@@ -312,11 +394,10 @@ class SimulationArtifactExporter:
         }
 
     def _build_analysis_info_text(self, payload: Dict[str, Any]) -> str:
+        # circuit linkage (``file_name`` / ``file_path``) is emitted by
+        # the authoritative header block — this body only carries the
+        # analysis-specific fields to avoid duplication.
         lines = [
-            f"analysis_type: {payload.get('analysis_type', '')}",
-            f"executor: {payload.get('executor', '')}",
-            f"file_name: {payload.get('file_name', '')}",
-            f"timestamp: {payload.get('timestamp', '')}",
             f"analysis_command: {payload.get('analysis_command', '')}",
             f"x_axis_kind: {payload.get('x_axis_kind', '')}",
             f"x_axis_label: {payload.get('x_axis_label', '')}",

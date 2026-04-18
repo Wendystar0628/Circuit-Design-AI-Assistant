@@ -206,6 +206,14 @@ def test_simulation_artifact_exporter_exports_full_raw_data_snapshot(sample_resu
     exported_files = simulation_artifact_exporter.export_raw_data(export_root, sample_result)
 
     assert len(exported_files) == 2
-    exported_csv = (export_root / "raw_data" / "raw_data.csv").read_text(encoding="utf-8").splitlines()
-    assert exported_csv[0] == "Time (s),V(out),V(in)"
-    assert exported_csv[2] == "0.1,2.0,0.6"
+    # CSV files carry a ``#``-prefixed circuit-linkage header block
+    # (authoritative contract in simulation_artifact_exporter); the
+    # tabular content lives after the trailing blank line.
+    csv_text = (export_root / "raw_data" / "raw_data.csv").read_text(encoding="utf-8")
+    header_block, _, table_block = csv_text.partition("\n\n")
+    assert header_block.startswith("# artifact_type: raw_data")
+    assert "# circuit_file: run_007.json" in header_block
+
+    table_lines = table_block.splitlines()
+    assert table_lines[0] == "Time (s),V(out),V(in)"
+    assert table_lines[2] == "0.1,2.0,0.6"

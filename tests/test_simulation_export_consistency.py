@@ -1,3 +1,5 @@
+import struct
+import zlib
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -5,6 +7,7 @@ import numpy as np
 import pytest
 from PyQt6.QtWidgets import QApplication
 
+from domain.simulation.data.png_metadata import read_png_text_chunks
 from domain.simulation.data.simulation_artifact_exporter import simulation_artifact_exporter
 from domain.simulation.models.simulation_result import SimulationData, SimulationResult
 from presentation.panels.simulation.analysis_chart_viewer import ChartViewer
@@ -18,6 +21,26 @@ from shared.event_types import (
 )
 from shared.service_locator import ServiceLocator
 from shared.service_names import SVC_EVENT_BUS
+
+
+def _build_minimal_png_bytes() -> bytes:
+    """Assemble a valid 1x1 RGBA PNG using pure stdlib so fake
+    exporters in tests can emit real PNG files (and we can then verify
+    ``tEXt`` chunks are injected after attach). No Pillow dependency.
+    """
+    ihdr_data = struct.pack(">IIBBBBB", 1, 1, 8, 6, 0, 0, 0)
+    ihdr_crc = struct.pack(">I", zlib.crc32(b"IHDR" + ihdr_data) & 0xFFFFFFFF)
+    ihdr = struct.pack(">I", len(ihdr_data)) + b"IHDR" + ihdr_data + ihdr_crc
+    raw = b"\x00" + b"\x00\x00\x00\x00"  # filter=None + transparent RGBA pixel
+    idat_data = zlib.compress(raw, 9)
+    idat_crc = struct.pack(">I", zlib.crc32(b"IDAT" + idat_data) & 0xFFFFFFFF)
+    idat = struct.pack(">I", len(idat_data)) + b"IDAT" + idat_data + idat_crc
+    iend_crc = struct.pack(">I", zlib.crc32(b"IEND") & 0xFFFFFFFF)
+    iend = b"\x00\x00\x00\x00" + b"IEND" + iend_crc
+    return b"\x89PNG\r\n\x1a\n" + ihdr + idat + iend
+
+
+_MINIMAL_PNG_BYTES = _build_minimal_png_bytes()
 
 
 @pytest.fixture(scope="session")
@@ -531,13 +554,13 @@ class _FakeEventBus:
 
 class _FakeChartExporter:
     def export_current_image(self, path: str) -> bool:
-        Path(path).write_bytes(b"chart-image")
+        Path(path).write_bytes(_MINIMAL_PNG_BYTES)
         return True
 
 
 class _FakeWaveformExporter:
     def export_image(self, path: str) -> bool:
-        Path(path).write_bytes(b"waveform-image")
+        Path(path).write_bytes(_MINIMAL_PNG_BYTES)
         return True
 
 
@@ -557,7 +580,10 @@ def test_simulation_conversation_attachment_coordinator_reuses_project_export_ro
 
     assert metrics_path == str(export_root / "metrics" / "metrics.json")
     assert output_log_path == str(export_root / "output_log" / "output_log.txt")
-    assert (export_root / "output_log" / "output_log.txt").read_text(encoding="utf-8") == sample_result.raw_output
+    log_text = (export_root / "output_log" / "output_log.txt").read_text(encoding="utf-8")
+    assert log_text.startswith("# artifact_type: output_log\n")
+    assert "# circuit_file: export_consistency.cir" in log_text
+    assert sample_result.raw_output in log_text
     assert event_bus.published == [
         (EVENT_UI_ATTACH_FILES_TO_CONVERSATION, {"paths": [metrics_path]}),
         (EVENT_UI_ACTIVATE_CONVERSATION_TAB, {}),
@@ -581,11 +607,85 @@ def test_simulation_conversation_attachment_coordinator_exports_current_images_i
 
     assert chart_path == str(export_root / "charts" / "current_chart.png")
     assert waveform_path == str(export_root / "waveforms" / "current_waveform.png")
-    assert Path(chart_path).read_bytes() == b"chart-image"
-    assert Path(waveform_path).read_bytes() == b"waveform-image"
+
+    chart_chunks = read_png_text_chunks(chart_path)
+    waveform_chunks = read_png_text_chunks(waveform_path)
+    assert chart_chunks["circuit_file"] == "export_consistency.cir"
+    assert chart_chunks["file_path"] == sample_result.file_path
+    assert chart_chunks["artifact_type"] == "chart"
+    assert waveform_chunks["circuit_file"] == "export_consistency.cir"
+    assert waveform_chunks["file_path"] == sample_result.file_path
+    assert waveform_chunks["artifact_type"] == "waveforms"
+
     assert event_bus.published == [
         (EVENT_UI_ATTACH_FILES_TO_CONVERSATION, {"paths": [chart_path]}),
         (EVENT_UI_ACTIVATE_CONVERSATION_TAB, {}),
         (EVENT_UI_ATTACH_FILES_TO_CONVERSATION, {"paths": [waveform_path]}),
         (EVENT_UI_ACTIVATE_CONVERSATION_TAB, {}),
     ]
+
+
+def test_text_and_csv_artifacts_carry_circuit_linkage_header(qapp, sample_result: SimulationResult, sample_metrics, tmp_path: Path):
+    """Every CSV / TXT artifact must prefix a ``#`` metadata header
+    that names the source circuit. This is the authoritative contract
+    agents rely on when reading loose files.
+    """
+    export_root = simulation_artifact_exporter.create_project_export_root(str(tmp_path), sample_result)
+
+    simulation_artifact_exporter.export_metrics(export_root, sample_result, sample_metrics)
+    simulation_artifact_exporter.export_raw_data(export_root, sample_result)
+    simulation_artifact_exporter.export_output_log(export_root, sample_result)
+    simulation_artifact_exporter.export_analysis_info(export_root, sample_result)
+
+    chart_viewer = ChartViewer()
+    chart_viewer.load_result(sample_result)
+    chart_viewer.export_bundle(str(export_root / "charts"))
+
+    waveform_widget = WaveformWidget()
+    waveform_widget.load_waveform(sample_result, "V(out)")
+    waveform_widget.add_waveform(sample_result, "V(in)")
+    waveform_widget.export_bundle(str(export_root / "waveforms"))
+
+    text_like_files = [
+        export_root / "metrics" / "metrics.csv",
+        export_root / "raw_data" / "raw_data.csv",
+        export_root / "output_log" / "output_log.txt",
+        export_root / "analysis_info" / "analysis_info.txt",
+        export_root / "charts" / "01_waveform_time.csv",
+        export_root / "waveforms" / "waveform.csv",
+    ]
+    for path in text_like_files:
+        content = path.read_text(encoding="utf-8")
+        assert content.startswith("# artifact_type: "), f"{path} missing header prefix"
+        assert "# circuit_file: export_consistency.cir" in content, f"{path} missing circuit_file"
+        assert f"# file_path: {sample_result.file_path}" in content, f"{path} missing file_path"
+
+
+def test_png_artifacts_carry_circuit_linkage_text_chunks(qapp, sample_result: SimulationResult, tmp_path: Path):
+    """Every PNG artifact must carry ``tEXt`` chunks that link it to
+    the source circuit — this is the only in-band way to tie an image
+    handed off to the agent back to its origin.
+    """
+    export_root = simulation_artifact_exporter.create_project_export_root(str(tmp_path), sample_result)
+
+    chart_viewer = ChartViewer()
+    chart_viewer.load_result(sample_result)
+    chart_viewer.export_bundle(str(export_root / "charts"))
+
+    waveform_widget = WaveformWidget()
+    waveform_widget.load_waveform(sample_result, "V(out)")
+    waveform_widget.add_waveform(sample_result, "V(in)")
+    waveform_widget.export_bundle(str(export_root / "waveforms"))
+
+    chart_png = export_root / "charts" / "01_waveform_time.png"
+    waveform_png = export_root / "waveforms" / "waveform.png"
+
+    chart_chunks = read_png_text_chunks(chart_png)
+    waveform_chunks = read_png_text_chunks(waveform_png)
+
+    assert chart_chunks["circuit_file"] == "export_consistency.cir"
+    assert chart_chunks["file_path"] == sample_result.file_path
+    assert chart_chunks["artifact_type"] == "chart"
+    assert waveform_chunks["circuit_file"] == "export_consistency.cir"
+    assert waveform_chunks["file_path"] == sample_result.file_path
+    assert waveform_chunks["artifact_type"] == "waveforms"

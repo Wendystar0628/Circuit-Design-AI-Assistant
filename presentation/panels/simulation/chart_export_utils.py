@@ -1,7 +1,8 @@
-import csv
 from typing import Any, Dict, List, Sequence
 import numpy as np
 
+from domain.simulation.data.simulation_artifact_exporter import simulation_artifact_exporter
+from domain.simulation.models.simulation_result import SimulationResult
 from presentation.panels.simulation.chart_view_types import ChartSeries, ChartSpec
 
 
@@ -84,14 +85,24 @@ def build_chart_export_payload(spec: ChartSpec, visible_series: Sequence[ChartSe
     }
 
 
-def write_chart_csv(path: str, export_payload: Dict[str, Any]) -> bool:
+def write_chart_csv(
+    path: str,
+    export_payload: Dict[str, Any],
+    result: SimulationResult,
+) -> bool:
+    """Write a chart's row data to ``path`` with the authoritative
+    circuit-linkage header block. ``result`` is mandatory — charts
+    without a source simulation result cannot be exported.
+    """
     rows = export_payload.get("rows", [])
     headers = [export_payload["x_label"]] + [series["name"] for series in export_payload.get("series", [])]
-    with open(path, "w", newline="", encoding="utf-8") as handle:
-        writer = csv.writer(handle)
-        writer.writerow(headers)
-        for row in rows:
-            writer.writerow([row.get(header, "") for header in headers])
+    simulation_artifact_exporter.write_csv_with_header(
+        path,
+        result,
+        "chart",
+        headers,
+        rows,
+    )
     return True
 
 

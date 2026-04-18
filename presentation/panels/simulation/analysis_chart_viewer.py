@@ -177,9 +177,10 @@ class ChartViewer(QWidget):
         file_map: Dict[str, str] = {}
 
         if page.export_image(str(image_path)):
+            simulation_artifact_exporter.inject_png_linkage(image_path, self._result, "chart")
             exported_files.append(str(image_path))
             file_map["image"] = image_path.name
-        if write_chart_csv(str(csv_path), chart_payload):
+        if write_chart_csv(str(csv_path), chart_payload, self._result):
             exported_files.append(str(csv_path))
             file_map["csv"] = csv_path.name
 

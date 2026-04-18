@@ -1,4 +1,3 @@
-import csv
 import json
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Sequence
@@ -84,14 +83,17 @@ class WaveformExportBundleBuilder:
         file_map: Dict[str, str] = {}
 
         if export_image(str(image_path)):
+            simulation_artifact_exporter.inject_png_linkage(image_path, result, "waveforms")
             exported_files.append(str(image_path))
             file_map["image"] = image_path.name
 
-        with csv_path.open("w", newline="", encoding="utf-8") as handle:
-            writer = csv.writer(handle)
-            writer.writerow(headers)
-            for row in rows:
-                writer.writerow([row.get(header, "") for header in headers])
+        simulation_artifact_exporter.write_csv_with_header(
+            csv_path,
+            result,
+            "waveforms",
+            headers,
+            rows,
+        )
         exported_files.append(str(csv_path))
         file_map["csv"] = csv_path.name
 

@@ -1,21 +1,18 @@
-"""Regression tests for the cancel-event-driven streaming contract.
+"""Regression tests for the stop-agnostic streaming contract.
 
-These tests pin the architectural invariants:
+Authoritative invariants:
 
-1. ``chat_stream`` must NEVER be interrupted through async-generator
-   ``aclose()``. Stop is communicated via ``cancel_event.set()``,
-   which triggers a watcher inside ``chat_stream`` that closes the
-   underlying HTTP response. The ``async for`` at the call site then
-   ends naturally (with an ``httpx.HTTPError`` that the producer
-   swallows), and ``async with client.stream(...)`` unwinds through
-   its normal ``__aexit__``.
+1. ``chat_stream`` is **stop-agnostic**: the SDK boundary accepts
+   exactly one cancellation primitive — ``asyncio.Task.cancel()``
+   on the owning task. Any other stop kwarg (``cancel_event``,
+   ``stop_requested``, ...) MUST be rejected at the boundary,
+   never silently forwarded to the wire.
 
-2. Under qasync + anyio + httpcore the aclose path is broken
-   (``HTTP11ConnectionByteStream.__aiter__``'s
-   ``except BaseException: await self.aclose()`` re-enters an anyio
-   lock and dies with ``no running event loop``). The tests exercise
-   the event-driven path to guarantee we never regress into
-   aclose-based cancellation.
+2. Cancellation travels through ``CancelledError`` raised at the
+   deepest ``await`` (httpx ``socket.recv``), unwinds through the
+   ``async with client.stream(...)`` context, and lets httpx's
+   ``AsyncShieldCancellation`` close the response synchronously.
+   No ``aclose()`` side-channel is required in the producer.
 """
 
 import asyncio
@@ -180,13 +177,40 @@ def test_openai_compatible_stream_drains_sse_on_normal_finish():
     assert any(chunk.is_finished for chunk in chunks)
 
 
-def test_openai_compatible_stream_cancel_event_closes_response_and_returns_cleanly():
-    """Core regression: when ``cancel_event`` fires mid-stream, the
-    watcher must close the response and ``chat_stream`` must exit
-    via ``StopAsyncIteration`` (not by raising). This is the
-    behaviour that lets ``async with client.stream(...)`` unwind
-    through its standard ``__aexit__`` instead of through the
-    GeneratorExit-based aclose path that crashes under qasync.
+@pytest.mark.parametrize("legacy_kwarg", ["cancel_event", "stop_requested"])
+def test_openai_compatible_stream_rejects_legacy_stop_kwargs_loudly(legacy_kwarg):
+    """SDK boundary is closed: any legacy stop kwarg
+    (``cancel_event``, ``stop_requested``, ...) must raise
+    ``TypeError`` at the call site, never silently leak into the
+    wire request body. Cancel travels exclusively via
+    ``asyncio.Task.cancel()``.
+    """
+    response = _FakeSSEResponse([
+        'data: {"choices":[{"delta":{"content":"hi"},"finish_reason":"stop"}]}',
+        'data: [DONE]',
+    ])
+
+    async def run():
+        client = _make_client(response)
+        kwargs = {legacy_kwarg: (asyncio.Event() if legacy_kwarg == "cancel_event" else (lambda: True))}
+        async for _ in client.chat_stream(  # type: ignore[call-arg]
+            messages=[{"role": "user", "content": "ping"}],
+            model="fake-model",
+            **kwargs,
+        ):
+            pass
+
+    with pytest.raises(TypeError) as excinfo:
+        asyncio.run(run())
+
+    assert legacy_kwarg in str(excinfo.value)
+
+
+def test_openai_compatible_stream_cancel_unwinds_through_async_with_exit():
+    """Authoritative cancel path: when the owning task is cancelled,
+    ``CancelledError`` unwinds through the ``async with client.stream``
+    context and httpx finalises the underlying response via its
+    normal ``__aexit__`` — no producer-side ``aclose`` required.
     """
     response = _FakeSSEResponse(
         [
@@ -197,76 +221,27 @@ def test_openai_compatible_stream_cancel_event_closes_response_and_returns_clean
 
     async def scenario():
         client = _make_client(response)
-        cancel_event = asyncio.Event()
-        received = []
-        stream = client.chat_stream(
-            messages=[{"role": "user", "content": "ping"}],
-            model="fake-model",
-            cancel_event=cancel_event,
-        )
-        async for chunk in stream:
-            received.append(chunk)
-            if chunk.content == "partial":
-                cancel_event.set()  # User clicks stop.
+        received: list = []
+
+        async def consume():
+            async for chunk in client.chat_stream(
+                messages=[{"role": "user", "content": "ping"}],
+                model="fake-model",
+            ):
+                received.append(chunk)
+
+        task = asyncio.create_task(consume())
+        # Let the consumer pull the first chunk, then cancel the
+        # owning task — mirrors ``LLMExecutor.request_stop``.
+        while not received:
+            await asyncio.sleep(0)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
         return received
 
     received = asyncio.run(scenario())
 
     assert any(c.content == "partial" for c in received)
-    assert response.closed is True
+    assert response.closed is True, "async-with __aexit__ must finalise the response"
     assert response.aiter_closed is True
-
-
-def test_openai_compatible_stream_rejects_unknown_kwargs_loudly():
-    """SDK boundary is closed: passing a legacy ``stop_requested``
-    kwarg must raise ``TypeError`` at the call site, never silently
-    leak into the wire request body."""
-    response = _FakeSSEResponse([
-        'data: {"choices":[{"delta":{"content":"hi"},"finish_reason":"stop"}]}',
-        'data: [DONE]',
-    ])
-
-    async def run():
-        client = _make_client(response)
-        async for _ in client.chat_stream(  # type: ignore[call-arg]
-            messages=[{"role": "user", "content": "ping"}],
-            model="fake-model",
-            stop_requested=lambda: True,
-        ):
-            pass
-
-    with pytest.raises(TypeError) as excinfo:
-        asyncio.run(run())
-
-    assert "stop_requested" in str(excinfo.value)
-
-
-def test_openai_compatible_stream_never_triggers_aclose_on_generator():
-    """Defensive contract: the producer must never swallow a
-    ``GeneratorExit`` by itself. The only way to stop it is via
-    ``cancel_event`` + watcher. This test verifies that if a caller
-    accidentally calls ``aclose()`` on the chat_stream generator,
-    the underlying response IS closed (via async-with exit), but
-    we do not rely on that code path for correctness."""
-    response = _FakeSSEResponse(
-        [
-            'data: {"choices":[{"delta":{"content":"x"},"finish_reason":null}]}',
-        ],
-        live=True,
-    )
-
-    async def run():
-        client = _make_client(response)
-        stream = client.chat_stream(
-            messages=[{"role": "user", "content": "ping"}],
-            model="fake-model",
-        )
-        # Advance once, then call aclose — this IS technically
-        # legal (Python async gen protocol). The fake httpx stack
-        # still finalises correctly because our fake cooperates with
-        # close. The real bug lives in httpcore, not in this layer.
-        await stream.__anext__()
-        await stream.aclose()
-
-    asyncio.run(run())
-    assert response.closed is True

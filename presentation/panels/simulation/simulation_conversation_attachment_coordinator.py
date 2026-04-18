@@ -89,6 +89,7 @@ class SimulationConversationAttachmentCoordinator:
         target_path = target_dir / "current_chart.png"
         if not self._chart_viewer.export_current_image(str(target_path)):
             raise ValueError("No chart image available for conversation attachment")
+        simulation_artifact_exporter.inject_png_linkage(target_path, result, "chart")
         self._ensure_file(target_path)
         self._publish([str(target_path)])
         return str(target_path)
@@ -105,6 +106,7 @@ class SimulationConversationAttachmentCoordinator:
         target_path = target_dir / "current_waveform.png"
         if not self._waveform_widget.export_image(str(target_path)):
             raise ValueError("No waveform image available for conversation attachment")
+        simulation_artifact_exporter.inject_png_linkage(target_path, result, "waveforms")
         self._ensure_file(target_path)
         self._publish([str(target_path)])
         return str(target_path)

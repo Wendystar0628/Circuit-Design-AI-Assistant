@@ -1,0 +1,45 @@
+* Five-Transistor CMOS OTA (Operational Transconductance Amplifier)
+* The textbook analog-IC input stage that shows up inside nearly
+* every CMOS op-amp: two NMOS input devices (M1, M2) form a
+* differential pair, two PMOS devices (M3, M4) act as an active
+* current-mirror load so the differential drain current is
+* reflected to a single-ended output, and a tail current source I1
+* sets the bias. The AC differential gain is approximately gm1 *
+* (ro2 || ro4); plotting the output vs Vin-diff across frequency
+* produces the standard single-pole OTA response.
+* Devices exercised: V, I (current source), M (NMOS BSS123 x2 +
+*                    PMOS BSS84 x2), R, C.
+
+.title 5-Transistor CMOS OTA
+
+* --- Supplies ---
+Vdd vdd 0 DC 5
+Vss vss 0 DC -5
+
+* --- Common-mode bias and small-signal differential pair inputs ---
+Vcm  cm  0  DC 0
+Vinp inp cm AC 0.5
+Vinn inn cm AC -0.5
+
+* --- Tail current source pulling to Vss ---
+Itail tail vss DC 100u
+
+* --- Input NMOS differential pair (drains go to the current-mirror load) ---
+M1 d1 inp tail tail BSS123
+M2 d2 inn tail tail BSS123
+
+* --- PMOS current-mirror load (M3 diode-connected, M4 mirrors) ---
+M3 d1 d1 vdd vdd BSS84
+M4 d2 d1 vdd vdd BSS84
+
+* --- Resistive + capacitive output load so the single pole is visible ---
+Rload d2 0 1Meg
+Cload d2 0 1p
+
+* --- Analysis ---
+.ac dec 20 1 1G
+
+.MEASURE AC a_dc   FIND vdb(d2) AT=1
+.MEASURE AC f_pole WHEN vdb(d2)=(a_dc - 3) FALL=1
+
+.end

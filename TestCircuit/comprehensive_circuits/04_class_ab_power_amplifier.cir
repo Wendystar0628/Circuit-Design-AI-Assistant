@@ -1,0 +1,74 @@
+* Class-AB Audio Power Amplifier
+* A three-stage discrete audio amp:
+*
+*   Stage 1 - NPN differential pair (Q1, Q2) biased by a tail
+*             current source I_tail into Vss, with a simple resistive
+*             load on Q2's collector.
+*   Stage 2 - PNP common-emitter voltage amplifier (Q3) driven from
+*             Q2's collector, supplying the bulk of the voltage gain.
+*   Stage 3 - Complementary emitter-follower output pair (Q4 NPN,
+*             Q5 PNP) with two series diodes (D1, D2) biasing the
+*             bases a total of ~2 * Vbe apart to suppress class-B
+*             crossover distortion.
+*
+* A large-signal sine input drives the Q1 base and the speaker-sized
+* 8-ohm load sees a near-rail-to-rail amplified copy. Feedback is
+* set with Rf + Rg between the output and the inverting input so the
+* closed-loop gain is ~ (1 + Rf/Rg) ~ 11 V/V.
+* Devices exercised: V, I, R, D, Q (NPN 2N3904 x3 + PNP 2N3906 x2).
+
+.title Class-AB Audio Power Amplifier
+
+* --- Split supplies and sine input ---
+Vdd vdd 0 DC 12
+Vss vss 0 DC -12
+Vin in  0 SIN(0 0.3 1k)
+
+* ============================================================
+* Stage 1: NPN differential pair with tail current source
+* ============================================================
+Itail tail vss DC 1m
+
+* Input coupling + base bias for Q1 (non-inverting input)
+Rin in  b1  1k
+Rbias b1 0  100k
+
+* Feedback divider into Q2's base (inverting input)
+Rf out b2 22k
+Rg b2  0  2.2k
+
+* Differential pair collectors: Q1 unloaded, Q2 into Rc2
+Rc2 vdd c2 10k
+
+Q1 vdd b1 tail 2N3904
+Q2 c2  b2 tail 2N3904
+
+* ============================================================
+* Stage 2: PNP voltage amplifier driven from Q2's collector
+* ============================================================
+Re3 vdd e3 1k
+Rc3 c3  vss 10k
+Q3 c3 c2 e3 2N3906
+
+* ============================================================
+* Stage 3: Complementary emitter-follower output with
+*          diode biasing to clamp a 2*Vbe gap across the pair
+* ============================================================
+D1  c3 np 1N4148
+D2  np pp 1N4148
+Rbias3 pp vss 4.7k
+
+Q4 vdd c3 out 2N3904
+Q5 vss pp out 2N3906
+
+* --- Speaker-sized resistive load ---
+Rload out 0 8
+
+* --- Analysis: several audio cycles ---
+.tran 10u 5m
+
+.MEASURE TRAN v_out_pp PP V(out) FROM=1m TO=5m
+.MEASURE TRAN v_out_max MAX V(out)
+.MEASURE TRAN v_out_min MIN V(out)
+
+.end

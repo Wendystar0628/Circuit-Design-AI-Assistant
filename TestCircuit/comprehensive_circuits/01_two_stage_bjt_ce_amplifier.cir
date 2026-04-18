@@ -1,0 +1,54 @@
+* Two-Stage NPN Common-Emitter Cascade Amplifier
+* A classic low-frequency audio amplifier: two voltage-divider-biased
+* NPN common-emitter stages coupled by a blocking capacitor Cc, each
+* with a bypassed emitter to maximize gain. Input and output are AC
+* coupled so the amplifier works into a floating source / floating
+* load. Target midband gain is the product of the two stage gains
+* (~ -gm*Rc per stage), and the overall bandwidth is bounded by the
+* coupling-cap low-frequency poles and the device-capacitance high
+* poles. .ac sweep reveals the full gain-vs-frequency curve.
+* Devices exercised: V, R (x11), C (x5), Q (NPN bundled 2N3904, x2).
+
+.title Two-Stage NPN CE Cascade Amplifier
+
+* --- Supply and AC test source ---
+Vdd vdd 0 DC 12
+Vin in  0 AC 1
+
+* ============================================================
+* Stage 1: Q1 common-emitter (voltage divider bias + bypassed Re)
+* ============================================================
+Rb1a vdd b1 68k
+Rb1b b1  0  12k
+Rc1  vdd c1 4.7k
+Re1  e1  0  1k
+Ce1  e1  0  22u
+
+Cin  in b1  1u
+Q1   c1 b1 e1 2N3904
+
+* ============================================================
+* Stage 2: Q2 common-emitter, AC-coupled from Q1 collector
+* ============================================================
+Cc   c1  b2 1u
+
+Rb2a vdd b2 68k
+Rb2b b2  0  12k
+Rc2  vdd c2 4.7k
+Re2  e2  0  1k
+Ce2  e2  0  22u
+
+Q2   c2 b2 e2 2N3904
+
+* --- Output coupling to a 47k load ---
+Cout  c2 out 1u
+Rload out 0  47k
+
+* --- Analysis ---
+.ac dec 20 1 100Meg
+
+.MEASURE AC av_midband FIND vdb(out) AT=10k
+.MEASURE AC f_low_3db  WHEN vdb(out)=(av_midband - 3) RISE=1
+.MEASURE AC f_high_3db WHEN vdb(out)=(av_midband - 3) FALL=1
+
+.end

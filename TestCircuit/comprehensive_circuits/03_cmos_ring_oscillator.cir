@@ -1,0 +1,44 @@
+* Three-Stage CMOS Ring Oscillator
+* Three CMOS inverters connected in a closed ring. With an odd
+* number of stages the feedback is net-inverting, so the circuit is
+* unstable at its DC fixed point and breaks into self-oscillation.
+* The oscillation period is ~ 2 * N * t_pd where t_pd is the
+* inverter propagation delay and N = 3. Node capacitors load each
+* stage so the delay is measurable and .tran can capture the
+* waveform directly. A slight IC= on n1 kicks the oscillator out of
+* its unstable DC equilibrium on start-up.
+* Devices exercised: V, M (PMOS BSS84 x3 + NMOS BSS123 x3), C (x3).
+
+.title 3-Stage CMOS Ring Oscillator
+
+* --- Supply ---
+Vdd vdd 0 DC 5
+
+* ============================================================
+* Inverter 1: n3 -> n1 (kicked off by IC=0.5)
+* ============================================================
+M1p n1 n3 vdd vdd BSS84
+M1n n1 n3 0   0   BSS123
+C1  n1 0  1p IC=0.5
+
+* ============================================================
+* Inverter 2: n1 -> n2
+* ============================================================
+M2p n2 n1 vdd vdd BSS84
+M2n n2 n1 0   0   BSS123
+C2  n2 0  1p
+
+* ============================================================
+* Inverter 3: n2 -> n3 (closing the ring)
+* ============================================================
+M3p n3 n2 vdd vdd BSS84
+M3n n3 n2 0   0   BSS123
+C3  n3 0  1p
+
+* --- Analysis: let the ring oscillate for a few hundred nanoseconds ---
+.tran 200p 500n UIC
+
+.MEASURE TRAN v_peak  MAX V(n1)
+.MEASURE TRAN v_valley MIN V(n1)
+
+.end

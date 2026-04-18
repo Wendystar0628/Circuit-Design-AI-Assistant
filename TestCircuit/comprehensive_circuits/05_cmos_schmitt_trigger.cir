@@ -1,0 +1,49 @@
+* CMOS Schmitt Trigger
+* The canonical six-MOSFET CMOS Schmitt trigger. The input drives a
+* stack of two NMOS pull-downs in series (Mn1 / Mn2) and two PMOS
+* pull-ups in series (Mp1 / Mp2). Two feedback devices, Mnf (NMOS,
+* gated by the output) and Mpf (PMOS, gated by the output), push the
+* intermediate nodes toward the rail that the output has most
+* recently reached, creating a hysteresis window around the nominal
+* switching threshold.
+*
+* A slow triangle-wave input sweeps the threshold back and forth so
+* the transient waveform clearly displays the difference between the
+* rising-edge trigger point (VT+) and the falling-edge trigger
+* point (VT-). The width of that window is the hysteresis.
+* Devices exercised: V, M (PMOS BSS84 x3 + NMOS BSS123 x3), C.
+
+.title CMOS Schmitt Trigger
+
+* --- Supply and slow triangle-wave input ---
+Vdd vdd 0 DC 5
+Vin in  0 PWL(0 0   1m 5   2m 0   3m 5   4m 0)
+
+* ============================================================
+* NMOS pull-down stack (Mn1 on top of Mn2)
+* ============================================================
+Mn1 out in  ma ma BSS123
+Mn2 ma  in  0  0  BSS123
+
+* --- NMOS feedback device: pulls 'ma' toward VDD when out is high ---
+Mnf ma  out vdd vdd BSS84
+
+* ============================================================
+* PMOS pull-up stack (Mp1 on top of Mp2)
+* ============================================================
+Mp1 out in  mb mb BSS84
+Mp2 mb  in  vdd vdd BSS84
+
+* --- PMOS feedback device: pulls 'mb' toward GND when out is low ---
+Mpf mb  out 0   0   BSS123
+
+* --- Output load ---
+Cload out 0 5p
+
+* --- Analysis: capture the full input sweep ---
+.tran 2u 4m
+
+.MEASURE TRAN v_out_high MAX V(out)
+.MEASURE TRAN v_out_low  MIN V(out)
+
+.end

@@ -392,17 +392,105 @@ function renderOpamp({ appearance }: RenderSchematicSymbolProps): ReactNode {
   )
 }
 
-function renderBjt({ appearance }: RenderSchematicSymbolProps): ReactNode {
+/**
+ * Build an L-shaped two-segment polyline from a pin's anchor on the
+ * symbol's outer bounding box to an electrode terminal point defined in
+ * the symbol's interior. Which axis runs first is chosen to match the
+ * pin's natural outgoing direction — horizontal pins (left / right) bend
+ * vertically after the first horizontal run, and vertical pins
+ * (top / bottom) bend horizontally after the first vertical run — so the
+ * lead always leaves the pin along the pin's own side without a visible
+ * diagonal artifact. Segments that are zero-length collapse into a plain
+ * straight line.
+ */
+function leadPathPoints(
+  anchor: SchematicSymbolAnchor,
+  terminal: { x: number; y: number },
+): string {
+  if (anchor.side === 'left' || anchor.side === 'right') {
+    return `${anchor.x},${anchor.y} ${terminal.x},${anchor.y} ${terminal.x},${terminal.y}`
+  }
+  return `${anchor.x},${anchor.y} ${anchor.x},${terminal.y} ${terminal.x},${terminal.y}`
+}
+
+/**
+ * Classify a BJT pin as base / collector / emitter using the same rule
+ * `resolveBjtPinAnchor` uses to position pins: pin role `input` (or the
+ * first pin when no role is present) is the base, the next is the
+ * collector, and the last is the emitter. Keeping the render and the
+ * anchor resolver in lock-step is what guarantees each lead reaches the
+ * electrode the pin is semantically wired to.
+ */
+function classifyBjtPin(pin: SchematicPinState, index: number): 'base' | 'collector' | 'emitter' {
+  if (pin.role === 'input' || index === 0) return 'base'
+  if (index === 1) return 'collector'
+  return 'emitter'
+}
+
+function classifyMosPin(pin: SchematicPinState, index: number): 'gate' | 'drain' | 'source' | 'bulk' {
+  if (pin.role === 'input' || index === 0) return 'gate'
+  if (index === 1) return 'drain'
+  if (index === 2) return 'source'
+  return 'bulk'
+}
+
+function renderBjt({ component, appearance }: RenderSchematicSymbolProps): ReactNode {
+  // Textbook NPN layout: a circle envelope, a vertical base bar inside
+  // the circle on its left, and two slanted leads going from the ends
+  // of the base bar to the upper-right and lower-right of the circle
+  // (the collector and emitter electrode terminals). Pin leads are then
+  // drawn from each pin's anchor on the bounding box to whichever of
+  // the three interior terminals the pin is semantically connected to,
+  // so the symbol is always visibly continuous with the terminal dots.
   const cx = TRANSISTOR_WIDTH * 0.56
   const cy = TRANSISTOR_HEIGHT / 2
+  const r = 22
+  const baseBarX = cx - 10
+  const baseTerminal = { x: cx - r, y: cy }
+  const collectorTerminal = { x: cx + 14, y: cy - 17 }
+  const emitterTerminal = { x: cx + 14, y: cy + 17 }
+  const leads = component.pins.map((pin, index) => {
+    const anchor = resolveBjtPinAnchor(component, pin, index)
+    const role = classifyBjtPin(pin, index)
+    const terminal =
+      role === 'base' ? baseTerminal : role === 'collector' ? collectorTerminal : emitterTerminal
+    return (
+      <polyline
+        key={`lead-${pin.name}`}
+        points={leadPathPoints(anchor, terminal)}
+        fill="none"
+        stroke={appearance.stroke}
+        strokeWidth={2.2}
+      />
+    )
+  })
   return (
     <g>
-      <circle cx={cx} cy={cy} r={22} fill={appearance.fill} stroke={appearance.stroke} strokeWidth={2.2} />
-      <line x1={12} y1={cy} x2={cx - 12} y2={cy} stroke={appearance.stroke} strokeWidth={2.2} />
-      <line x1={cx - 4} y1={cy - 12} x2={cx + 14} y2={18} stroke={appearance.stroke} strokeWidth={2.2} />
-      <line x1={cx - 4} y1={cy + 12} x2={cx + 14} y2={TRANSISTOR_HEIGHT - 18} stroke={appearance.stroke} strokeWidth={2.2} />
+      {leads}
+      <circle cx={cx} cy={cy} r={r} fill={appearance.fill} stroke={appearance.stroke} strokeWidth={2.2} />
+      {/* Vertical base bar inside the circle */}
+      <line x1={baseBarX} y1={cy - 12} x2={baseBarX} y2={cy + 12} stroke={appearance.stroke} strokeWidth={2.4} />
+      {/* Collector slant: from upper end of base bar to upper-right terminal */}
+      <line
+        x1={baseBarX}
+        y1={cy - 8}
+        x2={collectorTerminal.x}
+        y2={collectorTerminal.y}
+        stroke={appearance.stroke}
+        strokeWidth={2.2}
+      />
+      {/* Emitter slant: from lower end of base bar to lower-right terminal */}
+      <line
+        x1={baseBarX}
+        y1={cy + 8}
+        x2={emitterTerminal.x}
+        y2={emitterTerminal.y}
+        stroke={appearance.stroke}
+        strokeWidth={2.2}
+      />
+      {/* NPN arrow on the emitter slant, tip at the emitter terminal */}
       <polyline
-        points={`${cx + 4},${TRANSISTOR_HEIGHT - 28} ${cx + 14},${TRANSISTOR_HEIGHT - 18} ${cx + 1},${TRANSISTOR_HEIGHT - 14}`}
+        points={`${cx + 3},${cy + 10} ${emitterTerminal.x},${emitterTerminal.y} ${cx + 2},${cy + 20}`}
         fill="none"
         stroke={appearance.stroke}
         strokeWidth={2.2}
@@ -413,17 +501,63 @@ function renderBjt({ appearance }: RenderSchematicSymbolProps): ReactNode {
   )
 }
 
-function renderMos({ appearance }: RenderSchematicSymbolProps): ReactNode {
+function renderMos({ component, appearance }: RenderSchematicSymbolProps): ReactNode {
+  // Textbook enhancement-mode MOSFET layout, rotated so gate enters from
+  // the left: horizontal gate lead stub → small insulator gap → vertical
+  // gate bar → channel bar to its right → drain stub (upper) and source
+  // stub (lower) jutting right out of the channel. Per-pin L-shaped
+  // leads connect each pin anchor to its electrode terminal so the
+  // terminal dots are never visually detached from the symbol.
+  const cy = TRANSISTOR_HEIGHT / 2
   const channelX = TRANSISTOR_WIDTH * 0.58
+  const gateBarX = channelX - 12
+  const gateLeadInnerX = gateBarX - 8
+  const channelTop = 16
+  const channelBottom = TRANSISTOR_HEIGHT - 16
+  const drainStubY = 20
+  const sourceStubY = TRANSISTOR_HEIGHT - 20
+  const stubEndX = channelX + 18
+  const gateTerminal = { x: 16, y: cy }
+  const drainTerminal = { x: stubEndX, y: drainStubY }
+  const sourceTerminal = { x: stubEndX, y: sourceStubY }
+  const bulkTerminal = { x: channelX, y: cy }
+  const leads = component.pins.map((pin, index) => {
+    const anchor = resolveMosPinAnchor(component, pin, index)
+    const role = classifyMosPin(pin, index)
+    const terminal =
+      role === 'gate'
+        ? gateTerminal
+        : role === 'drain'
+          ? drainTerminal
+          : role === 'source'
+            ? sourceTerminal
+            : bulkTerminal
+    return (
+      <polyline
+        key={`lead-${pin.name}`}
+        points={leadPathPoints(anchor, terminal)}
+        fill="none"
+        stroke={appearance.stroke}
+        strokeWidth={2.2}
+      />
+    )
+  })
   return (
     <g>
-      <line x1={16} y1={TRANSISTOR_HEIGHT / 2} x2={34} y2={TRANSISTOR_HEIGHT / 2} stroke={appearance.stroke} strokeWidth={2.2} />
-      <line x1={42} y1={18} x2={42} y2={TRANSISTOR_HEIGHT - 18} stroke={appearance.stroke} strokeWidth={2.2} />
-      <line x1={channelX} y1={16} x2={channelX} y2={TRANSISTOR_HEIGHT - 16} stroke={appearance.stroke} strokeWidth={2.2} />
-      <line x1={channelX} y1={20} x2={channelX + 18} y2={20} stroke={appearance.stroke} strokeWidth={2.2} />
-      <line x1={channelX} y1={TRANSISTOR_HEIGHT - 20} x2={channelX + 18} y2={TRANSISTOR_HEIGHT - 20} stroke={appearance.stroke} strokeWidth={2.2} />
+      {leads}
+      {/* Gate lead inside the symbol (horizontal), stops short of gate bar to leave insulator gap */}
+      <line x1={gateTerminal.x} y1={cy} x2={gateLeadInnerX} y2={cy} stroke={appearance.stroke} strokeWidth={2.2} />
+      {/* Vertical gate bar (separated from channel by the insulator gap) */}
+      <line x1={gateBarX} y1={channelTop + 2} x2={gateBarX} y2={channelBottom - 2} stroke={appearance.stroke} strokeWidth={2.2} />
+      {/* Vertical channel bar */}
+      <line x1={channelX} y1={channelTop} x2={channelX} y2={channelBottom} stroke={appearance.stroke} strokeWidth={2.2} />
+      {/* Drain stub (upper) */}
+      <line x1={channelX} y1={drainStubY} x2={stubEndX} y2={drainStubY} stroke={appearance.stroke} strokeWidth={2.2} />
+      {/* Source stub (lower) */}
+      <line x1={channelX} y1={sourceStubY} x2={stubEndX} y2={sourceStubY} stroke={appearance.stroke} strokeWidth={2.2} />
+      {/* Source arrow: open chevron pointing out along the source stub */}
       <polyline
-        points={`${channelX + 8},${TRANSISTOR_HEIGHT - 30} ${channelX + 18},${TRANSISTOR_HEIGHT - 20} ${channelX + 5},${TRANSISTOR_HEIGHT - 16}`}
+        points={`${channelX + 8},${sourceStubY - 10} ${stubEndX},${sourceStubY} ${channelX + 5},${sourceStubY + 4}`}
         fill="none"
         stroke={appearance.stroke}
         strokeWidth={2.2}

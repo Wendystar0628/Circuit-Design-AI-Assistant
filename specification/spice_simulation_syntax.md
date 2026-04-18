@@ -1,4 +1,4 @@
-# SPICE 电路设计语法参考
+7 665554# SPICE 电路设计语法参考
 
 本文档面向编写 SPICE 网表的 AI。目标仿真器是 **ngspice**（非 HSPICE / PSpice），下列所有规则已对齐 ngspice 的实际行为。按本文档生成的网表可直接交给 ngspice 执行。
 

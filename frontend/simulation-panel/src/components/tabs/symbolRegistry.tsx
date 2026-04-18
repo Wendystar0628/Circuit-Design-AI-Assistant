@@ -463,30 +463,18 @@ function resolveBjtVariant(component: SchematicComponentState): BjtChannelVarian
 }
 
 /**
- * JFET channel variant (n-channel / p-channel). Parser fills this
- * from the `.model` lookup (`NJF` / `PJF`); any other value (including
- * the neutral fallback `"jfet"`) is rendered with the NJF silhouette
- * because NJF is the more common case and the schematic is still
- * correct — only the gate-arrow direction differs between variants.
+ * JFET channel variant tag supplied by the backend parser from the
+ * `.model` lookup (`NJF` → `'njf'` / `PJF` → `'pjf'`). The only visual
+ * difference between the two is the direction of the gate-to-channel
+ * arrow; everything else in the symbol is identical. When no `.model`
+ * card resolves the referenced model name the parser emits the
+ * neutral sentinel `'jfet'`, which we normalise to `'njf'` here since
+ * the NJF silhouette is the conventional default.
  */
 type JfetChannelVariant = 'njf' | 'pjf'
 
 function resolveJfetVariant(component: SchematicComponentState): JfetChannelVariant {
   return component.symbol_variant === 'pjf' ? 'pjf' : 'njf'
-}
-
-/**
- * Classify a JFET pin by its semantic electrode role, matching
- * `resolveJfetPinAnchor`'s canonical order. Pin 0 (or any pin whose
- * role is `input` / `gate`) is the gate; pin 1 the drain; pin 2 the
- * source. The fallback returns `gate` rather than dropping the pin
- * so an unexpected extra pin still emits a terminal lead.
- */
-function classifyJfetPin(pin: SchematicPinState, index: number): 'gate' | 'drain' | 'source' {
-  if (pin.role === 'input' || pin.role === 'gate' || index === 1) return 'gate'
-  if (index === 0) return 'drain'
-  if (index === 2) return 'source'
-  return 'gate'
 }
 
 /**
@@ -676,90 +664,68 @@ function renderMos({ component, appearance }: RenderSchematicSymbolProps): React
   )
 }
 
+// --- JFET symbol geometry (single source of truth) ---------------------
+// The pin anchors returned by `resolveJfetPinAnchor` coincide exactly
+// with the electrode line endpoints drawn by `renderJfet`, so every
+// pin is a single straight stroke from the channel bar to the pin
+// without any L-shaped jumper compensation.
+const JFET_CHANNEL_X = TRANSISTOR_WIDTH * 0.58
+const JFET_GATE_Y = TRANSISTOR_HEIGHT / 2
+const JFET_DRAIN_Y = 20
+const JFET_SOURCE_Y = TRANSISTOR_HEIGHT - 20
+const JFET_CHANNEL_TOP = JFET_DRAIN_Y - 4
+const JFET_CHANNEL_BOTTOM = JFET_SOURCE_Y + 4
+
 /**
- * Compute the three vertices of the JFET gate arrow. Unlike the MOSFET
- * (where the gate is capacitively coupled through an insulator and
- * carries no arrow), a JFET's gate is a P-N junction with the channel,
- * and the gate-side arrowhead is what distinguishes n-channel (NJF)
- * from p-channel (PJF) in the textbook symbol:
+ * Three-vertex gate-to-channel arrow that encodes NJF vs PJF:
  *
- *   - **NJF**: gate is P-type, channel is N-type → arrow points
- *     from gate **into** the channel (rightward, toward the channel
- *     bar).
- *   - **PJF**: gate is N-type, channel is P-type → arrow points
- *     from the channel **out toward** the gate (leftward).
+ *   - **NJF** (p-type gate, n-type channel): tip points **into** the
+ *     channel (rightward) indicating conventional current flowing
+ *     from gate into channel.
+ *   - **PJF** (n-type gate, p-type channel): tip points **out toward**
+ *     the gate lead (leftward).
  *
- * The arrow sits on the gate lead just before it meets the channel so
- * the junction indication is visible regardless of gate-lead length.
+ * The arrow sits flush against the channel bar so the junction
+ * indication is visible independently of gate-lead length.
  */
-function jfetGateArrowPoints(channelX: number, cy: number, variant: JfetChannelVariant): string {
+function jfetGateArrowPoints(variant: JfetChannelVariant): string {
   const halfHeight = 4
   const baseOffset = 10
   if (variant === 'njf') {
-    // Tip on the channel side (inward); base further left along the
-    // gate lead (outward).
-    const tipX = channelX - 2
+    const tipX = JFET_CHANNEL_X - 2
     const baseX = tipX - baseOffset
-    return `${tipX},${cy} ${baseX},${cy - halfHeight} ${baseX},${cy + halfHeight}`
+    return `${tipX},${JFET_GATE_Y} ${baseX},${JFET_GATE_Y - halfHeight} ${baseX},${JFET_GATE_Y + halfHeight}`
   }
-  // PJF: tip outward (toward gate pin), base nearer the channel.
-  const baseX = channelX - 2
+  const baseX = JFET_CHANNEL_X - 2
   const tipX = baseX - baseOffset
-  return `${tipX},${cy} ${baseX},${cy - halfHeight} ${baseX},${cy + halfHeight}`
+  return `${tipX},${JFET_GATE_Y} ${baseX},${JFET_GATE_Y - halfHeight} ${baseX},${JFET_GATE_Y + halfHeight}`
 }
 
 function renderJfet({ component, appearance }: RenderSchematicSymbolProps): ReactNode {
-  // Textbook 3-terminal JFET layout: a vertical channel bar with a
-  // horizontal gate lead entering from the left and making direct
-  // (non-capacitive) contact with the channel — hence no insulator
-  // gap, which is how the schematic visually distinguishes a JFET
-  // from a MOSFET. Drain / source stubs emerge from the channel top
-  // and bottom, mirroring the MOS layout so the two families are
-  // visually consistent while the arrow on the gate lead encodes
-  // NJF vs PJF. Per-pin L-shaped leads connect each pin anchor to
-  // its electrode terminal so the terminal dots are never detached.
+  // Textbook 3-terminal JFET: a vertical channel bar with the gate
+  // lead entering from the left and making direct (non-capacitive)
+  // contact with the channel — the missing insulator gap is what
+  // visually distinguishes a JFET from a MOSFET. Drain and source
+  // leads run from the channel ends straight out to the right-edge
+  // pin anchors. NJF vs PJF is carried exclusively by the arrow on
+  // the gate lead.
   const variant = resolveJfetVariant(component)
-  const cy = TRANSISTOR_HEIGHT / 2
-  const channelX = TRANSISTOR_WIDTH * 0.58
-  const channelTop = 16
-  const channelBottom = TRANSISTOR_HEIGHT - 16
-  const drainStubY = 20
-  const sourceStubY = TRANSISTOR_HEIGHT - 20
-  const stubEndX = channelX + 18
-  const gateTerminal = { x: 16, y: cy }
-  const drainTerminal = { x: stubEndX, y: drainStubY }
-  const sourceTerminal = { x: stubEndX, y: sourceStubY }
-  const leads = component.pins.map((pin, index) => {
-    const anchor = resolveJfetPinAnchor(component, pin, index)
-    const role = classifyJfetPin(pin, index)
-    const terminal =
-      role === 'gate' ? gateTerminal : role === 'drain' ? drainTerminal : sourceTerminal
-    return (
-      <polyline
-        key={`lead-${pin.name}`}
-        points={leadPathPoints(anchor, terminal)}
-        fill="none"
-        stroke={appearance.stroke}
-        strokeWidth={2.2}
-      />
-    )
-  })
+  const stroke = appearance.stroke
   return (
     <g>
-      {leads}
-      {/* Gate lead meets the channel directly — no insulator gap */}
-      <line x1={gateTerminal.x} y1={cy} x2={channelX} y2={cy} stroke={appearance.stroke} strokeWidth={2.2} />
+      {/* Gate lead: left-edge pin → channel (no insulator gap) */}
+      <line x1={0} y1={JFET_GATE_Y} x2={JFET_CHANNEL_X} y2={JFET_GATE_Y} stroke={stroke} strokeWidth={2.2} />
       {/* Vertical channel bar */}
-      <line x1={channelX} y1={channelTop} x2={channelX} y2={channelBottom} stroke={appearance.stroke} strokeWidth={2.2} />
-      {/* Drain stub (top) */}
-      <line x1={channelX} y1={drainStubY} x2={stubEndX} y2={drainStubY} stroke={appearance.stroke} strokeWidth={2.2} />
-      {/* Source stub (bottom) */}
-      <line x1={channelX} y1={sourceStubY} x2={stubEndX} y2={sourceStubY} stroke={appearance.stroke} strokeWidth={2.2} />
+      <line x1={JFET_CHANNEL_X} y1={JFET_CHANNEL_TOP} x2={JFET_CHANNEL_X} y2={JFET_CHANNEL_BOTTOM} stroke={stroke} strokeWidth={2.2} />
+      {/* Drain lead: channel top → right-edge drain pin */}
+      <line x1={JFET_CHANNEL_X} y1={JFET_DRAIN_Y} x2={TRANSISTOR_WIDTH} y2={JFET_DRAIN_Y} stroke={stroke} strokeWidth={2.2} />
+      {/* Source lead: channel bottom → right-edge source pin */}
+      <line x1={JFET_CHANNEL_X} y1={JFET_SOURCE_Y} x2={TRANSISTOR_WIDTH} y2={JFET_SOURCE_Y} stroke={stroke} strokeWidth={2.2} />
       {/* Channel-type arrow on the gate lead */}
       <polygon
-        points={jfetGateArrowPoints(channelX, cy, variant)}
-        fill={appearance.stroke}
-        stroke={appearance.stroke}
+        points={jfetGateArrowPoints(variant)}
+        fill={stroke}
+        stroke={stroke}
         strokeWidth={1}
         strokeLinejoin="round"
       />
@@ -823,30 +789,26 @@ function resolveBjtPinAnchor(component: SchematicComponentState, pin: SchematicP
 
 /**
  * Pin-anchor resolver for JFETs. The SPICE `J` card orders nodes as
- * `drain gate source`, so pin[0] lands on the top-right (drain),
- * pin[1] on the left (gate), and pin[2] on the bottom-right (source).
- * Unlike MOSFETs the D/S anchors are not mirrored between NJF and
- * PJF — JFETs are electrically symmetric between drain and source
- * and the channel-type distinction is carried by the gate arrow, so
- * swapping the pin sides per variant would only confuse layout.
+ * `drain gate source`, so pin[0] is drain (right-top), pin[1] gate
+ * (left-center), pin[2] source (right-bottom). The returned anchors
+ * are also the exact endpoints that `renderJfet` draws its electrode
+ * lines to, so the three pins are connected to the channel by single
+ * straight strokes with no jumper. JFETs are electrically symmetric
+ * between drain and source and the channel-type distinction rides on
+ * the gate arrow, so we deliberately do not mirror D/S between NJF
+ * and PJF. We also deliberately ignore `port_side_hints`: the JFET
+ * silhouette is fixed (gate-on-left, drain/source-on-right) and any
+ * layout-engine request to move a pin onto a different face would
+ * only desynchronise the anchor from the drawn electrode line.
  */
-function resolveJfetPinAnchor(component: SchematicComponentState, pin: SchematicPinState, index: number): SchematicSymbolAnchor {
-  const sideHint = component.port_side_hints[pin.name]
-  if (isSide(sideHint)) {
-    const placement = resolveSideOrder(component, sideHint, index)
-    return distributeAlongSide(sideHint, placement.order, placement.total, TRANSISTOR_WIDTH, TRANSISTOR_HEIGHT)
-  }
+function resolveJfetPinAnchor(_component: SchematicComponentState, pin: SchematicPinState, index: number): SchematicSymbolAnchor {
   if (pin.role === 'gate' || pin.role === 'input' || index === 1) {
-    return { x: 0, y: TRANSISTOR_HEIGHT / 2, side: 'left' }
-  }
-  if (index === 0) {
-    return { x: TRANSISTOR_WIDTH, y: 12, side: 'right' }
+    return { x: 0, y: JFET_GATE_Y, side: 'left' }
   }
   if (index === 2) {
-    return { x: TRANSISTOR_WIDTH, y: TRANSISTOR_HEIGHT - 12, side: 'right' }
+    return { x: TRANSISTOR_WIDTH, y: JFET_SOURCE_Y, side: 'right' }
   }
-  // Fallback for any unexpected extra pin.
-  return { x: TRANSISTOR_WIDTH / 2, y: TRANSISTOR_HEIGHT, side: 'bottom' }
+  return { x: TRANSISTOR_WIDTH, y: JFET_DRAIN_Y, side: 'right' }
 }
 
 function resolveMosPinAnchor(component: SchematicComponentState, pin: SchematicPinState, index: number): SchematicSymbolAnchor {

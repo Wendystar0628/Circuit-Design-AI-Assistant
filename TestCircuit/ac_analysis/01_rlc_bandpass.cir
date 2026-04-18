@@ -17,6 +17,6 @@ C1 n2   0   1u
 * --- Analysis: 3 decades around the tuned frequency ---
 .ac dec 40 100 1Meg
 
-.MEASURE AC f_peak WHEN vdb(out)=MAXAC
+.MEASURE AC v_at_resonance FIND vdb(out) AT=5k
 
 .end

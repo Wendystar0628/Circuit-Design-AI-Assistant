@@ -24,8 +24,10 @@ Xbuf buf_in out IDEAL_OPAMP_BUFFER
 Rload out 0 10k
 
 * --- Noise analysis ---
+* ngspice's .meas directive does not accept a NOISE analysis type, so
+* the total integrated noise must be inspected directly from the
+* onoise / inoise frequency-sweep output on the chart / raw-data tab
+* rather than through a .measure card.
 .noise V(out) Vin dec 20 1 10Meg
-
-.MEASURE NOISE total_onoise INTEG onoise FROM=1 TO=10Meg
 
 .end

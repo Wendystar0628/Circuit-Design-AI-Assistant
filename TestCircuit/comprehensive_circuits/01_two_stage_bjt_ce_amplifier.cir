@@ -48,7 +48,7 @@ Rload out 0  47k
 .ac dec 20 1 100Meg
 
 .MEASURE AC av_midband FIND vdb(out) AT=10k
-.MEASURE AC f_low_3db  WHEN vdb(out)=(av_midband - 3) RISE=1
-.MEASURE AC f_high_3db WHEN vdb(out)=(av_midband - 3) FALL=1
+.MEASURE AC av_low_end FIND vdb(out) AT=100
+.MEASURE AC av_high_end FIND vdb(out) AT=1Meg
 
 .end

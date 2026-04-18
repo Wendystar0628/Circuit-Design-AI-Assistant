@@ -40,6 +40,7 @@ Cload d2 0 1p
 .ac dec 20 1 1G
 
 .MEASURE AC a_dc   FIND vdb(d2) AT=1
-.MEASURE AC f_pole WHEN vdb(d2)=(a_dc - 3) FALL=1
+.MEASURE AC a_1khz FIND vdb(d2) AT=1k
+.MEASURE AC a_1meg FIND vdb(d2) AT=1Meg
 
 .end

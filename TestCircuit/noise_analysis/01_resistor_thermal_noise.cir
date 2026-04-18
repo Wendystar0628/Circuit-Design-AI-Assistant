@@ -15,8 +15,10 @@ R1 in  out 10k
 R2 out 0   10k
 
 * --- Noise analysis: V(out) is the output, V(in) the input source ---
+* ngspice's .meas directive does not accept a NOISE analysis type, so
+* the total integrated noise must be inspected directly from the
+* onoise / inoise frequency-sweep output on the chart / raw-data tab
+* rather than through a .measure card.
 .noise V(out) Vin dec 20 1 10Meg
-
-.MEASURE NOISE total_onoise INTEG onoise FROM=1 TO=10Meg
 
 .end

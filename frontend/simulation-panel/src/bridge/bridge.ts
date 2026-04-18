@@ -69,6 +69,7 @@ export interface SimulationBridge {
   clearExportDirectory(): void
   requestExport(): void
   addToConversation(target: string): void
+  copyTextToClipboard(text: string): void
 }
 
 export interface SimulationAppApi {

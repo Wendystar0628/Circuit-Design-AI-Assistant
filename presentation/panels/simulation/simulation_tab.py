@@ -25,6 +25,7 @@ from typing import List, Optional
 
 from PyQt6.QtCore import QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
+    QApplication,
     QWidget,
     QVBoxLayout,
     QSizePolicy,
@@ -662,6 +663,7 @@ class SimulationTab(QWidget):
         bridge.export_directory_clear_requested.connect(self._on_export_directory_clear_requested)
         bridge.export_requested.connect(self._on_export_requested)
         bridge.add_to_conversation_requested.connect(self._on_bridge_add_to_conversation_requested)
+        bridge.text_clipboard_copy_requested.connect(self._on_text_clipboard_copy_requested)
 
     def _on_schematic_value_update_requested(self, payload: dict):
         if not isinstance(payload, dict):
@@ -703,6 +705,23 @@ class SimulationTab(QWidget):
             row_count=max(0, row_end - row_start),
             col_count=max(0, col_end - col_start),
         )
+
+    def _on_text_clipboard_copy_requested(self, text: str):
+        # Generic clipboard pipe used by any frontend "Copy" button
+        # whose payload is already plain text (e.g. the output log
+        # tab). Routed through QClipboard because the embedded
+        # QtWebEngine cannot reliably write to the system clipboard
+        # from JavaScript.
+        payload = str(text or "")
+        if not payload:
+            return
+        app = QApplication.instance()
+        if app is None:
+            return
+        clipboard = app.clipboard()
+        if clipboard is None:
+            return
+        clipboard.setText(payload)
 
     def _on_chart_clear_all_requested(self):
         self._backend_runtime.chart_viewer.clear_all_series()

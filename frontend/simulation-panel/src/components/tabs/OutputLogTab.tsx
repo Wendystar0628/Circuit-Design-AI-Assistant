@@ -12,6 +12,7 @@ export function OutputLogTab({ state, bridge }: OutputLogTabProps) {
   const logView = state.output_log_view
   const [searchKeyword, setSearchKeyword] = useState(logView.search_keyword)
   const [filterLevel, setFilterLevel] = useState(logView.current_filter || 'all')
+  const [copyStatus, setCopyStatus] = useState<'idle' | 'copied'>('idle')
 
   useEffect(() => {
     setSearchKeyword(logView.search_keyword)
@@ -20,6 +21,23 @@ export function OutputLogTab({ state, bridge }: OutputLogTabProps) {
   useEffect(() => {
     setFilterLevel(logView.current_filter || 'all')
   }, [logView.current_filter])
+
+  const handleCopyLog = () => {
+    // The copy pipeline is unified: ship plain text through the
+    // Qt WebChannel bridge so the host process writes it to the
+    // system clipboard via QClipboard. The frontend never touches
+    // navigator.clipboard / document.execCommand because they are
+    // not reliable inside the embedded QtWebEngine.
+    if (!bridge || !logView.lines.length) {
+      return
+    }
+    const text = logView.lines.map((line) => line.content).join('\n')
+    bridge.copyTextToClipboard(text)
+    setCopyStatus('copied')
+    window.setTimeout(() => setCopyStatus('idle'), 1500)
+  }
+
+  const copyLabel = copyStatus === 'copied' ? '已复制' : '复制'
 
   return (
     <div className="tab-surface">
@@ -46,6 +64,9 @@ export function OutputLogTab({ state, bridge }: OutputLogTabProps) {
           </button>
           <button type="button" className="toolbar-button" disabled={!logView.can_add_to_conversation} onClick={() => bridge?.addToConversation('output_log')}>
             添加至对话
+          </button>
+          <button type="button" className="toolbar-button-secondary" disabled={!logView.lines.length} onClick={handleCopyLog}>
+            {copyLabel}
           </button>
         </div>
         <div className="log-stage log-stage--lines">

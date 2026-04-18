@@ -35,6 +35,7 @@ class SimulationWebBridge(QObject):
     export_directory_clear_requested = pyqtSignal()
     export_requested = pyqtSignal()
     add_to_conversation_requested = pyqtSignal(str)
+    text_clipboard_copy_requested = pyqtSignal(str)
 
     @pyqtSlot()
     def markReady(self) -> None:
@@ -167,6 +168,15 @@ class SimulationWebBridge(QObject):
     @pyqtSlot(str)
     def addToConversation(self, target: str) -> None:
         self.add_to_conversation_requested.emit(self._normalize_attachment_target(target))
+
+    @pyqtSlot(str)
+    def copyTextToClipboard(self, text: str) -> None:
+        # Generic text-to-clipboard pipe. The frontend cannot rely on
+        # navigator.clipboard / document.execCommand inside QtWebEngine
+        # (sandbox / non-secure-context), so every copy-to-clipboard
+        # button in the simulation panel funnels through this slot and
+        # the host sets the system clipboard via QClipboard.
+        self.text_clipboard_copy_requested.emit(str(text or ""))
 
     def _normalize_tab_id(self, tab_id: str) -> str:
         normalized = str(tab_id or "metrics").strip().lower()

@@ -674,10 +674,18 @@ class SimulationTab(QWidget):
 
         The frontend sends a full replacement map for one circuit
         source file; ``MetricTargetService.set_targets_for_file``
-        enforces the whole-file write semantic. After persistence we
-        ask the ViewModel to reinject targets into the current
-        ``metrics_list`` so the already-loaded metrics pick up the new
-        target strings without re-running the simulation.
+        enforces the whole-file write semantic (empty values clear the
+        entry; callers are free to submit empty strings to opt out of
+        a target). After persistence we:
+          1. Ask the ViewModel to reinject targets into the current
+             ``metrics_list`` so already-loaded metrics pick up the new
+             strings without re-running the simulation.
+          2. Rewrite ``metrics/metrics.json`` inside the simulation's
+             latest auto-export directory so the on-disk artifact
+             stays in lock-step with the UI. Without this step the
+             saved result would still carry stale (or missing) target
+             strings after a user edit, breaking the "\u4fdd\u5b58\u7684\u7ed3\u679c
+             \u5305\u542b\u6700\u65b0\u6307\u6807\u4e0e\u76ee\u6807" invariant.
         """
         if not isinstance(payload, dict):
             return
@@ -697,6 +705,38 @@ class SimulationTab(QWidget):
             self._logger.warning(f"Failed to persist metric targets: {exc}")
             return
         self._view_model.refresh_metric_targets()
+        self._refresh_metrics_artifact_on_disk()
+
+    def _refresh_metrics_artifact_on_disk(self) -> None:
+        """Re-export ``metrics/metrics.json`` into the simulation's
+        latest auto-export directory using the ViewModel's current
+        ``metrics_list`` (which already carries the freshly-confirmed
+        targets). We intentionally only touch the ``metrics`` category
+        so charts / waveforms / logs / raw data stay untouched, and we
+        never create a new timestamp directory here \u2014 if there is no
+        existing export root we silently return, because there is
+        nothing for the agent to re-read yet.
+        """
+        result = self._view_model.current_result
+        if result is None:
+            return
+        export_root_str = self._get_latest_project_export_root()
+        if not export_root_str:
+            return
+        from pathlib import Path
+        from domain.simulation.data.simulation_artifact_exporter import simulation_artifact_exporter
+
+        export_root = Path(export_root_str)
+        if not export_root.is_dir():
+            return
+        try:
+            simulation_artifact_exporter.export_metrics(
+                export_root,
+                result,
+                self._view_model.metrics_list,
+            )
+        except Exception as exc:
+            self._logger.warning(f"Failed to refresh metrics artifact on disk: {exc}")
 
     def _on_raw_data_viewport_requested(self, payload: dict):
         if not isinstance(payload, dict):

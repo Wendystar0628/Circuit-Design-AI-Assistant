@@ -216,13 +216,8 @@ def sample_metrics():
             name="gain",
             value="20",
             unit="dB",
-            target=">= 18 dB",
-            is_met=True,
-            trend="up",
-            category="performance",
             raw_value=20.0,
-            confidence=0.95,
-            error_message="",
+            target=">= 18 dB",
         )
     ]
 
@@ -241,7 +236,7 @@ def _assert_common_artifact_payload(payload: dict, artifact_type: str, *, expect
 def test_artifact_exporter_outputs_common_payload_schema(sample_result: SimulationResult, sample_metrics, tmp_path: Path):
     export_root = simulation_artifact_exporter.create_export_root(str(tmp_path), sample_result)
 
-    simulation_artifact_exporter.export_metrics(export_root, sample_result, sample_metrics, 88.0)
+    simulation_artifact_exporter.export_metrics(export_root, sample_result, sample_metrics)
     simulation_artifact_exporter.export_analysis_info(export_root, sample_result)
     simulation_artifact_exporter.export_raw_data(export_root, sample_result)
     simulation_artifact_exporter.export_output_log(export_root, sample_result)
@@ -318,7 +313,6 @@ def test_export_panel_auto_exports_current_result_into_project_results_tree(qapp
     export_panel = SimulationExportPanel(chart_viewer, waveform_widget)
     export_panel.set_result(sample_result)
     export_panel.set_metrics(sample_metrics)
-    export_panel.set_overall_score(88.0)
     export_panel.set_all_types_selected(False)
     export_panel.set_export_type_selected("metrics", True)
 
@@ -549,14 +543,14 @@ class _FakeWaveformExporter:
 
 def test_simulation_conversation_attachment_coordinator_reuses_project_export_root_for_text_artifacts(sample_result: SimulationResult, sample_metrics, tmp_path: Path):
     export_root = simulation_artifact_exporter.create_project_export_root(str(tmp_path), sample_result)
-    simulation_artifact_exporter.export_metrics(export_root, sample_result, sample_metrics, 88.0)
+    simulation_artifact_exporter.export_metrics(export_root, sample_result, sample_metrics)
 
     event_bus = _FakeEventBus()
     ServiceLocator.register(SVC_EVENT_BUS, event_bus)
     coordinator = SimulationConversationAttachmentCoordinator(_FakeChartExporter(), _FakeWaveformExporter())
 
     try:
-        metrics_path = coordinator.attach_metrics(str(tmp_path), str(export_root), sample_result, sample_metrics, 88.0)
+        metrics_path = coordinator.attach_metrics(str(tmp_path), str(export_root), sample_result, sample_metrics)
         output_log_path = coordinator.attach_output_log(str(tmp_path), str(export_root), sample_result)
     finally:
         ServiceLocator.unregister(SVC_EVENT_BUS)

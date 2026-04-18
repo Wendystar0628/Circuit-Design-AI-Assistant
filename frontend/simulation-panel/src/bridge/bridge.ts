@@ -39,6 +39,11 @@ export interface SchematicValueUpdateRequestInput {
   requestId: string
 }
 
+export interface MetricTargetsUpdateRequestInput {
+  sourceFilePath: string
+  targets: Record<string, string>
+}
+
 export interface SimulationBridge {
   markReady(): void
   activateTab(tabId: SimulationTabId): void
@@ -69,6 +74,7 @@ export interface SimulationBridge {
   clearExportDirectory(): void
   requestExport(): void
   addToConversation(target: string): void
+  updateMetricTargets(payload: MetricTargetsUpdateRequestInput): void
   copyTextToClipboard(text: string): void
 }
 

@@ -613,6 +613,13 @@ def _delayed_init():
         if _logger:
             _logger.info("Phase 3.5.2 PendingWorkspaceEditService 初始化完成")
 
+        from application.metric_target_service import MetricTargetService
+        from shared.service_names import SVC_METRIC_TARGET_SERVICE
+        metric_target_service = MetricTargetService()
+        ServiceLocator.register(SVC_METRIC_TARGET_SERVICE, metric_target_service)
+        if _logger:
+            _logger.info("Phase 3.5.2.1 MetricTargetService 初始化完成")
+
         # --------------------------------------------------------
         # 3.5.3 StopController 初始化
         # 依赖：Logger、EventBus

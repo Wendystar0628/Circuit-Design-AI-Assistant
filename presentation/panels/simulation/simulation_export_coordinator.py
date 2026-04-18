@@ -48,10 +48,9 @@ class SimulationExportCoordinator:
         result: SimulationResult,
         selected_types: Sequence[str],
         metrics: List[Any],
-        overall_score: float,
     ) -> SimulationExportExecution:
         export_root = simulation_artifact_exporter.create_export_root(base_directory, result)
-        return self._export_to_root(export_root, result, selected_types, metrics, overall_score)
+        return self._export_to_root(export_root, result, selected_types, metrics)
 
     def export_to_project_directory(
         self,
@@ -59,10 +58,9 @@ class SimulationExportCoordinator:
         result: SimulationResult,
         selected_types: Sequence[str],
         metrics: List[Any],
-        overall_score: float,
     ) -> SimulationExportExecution:
         export_root = simulation_artifact_exporter.create_project_export_root(project_root, result)
-        return self._export_to_root(export_root, result, selected_types, metrics, overall_score)
+        return self._export_to_root(export_root, result, selected_types, metrics)
 
     def _export_to_root(
         self,
@@ -70,7 +68,6 @@ class SimulationExportCoordinator:
         result: SimulationResult,
         selected_types: Sequence[str],
         metrics: List[Any],
-        overall_score: float,
     ) -> SimulationExportExecution:
         resolved_types = self.normalize_selected_types(selected_types)
         export_root.mkdir(parents=True, exist_ok=True)
@@ -82,7 +79,7 @@ class SimulationExportCoordinator:
 
         for export_type in resolved_types:
             try:
-                category_file_paths = self._export_category(export_root, result, export_type, metrics, overall_score)
+                category_file_paths = self._export_category(export_root, result, export_type, metrics)
                 execution.exported_files.extend(category_file_paths)
                 execution.category_exports[export_type] = self._to_relative_paths(export_root, category_file_paths)
             except Exception as exc:
@@ -121,10 +118,9 @@ class SimulationExportCoordinator:
         result: SimulationResult,
         export_type: str,
         metrics: List[Any],
-        overall_score: float,
     ) -> List[str]:
         if export_type == "metrics":
-            return simulation_artifact_exporter.export_metrics(export_root, result, metrics, overall_score)
+            return simulation_artifact_exporter.export_metrics(export_root, result, metrics)
         if export_type == "charts":
             return self._chart_viewer.export_bundle(str(export_root / "charts"))
         if export_type == "waveforms":

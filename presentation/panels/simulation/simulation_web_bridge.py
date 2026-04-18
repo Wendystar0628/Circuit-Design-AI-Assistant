@@ -35,6 +35,7 @@ class SimulationWebBridge(QObject):
     export_directory_clear_requested = pyqtSignal()
     export_requested = pyqtSignal()
     add_to_conversation_requested = pyqtSignal(str)
+    update_metric_targets_requested = pyqtSignal(dict)
     text_clipboard_copy_requested = pyqtSignal(str)
 
     @pyqtSlot()
@@ -169,6 +170,13 @@ class SimulationWebBridge(QObject):
     def addToConversation(self, target: str) -> None:
         self.add_to_conversation_requested.emit(self._normalize_attachment_target(target))
 
+    @pyqtSlot(QJsonValue)
+    @pyqtSlot(dict)
+    def updateMetricTargets(self, payload: Any) -> None:
+        normalized = self._normalize_metric_targets_payload(payload)
+        if normalized is not None:
+            self.update_metric_targets_requested.emit(normalized)
+
     @pyqtSlot(str)
     def copyTextToClipboard(self, text: str) -> None:
         # Generic text-to-clipboard pipe. The frontend cannot rely on
@@ -202,6 +210,25 @@ class SimulationWebBridge(QObject):
         normalized = str(target or "metrics").strip().lower()
         allowed = {"metrics", "chart", "waveform", "output_log", "op_result"}
         return normalized if normalized in allowed else "metrics"
+
+    def _normalize_metric_targets_payload(self, payload: Any) -> Optional[Dict[str, Any]]:
+        if isinstance(payload, QJsonValue):
+            payload = payload.toVariant()
+        if not isinstance(payload, dict):
+            return None
+        raw_targets = payload.get("targets")
+        if not isinstance(raw_targets, dict):
+            return None
+        cleaned: Dict[str, str] = {}
+        for raw_name, raw_value in raw_targets.items():
+            name = str(raw_name or "").strip()
+            value = str(raw_value or "").strip()
+            if name:
+                cleaned[name] = value
+        return {
+            "source_file_path": str(payload.get("sourceFilePath") or ""),
+            "targets": cleaned,
+        }
 
     def _normalize_schematic_value_update_payload(self, payload: Any) -> Optional[Dict[str, Any]]:
         if isinstance(payload, QJsonValue):

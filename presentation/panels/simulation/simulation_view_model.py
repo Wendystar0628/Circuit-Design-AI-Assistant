@@ -1,32 +1,22 @@
 # Simulation ViewModel
 """
-仿真面板 ViewModel
+\u4eff\u771f\u9762\u677f ViewModel
 
-职责：
-- 作为 UI 与仿真服务之间的中间层
-- 隔离 simulation_tab 与 SimulationService 的直接依赖
-- 订阅仿真事件并转换为 UI 友好格式
-- 管理仿真状态与结果展示
+\u804c\u8d23:
+- \u4f5c\u4e3a UI \u4e0e\u4eff\u771f\u670d\u52a1\u4e4b\u95f4\u7684\u4e2d\u95f4\u5c42
+- \u9694\u79bb simulation_tab \u4e0e SimulationService \u7684\u76f4\u63a5\u4f9d\u8d56
+- \u8ba2\u9605\u4eff\u771f\u4e8b\u4ef6\u5e76\u8f6c\u6362\u4e3a UI \u53cb\u597d\u683c\u5f0f
+- \u7ba1\u7406\u4eff\u771f\u72b6\u6001\u4e0e\u7ed3\u679c\u5c55\u793a\u3002\u5c06 .MEASURE \u7ed3\u679c\u7ffb\u8bd1\u4e3a
+  DisplayMetric\uff0c\u5e76\u5728\u52a0\u8f7d\u65f6\u8bfb\u53d6 MetricTargetService \u5c06\u7528\u6237
+  \u8bbe\u5b9a\u7684\u76ee\u6807\u503c\u7eb3\u5165\u3002
 
-设计原则：
-- 继承 BaseViewModel，使用统一的事件订阅和属性通知机制
-- 将 .MEASURE 结果转换为 DisplayMetric（UI 友好格式）
-- 通过 property_changed 信号通知 UI 更新
-
-被调用方：
-- simulation_tab.py
-
-使用示例：
-    view_model = SimulationViewModel()
-    view_model.property_changed.connect(on_property_changed)
-    view_model.initialize()
-
-    # 响应属性变更
-    def on_property_changed(name, value):
-        if name == "metrics_list":
-            update_metrics_display(value)
-        elif name == "simulation_status":
-            update_status_indicator(value)
+\u8bbe\u8ba1\u539f\u5219:
+- DisplayMetric \u662f UI \u548c\u5bfc\u51fa\u7ba1\u7ebf\u5171\u4eab\u7684\u5c55\u793a\u6a21\u578b\uff0c
+  \u5b57\u6bb5\u4ec5\u4fdd\u7559\u5b9e\u9645\u88ab\u6d88\u8d39\u7684\u6838\u5fc3\u9879\uff1a
+  ``name`` / ``display_name`` / ``value`` / ``unit`` /
+  ``raw_value`` / ``target``\u3002
+- ViewModel \u4ec5\u8d1f\u8d23\u5c06 .MEASURE \u7ed3\u679c\u4e0e\u7528\u6237\u8bbe\u5b9a\u7684\u76ee\u6807
+  \u503c\u5408\u5e76\u6210\u6307\u6807\u5217\u8868\uff0c\u4e0d\u627f\u62c5\u4efb\u4f55\u8bc4\u5206 / \u8fbe\u6807\u5224\u5b9a\u903b\u8f91\u3002
 """
 
 import logging
@@ -46,293 +36,244 @@ from shared.event_types import (
 
 
 class SimulationStatus(Enum):
-    """仿真状态枚举"""
-    
+    """\u4eff\u771f\u72b6\u6001\u679a\u4e3e"""
+
     IDLE = "idle"
-    """空闲状态，等待用户操作"""
-    
     RUNNING = "running"
-    """仿真运行中"""
-    
     COMPLETE = "complete"
-    """仿真完成"""
-    
     ERROR = "error"
-    """仿真出错"""
 
 
 @dataclass
 class DisplayMetric:
+    """UI \u53cb\u597d\u7684\u6307\u6807\u5c55\u793a\u683c\u5f0f\u3002
+
+    \u4e0e ``MeasureResult`` \u7684\u5dee\u522b\uff1a``MeasureResult`` \u662f\u6267\u884c\u7ed3\u679c\uff0c
+    ``DisplayMetric`` \u662f\u5df2\u683c\u5f0f\u5316\u3001\u9644\u5e26\u7528\u6237\u76ee\u6807\u503c\u7684\u5c55\u793a\u5c42\u89c6\u56fe
+    \u3002\u5b57\u6bb5\u523b\u610f\u6536\u7a84\u5230\u771f\u6b63\u88ab\u4e0b\u6e38\uff08\u524d\u7aef\u8868\u683c\u3001JSON
+    \u5bfc\u51fa\u3001Agent \u9644\u4ef6\uff09\u6d88\u8d39\u7684\u51e0\u4e2a\u5217\uff0c\u4ee5\u514d\u9057\u7559\u6b7b\u5bf9\u9f50\u3002
     """
-    UI 友好的指标显示格式
-    
-    从 MetricResult 转换而来，专为 UI 显示优化
-    """
-    
+
     name: str
-    """指标标识名（英文）"""
-    
+    """\u6307\u6807\u6807\u8bc6\u540d\uff08.MEASURE \u8bed\u53e5\u4e2d\u7684\u540d\u79f0\uff09\u3002"""
+
     display_name: str
-    """指标显示名（已国际化）"""
-    
+    """\u5df2\u56fd\u9645\u5316\u7684\u5c55\u793a\u540d\u3002"""
+
     value: str
-    """格式化后的数值字符串（如 "20.5 dB"）"""
-    
+    """\u683c\u5f0f\u5316\u540e\u7684\u6570\u503c\u5b57\u7b26\u4e32\uff08\u5982 ``"20.5 dB"``\uff09\u3002"""
+
     unit: str
-    """单位"""
-    
-    target: str
-    """目标值描述（如 "≥ 20 dB"）"""
-    
-    is_met: Optional[bool]
-    """是否达标（None 表示无目标）"""
-    
-    trend: str
-    """趋势（"up", "down", "stable", "unknown"）"""
-    
-    category: str
-    """指标类别（"gain", "bandwidth", "noise" 等）"""
-    
+    """\u5355\u4f4d\uff08\u5982 ``dB`` / ``Hz`` / ``V``\uff09\u3002"""
+
     raw_value: Optional[float] = None
-    """原始数值（用于排序和计算）"""
-    
-    confidence: float = 1.0
-    """置信度（0-1）"""
-    
-    error_message: Optional[str] = None
-    """错误信息（若计算失败）"""
+    """\u539f\u59cb\u6570\u503c\uff0c\u4f9b Agent / \u5bfc\u51fa\u7ba1\u7ebf\u7528\u4e8e\u8fd0\u7b97\u3002"""
+
+    target: str = ""
+    """\u7528\u6237\u8bbe\u5b9a\u7684\u76ee\u6807\u503c\u6587\u672c\uff08\u5982 ``"\u2265 20 dB"``\uff09\u3002
+    \u7a7a\u5b57\u7b26\u4e32\u8868\u793a\u8be5\u6307\u6807\u672a\u8bbe\u5b9a\u76ee\u6807\u3002"""
 
 
 class SimulationViewModel(BaseViewModel):
+    """\u4eff\u771f\u9762\u677f ViewModel\u3002
+
+    \u6838\u5fc3\u8f93\u51fa\uff1a``metrics_list``\uff08List[DisplayMetric]\uff09+
+    ``current_result`` + ``simulation_status`` + ``error_message``\u3002
+    \u8f93\u51fa\u901a\u8fc7 ``notify_property_changed`` \u63a8\u9001\u7ed9 SimulationTab\uff0c
+    SimulationTab \u518d\u8c03\u7528 Serializer \u4ea7\u751f\u524d\u7aef\u72b6\u6001\u3002
     """
-    仿真面板 ViewModel
-    
-    管理仿真状态、结果和指标的展示逻辑。
-    订阅仿真事件，将数据转换为 UI 友好格式后通知 View 更新。
-    """
-    
+
     def __init__(self):
         super().__init__()
-        
         self._logger = logging.getLogger(__name__)
-        
-        # 核心状态
+
         self._current_result: Optional[SimulationResult] = None
         self._metrics_list: List[DisplayMetric] = []
-        self._overall_score: float = 0.0
         self._simulation_status: SimulationStatus = SimulationStatus.IDLE
         self._error_message: str = ""
-        self._has_goals: bool = False  # 是否有设计目标
-    
-    # ============================================================
-    # 属性访问器
-    # ============================================================
-    
+        self._metric_target_service = None
+
+    # ------------------------------------------------------------------
+    # \u5c5e\u6027\u8bbf\u95ee\u5668
+    # ------------------------------------------------------------------
+
     @property
     def current_result(self) -> Optional[SimulationResult]:
-        """当前仿真结果"""
         return self._current_result
-    
+
     @property
     def metrics_list(self) -> List[DisplayMetric]:
-        """格式化后的指标列表"""
         return self._metrics_list
-    
-    @property
-    def overall_score(self) -> float:
-        """综合评分（0-100，-1.0 表示无目标模式无评分）"""
-        return self._overall_score
-    
-    @property
-    def has_goals(self) -> bool:
-        """是否有设计目标"""
-        return self._has_goals
-    
+
     @property
     def simulation_status(self) -> SimulationStatus:
-        """仿真状态"""
         return self._simulation_status
-    
+
     @property
     def error_message(self) -> str:
-        """错误信息"""
         return self._error_message
-    
-    # ============================================================
-    # 生命周期
-    # ============================================================
-    
+
+    @property
+    def metric_target_service(self):
+        if self._metric_target_service is None:
+            try:
+                from shared.service_locator import ServiceLocator
+                from shared.service_names import SVC_METRIC_TARGET_SERVICE
+
+                self._metric_target_service = ServiceLocator.get_optional(SVC_METRIC_TARGET_SERVICE)
+            except Exception:
+                self._metric_target_service = None
+        return self._metric_target_service
+
+    # ------------------------------------------------------------------
+    # \u751f\u547d\u5468\u671f
+    # ------------------------------------------------------------------
+
     def initialize(self):
-        """初始化 ViewModel，订阅仿真事件"""
         super().initialize()
-        
-        # 订阅仿真事件
         self.subscribe(EVENT_SIM_STARTED, self._on_simulation_started)
         self.subscribe(EVENT_SIM_COMPLETE, self._on_simulation_complete)
         self.subscribe(EVENT_SIM_ERROR, self._on_simulation_error)
-        
         self._logger.info("SimulationViewModel initialized")
 
-    # ============================================================
-    # 事件处理
-    # ============================================================
-    
+    # ------------------------------------------------------------------
+    # \u4e8b\u4ef6\u5904\u7406
+    # ------------------------------------------------------------------
+
     def _on_simulation_started(self, event_data: Dict[str, Any]):
-        """处理仿真开始事件"""
         self._set_status(SimulationStatus.RUNNING)
         self._error_message = ""
-        
         self.notify_property_changed("simulation_status", self._simulation_status)
         self.notify_property_changed("error_message", self._error_message)
-        
         self._logger.info(
             f"Simulation started: {event_data.get('circuit_file', 'unknown')}"
         )
-    
+
     def _on_simulation_complete(self, event_data: Dict[str, Any]):
-        """处理仿真完成事件"""
         self._set_status(SimulationStatus.COMPLETE)
-        
         self.notify_property_changed("simulation_status", self._simulation_status)
-        
         self._logger.info("Simulation complete")
-    
+
     def _on_simulation_error(self, event_data: Dict[str, Any]):
-        """处理仿真错误事件"""
         self._set_status(SimulationStatus.ERROR)
         self._error_message = event_data.get("error_message", "Unknown error")
-        
         self.notify_property_changed("simulation_status", self._simulation_status)
         self.notify_property_changed("error_message", self._error_message)
-        
         self._logger.error(f"Simulation error: {self._error_message}")
-    
+
     def _set_status(self, status: SimulationStatus):
-        """设置仿真状态"""
         self._simulation_status = status
-    
-    # ============================================================
-    # 核心方法
-    # ============================================================
-    
+
+    # ------------------------------------------------------------------
+    # \u6838\u5fc3\u65b9\u6cd5
+    # ------------------------------------------------------------------
+
     def load_result(self, result: SimulationResult):
-        """
-        加载仿真结果并转换为显示格式
-        
-        Args:
-            result: 仿真结果对象
+        """\u52a0\u8f7d\u4eff\u771f\u7ed3\u679c\u5e76\u8f6c\u6362\u4e3a\u5c55\u793a\u683c\u5f0f\u3002
+
+        \u6bcf\u6b21\u52a0\u8f7d\u65f6\u4f1a\u91cd\u65b0\u67e5\u8be2 MetricTargetService\uff0c\u786e\u4fdd
+        \u7528\u6237\u5bf9\u5f53\u524d\u7535\u8def\u6587\u4ef6\u7684\u6700\u65b0\u76ee\u6807\u503c\u4f1a\u540c\u6b65\u5230 UI\u3002\u4ec5\u5728
+        ``result.success`` \u4e14 ``result.measurements`` \u6709\u503c\u65f6\u5c55\u793a\u6307\u6807\u3002
         """
         self._current_result = result
-        
+
         if result.success and result.data is not None:
-            if result.measurements:
-                self._metrics_list = self._load_metrics_from_measurements(result.measurements)
-            else:
-                self._metrics_list = []
-            
-            # 计算综合评分
-            self._calculate_overall_score()
-            
-            # 更新状态
+            measurements = result.measurements or []
+            self._metrics_list = self._load_metrics_from_measurements(
+                measurements,
+                result.file_path,
+            )
             self._set_status(SimulationStatus.COMPLETE)
             self._error_message = ""
         else:
-            # 仿真失败
             self._metrics_list = []
-            self._overall_score = 0.0
             self._set_status(SimulationStatus.ERROR)
-            
             if result.error:
                 if hasattr(result.error, "message"):
                     self._error_message = result.error.message
                 else:
                     self._error_message = str(result.error)
-        
-        # 通知 UI 更新
+
         self.notify_properties_changed({
             "current_result": self._current_result,
             "metrics_list": self._metrics_list,
-            "overall_score": self._overall_score,
-            "has_goals": self._has_goals,
             "simulation_status": self._simulation_status,
             "error_message": self._error_message,
         })
-    
-    def _load_metrics_from_measurements(self, measurements: List[Any]) -> List[DisplayMetric]:
-        """
-        从 .MEASURE 结果创建 DisplayMetric 列表
-        
-        Args:
-            measurements: MeasureResult 列表
-            
-        Returns:
-            List[DisplayMetric]: DisplayMetric 列表
-        """
-        display_metrics = []
-        
+
+    def refresh_metric_targets(self):
+        """\u4ec5\u7528\u6237\u4fee\u6539\u76ee\u6807\u503c\u65f6\u8c03\u7528\uff0c\u5c06 MetricTargetService
+        \u7684\u6700\u65b0\u6301\u4e45\u5316\u5185\u5bb9\u5408\u5e76\u56de\u5f53\u524d metrics_list \u5e76\u5e7f\u64ad\u3002
+        \u56e0\u4e3a\u6309\u94ae\u786e\u8ba4\u540e\u4e0d\u4f1a\u89e6\u53d1\u4eff\u771f\u91cd\u8dd1\uff0c\u4ec5\u9700\u5237\u65b0
+        target \u5b57\u6bb5\u3002"""
+        if not self._metrics_list or self._current_result is None:
+            return
+        source_file = self._current_result.file_path or ""
+        targets = self._resolve_targets(source_file)
+        updated = [
+            DisplayMetric(
+                name=metric.name,
+                display_name=metric.display_name,
+                value=metric.value,
+                unit=metric.unit,
+                raw_value=metric.raw_value,
+                target=targets.get(metric.name, ""),
+            )
+            for metric in self._metrics_list
+        ]
+        self._metrics_list = updated
+        self.notify_property_changed("metrics_list", self._metrics_list)
+
+    def _load_metrics_from_measurements(
+        self,
+        measurements: List[Any],
+        source_file_path: str,
+    ) -> List[DisplayMetric]:
+        targets = self._resolve_targets(source_file_path)
+        display_metrics: List[DisplayMetric] = []
+
         for measure in measurements:
             if not isinstance(measure, MeasureResult):
                 continue
-            name = measure.name
-            value = measure.value
-            unit = measure.unit
-            display_name = measure.display_name
-            category = measure.category
-            description = measure.description
-            statement = measure.statement
-            is_valid = measure.status == MeasureStatus.OK and value is not None
-            
-            # 跳过无效的测量
-            if not is_valid:
+            if measure.status != MeasureStatus.OK or measure.value is None:
                 continue
-            
             metadata = measure_metadata_resolver.resolve(
-                name,
-                statement=statement,
-                description=description,
-                fallback_unit=unit,
+                measure.name,
+                statement=measure.statement,
+                description=measure.description,
+                fallback_unit=measure.unit,
             )
-
-            display_metrics.append(self._create_display_metric(
-                name,
-                value,
-                unit=metadata.unit,
-                display_name=display_name or metadata.display_name,
-                category=category or metadata.category,
-            ))
-        
+            display_name = measure.display_name or metadata.display_name
+            display_metrics.append(
+                self._build_display_metric(
+                    name=measure.name,
+                    value=measure.value,
+                    unit=metadata.unit,
+                    display_name=display_name,
+                    target=targets.get(measure.name, ""),
+                )
+            )
         return display_metrics
-    
-    def _create_display_metric(
+
+    def _build_display_metric(
         self,
+        *,
         name: str,
         value: Any,
-        unit: str = "",
-        display_name: str = "",
-        category: str = "",
+        unit: str,
+        display_name: str,
+        target: str,
     ) -> DisplayMetric:
-        """
-        从简单值创建 DisplayMetric
-        
-        Args:
-            name: 指标名称
-            value: 指标值（可以是数字或字符串）
-            unit: 单位
-            
-        Returns:
-            DisplayMetric: 显示指标
-        """
-        # 解析值和单位
-        raw_value = None
-        formatted_value = str(value) if value is not None else "N/A"
-        
+        raw_value: Optional[float] = None
+        formatted_value: str = str(value) if value is not None else "N/A"
+
         if isinstance(value, (int, float)):
             raw_value = float(value)
             formatted_value = self._format_value_with_unit(raw_value, unit)
         elif isinstance(value, str):
-            # 尝试从字符串中提取数值
             import re
-            match = re.match(r'^([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?)\s*(.*)$', value.strip())
+
+            match = re.match(r"^([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?)\s*(.*)$", value.strip())
             if match:
                 try:
                     raw_value = float(match.group(1))
@@ -340,31 +281,18 @@ class SimulationViewModel(BaseViewModel):
                     formatted_value = value
                 except ValueError:
                     pass
-        
-        metadata = measure_metadata_resolver.resolve(
-            name,
-            description=display_name,
-            fallback_unit=unit,
-        )
-        
+
         return DisplayMetric(
             name=name,
-            display_name=display_name or metadata.display_name,
+            display_name=display_name,
             value=formatted_value,
-            unit=metadata.unit,
-            target="",
-            is_met=None,
-            trend="unknown",
-            category=category or metadata.category,
+            unit=unit,
             raw_value=raw_value,
-            confidence=1.0,
-            error_message=None,
+            target=target,
         )
-    
+
     def _format_value_with_unit(self, value: float, unit: str) -> str:
-        """格式化数值（带单位）"""
         abs_value = abs(value)
-        
         if abs_value == 0:
             formatted = "0"
         elif abs_value >= 1e9:
@@ -378,98 +306,44 @@ class SimulationViewModel(BaseViewModel):
         elif abs_value >= 1e-3:
             formatted = f"{value * 1e3:.2f}m"
         elif abs_value >= 1e-6:
-            formatted = f"{value * 1e6:.2f}μ"
+            formatted = f"{value * 1e6:.2f}\u03bc"
         elif abs_value >= 1e-9:
             formatted = f"{value * 1e9:.2f}n"
         else:
             formatted = f"{value:.2e}"
-        
-        if unit:
-            return f"{formatted} {unit}"
-        return formatted
-    
-    def _calculate_overall_score(self):
-        """
-        计算综合评分
-        
-        有目标模式：返回达标指标比例（0-100）
-        无目标模式：返回 -1.0 表示无评分
-        """
-        if not self._metrics_list:
-            self._overall_score = 0.0
-            self._has_goals = False
-            return
-        
-        # 统计达标指标数量
-        met_count = sum(
-            1 for m in self._metrics_list
-            if m.is_met is True
-        )
-        total_with_target = sum(
-            1 for m in self._metrics_list
-            if m.is_met is not None
-        )
-        
-        if total_with_target > 0:
-            # 有目标模式：计算达标比例
-            self._overall_score = (met_count / total_with_target) * 100
-            self._has_goals = True
-        else:
-            # 无目标模式：返回 -1.0 表示无评分
-            self._has_goals = False
-            self._overall_score = -1.0
+        return f"{formatted} {unit}" if unit else formatted
 
-    # ============================================================
-    # 辅助方法
-    # ============================================================
-    
-    def get_metrics_by_category(self, category: str) -> List[DisplayMetric]:
-        """
-        按类别获取指标列表
-        
-        Args:
-            category: 指标类别
-            
-        Returns:
-            List[DisplayMetric]: 该类别的指标列表
-        """
-        return [m for m in self._metrics_list if m.category == category]
-    
+    def _resolve_targets(self, source_file_path: str) -> Dict[str, str]:
+        service = self.metric_target_service
+        if service is None or not source_file_path:
+            return {}
+        try:
+            return service.get_targets_for_file(source_file_path)
+        except Exception:
+            return {}
+
+    # ------------------------------------------------------------------
+    # \u8f85\u52a9\u65b9\u6cd5
+    # ------------------------------------------------------------------
+
     def get_metric_by_name(self, name: str) -> Optional[DisplayMetric]:
-        """
-        按名称获取指标
-        
-        Args:
-            name: 指标名称
-            
-        Returns:
-            Optional[DisplayMetric]: 指标对象，若不存在则返回 None
-        """
         for metric in self._metrics_list:
             if metric.name == name:
                 return metric
         return None
-    
+
     def clear(self):
-        """清空当前状态"""
         self._current_result = None
         self._metrics_list = []
-        self._overall_score = 0.0
         self._simulation_status = SimulationStatus.IDLE
         self._error_message = ""
-        
         self.notify_properties_changed({
             "current_result": None,
             "metrics_list": [],
-            "overall_score": 0.0,
             "simulation_status": SimulationStatus.IDLE,
             "error_message": "",
         })
 
-
-# ============================================================
-# 模块导出
-# ============================================================
 
 __all__ = [
     "SimulationViewModel",

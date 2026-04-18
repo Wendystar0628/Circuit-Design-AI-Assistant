@@ -263,14 +263,6 @@ export function SchematicTab({ bridge, schematicDocument, schematicWriteResult }
     })
   }
 
-  const handleFit = useCallback(() => {
-    const bounds = layoutState.result?.bounds
-    if (!bounds || viewportSize.width <= 0 || viewportSize.height <= 0) {
-      return
-    }
-    setViewState(fitSchematicViewToBounds(bounds, viewportSize.width, viewportSize.height))
-  }, [layoutState.result, viewportSize.height, viewportSize.width])
-
   return (
     <div className="tab-surface">
       <ResponsivePane
@@ -288,8 +280,6 @@ export function SchematicTab({ bridge, schematicDocument, schematicWriteResult }
             fieldDrafts={selectedFieldDrafts}
             pendingFieldRequestIds={selectedPendingFieldRequestIds}
             staleDraftNotice={staleDraftNotice}
-            canFit={layoutState.result?.bounds !== null && viewportSize.width > 0 && viewportSize.height > 0}
-            onFit={handleFit}
             onDraftChange={handleDraftChange}
             onSubmitField={handleSubmitField}
           />

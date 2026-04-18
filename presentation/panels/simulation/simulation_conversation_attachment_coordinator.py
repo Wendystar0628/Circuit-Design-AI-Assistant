@@ -29,12 +29,20 @@ class SimulationConversationAttachmentCoordinator:
         export_root: Optional[str],
         result: SimulationResult,
         metrics: List[Any],
-        overall_score: float,
     ) -> str:
+        """Ensure ``metrics.json`` exists for the current result and
+        publish it to the conversation panel.
+
+        The caller is responsible for building ``metrics`` from a
+        ``DisplayMetric`` list whose ``target`` fields have already been
+        populated by ``MetricTargetService``. We intentionally
+        re-export on every call (even if a stale file already exists)
+        so the agent never sees outdated target strings after the user
+        tweaks them between simulation runs.
+        """
         root = self._resolve_export_root(project_root, export_root, result)
+        simulation_artifact_exporter.export_metrics(root, result, metrics)
         target_path = root / "metrics" / "metrics.json"
-        if not target_path.is_file():
-            simulation_artifact_exporter.export_metrics(root, result, metrics, overall_score)
         self._ensure_file(target_path)
         self._publish([str(target_path)])
         return str(target_path)

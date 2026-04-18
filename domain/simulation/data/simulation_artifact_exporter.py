@@ -79,7 +79,14 @@ class SimulationArtifactExporter:
             "actual_x_range": self._serialize_range(result.actual_x_range),
         }
 
-    def export_metrics(self, export_root: Path, result: SimulationResult, metrics: List[Any], overall_score: float) -> List[str]:
+    def export_metrics(self, export_root: Path, result: SimulationResult, metrics: List[Any]) -> List[str]:
+        """Export the current ``DisplayMetric`` list as CSV + JSON side
+        by side. Columns are restricted to fields that actually carry
+        meaning to the agent / downstream pipeline. ``target`` is the
+        user-authored goal string ingested from ``MetricTargetService``
+        upstream, so the exported payload naturally carries target
+        information and the agent sees goals alongside values.
+        """
         category_dir = self._ensure_category_dir(export_root, "metrics")
         csv_path = category_dir / "metrics.csv"
         json_path = category_dir / "metrics.json"
@@ -89,13 +96,8 @@ class SimulationArtifactExporter:
             "name",
             "value",
             "unit",
-            "target",
-            "is_met",
-            "trend",
-            "category",
             "raw_value",
-            "confidence",
-            "error_message",
+            "target",
         ]
         rows = [self._metric_to_row(metric) for metric in metrics]
         with csv_path.open("w", newline="", encoding="utf-8") as handle:
@@ -109,7 +111,7 @@ class SimulationArtifactExporter:
             artifact_type="metrics",
             summary={
                 "metric_count": len(rows),
-                "overall_score": overall_score,
+                "metrics_with_target": sum(1 for row in rows if row.get("target")),
             },
             files={
                 "csv": csv_path.name,
@@ -117,7 +119,6 @@ class SimulationArtifactExporter:
             data={
                 "columns": columns,
                 "rows": rows,
-                "overall_score": overall_score,
             },
         ))
         return [str(csv_path), str(json_path)]
@@ -249,13 +250,8 @@ class SimulationArtifactExporter:
             "name": str(getattr(metric, "name", "") or ""),
             "value": str(getattr(metric, "value", "") or ""),
             "unit": str(getattr(metric, "unit", "") or ""),
-            "target": str(getattr(metric, "target", "") or ""),
-            "is_met": getattr(metric, "is_met", None),
-            "trend": str(getattr(metric, "trend", "") or ""),
-            "category": str(getattr(metric, "category", "") or ""),
             "raw_value": getattr(metric, "raw_value", None),
-            "confidence": getattr(metric, "confidence", None),
-            "error_message": str(getattr(metric, "error_message", "") or ""),
+            "target": str(getattr(metric, "target", "") or ""),
         }
 
     def _build_snapshot_rows(self, snapshot) -> List[Dict[str, Any]]:

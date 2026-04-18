@@ -9,7 +9,7 @@ import {
   type SchematicPinStubAppearance,
   type SchematicSymbolAppearance,
 } from './symbolRegistry'
-import { makeViewTargetWorldPoint } from './schematicLayout'
+import { fitSchematicViewToBounds, makeViewTargetWorldPoint } from './schematicLayout'
 import {
   SCHEMATIC_NET_LABEL_HEIGHT,
   computeSchematicLabelRect,
@@ -272,6 +272,19 @@ export function SchematicCanvas({
     // lifetime.
   }, [])
 
+  // Fit viewport: recomputes view-state from the current layout bounds
+  // and actual viewport size. The overlay button that calls this lives
+  // inside the canvas (top-right corner) so fit is a canvas-local
+  // capability; the tab shell never participates.
+  const canFit = Boolean(layoutResult?.bounds) && width > 0 && height > 0
+  const handleFit = useCallback(() => {
+    const bounds = layoutResult?.bounds
+    if (!bounds || width <= 0 || height <= 0) {
+      return
+    }
+    onViewStateChange(fitSchematicViewToBounds(bounds, width, height))
+  }, [height, layoutResult, onViewStateChange, width])
+
   const hasSourceFile = Boolean(schematicDocument.file_path)
   const layoutComponents = layoutResult?.components ?? []
   const layoutGroups = layoutResult?.groups ?? []
@@ -531,6 +544,17 @@ export function SchematicCanvas({
             </div>
           </div>
         ) : null}
+        <div className="schematic-canvas__fit-overlay">
+          <button
+            type="button"
+            className="sim-compact-button"
+            disabled={!canFit}
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={handleFit}
+          >
+            Fit
+          </button>
+        </div>
       </div>
     </div>
   )

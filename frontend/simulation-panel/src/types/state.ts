@@ -57,20 +57,13 @@ export interface MetricItemState {
   display_name: string
   value: string
   unit: string
-  target: string
-  is_met: boolean | null
-  trend: string
-  category: string
   raw_value: number | null
-  confidence: number
-  error_message: string | null
+  target: string
 }
 
 export interface MetricsViewState {
   items: MetricItemState[]
-  total: number
-  overall_score: number
-  has_goals: boolean
+  source_file_path: string
   can_add_to_conversation: boolean
 }
 
@@ -562,9 +555,7 @@ export const EMPTY_SIMULATION_STATE: SimulationMainState = {
   },
   metrics_view: {
     items: [],
-    total: 0,
-    overall_score: 0,
-    has_goals: false,
+    source_file_path: '',
     can_add_to_conversation: false,
   },
   analysis_chart_view: {
@@ -990,6 +981,23 @@ function normalizeOutputLogLines(value: unknown): OutputLogLineState[] {
   })
 }
 
+function normalizeMetricItems(value: unknown): MetricItemState[] {
+  if (!Array.isArray(value)) {
+    return []
+  }
+  return value.map((item) => {
+    const record = asRecord(item)
+    return {
+      name: asString(record.name),
+      display_name: asString(record.display_name),
+      value: asString(record.value),
+      unit: asString(record.unit),
+      raw_value: asNullableNumber(record.raw_value),
+      target: asString(record.target),
+    }
+  })
+}
+
 function normalizeExportItems(value: unknown): ExportItemState[] {
   if (!Array.isArray(value)) {
     return []
@@ -1084,10 +1092,8 @@ export function normalizeSimulationState(input: unknown): SimulationMainState {
       has_op_result: asBoolean(surfaceTabs.has_op_result),
     },
     metrics_view: {
-      items: Array.isArray(metricsView.items) ? (metricsView.items as MetricItemState[]) : [],
-      total: asNumber(metricsView.total),
-      overall_score: asNumber(metricsView.overall_score),
-      has_goals: asBoolean(metricsView.has_goals),
+      items: normalizeMetricItems(metricsView.items),
+      source_file_path: asString(metricsView.source_file_path),
       can_add_to_conversation: asBoolean(metricsView.can_add_to_conversation),
     },
     analysis_chart_view: {

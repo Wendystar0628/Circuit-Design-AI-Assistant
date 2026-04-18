@@ -254,8 +254,6 @@ class SimulationTab(QWidget):
             current_result=self._view_model.current_result,
             current_result_path=self._last_loaded_result_path or "",
             metrics=self._view_model.metrics_list,
-            overall_score=self._view_model.overall_score,
-            has_goals=self._view_model.has_goals,
             simulation_status=self._view_model.simulation_status,
             status_message=self._runtime_status_message,
             error_message=self._view_model.error_message,
@@ -427,8 +425,6 @@ class SimulationTab(QWidget):
         """处理 ViewModel 属性变更"""
         if name == "metrics_list":
             self._update_metrics(value)
-        elif name == "overall_score":
-            self._backend_runtime.export_panel.set_overall_score(value)
         elif name == "simulation_status":
             self._update_status(value)
         elif name == "error_message":
@@ -531,7 +527,6 @@ class SimulationTab(QWidget):
                 self._get_latest_project_export_root(),
                 result,
                 self._view_model.metrics_list,
-                self._view_model.overall_score,
             )
         except Exception as exc:
             self._show_add_to_conversation_error(exc)
@@ -663,12 +658,45 @@ class SimulationTab(QWidget):
         bridge.export_directory_clear_requested.connect(self._on_export_directory_clear_requested)
         bridge.export_requested.connect(self._on_export_requested)
         bridge.add_to_conversation_requested.connect(self._on_bridge_add_to_conversation_requested)
+        bridge.update_metric_targets_requested.connect(self._on_update_metric_targets_requested)
         bridge.text_clipboard_copy_requested.connect(self._on_text_clipboard_copy_requested)
 
     def _on_schematic_value_update_requested(self, payload: dict):
         if not isinstance(payload, dict):
             return
         self._backend_runtime.spice_schematic_document.request_value_update(payload)
+
+    def _on_update_metric_targets_requested(self, payload: dict):
+        """Persist the metric-target table flushed by the frontend's
+        \u786e\u8ba4\u4fee\u6539 button and immediately republish the frontend
+        state so the sidebar shows the new targets without having to
+        wait for another simulation run.
+
+        The frontend sends a full replacement map for one circuit
+        source file; ``MetricTargetService.set_targets_for_file``
+        enforces the whole-file write semantic. After persistence we
+        ask the ViewModel to reinject targets into the current
+        ``metrics_list`` so the already-loaded metrics pick up the new
+        target strings without re-running the simulation.
+        """
+        if not isinstance(payload, dict):
+            return
+        source_file_path = str(payload.get("source_file_path") or "")
+        targets = payload.get("targets") or {}
+        if not isinstance(targets, dict):
+            return
+        try:
+            from shared.service_locator import ServiceLocator
+            from shared.service_names import SVC_METRIC_TARGET_SERVICE
+
+            service = ServiceLocator.get_optional(SVC_METRIC_TARGET_SERVICE)
+            if service is None:
+                return
+            service.set_targets_for_file(source_file_path, targets)
+        except Exception as exc:
+            self._logger.warning(f"Failed to persist metric targets: {exc}")
+            return
+        self._view_model.refresh_metric_targets()
 
     def _on_raw_data_viewport_requested(self, payload: dict):
         if not isinstance(payload, dict):

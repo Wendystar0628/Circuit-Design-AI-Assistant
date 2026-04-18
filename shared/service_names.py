@@ -105,6 +105,9 @@ SVC_PROJECT_SERVICE = "project_service"
 SVC_FILE_WATCHER = "file_watcher"
 SVC_PENDING_WORKSPACE_EDIT_SERVICE = "pending_workspace_edit_service"
 
+# 指标目标值持久化服务 - 按电路源文件记录 .MEASURE 指标的用户设定目标
+SVC_METRIC_TARGET_SERVICE = "metric_target_service"
+
 # 信息卡片持久化服务 - 信息面板卡片的持久化存储
 SVC_INFO_CARD_PERSISTENCE = "info_card_persistence"
 
@@ -203,6 +206,7 @@ __all__ = [
     "SVC_PROJECT_SERVICE",
     "SVC_FILE_WATCHER",
     "SVC_PENDING_WORKSPACE_EDIT_SERVICE",
+    "SVC_METRIC_TARGET_SERVICE",
     "SVC_INFO_CARD_PERSISTENCE",
     "SVC_DESIGN_WORKFLOW",
     "SVC_TOOL_EXECUTOR",

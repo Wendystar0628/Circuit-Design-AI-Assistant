@@ -18,7 +18,6 @@ class SimulationExportPanel(QWidget):
         self._export_coordinator = SimulationExportCoordinator(chart_viewer, waveform_widget)
         self._result: Optional[SimulationResult] = None
         self._metrics: List[Any] = []
-        self._overall_score: float = 0.0
         self._latest_project_export_root: Optional[Path] = None
         self._manual_export_directory: Optional[Path] = None
         self._selected_type_preferences: Set[str] = set(self._export_coordinator.all_export_types())
@@ -31,13 +30,9 @@ class SimulationExportPanel(QWidget):
     def set_metrics(self, metrics: List[Any]):
         self._metrics = list(metrics)
 
-    def set_overall_score(self, overall_score: float):
-        self._overall_score = overall_score
-
     def clear(self):
         self._result = None
         self._metrics = []
-        self._overall_score = 0.0
         self._latest_project_export_root = None
 
     @property
@@ -124,7 +119,6 @@ class SimulationExportPanel(QWidget):
             result,
             selected_types,
             self._metrics,
-            self._overall_score,
         )
 
         if execution.errors:
@@ -165,7 +159,6 @@ class SimulationExportPanel(QWidget):
             result,
             selected_types,
             self._metrics,
-            self._overall_score,
         )
         self._latest_project_export_root = execution.export_root
         return execution

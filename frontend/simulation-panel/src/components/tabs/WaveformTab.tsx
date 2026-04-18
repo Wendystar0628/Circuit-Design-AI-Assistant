@@ -65,7 +65,7 @@ export function WaveformTab({ state, bridge }: WaveformTabProps) {
     <>
       <button
         type="button"
-        className="chart-header-button"
+        className="sim-compact-button"
         disabled={!waveform.has_waveform}
         onClick={() => bridge?.resetWaveformViewport()}
       >
@@ -73,7 +73,7 @@ export function WaveformTab({ state, bridge }: WaveformTabProps) {
       </button>
       <button
         type="button"
-        className="chart-header-button"
+        className="sim-compact-button"
         disabled={!waveform.has_waveform}
         onClick={() => bridge?.setCursorVisible('a', !waveform.cursor_a_visible)}
       >
@@ -81,7 +81,7 @@ export function WaveformTab({ state, bridge }: WaveformTabProps) {
       </button>
       <button
         type="button"
-        className="chart-header-button"
+        className="sim-compact-button"
         disabled={!waveform.has_waveform}
         onClick={() => bridge?.setCursorVisible('b', !waveform.cursor_b_visible)}
       >
@@ -89,7 +89,7 @@ export function WaveformTab({ state, bridge }: WaveformTabProps) {
       </button>
       <button
         type="button"
-        className="chart-header-button"
+        className="sim-compact-button"
         disabled={!waveform.signal_catalog.length}
         onClick={() => bridge?.clearAllSignals()}
       >
@@ -97,7 +97,7 @@ export function WaveformTab({ state, bridge }: WaveformTabProps) {
       </button>
       <button
         type="button"
-        className="chart-header-button chart-header-button--accent"
+        className="sim-compact-button sim-compact-button--accent"
         disabled={!waveform.can_add_to_conversation}
         onClick={() => bridge?.addToConversation('waveform')}
       >

@@ -44,8 +44,6 @@ class SimulationFrontendStateSerializer:
         current_result: Optional[SimulationResult] = None,
         current_result_path: str = "",
         metrics: Optional[Sequence[DisplayMetric]] = None,
-        overall_score: float = 0.0,
-        has_goals: bool = False,
         simulation_status: Any = "idle",
         status_message: str = "",
         error_message: str = "",
@@ -220,9 +218,7 @@ class SimulationFrontendStateSerializer:
             },
             "metrics_view": {
                 "items": normalized_metrics,
-                "total": len(normalized_metrics),
-                "overall_score": float(overall_score or 0.0),
-                "has_goals": bool(has_goals),
+                "source_file_path": self._normalize_source_file_path(result),
                 "can_add_to_conversation": has_result,
             },
             "analysis_chart_view": analysis_chart_view,
@@ -441,13 +437,8 @@ class SimulationFrontendStateSerializer:
             "display_name": metric.display_name,
             "value": metric.value,
             "unit": metric.unit,
-            "target": metric.target,
-            "is_met": metric.is_met,
-            "trend": metric.trend,
-            "category": metric.category,
             "raw_value": metric.raw_value,
-            "confidence": metric.confidence,
-            "error_message": metric.error_message,
+            "target": metric.target,
         }
 
     def serialize_result(
@@ -591,6 +582,16 @@ class SimulationFrontendStateSerializer:
 
     def _normalize_result_path(self, value: str) -> str:
         return str(value or "").replace("\\", "/").lower()
+
+    def _normalize_source_file_path(self, result: Optional[SimulationResult]) -> str:
+        """Return the canonicalised circuit-source path used as the key
+        in ``MetricTargetService``. The frontend echoes this exact
+        string back when flushing the target-value table so both sides
+        agree on which file the targets belong to.
+        """
+        if result is None:
+            return ""
+        return str(getattr(result, "file_path", "") or "").replace("\\", "/")
 
 
 __all__ = ["SimulationFrontendStateSerializer"]

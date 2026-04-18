@@ -7,13 +7,11 @@ interface SchematicPropertyPanelProps {
   fieldDrafts: Record<string, string>
   pendingFieldRequestIds: Record<string, string>
   staleDraftNotice: string
-  canFit: boolean
-  onFit(): void
   onDraftChange(fieldKey: string, nextValue: string): void
   onSubmitField(field: SchematicEditableFieldState): void
 }
 
-export function SchematicPropertyPanel({ component, schematicWriteResult, fieldDrafts, pendingFieldRequestIds, staleDraftNotice, canFit, onFit, onDraftChange, onSubmitField }: SchematicPropertyPanelProps) {
+export function SchematicPropertyPanel({ component, schematicWriteResult, fieldDrafts, pendingFieldRequestIds, staleDraftNotice, onDraftChange, onSubmitField }: SchematicPropertyPanelProps) {
   const visibleFields = component ? component.editable_fields.filter((field) => field.field_key === 'value') : []
   const hasPendingWrite = component !== null && Object.keys(pendingFieldRequestIds).length > 0
   const componentTypeLabel = component ? getSchematicComponentTypeLabel(component) : '--'
@@ -38,19 +36,6 @@ export function SchematicPropertyPanel({ component, schematicWriteResult, fieldD
 
   return (
     <div className="content-card schematic-property-panel">
-      <div className="schematic-property-panel__section">
-        <div className="schematic-property-panel__toolbar">
-          <button
-            type="button"
-            className="toolbar-button schematic-property-panel__toolbar-button"
-            disabled={!canFit}
-            onClick={onFit}
-          >
-            Fit
-          </button>
-        </div>
-      </div>
-
       {component ? (
         <>
           <div className="schematic-property-panel__section">

@@ -43,7 +43,7 @@ export function ChartTab({ state, bridge }: ChartTabProps) {
     <>
       <button
         type="button"
-        className="chart-header-button"
+        className="sim-compact-button"
         disabled={!chart.has_chart}
         onClick={() => bridge?.resetChartViewport()}
       >
@@ -51,7 +51,7 @@ export function ChartTab({ state, bridge }: ChartTabProps) {
       </button>
       <button
         type="button"
-        className="chart-header-button"
+        className="sim-compact-button"
         disabled={!chart.has_chart}
         onClick={() => bridge?.setChartMeasurementEnabled(!chart.measurement_enabled)}
       >
@@ -59,7 +59,7 @@ export function ChartTab({ state, bridge }: ChartTabProps) {
       </button>
       <button
         type="button"
-        className="chart-header-button"
+        className="sim-compact-button"
         disabled={!canToggleMeasurementPoint}
         onClick={() => bridge?.setChartMeasurementPointEnabled(!chart.measurement_point.enabled)}
       >
@@ -67,7 +67,7 @@ export function ChartTab({ state, bridge }: ChartTabProps) {
       </button>
       <button
         type="button"
-        className="chart-header-button"
+        className="sim-compact-button"
         disabled={!chart.available_series.length}
         onClick={() => bridge?.clearAllChartSeries()}
       >
@@ -75,7 +75,7 @@ export function ChartTab({ state, bridge }: ChartTabProps) {
       </button>
       <button
         type="button"
-        className="chart-header-button chart-header-button--accent"
+        className="sim-compact-button sim-compact-button--accent"
         disabled={!chart.can_add_to_conversation}
         onClick={() => bridge?.addToConversation('chart')}
       >

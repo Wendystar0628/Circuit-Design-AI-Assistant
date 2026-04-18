@@ -18,8 +18,6 @@ from presentation.panels.simulation.simulation_view_model import (
     SimulationStatus,
     DisplayMetric,
 )
-from presentation.panels.simulation.metric_card import MetricCard
-from presentation.panels.simulation.metrics_panel import MetricsPanel
 from presentation.panels.simulation.analysis_chart_viewer import ChartViewer
 from presentation.panels.simulation.waveform_widget import WaveformWidget
 from presentation.panels.simulation.waveform_plot_types import WaveformMeasurement
@@ -37,8 +35,6 @@ __all__ = [
     "SimulationViewModel",
     "SimulationStatus",
     "DisplayMetric",
-    "MetricCard",
-    "MetricsPanel",
     "ChartViewer",
     "WaveformWidget",
     "WaveformMeasurement",

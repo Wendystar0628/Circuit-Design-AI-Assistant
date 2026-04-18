@@ -76,6 +76,7 @@ _COMPONENT_SYMBOL_KINDS: Dict[str, str] = {
     "I": "current_source",
     "Q": "bjt",
     "M": "mos",
+    "J": "jfet",
     "U": "opamp",
     "X": "subckt_block",
     "E": "controlled_source",
@@ -290,11 +291,15 @@ class SpiceParser:
           BSS123 resolve to the right schematic glyph.
         """
         variants: Dict[str, str] = {}
+        # Canonical device-type → variant tag. `NJF` / `PJF` are the
+        # SPICE standard type tokens for n-channel and p-channel JFETs.
         type_to_variant = {
             "NMOS": "nmos",
             "PMOS": "pmos",
             "NPN": "npn",
             "PNP": "pnp",
+            "NJF": "njf",
+            "PJF": "pjf",
         }
         for raw_line in lines:
             stripped = raw_line.strip()
@@ -307,6 +312,19 @@ class SpiceParser:
             if len(pieces) < 3:
                 continue
             model_name = pieces[1]
+            # SPICE "AKO" (A Kind Of) inheritance lets one model extend
+            # another: `.model NEW ako:BASE TYPE (override params)`. The
+            # real device-type token therefore lives in pieces[3] when
+            # pieces[2] starts with `ako:`; if the TYPE field is missing
+            # (`.model NEW ako:BASE (...)`) we currently leave NEW
+            # unresolved — `standard.bjt` always includes the explicit
+            # type, and any unresolved AKO simply falls back to the
+            # neutral `"bjt"` / `"mos"` / `"jfet"` symbol.
+            type_piece_index = 2
+            if pieces[type_piece_index].lower().startswith("ako:"):
+                if len(pieces) <= 3:
+                    continue
+                type_piece_index = 3
             # Split on "(" so we canonicalize three spellings of the type
             # token in one step:
             #   "PMOS"          -> ["PMOS"]
@@ -314,7 +332,7 @@ class SpiceParser:
             #   "PMOS(LEVEL=1)" -> ["PMOS", "LEVEL=1)"]
             # The first element is always the pure type name, which is
             # what we want to look up in `type_to_variant`.
-            raw_type = pieces[2].split("(", 1)[0].upper()
+            raw_type = pieces[type_piece_index].split("(", 1)[0].upper()
             variant = type_to_variant.get(raw_type)
             if variant is not None:
                 variants[model_name] = variant
@@ -324,11 +342,11 @@ class SpiceParser:
                 # only when the parameter list contains the `pchan`
                 # keyword (as a whole word). Case-insensitive to tolerate
                 # `PCHAN`, `Pchan`, etc. Inspect the rest of the line
-                # (`pieces[2:]`) because `pchan` may appear on the same
-                # line as the type token or on a continuation — but
-                # continuation lines are already ignored so we only see
-                # the header here.
-                rest_text = " ".join(pieces[2:]).lower()
+                # (`pieces[type_piece_index:]`) because `pchan` may
+                # appear on the same line as the type token or on a
+                # continuation — but continuation lines are already
+                # ignored so we only see the header here.
+                rest_text = " ".join(pieces[type_piece_index:]).lower()
                 if re.search(r"\bpchan\b", rest_text):
                     variants[model_name] = "pmos"
                 else:
@@ -416,6 +434,36 @@ class SpiceParser:
                 "symbol_variant": variant,
                 "polarity_marks": {},
                 "port_order": ["collector", "base", "emitter"],
+                "render_hints": {"orientation": "right"},
+                "model_name": model_name,
+            }
+
+        if prefix == "J":
+            # SPICE JFET card: `Jxxx D G S <model>` (3 nodes + model name).
+            # Electrode order is drain / gate / source, identical to the
+            # first three positions of a MOSFET but without the body
+            # terminal, which is why we can reuse the same schematic
+            # layout primitives downstream.
+            node_tokens = tokens[1:4]
+            node_names = [token.text for token in node_tokens]
+            pin_roles = {
+                node_names[0]: "drain",
+                node_names[1]: "gate",
+                node_names[2]: "source",
+            } if len(node_names) == 3 else {}
+            model_name = tokens[4].text if len(tokens) > 4 else ""
+            # Resolve the JFET channel variant from the .model lookup.
+            # Falls back to the generic "jfet" marker when no .model
+            # card was found so the renderer can pick a neutral glyph.
+            variant = model_variants.get(model_name, "")
+            if variant not in ("njf", "pjf"):
+                variant = "jfet"
+            return {
+                "node_tokens": node_tokens,
+                "pin_roles": pin_roles,
+                "symbol_variant": variant,
+                "polarity_marks": {},
+                "port_order": ["drain", "gate", "source"],
                 "render_hints": {"orientation": "right"},
                 "model_name": model_name,
             }

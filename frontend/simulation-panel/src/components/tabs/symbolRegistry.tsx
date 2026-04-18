@@ -105,6 +105,8 @@ const schematicComponentTypeLabels: Record<string, string> = {
   bjt: '三极管',
   m: 'MOS 管',
   mos: 'MOS 管',
+  j: '结型场效应管',
+  jfet: '结型场效应管',
   unknown: '未知元件',
 }
 
@@ -461,6 +463,33 @@ function resolveBjtVariant(component: SchematicComponentState): BjtChannelVarian
 }
 
 /**
+ * JFET channel variant (n-channel / p-channel). Parser fills this
+ * from the `.model` lookup (`NJF` / `PJF`); any other value (including
+ * the neutral fallback `"jfet"`) is rendered with the NJF silhouette
+ * because NJF is the more common case and the schematic is still
+ * correct — only the gate-arrow direction differs between variants.
+ */
+type JfetChannelVariant = 'njf' | 'pjf'
+
+function resolveJfetVariant(component: SchematicComponentState): JfetChannelVariant {
+  return component.symbol_variant === 'pjf' ? 'pjf' : 'njf'
+}
+
+/**
+ * Classify a JFET pin by its semantic electrode role, matching
+ * `resolveJfetPinAnchor`'s canonical order. Pin 0 (or any pin whose
+ * role is `input` / `gate`) is the gate; pin 1 the drain; pin 2 the
+ * source. The fallback returns `gate` rather than dropping the pin
+ * so an unexpected extra pin still emits a terminal lead.
+ */
+function classifyJfetPin(pin: SchematicPinState, index: number): 'gate' | 'drain' | 'source' {
+  if (pin.role === 'input' || pin.role === 'gate' || index === 1) return 'gate'
+  if (index === 0) return 'drain'
+  if (index === 2) return 'source'
+  return 'gate'
+}
+
+/**
  * Compute the three vertices of a solid-filled BJT emitter arrow
  * positioned along the emitter slant from the base bar to the emitter
  * terminal. For NPN the tip sits at the emitter terminal (pointing
@@ -647,6 +676,97 @@ function renderMos({ component, appearance }: RenderSchematicSymbolProps): React
   )
 }
 
+/**
+ * Compute the three vertices of the JFET gate arrow. Unlike the MOSFET
+ * (where the gate is capacitively coupled through an insulator and
+ * carries no arrow), a JFET's gate is a P-N junction with the channel,
+ * and the gate-side arrowhead is what distinguishes n-channel (NJF)
+ * from p-channel (PJF) in the textbook symbol:
+ *
+ *   - **NJF**: gate is P-type, channel is N-type → arrow points
+ *     from gate **into** the channel (rightward, toward the channel
+ *     bar).
+ *   - **PJF**: gate is N-type, channel is P-type → arrow points
+ *     from the channel **out toward** the gate (leftward).
+ *
+ * The arrow sits on the gate lead just before it meets the channel so
+ * the junction indication is visible regardless of gate-lead length.
+ */
+function jfetGateArrowPoints(channelX: number, cy: number, variant: JfetChannelVariant): string {
+  const halfHeight = 4
+  const baseOffset = 10
+  if (variant === 'njf') {
+    // Tip on the channel side (inward); base further left along the
+    // gate lead (outward).
+    const tipX = channelX - 2
+    const baseX = tipX - baseOffset
+    return `${tipX},${cy} ${baseX},${cy - halfHeight} ${baseX},${cy + halfHeight}`
+  }
+  // PJF: tip outward (toward gate pin), base nearer the channel.
+  const baseX = channelX - 2
+  const tipX = baseX - baseOffset
+  return `${tipX},${cy} ${baseX},${cy - halfHeight} ${baseX},${cy + halfHeight}`
+}
+
+function renderJfet({ component, appearance }: RenderSchematicSymbolProps): ReactNode {
+  // Textbook 3-terminal JFET layout: a vertical channel bar with a
+  // horizontal gate lead entering from the left and making direct
+  // (non-capacitive) contact with the channel — hence no insulator
+  // gap, which is how the schematic visually distinguishes a JFET
+  // from a MOSFET. Drain / source stubs emerge from the channel top
+  // and bottom, mirroring the MOS layout so the two families are
+  // visually consistent while the arrow on the gate lead encodes
+  // NJF vs PJF. Per-pin L-shaped leads connect each pin anchor to
+  // its electrode terminal so the terminal dots are never detached.
+  const variant = resolveJfetVariant(component)
+  const cy = TRANSISTOR_HEIGHT / 2
+  const channelX = TRANSISTOR_WIDTH * 0.58
+  const channelTop = 16
+  const channelBottom = TRANSISTOR_HEIGHT - 16
+  const drainStubY = 20
+  const sourceStubY = TRANSISTOR_HEIGHT - 20
+  const stubEndX = channelX + 18
+  const gateTerminal = { x: 16, y: cy }
+  const drainTerminal = { x: stubEndX, y: drainStubY }
+  const sourceTerminal = { x: stubEndX, y: sourceStubY }
+  const leads = component.pins.map((pin, index) => {
+    const anchor = resolveJfetPinAnchor(component, pin, index)
+    const role = classifyJfetPin(pin, index)
+    const terminal =
+      role === 'gate' ? gateTerminal : role === 'drain' ? drainTerminal : sourceTerminal
+    return (
+      <polyline
+        key={`lead-${pin.name}`}
+        points={leadPathPoints(anchor, terminal)}
+        fill="none"
+        stroke={appearance.stroke}
+        strokeWidth={2.2}
+      />
+    )
+  })
+  return (
+    <g>
+      {leads}
+      {/* Gate lead meets the channel directly — no insulator gap */}
+      <line x1={gateTerminal.x} y1={cy} x2={channelX} y2={cy} stroke={appearance.stroke} strokeWidth={2.2} />
+      {/* Vertical channel bar */}
+      <line x1={channelX} y1={channelTop} x2={channelX} y2={channelBottom} stroke={appearance.stroke} strokeWidth={2.2} />
+      {/* Drain stub (top) */}
+      <line x1={channelX} y1={drainStubY} x2={stubEndX} y2={drainStubY} stroke={appearance.stroke} strokeWidth={2.2} />
+      {/* Source stub (bottom) */}
+      <line x1={channelX} y1={sourceStubY} x2={stubEndX} y2={sourceStubY} stroke={appearance.stroke} strokeWidth={2.2} />
+      {/* Channel-type arrow on the gate lead */}
+      <polygon
+        points={jfetGateArrowPoints(channelX, cy, variant)}
+        fill={appearance.stroke}
+        stroke={appearance.stroke}
+        strokeWidth={1}
+        strokeLinejoin="round"
+      />
+    </g>
+  )
+}
+
 function renderUnknown({ width, height, appearance }: RenderSchematicSymbolProps): ReactNode {
   return (
     <g>
@@ -699,6 +819,34 @@ function resolveBjtPinAnchor(component: SchematicComponentState, pin: SchematicP
     return { x: TRANSISTOR_WIDTH, y: 12, side: 'right' }
   }
   return { x: TRANSISTOR_WIDTH, y: TRANSISTOR_HEIGHT - 12, side: 'right' }
+}
+
+/**
+ * Pin-anchor resolver for JFETs. The SPICE `J` card orders nodes as
+ * `drain gate source`, so pin[0] lands on the top-right (drain),
+ * pin[1] on the left (gate), and pin[2] on the bottom-right (source).
+ * Unlike MOSFETs the D/S anchors are not mirrored between NJF and
+ * PJF — JFETs are electrically symmetric between drain and source
+ * and the channel-type distinction is carried by the gate arrow, so
+ * swapping the pin sides per variant would only confuse layout.
+ */
+function resolveJfetPinAnchor(component: SchematicComponentState, pin: SchematicPinState, index: number): SchematicSymbolAnchor {
+  const sideHint = component.port_side_hints[pin.name]
+  if (isSide(sideHint)) {
+    const placement = resolveSideOrder(component, sideHint, index)
+    return distributeAlongSide(sideHint, placement.order, placement.total, TRANSISTOR_WIDTH, TRANSISTOR_HEIGHT)
+  }
+  if (pin.role === 'gate' || pin.role === 'input' || index === 1) {
+    return { x: 0, y: TRANSISTOR_HEIGHT / 2, side: 'left' }
+  }
+  if (index === 0) {
+    return { x: TRANSISTOR_WIDTH, y: 12, side: 'right' }
+  }
+  if (index === 2) {
+    return { x: TRANSISTOR_WIDTH, y: TRANSISTOR_HEIGHT - 12, side: 'right' }
+  }
+  // Fallback for any unexpected extra pin.
+  return { x: TRANSISTOR_WIDTH / 2, y: TRANSISTOR_HEIGHT, side: 'bottom' }
 }
 
 function resolveMosPinAnchor(component: SchematicComponentState, pin: SchematicPinState, index: number): SchematicSymbolAnchor {
@@ -831,6 +979,13 @@ const symbolDefinitions: Record<string, SchematicSymbolDefinition> = {
       return resolveMosPinAnchor(component, pin, index)
     },
     render: renderMos,
+  },
+  jfet: {
+    getDimensions: () => transistorDimensions,
+    getPinAnchor(component, pin, index) {
+      return resolveJfetPinAnchor(component, pin, index)
+    },
+    render: renderJfet,
   },
   unknown: {
     getDimensions: () => blockDimensions,

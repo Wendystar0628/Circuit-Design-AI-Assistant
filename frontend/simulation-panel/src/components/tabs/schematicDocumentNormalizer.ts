@@ -54,6 +54,7 @@ function resolveComponentRole(component: SchematicComponentState): SemanticCompo
       return 'passive'
     case 'bjt':
     case 'mos':
+    case 'jfet':
       return 'active'
     case 'opamp':
       return 'amplifier'

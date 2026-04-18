@@ -963,11 +963,21 @@
   font-weight: 700;
   line-height: 1;
   white-space: nowrap;
+  transition: transform 90ms ease-out, background-color 120ms ease-out, border-color 120ms ease-out;
+  transform-origin: center;
+}
+
+/* Press-down rebound: only trigger when the button is actually
+   actionable (i.e. not disabled) so the animation doubles as a
+   "successfully pressed" affordance. */
+.sim-compact-button:not(:disabled):active {
+  transform: scale(0.94);
 }
 
 .sim-compact-button:disabled {
   color: var(--sim-text-tertiary);
   background: var(--sim-surface-muted);
+  cursor: not-allowed;
 }
 
 .sim-compact-button--accent {
@@ -984,22 +994,28 @@
    = read-only current value, second row = editable target. The two
    overlay buttons (`确认修改` + `添加至对话`) float in the panel's
    top-right corner so the content area isn't carved up by a toolbar.
-   `.tab-surface--metrics` provides the positioning context for the
-   overlay and leaves room for the buttons via extra top padding.
+   `.tab-surface--metrics` only provides the positioning context; the
+   overlay is fully absolute so the table starts flush against the
+   tab strip with no extra vertical gap.
    --------------------------------------------------------------- */
 .tab-surface--metrics {
   position: relative;
-  padding-top: calc(var(--sim-gap-md) + 28px);
 }
 
 .metrics-overlay {
   position: absolute;
-  top: 12px;
-  right: 12px;
+  top: 4px;
+  right: 4px;
   z-index: 3;
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
+  pointer-events: none;
+}
+
+.metrics-overlay > .sim-compact-button {
+  pointer-events: auto;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
 }
 
 .metrics-matrix-scroll {

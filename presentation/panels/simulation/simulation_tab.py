@@ -45,7 +45,10 @@ from domain.simulation.service.simulation_result_repository import (
 )
 from presentation.panels.simulation.simulation_backend_runtime import SimulationBackendRuntime
 from presentation.panels.simulation.simulation_conversation_attachment_coordinator import SimulationConversationAttachmentCoordinator
-from presentation.panels.simulation.simulation_frontend_state_serializer import SimulationFrontendStateSerializer
+from presentation.panels.simulation.simulation_frontend_state_serializer import (
+    ALL_TAB_IDS,
+    SimulationFrontendStateSerializer,
+)
 from presentation.panels.simulation.simulation_web_bridge import SimulationWebBridge
 from presentation.panels.simulation.simulation_web_host import SimulationWebHost
 from resources.theme import (
@@ -234,18 +237,17 @@ class SimulationTab(QWidget):
         return str(tab_id or "metrics")
 
     def _is_allowed_frontend_tab(self, tab_id: str) -> bool:
-        return tab_id in {
-            "metrics",
-            "schematic",
-            "chart",
-            "waveform",
-            "analysis_info",
-            "raw_data",
-            "output_log",
-            "export",
-            "history",
-            "op_result",
-        }
+        """Membership check against the authoritative tab catalogue.
+
+        The previous implementation maintained a hand-rolled literal
+        set that duplicated the serializer's `_BASE_TABS` + conditional
+        append list; adding a new tab required editing three separate
+        places. The single source of truth now lives in
+        :data:`ALL_TAB_IDS`, so every acceptance predicate — here, the
+        `available_tabs` serialization, and the tab-bar chip order —
+        reads the same catalogue.
+        """
+        return tab_id in ALL_TAB_IDS
 
     def _set_active_frontend_tab(self, tab_id: str) -> bool:
         normalized_tab_id = self._normalize_frontend_tab_id(tab_id)

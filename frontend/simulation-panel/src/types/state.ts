@@ -1,14 +1,48 @@
-export type SimulationTabId =
-  | 'metrics'
-  | 'schematic'
-  | 'chart'
-  | 'waveform'
-  | 'analysis_info'
-  | 'raw_data'
-  | 'output_log'
-  | 'export'
-  | 'history'
-  | 'op_result'
+/**
+ * Authoritative, single-source-of-truth ordering for every tab id
+ * the simulation panel can ever show.
+ *
+ * The order here defines the left-to-right chip order in
+ * {@link SimulationTabBar} and the default {@link DEFAULT_AVAILABLE_TABS}.
+ * `SimulationTabId` is *derived* from this tuple — adding a new tab
+ * is a single-line change, and the TypeScript compiler then enforces
+ * exhaustiveness in `TAB_LABELS`, `TAB_COMPONENT_MAP`, and every
+ * other `Record<SimulationTabId, …>` keyed table.
+ */
+export const SIMULATION_TAB_IDS = [
+  'circuit_selection',
+  'metrics',
+  'schematic',
+  'chart',
+  'waveform',
+  'analysis_info',
+  'raw_data',
+  'output_log',
+  'export',
+  'history',
+  'op_result',
+] as const
+
+export type SimulationTabId = (typeof SIMULATION_TAB_IDS)[number]
+
+/**
+ * Tab ids whose visibility is *conditional* on backend runtime state
+ * (project open / op-result availability) rather than on the tab
+ * catalogue. They are excluded from the pre-bridge default but still
+ * live in {@link SIMULATION_TAB_IDS} so the type system knows about
+ * them.
+ */
+const CONDITIONAL_TAB_IDS = new Set<SimulationTabId>(['history', 'op_result'])
+
+/**
+ * Pre-bridge / offline default for `surface_tabs.available_tabs`.
+ * Derived from {@link SIMULATION_TAB_IDS} minus conditional entries
+ * so the ordering stays in lock-step with the authoritative tuple
+ * without a second hand-written array.
+ */
+export const DEFAULT_AVAILABLE_TABS: SimulationTabId[] = SIMULATION_TAB_IDS.filter(
+  (id) => !CONDITIONAL_TAB_IDS.has(id),
+)
 
 export interface SimulationResultSummary {
   has_result: boolean
@@ -549,7 +583,7 @@ export const EMPTY_SIMULATION_STATE: SimulationMainState = {
   },
   surface_tabs: {
     active_tab: 'metrics',
-    available_tabs: ['metrics', 'schematic', 'chart', 'waveform', 'analysis_info', 'raw_data', 'output_log', 'export'],
+    available_tabs: DEFAULT_AVAILABLE_TABS,
     has_history: false,
     has_op_result: false,
   },

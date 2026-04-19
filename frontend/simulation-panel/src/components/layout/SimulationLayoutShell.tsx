@@ -3,6 +3,20 @@ import type { ReactNode } from 'react'
 import type { SimulationMainState, SimulationTabId } from '../../types/state'
 import { SimulationTabBar } from './SimulationTabBar'
 
+/**
+ * Tabs that render their own browsable content even when the
+ * simulation runtime is empty — they are *not* downstream consumers
+ * of `current_result` and therefore must *not* be occluded by the
+ * generic "暂无仿真结果" empty-state hint.
+ *
+ * This set is the single source of truth for the occlusion rule.
+ * Adding a new self-contained tab is a one-line append here; the
+ * previous design leaked a hard-coded `activeTab !== 'history'`
+ * branch into the render predicate, which would rot the moment a
+ * second such tab existed.
+ */
+const SELF_CONTAINED_TABS = new Set<SimulationTabId>(['history', 'circuit_selection'])
+
 interface SimulationLayoutShellProps {
   state: SimulationMainState
   bridgeConnected: boolean
@@ -21,7 +35,7 @@ export function SimulationLayoutShell({
   const availableTabs = state.surface_tabs.available_tabs
   const hasStatusMessage = Boolean(runtime.status_message)
   const hasError = Boolean(runtime.error_message)
-  const shouldShowEmptyHint = runtime.is_empty && activeTab !== 'history'
+  const shouldShowEmptyHint = runtime.is_empty && !SELF_CONTAINED_TABS.has(activeTab)
   const statusToneClassName = runtime.awaiting_confirmation ? 'surface-state-card--warning' : 'surface-state-card--info'
 
   return (

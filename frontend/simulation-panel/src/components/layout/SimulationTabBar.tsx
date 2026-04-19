@@ -7,6 +7,7 @@ interface SimulationTabBarProps {
 }
 
 const TAB_LABELS: Record<SimulationTabId, string> = {
+  circuit_selection: '电路选择',
   metrics: '指标',
   schematic: '电路',
   chart: '图表',

@@ -4,6 +4,8 @@ from typing import Any, Dict, List, Optional
 
 from PyQt6.QtCore import QObject, QJsonValue, pyqtSignal, pyqtSlot
 
+from presentation.panels.simulation.simulation_frontend_state_serializer import ALL_TAB_IDS
+
 
 class SimulationWebBridge(QObject):
     ready = pyqtSignal()
@@ -187,20 +189,18 @@ class SimulationWebBridge(QObject):
         self.text_clipboard_copy_requested.emit(str(text or ""))
 
     def _normalize_tab_id(self, tab_id: str) -> str:
+        """Normalise a JS-supplied tab id, falling back to ``metrics``.
+
+        The membership set is the authoritative
+        :data:`~presentation.panels.simulation.simulation_frontend_state_serializer.ALL_TAB_IDS`
+        tuple — this bridge deliberately refuses to maintain its own
+        tab catalogue. Prior to this collapse three independent sets
+        existed (``_BASE_TABS`` in the serializer, a literal set in
+        ``SimulationTab._is_allowed_frontend_tab``, and another here)
+        which made adding ``circuit_selection`` a three-place change.
+        """
         normalized = str(tab_id or "metrics").strip().lower()
-        allowed = {
-            "metrics",
-            "schematic",
-            "chart",
-            "waveform",
-            "analysis_info",
-            "raw_data",
-            "output_log",
-            "export",
-            "history",
-            "op_result",
-        }
-        return normalized if normalized in allowed else "metrics"
+        return normalized if normalized in ALL_TAB_IDS else "metrics"
 
     def _normalize_cursor_id(self, cursor_id: str) -> str:
         normalized = str(cursor_id or "a").strip().lower()

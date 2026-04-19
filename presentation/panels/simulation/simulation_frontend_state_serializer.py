@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from domain.simulation.data.op_result_data_builder import op_result_data_builder
 from domain.simulation.models.simulation_result import SimulationResult
@@ -9,17 +9,32 @@ from domain.simulation.service.simulation_result_repository import SimulationRes
 from presentation.panels.simulation.simulation_view_model import DisplayMetric
 
 
+#: Authoritative, single-source-of-truth ordering for every tab id
+#: the simulation panel can ever render. The frontend mirrors this
+#: tuple in `SIMULATION_TAB_IDS` (see
+#: ``frontend/simulation-panel/src/types/state.ts``); the two
+#: definitions must stay in lock-step and no third list of tab ids
+#: may exist anywhere in the codebase. Membership here is what
+#: :meth:`SimulationTab._is_allowed_frontend_tab` checks against,
+#: and the ordering here is what `surface_tabs.available_tabs` is
+#: built from — downstream consumers (tab bar chip order, empty-
+#: project defaults) never reorder.
+ALL_TAB_IDS: Tuple[str, ...] = (
+    "circuit_selection",
+    "metrics",
+    "schematic",
+    "chart",
+    "waveform",
+    "analysis_info",
+    "raw_data",
+    "output_log",
+    "export",
+    "history",
+    "op_result",
+)
+
+
 class SimulationFrontendStateSerializer:
-    _BASE_TABS = [
-        "metrics",
-        "schematic",
-        "chart",
-        "waveform",
-        "analysis_info",
-        "raw_data",
-        "output_log",
-        "export",
-    ]
     _EXPORT_TYPES = [
         "metrics",
         "charts",
@@ -60,11 +75,10 @@ class SimulationFrontendStateSerializer:
         normalized_metrics = [
             self.serialize_metric(metric) for metric in (metrics or []) if isinstance(metric, DisplayMetric)
         ]
-        available_tabs = list(self._BASE_TABS)
-        if project_root:
-            available_tabs.append("history")
-        if self._has_op_result(result):
-            available_tabs.append("op_result")
+        available_tabs = self._compute_available_tabs(
+            project_root=project_root,
+            has_op_result=self._has_op_result(result),
+        )
         status_phase = self._resolve_status_phase(simulation_status, awaiting_confirmation)
         normalized_active_tab = active_tab if active_tab in available_tabs else "metrics"
         normalized_result_path = self._normalize_result_path(current_result_path)
@@ -554,6 +568,46 @@ class SimulationFrontendStateSerializer:
             "can_add_to_conversation": bool(payload.get("is_available", False)),
         }
 
+    def _compute_available_tabs(
+        self,
+        *,
+        project_root: str,
+        has_op_result: bool,
+    ) -> List[str]:
+        """Filter :data:`ALL_TAB_IDS` by per-tab visibility gates.
+
+        Ordering is inherited from the authoritative tuple — tabs
+        whose visibility depends on backend runtime state (``history``
+        needs a project; ``op_result`` needs a SPICE ``.op`` section)
+        are skipped, but their *slot* in the overall order is
+        preserved. This replaces the previous ``_BASE_TABS`` +
+        ``append("history")`` + ``append("op_result")`` design which
+        forced conditional tabs to sit at the tail regardless of
+        intended chip order, and which duplicated the tab catalogue
+        in a second list local to the serializer.
+        """
+        return [
+            tab_id for tab_id in ALL_TAB_IDS
+            if self._tab_is_visible(
+                tab_id,
+                project_root=project_root,
+                has_op_result=has_op_result,
+            )
+        ]
+
+    @staticmethod
+    def _tab_is_visible(
+        tab_id: str,
+        *,
+        project_root: str,
+        has_op_result: bool,
+    ) -> bool:
+        if tab_id == "history":
+            return bool(project_root)
+        if tab_id == "op_result":
+            return bool(has_op_result)
+        return True
+
     def _resolve_status_phase(self, simulation_status: Any, awaiting_confirmation: bool) -> str:
         if awaiting_confirmation:
             return "awaiting_confirmation"
@@ -606,4 +660,4 @@ class SimulationFrontendStateSerializer:
         return str(getattr(result, "file_path", "") or "").replace("\\", "/")
 
 
-__all__ = ["SimulationFrontendStateSerializer"]
+__all__ = ["ALL_TAB_IDS", "SimulationFrontendStateSerializer"]

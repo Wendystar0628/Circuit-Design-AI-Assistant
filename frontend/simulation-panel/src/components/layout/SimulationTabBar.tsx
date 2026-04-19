@@ -16,7 +16,6 @@ const TAB_LABELS: Record<SimulationTabId, string> = {
   raw_data: '原始数据',
   output_log: '输出日志',
   export: '导出',
-  history: '历史结果',
   op_result: '工作点结果',
 }
 

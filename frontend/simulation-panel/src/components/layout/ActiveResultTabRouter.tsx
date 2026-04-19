@@ -6,7 +6,6 @@ import { AnalysisInfoTab } from '../tabs/AnalysisInfoTab'
 import { ChartTab } from '../tabs/ChartTab'
 import { CircuitSelectionTab } from '../tabs/CircuitSelectionTab'
 import { ExportTab } from '../tabs/ExportTab'
-import { HistoryResultsTab } from '../tabs/HistoryResultsTab'
 import { MetricsTab } from '../tabs/MetricsTab'
 import { OpResultTab } from '../tabs/OpResultTab'
 import { OutputLogTab } from '../tabs/OutputLogTab'
@@ -51,7 +50,6 @@ const TAB_COMPONENT_MAP: Record<SimulationTabId, TabRenderer> = {
   raw_data: () => null,
   output_log: ({ state, bridge }) => <OutputLogTab state={state} bridge={bridge} />,
   export: ({ state, bridge }) => <ExportTab state={state} bridge={bridge} />,
-  history: ({ state, bridge }) => <HistoryResultsTab state={state} bridge={bridge} />,
   op_result: ({ state, bridge }) => <OpResultTab state={state} bridge={bridge} />,
 }
 

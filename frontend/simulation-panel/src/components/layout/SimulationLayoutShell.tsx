@@ -11,11 +11,9 @@ import { SimulationTabBar } from './SimulationTabBar'
  *
  * This set is the single source of truth for the occlusion rule.
  * Adding a new self-contained tab is a one-line append here; the
- * previous design leaked a hard-coded `activeTab !== 'history'`
- * branch into the render predicate, which would rot the moment a
- * second such tab existed.
+ * render predicate must never grow ad-hoc one-off exceptions.
  */
-const SELF_CONTAINED_TABS = new Set<SimulationTabId>(['history', 'circuit_selection'])
+const SELF_CONTAINED_TABS = new Set<SimulationTabId>(['circuit_selection'])
 
 interface SimulationLayoutShellProps {
   state: SimulationMainState
@@ -36,6 +34,7 @@ export function SimulationLayoutShell({
   const hasStatusMessage = Boolean(runtime.status_message)
   const hasError = Boolean(runtime.error_message)
   const shouldShowEmptyHint = runtime.is_empty && !SELF_CONTAINED_TABS.has(activeTab)
+  const canOpenCircuitSelection = availableTabs.includes('circuit_selection')
   const statusToneClassName = runtime.awaiting_confirmation ? 'surface-state-card--warning' : 'surface-state-card--info'
 
   return (
@@ -71,10 +70,10 @@ export function SimulationLayoutShell({
                     <div className="muted-text">
                       {runtime.has_project ? '运行一次仿真后，当前 tab 会显示对应结果。' : '请先打开项目并运行仿真。'}
                     </div>
-                    {state.surface_tabs.has_history ? (
+                    {canOpenCircuitSelection ? (
                       <div className="surface-state-actions">
-                        <button type="button" className="toolbar-button" onClick={() => onTabSelect('history')}>
-                          转到历史结果
+                        <button type="button" className="sim-compact-button sim-compact-button--accent" onClick={() => onTabSelect('circuit_selection')}>
+                          转到电路选择
                         </button>
                       </div>
                     ) : null}

@@ -1,20 +1,17 @@
 """Contract tests for :class:`SimulationFrontendStateSerializer`.
 
-Step 11 collapsed the pre-flattened ``history_results=`` input into a
-single ``circuit_groups=`` entry point, with both the flat history-
-results view and the grouped circuit-selection view derived inside
-the serializer. These tests pin down the resulting wire contract so
-the two surfaces cannot drift independently:
+The simulation panel now exposes a single persisted-result browsing
+surface: ``circuit_selection_view``. These tests pin down the resulting
+wire contract so the deleted peer history tab cannot silently reappear:
 
-* One cache object feeds both views (no hidden second disk scan, no
-  caller-side pre-flattening).
-* The flat history ``items`` stay timestamp-descending across
-  circuits, matching the pre-Step-11 ordering.
+* One by-circuit cache object feeds the card grid directly.
+* ``history`` is absent from the payload's available tabs and no
+  ``history_results_view`` / ``has_history`` compatibility fields
+  remain.
 * The circuit-selection cards preserve group order, key ``is_current``
   off ``displayed_circuit_file`` with POSIX + case-fold normalisation,
-  and embed each group's newest summary as ``latest_result`` using
-  the exact same schema as the flat history row (the field-level
-  deduplication invariant from the plan).
+  and embed each group's newest summary as ``latest_result`` using the
+  single generic loadable-result schema.
 """
 
 from domain.simulation.service.simulation_result_repository import (
@@ -66,13 +63,7 @@ def _make_group(
 
 
 def _build_two_circuit_fixture():
-    """Two circuits, three runs total.
-
-    Group ``amp`` has two runs (newest first, per repository contract)
-    and ``amp``'s newest run is globally newer than ``filter``'s single
-    run — so the flat history must interleave groups purely by
-    timestamp, not by group identity.
-    """
+    """Two circuits, three runs total."""
     amp_new = _make_summary(
         bundle="simulation_results/amp/run_2026_04_19_12_00",
         circuit_file="circuits/amp.cir",
@@ -105,48 +96,39 @@ def _build_two_circuit_fixture():
     return groups, amp_new, amp_old, filter_mid
 
 
-def test_history_results_view_flattens_groups_newest_first():
-    """Flat view ordering is global timestamp-desc, independent of
-    group traversal order."""
-    groups, amp_new, amp_old, filter_mid = _build_two_circuit_fixture()
+def test_surface_tabs_do_not_expose_history_tab_or_flag():
+    groups, *_ = _build_two_circuit_fixture()
 
     payload = SimulationFrontendStateSerializer().serialize_main_state(
         project_root="/projects/demo",
         circuit_groups=groups,
     )
 
-    history_items = payload["history_results_view"]["items"]
-    assert [item["id"] for item in history_items] == [
-        amp_new.id,
-        filter_mid.id,
-        amp_old.id,
-    ]
-    assert payload["history_results_view"]["can_load"] is True
-    # No project_root => no history loads are meaningful.
-    empty_payload = SimulationFrontendStateSerializer().serialize_main_state(
-        circuit_groups=groups,
+    assert "history" not in payload["surface_tabs"]["available_tabs"]
+    assert "has_history" not in payload["surface_tabs"]
+    assert "history_results_view" not in payload
+
+
+def test_serialize_loadable_result_normalizes_result_path_and_current_match():
+    groups, amp_new, *_ = _build_two_circuit_fixture()
+    del groups
+
+    payload = SimulationFrontendStateSerializer().serialize_loadable_result(
+        amp_new,
+        current_result_path="simulation_results/amp/run_2026_04_19_12_00/result.json",
     )
-    assert empty_payload["history_results_view"]["can_load"] is False
 
-
-def test_history_row_is_current_matches_current_result_path_case_insensitively():
-    """``is_current`` on flat-view rows uses the same POSIX + lowercase
-    normalisation as the stored ``result_path`` — Windows-born
-    separators or case differences must still match the selection."""
-    groups, amp_new, _amp_old, _filter_mid = _build_two_circuit_fixture()
-
-    payload = SimulationFrontendStateSerializer().serialize_main_state(
-        project_root="/projects/demo",
-        circuit_groups=groups,
-        # Caller passed a Windows-style mixed-case path: must still
-        # resolve to the ``amp_new`` row as current.
-        current_result_path="Simulation_Results\\AMP\\run_2026_04_19_12_00\\result.json",
-    )
-    history_items = payload["history_results_view"]["items"]
-    current_rows = [item for item in history_items if item["is_current"]]
-    assert [row["id"] for row in current_rows] == [amp_new.id]
-    # The canonicalised path is echoed back to the frontend verbatim.
-    assert payload["history_results_view"]["selected_result_path"] == amp_new.result_path.lower()
+    assert payload == {
+        "id": amp_new.id,
+        "result_path": amp_new.result_path.lower(),
+        "file_path": "circuits/amp.cir",
+        "file_name": "amp.cir",
+        "analysis_type": "tran",
+        "success": True,
+        "timestamp": "2026-04-19T12:00:00",
+        "is_current": True,
+        "can_load": True,
+    }
 
 
 def test_circuit_selection_view_has_one_card_per_group_in_input_order():
@@ -196,40 +178,40 @@ def test_circuit_selection_view_is_current_uses_case_and_separator_insensitive_m
 
 def test_latest_result_shares_schema_with_history_row():
     """Field-level deduplication invariant: the latest-result card
-    payload is emitted by the same :meth:`serialize_history_item`
-    used for the flat history row, so the two surfaces share one
+    payload uses the single generic persisted-result load-target
     schema on the wire."""
     groups, amp_new, *_ = _build_two_circuit_fixture()
 
-    payload = SimulationFrontendStateSerializer().serialize_main_state(
+    serializer = SimulationFrontendStateSerializer()
+    payload = serializer.serialize_main_state(
         project_root="/projects/demo",
         circuit_groups=groups,
     )
 
-    history_row = next(
-        item for item in payload["history_results_view"]["items"]
-        if item["id"] == amp_new.id
+    loadable_result = serializer.serialize_loadable_result(
+        amp_new,
+        current_result_path=amp_new.result_path.lower(),
     )
     card_latest = payload["circuit_selection_view"]["items"][0]["latest_result"]
-    assert set(card_latest.keys()) == set(history_row.keys())
+    assert set(card_latest.keys()) == set(loadable_result.keys())
     # ``is_current`` is the one field whose value legitimately differs
     # (see the card-level rationale in
     # :meth:`serialize_circuit_selection_view`). Every other field
     # describes the bundle itself and must agree verbatim.
-    shared_keys = set(history_row.keys()) - {"is_current"}
+    shared_keys = set(loadable_result.keys()) - {"is_current"}
     for key in shared_keys:
-        assert card_latest[key] == history_row[key], key
+        assert card_latest[key] == loadable_result[key], key
 
 
 def test_empty_circuit_groups_produce_empty_views():
-    """No groups => both derived views are empty but well-formed."""
+    """No groups => the card grid is empty and no deleted history view returns."""
     payload = SimulationFrontendStateSerializer().serialize_main_state(
         project_root="/projects/demo",
         circuit_groups=[],
     )
-    assert payload["history_results_view"]["items"] == []
     assert payload["circuit_selection_view"]["items"] == []
     assert payload["circuit_selection_view"]["selected_circuit_file"] == ""
+    assert "history_results_view" not in payload
 
 
 def test_group_with_no_results_is_skipped_from_circuit_selection():
@@ -248,4 +230,4 @@ def test_group_with_no_results_is_skipped_from_circuit_selection():
         circuit_groups=groups,
     )
     assert payload["circuit_selection_view"]["items"] == []
-    assert payload["history_results_view"]["items"] == []
+    assert "history_results_view" not in payload

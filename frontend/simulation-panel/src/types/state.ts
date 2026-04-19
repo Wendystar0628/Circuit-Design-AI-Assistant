@@ -19,7 +19,6 @@ export const SIMULATION_TAB_IDS = [
   'raw_data',
   'output_log',
   'export',
-  'history',
   'op_result',
 ] as const
 
@@ -32,7 +31,7 @@ export type SimulationTabId = (typeof SIMULATION_TAB_IDS)[number]
  * live in {@link SIMULATION_TAB_IDS} so the type system knows about
  * them.
  */
-const CONDITIONAL_TAB_IDS = new Set<SimulationTabId>(['history', 'op_result'])
+const CONDITIONAL_TAB_IDS = new Set<SimulationTabId>(['op_result'])
 
 /**
  * Pre-bridge / offline default for `surface_tabs.available_tabs`.
@@ -82,7 +81,6 @@ export interface SimulationRuntimeState {
 export interface SurfaceTabsState {
   active_tab: SimulationTabId
   available_tabs: SimulationTabId[]
-  has_history: boolean
   has_op_result: boolean
 }
 
@@ -400,7 +398,7 @@ export interface ExportViewState {
   latest_project_export_root: string
 }
 
-export interface HistoryResultItemState {
+export interface LoadableResultState {
   id: string
   result_path: string
   file_path: string
@@ -412,21 +410,14 @@ export interface HistoryResultItemState {
   can_load: boolean
 }
 
-export interface HistoryResultsViewState {
-  items: HistoryResultItemState[]
-  selected_result_path: string
-  can_load: boolean
-}
-
 /**
  * One card in the circuit-selection grid.
  *
  * ``latest_result`` intentionally reuses the exact {@link
- * HistoryResultItemState} shape emitted by the history-tab row — the
- * backend produces both via the same ``serialize_history_item`` call
- * site, so the wire-level field-deduplication invariant is mirrored
- * here at the type level. Defining a parallel "latest result" shape
- * would re-introduce the drift the backend just eliminated.
+ * LoadableResultState} shape emitted by the backend's single persisted-
+ * result load target serializer. Defining a second, card-local "latest
+ * result" shape would re-introduce the drift this tab collapse is
+ * explicitly removing.
  *
  * Currency is a *circuit-level* predicate: ``is_current`` is true
  * iff this card's ``circuit_file`` matches the panel's currently-
@@ -441,7 +432,7 @@ export interface CircuitSelectionItemState {
   circuit_display_name: string
   run_count: number
   is_current: boolean
-  latest_result: HistoryResultItemState
+  latest_result: LoadableResultState
 }
 
 export interface CircuitSelectionViewState {
@@ -482,7 +473,6 @@ export interface SimulationMainState {
   analysis_info_view: AnalysisInfoViewState
   output_log_view: OutputLogViewState
   export_view: ExportViewState
-  history_results_view: HistoryResultsViewState
   circuit_selection_view: CircuitSelectionViewState
   op_result_view: OpResultViewState
 }
@@ -616,7 +606,6 @@ export const EMPTY_SIMULATION_STATE: SimulationMainState = {
   surface_tabs: {
     active_tab: 'metrics',
     available_tabs: DEFAULT_AVAILABLE_TABS,
-    has_history: false,
     has_op_result: false,
   },
   metrics_view: {
@@ -690,11 +679,6 @@ export const EMPTY_SIMULATION_STATE: SimulationMainState = {
     items: [],
     selected_directory: '',
     latest_project_export_root: '',
-  },
-  history_results_view: {
-    items: [],
-    selected_result_path: '',
-    can_load: false,
   },
   circuit_selection_view: {
     items: [],
@@ -1083,7 +1067,7 @@ function normalizeExportItems(value: unknown): ExportItemState[] {
   })
 }
 
-function normalizeHistoryResultItem(value: unknown): HistoryResultItemState {
+function normalizeLoadableResult(value: unknown): LoadableResultState {
   const record = asRecord(value)
   return {
     id: asString(record.id),
@@ -1098,13 +1082,6 @@ function normalizeHistoryResultItem(value: unknown): HistoryResultItemState {
   }
 }
 
-function normalizeHistoryResultItems(value: unknown): HistoryResultItemState[] {
-  if (!Array.isArray(value)) {
-    return []
-  }
-  return value.map(normalizeHistoryResultItem)
-}
-
 function normalizeCircuitSelectionItems(value: unknown): CircuitSelectionItemState[] {
   if (!Array.isArray(value)) {
     return []
@@ -1117,7 +1094,7 @@ function normalizeCircuitSelectionItems(value: unknown): CircuitSelectionItemSta
       circuit_display_name: asString(record.circuit_display_name),
       run_count: asNumber(record.run_count),
       is_current: asBoolean(record.is_current),
-      latest_result: normalizeHistoryResultItem(record.latest_result),
+      latest_result: normalizeLoadableResult(record.latest_result),
     }
   })
 }
@@ -1156,7 +1133,6 @@ export function normalizeSimulationState(input: unknown): SimulationMainState {
   const analysisInfoView = asRecord(root.analysis_info_view)
   const outputLogView = asRecord(root.output_log_view)
   const exportView = asRecord(root.export_view)
-  const historyResultsView = asRecord(root.history_results_view)
   const circuitSelectionView = asRecord(root.circuit_selection_view)
   const opResultView = asRecord(root.op_result_view)
   const runtime = simulationRuntime
@@ -1198,7 +1174,6 @@ export function normalizeSimulationState(input: unknown): SimulationMainState {
     surface_tabs: {
       active_tab: (asString(surfaceTabs.active_tab) as SimulationTabId) || EMPTY_SIMULATION_STATE.surface_tabs.active_tab,
       available_tabs: asStringArray(surfaceTabs.available_tabs) as SimulationTabId[],
-      has_history: asBoolean(surfaceTabs.has_history),
       has_op_result: asBoolean(surfaceTabs.has_op_result),
     },
     metrics_view: {
@@ -1272,11 +1247,6 @@ export function normalizeSimulationState(input: unknown): SimulationMainState {
       items: normalizeExportItems(exportView.items),
       selected_directory: asString(exportView.selected_directory),
       latest_project_export_root: asString(exportView.latest_project_export_root),
-    },
-    history_results_view: {
-      items: normalizeHistoryResultItems(historyResultsView.items),
-      selected_result_path: asString(historyResultsView.selected_result_path),
-      can_load: asBoolean(historyResultsView.can_load),
     },
     circuit_selection_view: {
       items: normalizeCircuitSelectionItems(circuitSelectionView.items),

@@ -47,7 +47,7 @@ export interface MetricTargetsUpdateRequestInput {
 export interface SimulationBridge {
   markReady(): void
   activateTab(tabId: SimulationTabId): void
-  loadHistoryResult(resultPath: string): void
+  loadResultByPath(resultPath: string): void
   updateSchematicValue(payload: SchematicValueUpdateRequestInput): void
   requestRawDataViewport(payload: RawDataViewportRequestInput): void
   copyRawDataRange(payload: RawDataCopyRequestInput): void

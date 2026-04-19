@@ -32,7 +32,6 @@ ALL_TAB_IDS: Tuple[str, ...] = (
     "raw_data",
     "output_log",
     "export",
-    "history",
     "op_result",
 )
 
@@ -79,20 +78,16 @@ class SimulationFrontendStateSerializer:
 
         ``circuit_groups`` is the single by-circuit aggregated index
         produced by :meth:`SimulationResultRepository.list_by_circuit`
-        and cached in ``SimulationTab._history_index_cache`` — both the
-        flat history-tab view and the grouped circuit-selection view
-        are derived from this one input, so the two surfaces cannot
-        drift. The pre-Step-11 ``history_results=`` entry point, which
-        forced the caller to pre-flatten the groups, has been removed;
-        its signature is now expressed end-to-end in terms of the
-        aggregated cache.
+        and cached in ``SimulationTab._circuit_result_index_cache``.
+        The circuit-selection view is derived directly from this one
+        input; callers no longer pre-shape or receive any parallel peer
+        browsing surface.
         """
         result = current_result if isinstance(current_result, SimulationResult) else None
         normalized_metrics = [
             self.serialize_metric(metric) for metric in (metrics or []) if isinstance(metric, DisplayMetric)
         ]
         available_tabs = self._compute_available_tabs(
-            project_root=project_root,
             has_op_result=self._has_op_result(result),
         )
         status_phase = self._resolve_status_phase(simulation_status, awaiting_confirmation)
@@ -100,10 +95,6 @@ class SimulationFrontendStateSerializer:
         normalized_result_path = self._normalize_result_path(current_result_path)
         normalized_groups = [
             group for group in (circuit_groups or []) if isinstance(group, CircuitResultGroup)
-        ]
-        normalized_history = [
-            self.serialize_history_item(item, current_result_path=normalized_result_path)
-            for item in self._flatten_history_groups(normalized_groups)
         ]
         circuit_selection_view = self.serialize_circuit_selection_view(
             circuit_groups=normalized_groups,
@@ -250,7 +241,6 @@ class SimulationFrontendStateSerializer:
             "surface_tabs": {
                 "active_tab": normalized_active_tab,
                 "available_tabs": available_tabs,
-                "has_history": bool(project_root),
                 "has_op_result": self._has_op_result(result),
             },
             "metrics_view": {
@@ -263,11 +253,6 @@ class SimulationFrontendStateSerializer:
             "analysis_info_view": self.serialize_analysis_info(result),
             "output_log_view": output_log_view,
             "export_view": export_view,
-            "history_results_view": {
-                "items": normalized_history,
-                "selected_result_path": normalized_result_path,
-                "can_load": bool(project_root),
-            },
             "circuit_selection_view": circuit_selection_view,
             "op_result_view": op_result_view,
         }
@@ -554,13 +539,14 @@ class SimulationFrontendStateSerializer:
             "parameters": dict(info.get("parameters") or {}),
         }
 
-    def serialize_history_item(
+    def serialize_loadable_result(
         self,
         item: SimulationResultSummary,
         *,
         current_result_path: str,
     ) -> Dict[str, Any]:
-        """Flatten a repository summary into the history-tab row schema.
+        """Serialize a repository summary into the generic persisted-
+        result load-target schema.
 
         Post-Step-8 the serializer consumes the typed
         :class:`SimulationResultSummary` directly — the old
@@ -595,8 +581,8 @@ class SimulationFrontendStateSerializer:
         One card per :class:`CircuitResultGroup` — the incoming sequence
         is the authoritative by-circuit aggregation produced by
         :meth:`SimulationResultRepository.list_by_circuit` and cached
-        in ``SimulationTab._history_index_cache``. No fallback to the
-        flat ``list`` tier, no per-card disk hit, no ``get_latest``.
+        in ``SimulationTab._circuit_result_index_cache``. No fallback
+        to a flat peer surface, no per-card disk hit, no ``get_latest``.
 
         The input is already group-newest-first (repository contract
         at :meth:`list_by_circuit`), so the card order here is a
@@ -616,11 +602,11 @@ class SimulationFrontendStateSerializer:
 
         Each card embeds the group's newest
         :class:`SimulationResultSummary` as ``latest_result`` via the
-        same :meth:`serialize_history_item` used by the history-results
-        tab — this is how the field-level deduplication invariant from
-        the plan is realised at the wire level: there is exactly one
-        ``result_path`` / ``analysis_type`` / ``timestamp`` / ``success``
-        shape in the payload, shared by both surfaces.
+        same :meth:`serialize_loadable_result` helper used everywhere a
+        persisted result is represented on the wire. This is how the
+        field-level deduplication invariant from the plan is realised:
+        there is exactly one ``result_path`` / ``analysis_type`` /
+        ``timestamp`` / ``success`` shape in the payload.
         """
         normalized_displayed = self._normalize_circuit_file(displayed_circuit_file)
         items: List[Dict[str, Any]] = []
@@ -639,11 +625,11 @@ class SimulationFrontendStateSerializer:
                     and normalized_circuit_file == normalized_displayed
                 ),
                 # ``current_result_path=""`` intentionally zeroes out
-                # the embedded history item's ``is_current`` field —
+                # the embedded load-target's ``is_current`` field —
                 # per-run currency is not meaningful inside a card
                 # whose currency is already decided at the circuit
                 # level above.
-                "latest_result": self.serialize_history_item(
+                "latest_result": self.serialize_loadable_result(
                     latest,
                     current_result_path="",
                 ),
@@ -652,29 +638,6 @@ class SimulationFrontendStateSerializer:
             "items": items,
             "selected_circuit_file": normalized_displayed,
         }
-
-    @staticmethod
-    def _flatten_history_groups(
-        groups: Sequence[CircuitResultGroup],
-    ) -> List[SimulationResultSummary]:
-        """Derive the flat time-descending history view from the
-        by-circuit aggregation.
-
-        Groups are already per-circuit timestamp-descending
-        (repository contract), so flattening + one global timestamp
-        sort yields the same ordering the deprecated
-        :meth:`SimulationResultRepository.list` used to hand out.
-        Living here, rather than on :class:`SimulationTab`, is what
-        lets the panel hand a single ``circuit_groups`` input to the
-        serializer and have both the flat history tab and the
-        circuit-selection tab derive from it without the caller
-        pre-shaping two parallel views.
-        """
-        flat: List[SimulationResultSummary] = []
-        for group in groups:
-            flat.extend(group.results)
-        flat.sort(key=lambda summary: summary.timestamp, reverse=True)
-        return flat
 
     @staticmethod
     def _derive_circuit_display_name(circuit_file: str) -> str:
@@ -702,26 +665,19 @@ class SimulationFrontendStateSerializer:
     def _compute_available_tabs(
         self,
         *,
-        project_root: str,
         has_op_result: bool,
     ) -> List[str]:
         """Filter :data:`ALL_TAB_IDS` by per-tab visibility gates.
 
         Ordering is inherited from the authoritative tuple — tabs
-        whose visibility depends on backend runtime state (``history``
-        needs a project; ``op_result`` needs a SPICE ``.op`` section)
-        are skipped, but their *slot* in the overall order is
-        preserved. This replaces the previous ``_BASE_TABS`` +
-        ``append("history")`` + ``append("op_result")`` design which
-        forced conditional tabs to sit at the tail regardless of
-        intended chip order, and which duplicated the tab catalogue
-        in a second list local to the serializer.
+        whose visibility depends on backend runtime state (currently
+        only ``op_result``) are skipped, but their *slot* in the
+        overall order is preserved.
         """
         return [
             tab_id for tab_id in ALL_TAB_IDS
             if self._tab_is_visible(
                 tab_id,
-                project_root=project_root,
                 has_op_result=has_op_result,
             )
         ]
@@ -730,11 +686,8 @@ class SimulationFrontendStateSerializer:
     def _tab_is_visible(
         tab_id: str,
         *,
-        project_root: str,
         has_op_result: bool,
     ) -> bool:
-        if tab_id == "history":
-            return bool(project_root)
         if tab_id == "op_result":
             return bool(has_op_result)
         return True

@@ -99,7 +99,7 @@ export function SchematicPropertyPanel({ component, schematicWriteResult, fieldD
                       <div className="muted-text">{isPending ? '正在提交修改...' : ''}</div>
                       <button
                         type="button"
-                        className="toolbar-button"
+                        className="sim-compact-button sim-compact-button--accent"
                         disabled={!field.editable || draftValue === field.raw_text || isPending}
                         onClick={() => onSubmitField(field)}
                       >

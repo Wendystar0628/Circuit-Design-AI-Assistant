@@ -17,7 +17,7 @@ export function OpResultTab({ state, bridge }: OpResultTabProps) {
         title="工作点结果"
         description="局部动作区 + 结构化结果表；条件性 peer tab。"
         actions={
-          <button type="button" className="toolbar-button" disabled={!opView.can_add_to_conversation} onClick={() => bridge?.addToConversation('op_result')}>
+          <button type="button" className="sim-compact-button sim-compact-button--accent" disabled={!opView.can_add_to_conversation} onClick={() => bridge?.addToConversation('op_result')}>
             添加至对话
           </button>
         }

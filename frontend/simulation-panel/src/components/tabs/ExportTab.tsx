@@ -19,7 +19,7 @@ export function ExportTab({ state, bridge }: ExportTabProps) {
         actions={
           <button
             type="button"
-            className="toolbar-button"
+            className="sim-compact-button sim-compact-button--accent"
             disabled={!exportView.can_export}
             onClick={() => bridge?.requestExport()}
           >
@@ -33,16 +33,16 @@ export function ExportTab({ state, bridge }: ExportTabProps) {
             <span className="field-row__label">导出目录</span>
             <input className="field-input" value={exportView.selected_directory || '未选择'} readOnly />
           </label>
-          <button type="button" className="toolbar-button-secondary" disabled={!exportView.has_result} onClick={() => bridge?.chooseExportDirectory()}>
+          <button type="button" className="sim-compact-button" disabled={!exportView.has_result} onClick={() => bridge?.chooseExportDirectory()}>
             选择目录
           </button>
-          <button type="button" className="toolbar-button-secondary" disabled={!exportView.selected_directory} onClick={() => bridge?.clearExportDirectory()}>
+          <button type="button" className="sim-compact-button" disabled={!exportView.selected_directory} onClick={() => bridge?.clearExportDirectory()}>
             清空目录
           </button>
-          <button type="button" className="toolbar-button-secondary" disabled={!enabledItems.length} onClick={() => bridge?.setAllExportTypesSelected(true)}>
+          <button type="button" className="sim-compact-button" disabled={!enabledItems.length} onClick={() => bridge?.setAllExportTypesSelected(true)}>
             全选
           </button>
-          <button type="button" className="toolbar-button-secondary" disabled={!selectedCount} onClick={() => bridge?.setAllExportTypesSelected(false)}>
+          <button type="button" className="sim-compact-button" disabled={!selectedCount} onClick={() => bridge?.setAllExportTypesSelected(false)}>
             清空选择
           </button>
         </div>

@@ -105,17 +105,17 @@ class SimulationTab(QWidget):
         #       payload carries ``origin == ui_editor``. Writes
         #       ``job_id`` + ``circuit_file``; ``result_path`` stays
         #       ``None`` until the corresponding COMPLETE arrives.
-        #   (b) ``load_history_result`` (entry for both user-picked
-        #       history tabs *and* project-open restore). Writes
+        #   (b) ``load_result_by_path`` (entry for both circuit-
+        #       selection picks and project-open restore). Writes
         #       ``result_path`` + ``circuit_file``; ``job_id`` is
         #       explicitly cleared to ``None`` — this is the
-        #       historical-load branch and carries no live job.
+        #       persisted-result load branch and carries no live job.
         #   (c) ``clear`` — all three back to ``None``.
         #
         # Critically, ``_on_sim_result_file_created`` does **not** write
         # to these fields; that callback's sole job is to refresh the
-        # history index so an agent-origin simulation shows up in the
-        # history list without ever replacing what the user is
+        # circuit-result index so an agent-origin simulation shows up in
+        # circuit selection without ever replacing what the user is
         # currently viewing.
         self._displayed_job_id: Optional[str] = None
         self._displayed_result_path: Optional[str] = None
@@ -131,18 +131,17 @@ class SimulationTab(QWidget):
         self._authoritative_raw_data_viewport = self._state_serializer.serialize_raw_data_viewport()
         self._raw_data_copy_sequence = 0
         self._authoritative_raw_data_copy_result = self._state_serializer.serialize_raw_data_copy_result()
-        # Step 9 — single by-circuit aggregated history-index cache.
-        # The shared data source feeding both the history-results tab
-        # and the Step 11 circuit-selection tab. Handed verbatim to
+        # Step 9 — single by-circuit aggregated result-index cache.
+        # The shared data source feeding the Step 11 circuit-selection
+        # tab. Handed verbatim to
         # :meth:`SimulationFrontendStateSerializer.serialize_main_state`
-        # via the ``circuit_groups=`` input, which derives the flat
-        # time-descending history view and the grouped card grid from
-        # this one cache — no consumer ever hits the repository on
-        # its own. Refreshed via one and only one disk-scan entry
-        # point (``_refresh_history_index``) hooked to the Step 9
+        # via the ``circuit_groups=`` input, which derives the grouped
+        # card grid from this one cache — no consumer ever hits the
+        # repository on its own. Refreshed via one and only one disk-
+        # scan entry point (``_refresh_circuit_result_index``) hooked to the Step 9
         # trigger set: project open/close, SIM_COMPLETE, SIM_ERROR,
         # and the file-watcher fallback.
-        self._history_index_cache: List[CircuitResultGroup] = []
+        self._circuit_result_index_cache: List[CircuitResultGroup] = []
         self._bound_web_bridge: Optional[SimulationWebBridge] = None
         
         # EventBus 引用
@@ -260,16 +259,14 @@ class SimulationTab(QWidget):
         self._active_frontend_tab = normalized_tab_id
         return True
 
-    def _refresh_history_index(self) -> None:
-        """Rebuild the by-circuit aggregated history index (Step 9).
+    def _refresh_circuit_result_index(self) -> None:
+        """Rebuild the by-circuit aggregated result index (Step 9).
 
         **The single disk-scan entry point** for the simulation panel:
-        every other consumer — the flat history-results view and the
-        Step-11 circuit-selection grid (both derived inside
-        :meth:`SimulationFrontendStateSerializer.serialize_main_state`
-        from the ``circuit_groups=`` input), the project-open restore
-        flow — reads from :attr:`_history_index_cache` instead of
-        hitting the repository on its own. A grep in
+        every other consumer — the Step-11 circuit-selection grid and
+        the project-open restore flow — reads from
+        :attr:`_circuit_result_index_cache` instead of hitting the
+        repository on its own. A grep in
         ``presentation/panels/simulation/`` must show exactly one
         ``simulation_result_repository.list_by_circuit(`` call site,
         and that call site is this one.
@@ -281,28 +278,28 @@ class SimulationTab(QWidget):
             triple ``job_id`` filter — agent-origin completions must
             still update the index)
           * :meth:`_on_simulation_error` (same rationale — failure
-            bundles also land on disk and belong in the history view)
+            bundles also land on disk and belong in circuit selection)
           * :meth:`_on_sim_result_file_created` (fallback for manual
             drops into ``simulation_results/``)
-          * :meth:`refresh_history_index` — the public entry point
+          * :meth:`refresh_circuit_result_index` — the public entry point
             wired to the bottom-panel refresh button
           * :meth:`_render_result` — after an explicit
-            ``load_history_result`` render, to catch any bundles
+            ``load_result_by_path`` render, to catch any bundles
             persisted while the render was in flight
 
         Runs on the main thread; EventBus already marshals signals
         there, so no lock is taken.
         """
         if not self._project_root:
-            self._history_index_cache = []
+            self._circuit_result_index_cache = []
             return
         try:
-            self._history_index_cache = simulation_result_repository.list_by_circuit(
+            self._circuit_result_index_cache = simulation_result_repository.list_by_circuit(
                 self._project_root
             )
         except Exception as exc:
-            self._history_index_cache = []
-            self._logger.warning(f"Failed to refresh simulation history index: {exc}")
+            self._circuit_result_index_cache = []
+            self._logger.warning(f"Failed to refresh simulation circuit result index: {exc}")
 
     def _build_frontend_runtime_snapshots(self):
         active_tab = self._normalize_frontend_tab_id(self._active_frontend_tab)
@@ -335,7 +332,7 @@ class SimulationTab(QWidget):
             simulation_status=self._view_model.simulation_status,
             status_message=self._runtime_status_message,
             error_message=self._view_model.error_message,
-            circuit_groups=self._history_index_cache,
+            circuit_groups=self._circuit_result_index_cache,
             latest_project_export_root=self._current_displayed_bundle_dir() or "",
             awaiting_confirmation=self._awaiting_confirmation,
             analysis_chart_snapshot=snapshot_payloads["analysis_chart_snapshot"],
@@ -518,7 +515,7 @@ class SimulationTab(QWidget):
         self._awaiting_confirmation = False
         self._runtime_status_message = ""
         self._logger.info(f"Project opened: {self._project_root}")
-        self._refresh_history_index()
+        self._refresh_circuit_result_index()
 
         # 清空当前显示
         self.clear()
@@ -530,7 +527,7 @@ class SimulationTab(QWidget):
         self._project_root = None
         self._awaiting_confirmation = False
         self._runtime_status_message = ""
-        self._refresh_history_index()
+        self._refresh_circuit_result_index()
         self.clear()
 
     def _on_simulation_started(self, event_data: dict):
@@ -583,15 +580,15 @@ class SimulationTab(QWidget):
         handler, not by silent loss of state here.
         """
         payload = extract_sim_payload(EVENT_SIM_COMPLETE, event_data)
-        # Step 9: history-index refresh precedes the displayed-triple
+        # Step 9: result-index refresh precedes the displayed-triple
         # filter. Agent-origin completions persist bundles too, and the
-        # circuit-selection / history-results tabs must reflect every
-        # completion regardless of whether the triple will be mutated.
-        self._refresh_history_index()
+        # circuit-selection tab must reflect every completion regardless
+        # of whether the triple will be mutated.
+        self._refresh_circuit_result_index()
         job_id = payload["job_id"]
         if job_id != self._displayed_job_id:
-            # Republish frontend state so the history list visibly
-            # gains the new row even when the displayed triple stays
+            # Republish frontend state so circuit selection visibly
+            # gains the new card update even when the displayed triple stays
             # put (agent-origin completions are the main use case).
             self._update_frontend_payloads()
             return
@@ -632,17 +629,17 @@ class SimulationTab(QWidget):
         UI-displayed bundle: the user would see "failed" text while
         looking at an unrelated successful result.
 
-        Step 9: refresh the history index unconditionally — failed
+        Step 9: refresh the result index unconditionally — failed
         runs still persist a bundle when the producer opted to (and
-        the tab's history list must show them regardless of origin).
+        circuit selection must show them regardless of origin).
         The refresh precedes the ``job_id`` filter for the same reason
         as :meth:`_on_simulation_complete`.
         """
         payload = extract_sim_payload(EVENT_SIM_ERROR, event_data)
-        self._refresh_history_index()
+        self._refresh_circuit_result_index()
         job_id = payload["job_id"]
         if job_id != self._displayed_job_id:
-            # Republish so the history list reflects any newly-landed
+            # Republish so circuit selection reflects any newly-landed
             # failure bundle even though the triple stays put.
             self._update_frontend_payloads()
             return
@@ -722,16 +719,16 @@ class SimulationTab(QWidget):
             self._show_add_to_conversation_error(exc)
     
     def _on_sim_result_file_created(self, event_data: dict):
-        """File-watcher callback — refreshes the history index, nothing
+        """File-watcher callback — refreshes the result index, nothing
         else.
 
         Before Step 7 this handler doubled as a "new result detected,
         swap displayed bundle" trigger. That behaviour is now
         architecturally forbidden: the displayed triple can only be
         rewritten by (a) a UI-editor-origin SIM_COMPLETE that matches
-        ``displayed_job_id`` or (b) an explicit ``load_history_result``
+        ``displayed_job_id`` or (b) an explicit ``load_result_by_path``
         call. A stray file write — e.g. an agent-origin job finishing
-        in the background — must appear in the history list but must
+        in the background — must appear in circuit selection but must
         **not** hijack the user's current view.
         """
         data = event_data.get("data", event_data)
@@ -740,9 +737,9 @@ class SimulationTab(QWidget):
             if self._project_root != event_project_root:
                 return
         self._logger.info(
-            f"Sim result file created: {data.get('file_path', '')} (refreshing history index only)"
+            f"Sim result file created: {data.get('file_path', '')} (refreshing circuit result index only)"
         )
-        self._refresh_history_index()
+        self._refresh_circuit_result_index()
         self._update_frontend_payloads()
 
     def bind_web_bridge(self, bridge: Optional[SimulationWebBridge]):
@@ -750,7 +747,7 @@ class SimulationTab(QWidget):
             return
         self._bound_web_bridge = bridge
         bridge.activate_tab_requested.connect(self.activate_result_tab)
-        bridge.load_history_result_requested.connect(self.load_history_result)
+        bridge.load_result_by_path_requested.connect(self.load_result_by_path)
         bridge.schematic_value_update_requested.connect(self._on_schematic_value_update_requested)
         bridge.raw_data_viewport_requested.connect(self._on_raw_data_viewport_requested)
         bridge.raw_data_copy_requested.connect(self._on_raw_data_copy_requested)
@@ -1056,7 +1053,7 @@ class SimulationTab(QWidget):
         loaded ``SimulationResult`` without touching the displayed
         triple.
 
-        Every caller (``_apply_completed_job``, ``load_history_result``)
+        Every caller (``_apply_completed_job``, ``load_result_by_path``)
         is responsible for setting the triple *before* calling this
         function. Separating "decide what we're displaying" from
         "inject it into widgets" is what makes the two branches
@@ -1084,7 +1081,7 @@ class SimulationTab(QWidget):
             if analysis_type == 'op' and getattr(result, 'success', False) and getattr(result, 'data', None) is not None:
                 next_active_tab = "op_result"
         self._set_active_frontend_tab(next_active_tab)
-        self._refresh_history_index()
+        self._refresh_circuit_result_index()
         self._backend_runtime.spice_schematic_document.load_from_result_file(str(getattr(result, 'file_path', '') or ''))
         self._update_frontend_payloads(include_raw_data=True)
 
@@ -1124,24 +1121,25 @@ class SimulationTab(QWidget):
 
     def _restore_project_result_after_project_opened(self):
         """Project-open restore — a convenience UX that replays "show
-        the most recent historical bundle" on open.
+        the most recent persisted bundle" on open.
 
-        Implemented **as a history load**, not as an event replay: the
+        Implemented **as a persisted-result load**, not as an event
+        replay: the
         triple therefore ends with ``displayed_job_id is None``, which
         is the whole point. This means no subsequent SIM_COMPLETE can
         match against a stale "job id I had at project open" — the
         trio becomes inert until either the user runs a simulation or
-        picks another history entry.
+        picks another circuit card.
 
         Step 8 pins the entry point to
         :meth:`SimulationResultRepository.list_by_circuit` — "first
-        group's first result" — instead of the flat history list. The
+        group's first result" — instead of any flat peer list. The
         two are guaranteed equivalent by the repository (groups are
         sorted by their newest bundle), and routing through the
         aggregation API keeps ``get_latest`` off the UI path as
         required by the plan.
 
-        Step 9: reads the already-populated :attr:`_history_index_cache`
+        Step 9: reads the already-populated :attr:`_circuit_result_index_cache`
         instead of issuing its own ``list_by_circuit`` call.
         :meth:`_on_project_opened` refreshes the index synchronously
         before scheduling this 250 ms restore, so the cache is
@@ -1152,13 +1150,13 @@ class SimulationTab(QWidget):
             return
         if self._view_model.current_result is not None or self._displayed_result_path:
             return
-        groups = self._history_index_cache
+        groups = self._circuit_result_index_cache
         if not groups or not groups[0].results:
             return
         most_recent = groups[0].results[0]
         if not most_recent.result_path:
             return
-        self.load_history_result(most_recent.result_path)
+        self.load_result_by_path(most_recent.result_path)
 
     def _load_waveform_data(self, result):
         """
@@ -1231,8 +1229,8 @@ class SimulationTab(QWidget):
         self._view_model.clear()
         self._update_frontend_payloads(include_raw_data=True)
 
-    def refresh_history_index(self) -> None:
-        """Rebuild the history-results cache and republish frontend state.
+    def refresh_circuit_result_index(self) -> None:
+        """Rebuild the circuit-result cache and republish frontend state.
 
         Replaces the pre-Step-7 ``reload_latest_result`` used by the
         bottom-panel refresh button. The old behaviour silently
@@ -1240,14 +1238,15 @@ class SimulationTab(QWidget):
         :meth:`SimulationResultRepository.get_latest` returns", which
         clashes with Step 7's invariant that the displayed triple is
         only mutated by STARTED/COMPLETE with a matching job id or by
-        an explicit history load. Refresh, post-Step-7, therefore only
-        re-scans the on-disk history index — newly-persisted bundles
-        from agent jobs become visible in the history tab without
+        an explicit persisted-result load. Refresh, post-Step-7,
+        therefore only re-scans the on-disk result index — newly-
+        persisted bundles from agent jobs become visible in circuit
+        selection without
         hijacking the user's current view.
         """
         if not self._project_root:
             return
-        self._refresh_history_index()
+        self._refresh_circuit_result_index()
         self._update_frontend_payloads()
 
     def activate_result_tab(self, tab_id: str) -> bool:
@@ -1260,12 +1259,13 @@ class SimulationTab(QWidget):
         self._update_frontend_payloads()
         return True
 
-    def load_history_result(self, result_path: str) -> bool:
-        """History-load branch — the user (or project-open restore)
-        explicitly asks to display a historical bundle.
+    def load_result_by_path(self, result_path: str) -> bool:
+        """Persisted-result load branch — the user (or project-open
+        restore) explicitly asks to display a saved bundle.
 
         Semantics:
-          * ``displayed_job_id`` is set to ``None``. A history load
+          * ``displayed_job_id`` is set to ``None``. A persisted-result
+            load
             is not an "in-flight job", and pairing it with a job id
             would create a ghost match for whatever COMPLETE arrives
             next.
@@ -1283,11 +1283,11 @@ class SimulationTab(QWidget):
         try:
             load_result = simulation_result_repository.load(self._project_root, result_path)
         except Exception as exc:
-            self._logger.warning(f"Exception loading history bundle {result_path}: {exc}")
+            self._logger.warning(f"Exception loading result bundle {result_path}: {exc}")
             return False
         if not load_result.success or load_result.data is None:
             self._logger.warning(
-                f"Failed to load history bundle {result_path}: {load_result.error_message}"
+                f"Failed to load result bundle {result_path}: {load_result.error_message}"
             )
             return False
         self._displayed_job_id = None

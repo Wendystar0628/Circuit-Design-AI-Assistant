@@ -47,7 +47,7 @@ export function OutputLogTab({ state, bridge }: OutputLogTabProps) {
             <span className="field-row__label">关键词</span>
             <input className="field-input" value={searchKeyword} onChange={(event: { target: { value: string } }) => setSearchKeyword(event.target.value)} placeholder="输入搜索关键词" />
           </label>
-          <button type="button" className="toolbar-button-secondary" onClick={() => bridge?.searchOutputLog(searchKeyword)}>
+          <button type="button" className="sim-compact-button" onClick={() => bridge?.searchOutputLog(searchKeyword)}>
             搜索
           </button>
           <label className="field-row">
@@ -59,13 +59,13 @@ export function OutputLogTab({ state, bridge }: OutputLogTabProps) {
               <option value="info">信息</option>
             </select>
           </label>
-          <button type="button" className="toolbar-button-secondary" onClick={() => bridge?.filterOutputLog(filterLevel)}>
+          <button type="button" className="sim-compact-button" onClick={() => bridge?.filterOutputLog(filterLevel)}>
             应用过滤
           </button>
-          <button type="button" className="toolbar-button" disabled={!logView.can_add_to_conversation} onClick={() => bridge?.addToConversation('output_log')}>
+          <button type="button" className="sim-compact-button sim-compact-button--accent" disabled={!logView.can_add_to_conversation} onClick={() => bridge?.addToConversation('output_log')}>
             添加至对话
           </button>
-          <button type="button" className="toolbar-button-secondary" disabled={!logView.lines.length} onClick={handleCopyLog}>
+          <button type="button" className="sim-compact-button" disabled={!logView.lines.length} onClick={handleCopyLog}>
             {copyLabel}
           </button>
         </div>

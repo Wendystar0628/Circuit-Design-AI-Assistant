@@ -10,7 +10,7 @@ from presentation.panels.simulation.simulation_frontend_state_serializer import 
 class SimulationWebBridge(QObject):
     ready = pyqtSignal()
     activate_tab_requested = pyqtSignal(str)
-    load_history_result_requested = pyqtSignal(str)
+    load_result_by_path_requested = pyqtSignal(str)
     schematic_value_update_requested = pyqtSignal(dict)
     raw_data_viewport_requested = pyqtSignal(dict)
     raw_data_copy_requested = pyqtSignal(dict)
@@ -49,8 +49,8 @@ class SimulationWebBridge(QObject):
         self.activate_tab_requested.emit(self._normalize_tab_id(tab_id))
 
     @pyqtSlot(str)
-    def loadHistoryResult(self, result_path: str) -> None:
-        self.load_history_result_requested.emit(str(result_path or ""))
+    def loadResultByPath(self, result_path: str) -> None:
+        self.load_result_by_path_requested.emit(str(result_path or ""))
 
     @pyqtSlot(QJsonValue)
     @pyqtSlot(dict)

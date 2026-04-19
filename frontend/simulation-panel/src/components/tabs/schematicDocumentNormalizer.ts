@@ -17,6 +17,7 @@ import {
   type SemanticPinRole,
   type SemanticScopeGroup,
 } from './schematicSemanticModel'
+import { getSchematicComponentDisplayName } from './schematicComponentName'
 
 const POWER_NET_PATTERN = /^(vcc|vdd|vee|vss|vbb|vaa|vdda|vssa|vbus|vsupply|v_supply|v_rail|v\+|v-)$/
 const GROUND_NET_PATTERN = /^(0|gnd|agnd|dgnd|ground)$/
@@ -201,8 +202,8 @@ function sortSemanticComponents(components: SemanticComponent[]): SemanticCompon
     if (scopeDelta !== 0) {
       return scopeDelta
     }
-    const leftName = left.component.instance_name || left.component.display_name
-    const rightName = right.component.instance_name || right.component.display_name
+    const leftName = getSchematicComponentDisplayName(left.component)
+    const rightName = getSchematicComponentDisplayName(right.component)
     const nameDelta = leftName.localeCompare(rightName)
     if (nameDelta !== 0) {
       return nameDelta

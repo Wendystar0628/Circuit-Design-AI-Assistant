@@ -1,0 +1,11 @@
+.title LT1001 Voltage Follower
+
+VCC vcc 0 DC 15
+VEE vee 0 DC -15
+Vin in 0 SIN(0 0.1 1k)
+
+XU1 in out vcc vee out LT1001
+Rload out 0 10k
+
+.tran 0.02m 4m
+.end

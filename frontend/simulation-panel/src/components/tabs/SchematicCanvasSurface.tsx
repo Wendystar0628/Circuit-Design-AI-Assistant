@@ -15,6 +15,7 @@ import {
   computeSchematicLabelRect,
   getSchematicNetLabelWidth,
 } from './schematicLabelPlanner'
+import { getSchematicComponentDisplayName } from './schematicComponentName'
 import type { SchematicCanvasViewState, SchematicLayoutResult } from './schematicLayoutTypes'
 
 interface SchematicCanvasProps {
@@ -432,7 +433,7 @@ export function SchematicCanvas({
                     }}
                     tabIndex={0}
                     role="button"
-                    aria-label={`选择器件 ${item.component.instance_name || item.component.display_name || item.component.id}`}
+                    aria-label={`选择器件 ${getSchematicComponentDisplayName(item.component) || item.component.id}`}
                   >
                     <rect
                       className="schematic-canvas__component-hit"

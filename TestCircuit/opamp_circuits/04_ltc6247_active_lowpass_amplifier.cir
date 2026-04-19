@@ -1,0 +1,15 @@
+.title LTC6247 Active Low-Pass Amplifier
+
+VCC vcc 0 DC 5
+VEE vee 0 DC -5
+Vin in 0 AC 1
+
+R1 in filt 10k
+C1 filt 0 10n
+Rg fb 0 10k
+Rf out fb 10k
+XU1 out vee filt fb vcc LTC6247
+Rload out 0 100k
+
+.ac dec 20 1 1Meg
+.end

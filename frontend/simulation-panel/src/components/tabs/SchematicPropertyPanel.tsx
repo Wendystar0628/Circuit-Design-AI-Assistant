@@ -1,4 +1,5 @@
 import type { SchematicComponentState, SchematicEditableFieldState, SchematicWriteResultState } from '../../types/state'
+import { getSchematicComponentDisplayName } from './schematicComponentName'
 import { getSchematicComponentTypeLabel } from './symbolRegistry'
 
 interface SchematicPropertyPanelProps {
@@ -15,7 +16,7 @@ export function SchematicPropertyPanel({ component, schematicWriteResult, fieldD
   const visibleFields = component ? component.editable_fields.filter((field) => field.field_key === 'value') : []
   const hasPendingWrite = component !== null && Object.keys(pendingFieldRequestIds).length > 0
   const componentTypeLabel = component ? getSchematicComponentTypeLabel(component) : '--'
-  const currentComponentName = component?.instance_name || component?.display_name || component?.id || '--'
+  const currentComponentName = getSchematicComponentDisplayName(component) || '--'
   const latestWriteMessage = component === null
     ? ''
     : hasPendingWrite

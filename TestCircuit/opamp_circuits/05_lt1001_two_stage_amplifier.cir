@@ -1,0 +1,17 @@
+.title LT1001 Two-Stage Amplifier
+
+VCC vcc 0 DC 15
+VEE vee 0 DC -15
+Vin in 0 SIN(0 0.02 1k)
+
+Rg1 fb1 0 10k
+Rf1 stage1 fb1 10k
+XU1 in fb1 vcc vee stage1 LT1001
+
+Rin2 stage1 inv2 2k
+Rf2 out inv2 10k
+XU2 0 inv2 vcc vee out LT1001
+Rload out 0 10k
+
+.tran 0.02m 6m
+.end

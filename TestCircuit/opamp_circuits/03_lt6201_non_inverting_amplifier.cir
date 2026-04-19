@@ -1,0 +1,13 @@
+.title LT6201 Non-Inverting Amplifier
+
+VCC vcc 0 DC 5
+VEE vee 0 DC -5
+Vin in 0 AC 1
+
+Rg fb 0 1k
+Rf out fb 4k
+XU1 in fb out vcc vee LT6201
+Rload out 0 1k
+
+.ac dec 30 1k 100Meg
+.end

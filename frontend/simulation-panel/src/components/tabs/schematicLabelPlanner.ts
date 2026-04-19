@@ -6,6 +6,7 @@ import type {
   SchematicLayoutPoint,
   SchematicLayoutRect,
 } from './schematicLayoutTypes'
+import { getSchematicComponentDisplayName } from './schematicComponentName'
 
 const INSTANCE_LABEL_FONT_SIZE = 16.5
 const SECONDARY_LABEL_FONT_SIZE = 15
@@ -135,7 +136,7 @@ export function planSchematicComponentLabels(
   const result = new Map<string, SchematicComponentLabelPlan>()
   for (const component of components) {
     const slots = pickComponentSlots(component)
-    const nameText = component.component.instance_name || component.component.display_name || component.component.id
+    const nameText = getSchematicComponentDisplayName(component.component)
     const valueText = component.component.display_value
     const nameLabel = nameText ? placeComponentLabel(nameText, slots.name, component.symbolBounds) : null
     const valueLabel = valueText ? placeComponentLabel(valueText, slots.value, component.symbolBounds) : null

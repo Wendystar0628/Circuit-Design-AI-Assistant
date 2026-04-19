@@ -109,9 +109,8 @@ class FindFilesTool(BaseTool):
     @property
     def prompt_guidelines(self) -> Optional[List[str]]:
         return [
-            "Use find_files to locate SPICE netlists (*.cir, *.sp) or Python files (*.py).",
-            "Use find_files before read_file to confirm the file path.",
-            "Use path parameter to narrow search to a specific subdirectory.",
+            "Use find_files to locate files by filename glob (e.g. SPICE netlists '*.cir', '*.sp', or Python files '*.py').",
+            "Use the path parameter to narrow the search to a specific subdirectory.",
         ]
 
     async def execute(

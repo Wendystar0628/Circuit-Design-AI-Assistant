@@ -4,9 +4,9 @@
 职责：
 - 允许 agent 对**项目内任意**电路文件发起一次仿真
 - 通过 ``SimulationJobManager`` 统一通道提交 ``origin=AGENT_TOOL`` 的 job
-- 等待 job 终结，用紧凑 markdown 告诉 LLM 结果，同时把
-  ``result_path`` / ``export_root`` / ``job_id`` 放进 ``details`` 供后续
-  ``read_*`` tool 稳定寻址
+- 等待 job 终结，用极简 markdown 告诉 LLM 结果状态，同时把
+  ``result_path`` / ``export_root`` / ``job_id`` 放进 ``details`` 供上层
+  或后续任一 tool 稳定寻址
 
 与 UI 的解耦姿态：
 - 本 tool 不 import 任何 ``presentation/*`` 模块
@@ -20,12 +20,18 @@
   cancel 意图给 manager 再 ``raise``，让上层 ``AgentLoop`` / ``LLMExecutor``
   按既有 ``OUTCOME_STOPPED`` 路径处理。tool 自己**不**吞 ``CancelledError``。
 
+与其它 tool 的解耦姿态（Step 17 补强）：
+- 本 tool **只**负责"发起一次仿真并回报结果状态"。它既不内嵌
+  ``.MEASURE`` 表、波形、日志，也不在 ``content`` / ``prompt_guidelines``
+  里建议 LLM 下一步该调哪个 ``read_*`` tool——是否读指标、读日志、
+  读 op、读波形，完全由 LLM 基于用户的实际诉求自行判断。
+- 返回给 LLM 的 ``content`` 因此非常短：状态 + ``result_path`` +
+  ``export_root``。大体量 artifact（raw_data / 波形 csv / 完整日志 /
+  chart 图像编码）由对应的 ``read_*`` tool 按需读取，不在此处预载。
+
 MVP 语义上的克制：
 - 不暴露 ``analysis_config`` 参数——让 LLM 只跑电路文件自带的 analysis
   指令，避免 LLM 误写复杂 NgSpice 语法造成的细碎失败
-- 返回给 LLM 的 ``content`` 绝不塞大体量 artifact（raw_data / 波形
-  csv / 完整日志 / chart 图像编码）；这些交由后续 ``read_*`` tool 按需
-  按 ``result_path`` 获取
 """
 
 from __future__ import annotations
@@ -36,17 +42,11 @@ from typing import Any, Dict, List, Optional
 
 from domain.llm.agent.types import BaseTool, ToolContext, ToolResult
 from domain.llm.agent.utils.path_utils import validate_file_path
-from domain.simulation.measure.measure_result import MeasureResult
 from domain.simulation.models.simulation_job import JobOrigin, JobStatus
 from shared.workspace_file_types import (
     SIMULATABLE_CIRCUIT_EXTENSIONS,
     is_simulatable_circuit_extension,
 )
-
-
-# 紧凑 summary 里最多渲染的 measurement 行数，防止超长 .MEASURE 把 LLM
-# 上下文打爆。超过上限后只保留前 N 条并在表格末尾提示"还有 M 条被截断"。
-_MEASUREMENT_DISPLAY_LIMIT = 20
 
 
 def _same_circuit_path(a: str, b: str) -> bool:
@@ -87,9 +87,10 @@ class RunSimulationTool(BaseTool):
             "If file_path is omitted, falls back to the editor's currently "
             "active circuit file. The tool submits a headless job through "
             "SimulationJobManager, waits for it to complete, and returns a "
-            "compact summary plus a result_path for follow-up read tools. "
-            "Only the analysis directives embedded in the circuit file are "
-            "executed — this tool does not accept an analysis configuration."
+            "short status line plus the result bundle's result_path and "
+            "export_root. Only the analysis directives embedded in the "
+            "circuit file are executed — this tool does not accept an "
+            "analysis configuration."
         )
 
     @property
@@ -115,28 +116,24 @@ class RunSimulationTool(BaseTool):
     @property
     def prompt_snippet(self) -> Optional[str]:
         return (
-            "Run one simulation on a project circuit file and get a compact "
-            "result summary with a stable result_path for follow-up reads"
+            "Run one simulation on a project circuit file and return a "
+            "status line with the resulting bundle's result_path"
         )
 
     @property
     def prompt_guidelines(self) -> Optional[List[str]]:
+        # 故意只保留关于本 tool 自身使用约束的条文：并发安全、
+        # "它能开的电路是什么"。任何"仿真后你应该调 X"或
+        # "修改后你应该调 run_simulation"的跨工具编排建议均不出现
+        # 在此——这类决策由 LLM 结合用户实际需求自行完成，
+        # 在 tool 层硬编只会引入不必要的行为偏见。
         return [
-            "After editing a circuit file, call run_simulation to verify the "
-            "change before replying.",
-            "Do NOT call run_simulation again on the same circuit before the "
-            "full 'run → read results' loop of the previous call has "
-            "finished — finish reading its artifacts first.",
+            "Do NOT call run_simulation again on the same circuit while "
+            "an earlier call of it is still running — the tool rejects "
+            "concurrent runs of the same circuit from the agent.",
             "run_simulation is decoupled from the editor: it can target any "
             "circuit file inside the project, not just the one currently "
             "open in the editor tab.",
-            "When run_simulation reports failure, call read_output_log with "
-            "the returned result_path first to diagnose before retrying the "
-            "simulation.",
-            "run_simulation never embeds raw waveforms, full logs, or "
-            "measurement tables beyond a short preview — use the dedicated "
-            "read_* tools against the returned result_path when you need the "
-            "full data.",
         ]
 
     async def execute(
@@ -305,25 +302,24 @@ class RunSimulationTool(BaseTool):
         details: Dict[str, Any],
         repository,
     ) -> ToolResult:
-        """成功分派：从 result.json 取紧凑 summary，**显式跳过** raw_data /
-        raw_output / waveform 字段；只渲染 analysis_type / duration /
-        measurements 表格。
+        """成功分派：只回报状态 + analysis_type / duration + 两个寻址
+        权威字段。**不**内嵌 measurements、波形、日志，也不建议 LLM
+        下一步调谁——这是 Step 17 明确的解耦约定。
+
+        Bundle summary 解析失败时仍返回非 is_error 的 ToolResult：
+        仿真本身确实完成了，result_path 已落盘；LLM 可以自行决定
+        是否再调用某个 read 工具去读原始 artifact。
         """
         load = repository.load(project_root, job.result_path or "")
         if not load.success or load.data is None:
-            # Bundle 上了磁盘但 JSON 反序列化失败——返回"成功但摘要
-            # 缺失"的告警 ToolResult（非 is_error，因为仿真本身成功；
-            # LLM 仍可以用 result_path 让后续 read_* 去读）。
             err_text = load.error_message or "unknown error"
+            details["summary_error"] = err_text
             content = (
                 f"Simulation completed (job_id={job.job_id}), but the "
                 f"result bundle summary could not be parsed: {err_text}.\n"
                 f"- result_path: {job.result_path}\n"
-                f"- export_root: {job.export_root}\n"
-                "Use read_output_log or other read_* tools against "
-                "result_path for diagnostics."
+                f"- export_root: {job.export_root}"
             )
-            details["summary_error"] = err_text
             return ToolResult(content=content, details=details)
 
         result = load.data
@@ -339,24 +335,14 @@ class RunSimulationTool(BaseTool):
             f"- result_path: {job.result_path}",
             f"- export_root: {job.export_root}",
         ]
-
-        metrics_section = self._format_measurements(result.measurements)
-        if metrics_section:
-            lines.append("")
-            lines.extend(metrics_section)
-
-        lines.append("")
-        lines.append(
-            "Pass the result_path above verbatim to any read_* tool you "
-            "call next in this turn — do not rely on editor-state fallback."
-        )
         return ToolResult(content="\n".join(lines), details=details)
 
     def _format_failed(self, job, details: Dict[str, Any]) -> ToolResult:
         err_msg = job.error_message or "unknown error"
+        # 失败 bundle 仍然可能落盘（包含 output.log）；只陈述事实，
+        # 不提示 LLM 应调哪个 read_* 工具去看。
         bundle_hint = (
-            f" The failure bundle was still persisted at {job.result_path}; "
-            "call read_output_log with that result_path to diagnose."
+            f" The failure bundle was persisted at {job.result_path}."
             if job.result_path
             else ""
         )
@@ -367,54 +353,6 @@ class RunSimulationTool(BaseTool):
             is_error=True,
             details=details,
         )
-
-    def _format_measurements(
-        self,
-        measurements: Optional[List[Any]],
-    ) -> List[str]:
-        if not measurements:
-            return []
-        rendered_rows: List[str] = []
-        truncated = 0
-        for idx, item in enumerate(measurements):
-            if idx >= _MEASUREMENT_DISPLAY_LIMIT:
-                truncated = len(measurements) - _MEASUREMENT_DISPLAY_LIMIT
-                break
-            measure = self._coerce_measure(item)
-            if measure is None:
-                continue
-            rendered_rows.append(
-                f"| {measure.name} | {measure.display_value} | "
-                f"{measure.status.value} |"
-            )
-        if not rendered_rows:
-            return []
-        lines = [
-            "| Metric | Value | Status |",
-            "| --- | --- | --- |",
-            *rendered_rows,
-        ]
-        if truncated > 0:
-            lines.append(
-                f"_{truncated} additional measurement(s) omitted; use "
-                "a dedicated read tool against result_path for the full set._"
-            )
-        return lines
-
-    @staticmethod
-    def _coerce_measure(item: Any) -> Optional[MeasureResult]:
-        """SimulationResult.measurements 经 __post_init__ 归一化后一般是
-        MeasureResult 对象；但 from_dict 的分支下也可能遗留为 dict，这
-        里统一兜底。
-        """
-        if isinstance(item, MeasureResult):
-            return item
-        if isinstance(item, dict):
-            try:
-                return MeasureResult.from_dict(item)
-            except Exception:
-                return None
-        return None
 
 
 __all__ = ["RunSimulationTool"]

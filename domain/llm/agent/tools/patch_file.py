@@ -111,8 +111,7 @@ class PatchFileTool(BaseTool):
     def prompt_guidelines(self) -> Optional[List[str]]:
         return [
             "Use patch_file for precise changes (old_text must match exactly).",
-            "Always use read_file first to see the current content before editing.",
-            "Include enough context in old_text to make the match unique.",
+            "Include enough context in old_text to make the match unique within the file.",
         ]
     
     async def execute(

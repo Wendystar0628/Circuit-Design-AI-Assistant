@@ -52,11 +52,23 @@ op 展开、chart 图像编码）即可。
   （透传 result_path / 不要组合两种路径 / 不要野回落 / 失败不重试
   重推路径），concrete 工具在自己的 ``prompt_guidelines`` 里直接拼
   接这一段即可保持措辞一致。
+
+共享 target 达标判定：
+- ``evaluate_metric_target(raw_value, target_text)`` 是"该指标是否
+  达到用户目标"的**唯一**权威入口。``read_metrics`` 用它；后续任何
+  需要展示"达标/未达标"的 read 工具（比如 ``read_waveform`` 的
+  ``.ac`` 分支会引用 bandwidth / gain margin 目标）都必须共用同一
+  函数，禁止在 tool 内部手写 ``raw_value > target`` 这类比较。
+- 不规范化 ``MetricTargetService`` 的原文：这里现场解析用户自由
+  文本（``"≥ 20 dB"`` / ``"< 1.5k"`` 等）。字段目的是"判断通过
+  与否"，不涉及单位代数——详见 ``evaluate_metric_target`` 文档。
 """
 
 from __future__ import annotations
 
+import enum
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
@@ -122,7 +134,7 @@ READ_TOOL_SHARED_GUIDELINES: List[str] = [
     "that circuit is the implicit subject of the user's question.",
     "If this tool reports the result bundle or a specific artifact is "
     "missing, do not retry with a re-inferred path — surface the error to "
-    "the user or issue a new run_simulation first.",
+    "the user exactly as reported so they can decide how to proceed.",
 ]
 
 
@@ -444,12 +456,19 @@ class SimulationArtifactReaderBase:
         hint = (
             " (editor's active circuit)" if used_fallback else ""
         )
+        # 只陈述事实，不点名下一步该调哪个工具——该电路可能确实
+        # 从未被仿真过，也可能 bundle 已被清理；用户/LLM 如何处理
+        # 由它们结合上下文自行决定。措辞里"pass a result_path from
+        # an earlier run"是**本工具**的参数卫生提示（B 类），不是
+        # 跨工具的 workflow 编排。
         return ToolResult(
             content=(
                 f"Error: no simulation bundle was found for circuit "
-                f"'{display_path}'{hint}. Run run_simulation against "
-                "this circuit before calling read tools, or pass a "
-                "result_path from an earlier run."
+                f"'{display_path}'{hint}. Either this circuit has not "
+                "been simulated in this project, or its bundles are no "
+                "longer accessible. If you know an earlier simulation "
+                "produced a bundle, call this tool with its result_path "
+                "directly instead of relying on circuit-path lookup."
             ),
             is_error=True,
         )
@@ -490,6 +509,156 @@ def _normalize_result_path(project_root: str, raw_result_path: str) -> str:
 
 
 # ============================================================
+# Target 达标判定 —— 所有 read 工具共用的只读 util
+# ============================================================
+
+
+class TargetStatus(enum.Enum):
+    """指标是否达到用户设定目标的判定结果。
+
+    四个值覆盖**全部**可能态，不给 tool 留"自己再判断一遍"的空
+    间——``NO_TARGET`` 和 ``UNPARSEABLE`` 也是显式状态：
+
+    - ``PASS``: 解析成功且数值满足比较式。
+    - ``FAIL``: 解析成功但数值不满足。
+    - ``NO_TARGET``: 原文为空字符串——用户没设置目标，这不是错误，
+      应当在展示时归入"无目标"段而不是"未达标"段。
+    - ``UNPARSEABLE``: 原文非空但语法无法识别——展示时标注"目标
+      格式无法解析"，让用户去修 target 文案，而不是让 tool 瞎猜。
+    """
+    PASS = "pass"
+    FAIL = "fail"
+    NO_TARGET = "no_target"
+    UNPARSEABLE = "unparseable"
+
+
+# ``evaluate_metric_target`` 的词法：一个可选比较操作符、一个
+# 带可选正负号与科学计数法的十进制数、以及剩余文本。剩余文本的
+# 第一个非空白字符若为公认的 SI 前缀字符，则乘以对应数量级。
+#
+# 特意**不**引入完整单位代数（如 ``0.005 Ω`` vs ``5 mΩ`` 的维度
+# 转换）——那属于 ``MetricTargetService`` 规范化层的职责，目前用
+# 户给的是自由文本，我们只做"数值量级 × 比较方向"这两件 LLM 判达
+# 标必须用到的事。
+_TARGET_PATTERN = re.compile(
+    r"""^\s*
+    (?P<op>>=|<=|==|!=|>|<|=|≥|≤|≠)?
+    \s*
+    (?P<num>-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)
+    \s*
+    (?P<rest>.*)$""",
+    re.VERBOSE,
+)
+
+# SI 前缀字符到量级的映射。大小写分开：``M`` 是 mega（1e6），
+# ``m`` 是 milli（1e-3）。``K`` 虽非标准 SI 但用户常写，收录。
+# ``μ`` 与 ASCII 回退 ``u`` 都映射 1e-6。
+_SI_PREFIXES: Dict[str, float] = {
+    "T": 1e12,
+    "G": 1e9,
+    "M": 1e6,
+    "k": 1e3,
+    "K": 1e3,
+    "m": 1e-3,
+    "u": 1e-6,
+    "μ": 1e-6,
+    "n": 1e-9,
+    "p": 1e-12,
+    "f": 1e-15,
+}
+
+
+def evaluate_metric_target(
+    raw_value: Optional[float],
+    target_text: Optional[str],
+) -> TargetStatus:
+    """判定某一指标是否达到用户目标——**全局唯一**入口。
+
+    支持的 target 语法::
+
+        [op] <number>[si_prefix][unit_suffix]
+
+    - ``op``: 可省略，省略时默认 ``=``；支持 ASCII ``>=`` / ``<=`` /
+      ``>`` / ``<`` / ``=`` / ``==`` / ``!=``，以及 Unicode ``≥`` /
+      ``≤`` / ``≠``。
+    - ``number``: 普通十进制或科学计数法。
+    - ``si_prefix``: 紧跟在数字后的单个 SI 前缀字符（``k``/``M``/
+      ``G`` 等），用于把用户写的 ``"5mA"`` 解析为 0.005（与
+      ``DisplayMetric.raw_value`` 的 SI-base 量级对齐）。
+    - ``unit_suffix``: 随意单位文本（``"dB"`` / ``"Hz"`` /
+      ``"Ω"``），**被忽略**——我们不做维度校验，单位一致性是用户
+      责任。
+
+    ``=`` 用相对容差 1% 比较（绝对零时退化为 1e-9 绝对容差），
+    因为浮点严格相等对仿真输出几乎总会 ``FAIL``。
+
+    Args:
+        raw_value: 指标的 SI-base 原值；``None`` 时视为无法判定。
+        target_text: 用户原文；``None`` / 空串返回 ``NO_TARGET``。
+
+    Returns:
+        :class:`TargetStatus` 的一个实例。**绝不**抛异常——解析失
+        败返回 ``UNPARSEABLE``，让上层一律走展示分支。
+    """
+    if target_text is None:
+        return TargetStatus.NO_TARGET
+    cleaned = str(target_text).strip()
+    if not cleaned:
+        return TargetStatus.NO_TARGET
+
+    match = _TARGET_PATTERN.match(cleaned)
+    if not match:
+        return TargetStatus.UNPARSEABLE
+
+    try:
+        numeric = float(match.group("num"))
+    except (TypeError, ValueError):
+        return TargetStatus.UNPARSEABLE
+
+    rest = (match.group("rest") or "").lstrip()
+    if rest:
+        prefix_char = rest[0]
+        multiplier = _SI_PREFIXES.get(prefix_char)
+        if multiplier is not None:
+            numeric *= multiplier
+
+    # raw_value 为 None 时严格来说"无法判定"，但既然 target 文本
+    # 合法，将其视为 FAIL（展示成"未达标"）比静默降级为 UNPARSEABLE
+    # 更诚实——LLM 看到 FAIL 会追问 read_output_log，看到
+    # UNPARSEABLE 可能去改目标语法，这两条决策分支不能混。
+    if raw_value is None:
+        return TargetStatus.FAIL
+
+    op = match.group("op") or "="
+    if op == "==":
+        op = "="
+    if op == "≥":
+        op = ">="
+    if op == "≤":
+        op = "<="
+    if op == "≠":
+        op = "!="
+
+    if op == ">=":
+        return TargetStatus.PASS if raw_value >= numeric else TargetStatus.FAIL
+    if op == "<=":
+        return TargetStatus.PASS if raw_value <= numeric else TargetStatus.FAIL
+    if op == ">":
+        return TargetStatus.PASS if raw_value > numeric else TargetStatus.FAIL
+    if op == "<":
+        return TargetStatus.PASS if raw_value < numeric else TargetStatus.FAIL
+    if op == "!=":
+        return TargetStatus.PASS if raw_value != numeric else TargetStatus.FAIL
+    # op == "="
+    tolerance = max(abs(numeric) * 0.01, 1e-9)
+    return (
+        TargetStatus.PASS
+        if abs(raw_value - numeric) <= tolerance
+        else TargetStatus.FAIL
+    )
+
+
+# ============================================================
 # 模块导出
 # ============================================================
 
@@ -498,4 +667,6 @@ __all__ = [
     "SimulationArtifactReaderBase",
     "ResolvedSimulationBundle",
     "READ_TOOL_SHARED_GUIDELINES",
+    "TargetStatus",
+    "evaluate_metric_target",
 ]

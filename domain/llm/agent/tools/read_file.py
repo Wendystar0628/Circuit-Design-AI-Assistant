@@ -97,7 +97,7 @@ class ReadFileTool(BaseTool):
     @property
     def prompt_guidelines(self) -> Optional[List[str]]:
         return [
-            "Use read_file to examine files before making changes.",
+            "Use read_file to inspect a file's current contents on disk.",
             "For large files, use offset and limit to read specific sections.",
         ]
     

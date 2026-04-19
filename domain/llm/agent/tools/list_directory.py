@@ -93,8 +93,8 @@ class ListDirectoryTool(BaseTool):
     @property
     def prompt_guidelines(self) -> Optional[List[str]]:
         return [
-            "Use list_directory to explore the project structure before reading files.",
-            "Use list_directory to check what files exist in a specific folder.",
+            "Use list_directory to see the direct contents of a folder.",
+            "Directories are marked with a trailing '/'; the listing is sorted alphabetically.",
         ]
 
     async def execute(

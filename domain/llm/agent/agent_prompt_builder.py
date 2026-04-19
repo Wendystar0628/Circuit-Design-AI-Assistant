@@ -118,25 +118,14 @@ def _build_guidelines_section(registry: ToolRegistry) -> str:
             for g in tool.prompt_guidelines:
                 _add(g)
 
-    # 通用指南（对照开发方案中的"使用指南"列表）
-    _add(
-        "Use rewrite_file for new files or small files; "
-        "use patch_file for surgical edits to large existing files."
-    )
-    _add(
-        "Make one change at a time, then use read_file to verify the result."
-    )
+    # 通用指南：只保留**跨全局不变量**（输出体例、空回复兜底、通用
+    # 文件路径展示）。任何"该先调 X 再调 Y"的跨工具时序编排、以及任何
+    # "做 X 该用工具 A"的路由建议，都由**源头工具**自己在
+    # prompt_guidelines 里发出，不在此处重复或反向占位——这是把编排
+    # 决策权留给 LLM 的唯一方式。
     _add(
         "SPICE files (.cir/.sp/.spice) use specific syntax; "
         "preserve comments and formatting."
-    )
-    _add(
-        "Once run_simulation returns a result_path, pass that exact "
-        "result_path verbatim to every read_* tool you call in the same "
-        "turn — never rely on the editor's current-file fallback for "
-        "simulations you just ran. The current-file fallback is reserved "
-        "for a fresh, context-free question about whatever circuit the user "
-        "is looking at right now."
     )
     _add(
         "If a tool fails, do not end with an empty reply. Retry only when a clear correction is available; otherwise explain the limitation and provide the best possible final answer."

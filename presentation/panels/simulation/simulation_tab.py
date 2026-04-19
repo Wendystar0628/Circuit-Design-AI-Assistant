@@ -39,6 +39,7 @@ from presentation.panels.simulation.simulation_view_model import (
     DisplayMetric,
 )
 from domain.simulation.service.simulation_result_repository import (
+    CircuitResultGroup,
     SimulationResultSummary,
     simulation_result_repository,
 )
@@ -127,7 +128,14 @@ class SimulationTab(QWidget):
         self._authoritative_raw_data_viewport = self._state_serializer.serialize_raw_data_viewport()
         self._raw_data_copy_sequence = 0
         self._authoritative_raw_data_copy_result = self._state_serializer.serialize_raw_data_copy_result()
-        self._history_results_cache: List[SimulationResultSummary] = []
+        # Step 9 — single by-circuit aggregated history-index cache.
+        # The shared data source feeding both the history-results tab
+        # (via :meth:`_history_index_flat_view`) and any future
+        # circuit-selection tab. Refreshed via one and only one
+        # disk-scan entry point (``_refresh_history_index``) hooked to
+        # the Step 9 trigger set: project open/close, SIM_COMPLETE,
+        # SIM_ERROR, and the file-watcher fallback.
+        self._history_index_cache: List[CircuitResultGroup] = []
         self._bound_web_bridge: Optional[SimulationWebBridge] = None
         
         # EventBus 引用
@@ -246,15 +254,64 @@ class SimulationTab(QWidget):
         self._active_frontend_tab = normalized_tab_id
         return True
 
-    def _refresh_history_results_cache(self) -> None:
+    def _refresh_history_index(self) -> None:
+        """Rebuild the by-circuit aggregated history index (Step 9).
+
+        **The single disk-scan entry point** for the simulation panel:
+        every other consumer — the history-results tab's flat view,
+        any future circuit-selection tab, the project-open restore
+        flow — reads from :attr:`_history_index_cache` instead of
+        hitting the repository on its own. A grep in
+        ``presentation/panels/simulation/`` must show exactly one
+        ``simulation_result_repository.list_by_circuit(`` call site,
+        and that call site is this one.
+
+        Refresh is triggered — unconditionally, without consulting
+        job identity or origin — by:
+          * :meth:`_on_project_opened` / :meth:`_on_project_closed`
+          * :meth:`_on_simulation_complete` (before the displayed-
+            triple ``job_id`` filter — agent-origin completions must
+            still update the index)
+          * :meth:`_on_simulation_error` (same rationale — failure
+            bundles also land on disk and belong in the history view)
+          * :meth:`_on_sim_result_file_created` (fallback for manual
+            drops into ``simulation_results/``)
+          * :meth:`refresh_history_index` — the public entry point
+            wired to the bottom-panel refresh button
+          * :meth:`_render_result` — after an explicit
+            ``load_history_result`` render, to catch any bundles
+            persisted while the render was in flight
+
+        Runs on the main thread; EventBus already marshals signals
+        there, so no lock is taken.
+        """
         if not self._project_root:
-            self._history_results_cache = []
+            self._history_index_cache = []
             return
         try:
-            self._history_results_cache = simulation_result_repository.list(self._project_root, limit=20)
+            self._history_index_cache = simulation_result_repository.list_by_circuit(
+                self._project_root
+            )
         except Exception as exc:
-            self._history_results_cache = []
-            self._logger.warning(f"Failed to list simulation result history: {exc}")
+            self._history_index_cache = []
+            self._logger.warning(f"Failed to refresh simulation history index: {exc}")
+
+    def _history_index_flat_view(self) -> List[SimulationResultSummary]:
+        """Project the aggregated cache into the flat time-descending
+        view consumed by the history-results tab.
+
+        Equivalent to what ``simulation_result_repository.list`` used
+        to return, but derived from :attr:`_history_index_cache` so
+        only **one** scan ever hits disk per refresh cycle. Groups
+        are already per-circuit-sorted newest-first by the repository,
+        so flattening + global timestamp-descending sort yields the
+        same ordering as the tier-2 flat browse.
+        """
+        flat: List[SimulationResultSummary] = []
+        for group in self._history_index_cache:
+            flat.extend(group.results)
+        flat.sort(key=lambda summary: summary.timestamp, reverse=True)
+        return flat
 
     def _build_frontend_runtime_snapshots(self):
         active_tab = self._normalize_frontend_tab_id(self._active_frontend_tab)
@@ -286,7 +343,7 @@ class SimulationTab(QWidget):
             simulation_status=self._view_model.simulation_status,
             status_message=self._runtime_status_message,
             error_message=self._view_model.error_message,
-            history_results=list(self._history_results_cache),
+            history_results=self._history_index_flat_view(),
             latest_project_export_root=self._current_displayed_bundle_dir() or "",
             awaiting_confirmation=self._awaiting_confirmation,
             analysis_chart_snapshot=snapshot_payloads["analysis_chart_snapshot"],
@@ -469,8 +526,8 @@ class SimulationTab(QWidget):
         self._awaiting_confirmation = False
         self._runtime_status_message = ""
         self._logger.info(f"Project opened: {self._project_root}")
-        self._refresh_history_results_cache()
-         
+        self._refresh_history_index()
+
         # 清空当前显示
         self.clear()
 
@@ -481,7 +538,7 @@ class SimulationTab(QWidget):
         self._project_root = None
         self._awaiting_confirmation = False
         self._runtime_status_message = ""
-        self._refresh_history_results_cache()
+        self._refresh_history_index()
         self.clear()
 
     def _on_simulation_started(self, event_data: dict):
@@ -534,8 +591,17 @@ class SimulationTab(QWidget):
         handler, not by silent loss of state here.
         """
         payload = extract_sim_payload(EVENT_SIM_COMPLETE, event_data)
+        # Step 9: history-index refresh precedes the displayed-triple
+        # filter. Agent-origin completions persist bundles too, and the
+        # circuit-selection / history-results tabs must reflect every
+        # completion regardless of whether the triple will be mutated.
+        self._refresh_history_index()
         job_id = payload["job_id"]
         if job_id != self._displayed_job_id:
+            # Republish frontend state so the history list visibly
+            # gains the new row even when the displayed triple stays
+            # put (agent-origin completions are the main use case).
+            self._update_frontend_payloads()
             return
         self._logger.info(
             f"Simulation complete (mine): job_id={job_id} "
@@ -573,10 +639,20 @@ class SimulationTab(QWidget):
         diagnosable) but must not overwrite the status message of a
         UI-displayed bundle: the user would see "failed" text while
         looking at an unrelated successful result.
+
+        Step 9: refresh the history index unconditionally — failed
+        runs still persist a bundle when the producer opted to (and
+        the tab's history list must show them regardless of origin).
+        The refresh precedes the ``job_id`` filter for the same reason
+        as :meth:`_on_simulation_complete`.
         """
         payload = extract_sim_payload(EVENT_SIM_ERROR, event_data)
+        self._refresh_history_index()
         job_id = payload["job_id"]
         if job_id != self._displayed_job_id:
+            # Republish so the history list reflects any newly-landed
+            # failure bundle even though the triple stays put.
+            self._update_frontend_payloads()
             return
         error_message = payload["error_message"]
         self._logger.error(
@@ -674,7 +750,7 @@ class SimulationTab(QWidget):
         self._logger.info(
             f"Sim result file created: {data.get('file_path', '')} (refreshing history index only)"
         )
-        self._refresh_history_results_cache()
+        self._refresh_history_index()
         self._update_frontend_payloads()
 
     def bind_web_bridge(self, bridge: Optional[SimulationWebBridge]):
@@ -1016,7 +1092,7 @@ class SimulationTab(QWidget):
             if analysis_type == 'op' and getattr(result, 'success', False) and getattr(result, 'data', None) is not None:
                 next_active_tab = "op_result"
         self._set_active_frontend_tab(next_active_tab)
-        self._refresh_history_results_cache()
+        self._refresh_history_index()
         self._backend_runtime.spice_schematic_document.load_from_result_file(str(getattr(result, 'file_path', '') or ''))
         self._update_frontend_payloads(include_raw_data=True)
 
@@ -1072,12 +1148,19 @@ class SimulationTab(QWidget):
         sorted by their newest bundle), and routing through the
         aggregation API keeps ``get_latest`` off the UI path as
         required by the plan.
+
+        Step 9: reads the already-populated :attr:`_history_index_cache`
+        instead of issuing its own ``list_by_circuit`` call.
+        :meth:`_on_project_opened` refreshes the index synchronously
+        before scheduling this 250 ms restore, so the cache is
+        guaranteed current by the time we get here (``clear`` does
+        not reset the cache).
         """
         if not self._project_root:
             return
         if self._view_model.current_result is not None or self._displayed_result_path:
             return
-        groups = simulation_result_repository.list_by_circuit(self._project_root)
+        groups = self._history_index_cache
         if not groups or not groups[0].results:
             return
         most_recent = groups[0].results[0]
@@ -1172,7 +1255,7 @@ class SimulationTab(QWidget):
         """
         if not self._project_root:
             return
-        self._refresh_history_results_cache()
+        self._refresh_history_index()
         self._update_frontend_payloads()
 
     def activate_result_tab(self, tab_id: str) -> bool:

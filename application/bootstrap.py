@@ -628,6 +628,16 @@ def _delayed_init():
         _init_executor_registry()
 
         # --------------------------------------------------------
+        # 3.5.3.0 SimulationResultRepository 注册
+        # 依赖：无（stateless 单例）
+        # 职责：result.json 的权威加载/枚举/按电路聚合读取入口；
+        #       agent read-tool 基座（Step 16）与 UI 侧的 attachment
+        #       协调器通过 ServiceLocator 取用，避免模块级直 import
+        #       造成的依赖失真
+        # --------------------------------------------------------
+        _init_simulation_result_repository()
+
+        # --------------------------------------------------------
         # 3.5.3.1 SimulationJobManager 初始化
         # 依赖：ExecutorRegistry、EventBus、SimulationArtifactPersistence
         # 职责：作为仓库里唯一能启动仿真的入口，管理并发 job 提交、
@@ -814,6 +824,36 @@ def _init_executor_registry():
             _logger.warning(f"Phase 3.5.4 ExecutorRegistry 初始化失败（非致命）: {e}")
         else:
             print(f"[Phase 3.5.4] ExecutorRegistry 初始化失败: {e}")
+
+
+def _init_simulation_result_repository():
+    """注册 SimulationResultRepository 单例到 ServiceLocator（Phase 3.5.3.0）。
+
+    Repository 本身是 stateless 的模块级单例，但 agent 工具 / UI 组件
+    不再直接 import 这个单例；它们统一通过 ``SVC_SIMULATION_RESULT_REPOSITORY``
+    从 ServiceLocator 取用，和 ``SVC_SIMULATION_JOB_MANAGER`` 的注入
+    姿态对齐。
+    """
+    try:
+        from domain.simulation.service.simulation_result_repository import (
+            simulation_result_repository,
+        )
+        from shared.service_locator import ServiceLocator
+        from shared.service_names import SVC_SIMULATION_RESULT_REPOSITORY
+
+        ServiceLocator.register(
+            SVC_SIMULATION_RESULT_REPOSITORY, simulation_result_repository
+        )
+
+        if _logger:
+            _logger.info("Phase 3.5.3.0 SimulationResultRepository 注册完成")
+    except Exception as exc:
+        if _logger:
+            _logger.warning(
+                f"Phase 3.5.3.0 SimulationResultRepository 注册失败（非致命）: {exc}"
+            )
+        else:
+            print(f"[Phase 3.5.3.0] SimulationResultRepository 注册失败: {exc}")
 
 
 def _init_simulation_job_manager():

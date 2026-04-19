@@ -38,9 +38,6 @@ from domain.llm.agent.types import BaseTool, ToolContext, ToolResult
 from domain.llm.agent.utils.path_utils import validate_file_path
 from domain.simulation.measure.measure_result import MeasureResult
 from domain.simulation.models.simulation_job import JobOrigin, JobStatus
-from domain.simulation.service.simulation_result_repository import (
-    simulation_result_repository,
-)
 from shared.workspace_file_types import (
     SIMULATABLE_CIRCUIT_EXTENSIONS,
     is_simulatable_circuit_extension,
@@ -160,6 +157,22 @@ class RunSimulationTool(BaseTool):
                 is_error=True,
             )
 
+        # SimulationResultRepository 也必须由 context 提供——结果分
+        # 派阶段需要它把 result.json 反序列化成紧凑 summary。注入缺
+        # 失时直接 is_error，拒绝"fallback 到模块级 singleton"的双
+        # 路径，把"agent 的外部依赖入口只有 ToolContext"这一契约守
+        # 严；这也是 Step 16 read-tool 基座继承的同一姿态。
+        repository = context.sim_result_repository
+        if repository is None:
+            return ToolResult(
+                content=(
+                    "Error: SimulationResultRepository is not provided by "
+                    "the caller via ToolContext; run_simulation cannot "
+                    "summarize the result bundle without it."
+                ),
+                is_error=True,
+            )
+
         project_root = context.project_root
         if not project_root:
             return ToolResult(
@@ -243,13 +256,13 @@ class RunSimulationTool(BaseTool):
             raise
 
         # ---- 阶段 5: 结果分派 ----
-        return self._format_result(final_job, project_root)
+        return self._format_result(final_job, project_root, repository)
 
     # ------------------------------------------------------------------
     # 结果分派
     # ------------------------------------------------------------------
 
-    def _format_result(self, job, project_root: str) -> ToolResult:
+    def _format_result(self, job, project_root: str, repository) -> ToolResult:
         details: Dict[str, Any] = {
             "job_id": job.job_id,
             "circuit_file": job.circuit_file,
@@ -259,7 +272,7 @@ class RunSimulationTool(BaseTool):
         }
 
         if job.status is JobStatus.COMPLETED:
-            return self._format_completed(job, project_root, details)
+            return self._format_completed(job, project_root, details, repository)
         if job.status is JobStatus.FAILED:
             return self._format_failed(job, details)
         if job.status is JobStatus.CANCELLED:
@@ -290,12 +303,13 @@ class RunSimulationTool(BaseTool):
         job,
         project_root: str,
         details: Dict[str, Any],
+        repository,
     ) -> ToolResult:
         """成功分派：从 result.json 取紧凑 summary，**显式跳过** raw_data /
         raw_output / waveform 字段；只渲染 analysis_type / duration /
         measurements 表格。
         """
-        load = simulation_result_repository.load(project_root, job.result_path or "")
+        load = repository.load(project_root, job.result_path or "")
         if not load.success or load.data is None:
             # Bundle 上了磁盘但 JSON 反序列化失败——返回"成功但摘要
             # 缺失"的告警 ToolResult（非 is_error，因为仿真本身成功；

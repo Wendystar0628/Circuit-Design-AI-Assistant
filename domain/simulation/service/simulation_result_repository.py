@@ -23,15 +23,24 @@ Read surface — three clearly separated tiers (Step 8):
   3. :meth:`list_by_circuit` — per-circuit aggregation. Groups the
      same scan by the authoritative ``circuit_file`` header, keeps
      the most recent ``per_circuit_limit`` bundles per group, sorts
-     groups by their newest bundle. Supersedes :meth:`get_latest` for
-     every UX that needs a "pick a recent result" entry point.
+     groups by their newest bundle. This is the single authority for
+     "pick a recent result of circuit X"; the Step 16 agent read-tool
+     base uses it verbatim to resolve a ``circuit_file`` parameter
+     into a concrete ``result_path``.
 
 :meth:`resolve_bundle_dir` exposes the result_path → export_root
-resolution; attachment tooling and ExportPanel consume it as the single
-authority for "where does this bundle live on disk".
+resolution; attachment tooling, ExportPanel, and the agent read-tool
+base consume it as the single authority for "where does this bundle
+live on disk".
 
-:meth:`get_latest` survives only as a **pure history-browsing helper**
-(see its docstring ⚠️ banner). Zero UI/agent paths may call it.
+No ``get_latest`` helper exists: "which bundle is the UI/agent
+currently concerned with" is answered exclusively by the panel's
+displayed-triple (Step 7) or by explicit STARTED/COMPLETE payloads;
+"most recent run of circuit X" is answered by ``list_by_circuit``.
+A tip-of-history probe masquerading as "current result" was the
+concrete failure mode that the pre-Step-7 panel shipped with; we
+do not reintroduce a single-shot accessor that would tempt the
+same misuse.
 """
 
 import json
@@ -329,31 +338,6 @@ class SimulationResultRepository:
         if not bundle_dir.is_dir():
             return None
         return bundle_dir
-
-    # ------------------------------------------------------------------
-    # Read path — deprecated history helper (tier 2½)
-    # ------------------------------------------------------------------
-
-    def get_latest(self, project_root: str) -> LoadResult[SimulationResult]:
-        """⚠️ 仅用于历史浏览辅助排序，禁止用于判定 UI/agent 关心的仿真。
-
-        Legacy single-shot "give me the most recent result" helper.
-        The semantics — "whatever the filesystem most recently flushed"
-        — are **never** the same as "what the panel/agent is
-        currently concerned with" (Step 7 made that an invariant of
-        the displayed-triple). New code must not call this. It stays
-        compiled only so history-browsing tools that genuinely want
-        "tip of history regardless of job ownership" have one place
-        to ask.
-
-        A zero-caller grep in ``presentation/`` and ``domain/llm/``
-        is the static guarantee; see the Step 8 verification section
-        of ``AGENT_SIMULATION_TOOL_IMPLEMENTATION_PLAN.md``.
-        """
-        summaries = self.list(project_root, limit=1)
-        if summaries:
-            return self.load(project_root, summaries[0].result_path)
-        return LoadResult.file_missing("")
 
     # ------------------------------------------------------------------
     # Mutation

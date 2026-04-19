@@ -173,6 +173,7 @@ class LLMExecutor(QObject):
                 current_file=current_file,
                 rag_query_service=self._get_rag_query_service(),
                 sim_job_manager=self._get_sim_job_manager(),
+                sim_result_repository=self._get_sim_result_repository(),
                 pending_workspace_edit_service=(
                     self._get_pending_workspace_edit_service()
                 ),
@@ -364,6 +365,26 @@ class LLMExecutor(QObject):
         except Exception as e:
             if self.logger:
                 self.logger.debug(f"Failed to get simulation job manager: {e}")
+            return None
+
+    def _get_sim_result_repository(self):
+        """从 ServiceLocator 取 SimulationResultRepository 注入给 ToolContext。
+
+        read_metrics / read_output_log / read_op_result / read_chart_image
+        共用的 read 基座通过 context 使用此仓储完成 ``circuit_file``/
+        ``result_path`` → ``SimulationResult`` → bundle 目录的解析链；
+        tool 内部禁止再走 ServiceLocator 或 import 模块级单例。
+        """
+        try:
+            from shared.service_locator import ServiceLocator
+            from shared.service_names import SVC_SIMULATION_RESULT_REPOSITORY
+
+            return ServiceLocator.get_optional(SVC_SIMULATION_RESULT_REPOSITORY)
+        except Exception as e:
+            if self.logger:
+                self.logger.debug(
+                    f"Failed to get simulation result repository: {e}"
+                )
             return None
 
     def _get_pending_workspace_edit_service(self):

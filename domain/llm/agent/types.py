@@ -60,6 +60,9 @@ if TYPE_CHECKING:
     )
     from domain.rag.rag_manager import RAGManager
     from domain.services.simulation_job_manager import SimulationJobManager
+    from domain.simulation.service.simulation_result_repository import (
+        SimulationResultRepository,
+    )
 
 
 # ============================================================
@@ -167,6 +170,14 @@ class ToolContext:
         sim_job_manager: 仿真 Job 管理器（仿真系列 tool 依赖，
             SimulationJobManager 是并发 job 提交与生命周期的唯一
             权威入口）
+        sim_result_repository: 仿真结果仓储（Step 16 read-tool 基座
+            依赖）。``result.json`` 的加载 / 枚举 / 按电路聚合的
+            唯一读入口；``attach_metrics`` / ``attach_output_log`` /
+            ``attach_op_result`` / ``attach_chart_image`` 四个 read
+            工具都通过它完成 ``circuit_file``/``result_path``→
+            ``SimulationResult``→ bundle 目录的解析链。缺失时这些
+            工具以 ``is_error`` 失败，禁止回落到 ServiceLocator 或
+            模块级单例。
         pending_workspace_edit_service: 待写工作区编辑服务
             （PatchFileTool / RewriteFileTool 依赖，落盘前先写入
             pending 队列由用户审核）
@@ -178,6 +189,7 @@ class ToolContext:
     max_read_lines: int = 2000
     rag_query_service: Optional["RAGManager"] = None
     sim_job_manager: Optional["SimulationJobManager"] = None
+    sim_result_repository: Optional["SimulationResultRepository"] = None
     pending_workspace_edit_service: Optional["PendingWorkspaceEditService"] = None
 
 

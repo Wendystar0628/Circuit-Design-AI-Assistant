@@ -418,6 +418,37 @@ export interface HistoryResultsViewState {
   can_load: boolean
 }
 
+/**
+ * One card in the circuit-selection grid.
+ *
+ * ``latest_result`` intentionally reuses the exact {@link
+ * HistoryResultItemState} shape emitted by the history-tab row — the
+ * backend produces both via the same ``serialize_history_item`` call
+ * site, so the wire-level field-deduplication invariant is mirrored
+ * here at the type level. Defining a parallel "latest result" shape
+ * would re-introduce the drift the backend just eliminated.
+ *
+ * Currency is a *circuit-level* predicate: ``is_current`` is true
+ * iff this card's ``circuit_file`` matches the panel's currently-
+ * displayed circuit. It is **not** derived from ``latest_result``'s
+ * own ``is_current`` — per-run currency is meaningless inside a
+ * card whose identity is the circuit, and the backend always zeroes
+ * out the embedded row's ``is_current`` for that reason.
+ */
+export interface CircuitSelectionItemState {
+  circuit_file: string
+  circuit_absolute_path: string
+  circuit_display_name: string
+  run_count: number
+  is_current: boolean
+  latest_result: HistoryResultItemState
+}
+
+export interface CircuitSelectionViewState {
+  items: CircuitSelectionItemState[]
+  selected_circuit_file: string
+}
+
 export interface OpResultRowState {
   name: string
   formatted_value: string
@@ -452,6 +483,7 @@ export interface SimulationMainState {
   output_log_view: OutputLogViewState
   export_view: ExportViewState
   history_results_view: HistoryResultsViewState
+  circuit_selection_view: CircuitSelectionViewState
   op_result_view: OpResultViewState
 }
 
@@ -663,6 +695,10 @@ export const EMPTY_SIMULATION_STATE: SimulationMainState = {
     items: [],
     selected_result_path: '',
     can_load: false,
+  },
+  circuit_selection_view: {
+    items: [],
+    selected_circuit_file: '',
   },
   op_result_view: {
     is_available: false,
@@ -1047,6 +1083,45 @@ function normalizeExportItems(value: unknown): ExportItemState[] {
   })
 }
 
+function normalizeHistoryResultItem(value: unknown): HistoryResultItemState {
+  const record = asRecord(value)
+  return {
+    id: asString(record.id),
+    result_path: asString(record.result_path),
+    file_path: asString(record.file_path),
+    file_name: asString(record.file_name),
+    analysis_type: asString(record.analysis_type),
+    success: asBoolean(record.success),
+    timestamp: asString(record.timestamp),
+    is_current: asBoolean(record.is_current),
+    can_load: asBoolean(record.can_load),
+  }
+}
+
+function normalizeHistoryResultItems(value: unknown): HistoryResultItemState[] {
+  if (!Array.isArray(value)) {
+    return []
+  }
+  return value.map(normalizeHistoryResultItem)
+}
+
+function normalizeCircuitSelectionItems(value: unknown): CircuitSelectionItemState[] {
+  if (!Array.isArray(value)) {
+    return []
+  }
+  return value.map((item) => {
+    const record = asRecord(item)
+    return {
+      circuit_file: asString(record.circuit_file),
+      circuit_absolute_path: asString(record.circuit_absolute_path),
+      circuit_display_name: asString(record.circuit_display_name),
+      run_count: asNumber(record.run_count),
+      is_current: asBoolean(record.is_current),
+      latest_result: normalizeHistoryResultItem(record.latest_result),
+    }
+  })
+}
+
 function normalizeOpResultSections(value: unknown): OpResultSectionState[] {
   if (!Array.isArray(value)) {
     return []
@@ -1082,6 +1157,7 @@ export function normalizeSimulationState(input: unknown): SimulationMainState {
   const outputLogView = asRecord(root.output_log_view)
   const exportView = asRecord(root.export_view)
   const historyResultsView = asRecord(root.history_results_view)
+  const circuitSelectionView = asRecord(root.circuit_selection_view)
   const opResultView = asRecord(root.op_result_view)
   const runtime = simulationRuntime
   const currentResult = asRecord(simulationRuntime.current_result)
@@ -1198,9 +1274,13 @@ export function normalizeSimulationState(input: unknown): SimulationMainState {
       latest_project_export_root: asString(exportView.latest_project_export_root),
     },
     history_results_view: {
-      items: Array.isArray(historyResultsView.items) ? (historyResultsView.items as HistoryResultItemState[]) : [],
+      items: normalizeHistoryResultItems(historyResultsView.items),
       selected_result_path: asString(historyResultsView.selected_result_path),
       can_load: asBoolean(historyResultsView.can_load),
+    },
+    circuit_selection_view: {
+      items: normalizeCircuitSelectionItems(circuitSelectionView.items),
+      selected_circuit_file: asString(circuitSelectionView.selected_circuit_file),
     },
     op_result_view: {
       is_available: asBoolean(opResultView.is_available),

@@ -13,19 +13,25 @@ from presentation.panels.simulation.simulation_export_coordinator import Simulat
 
 
 class SimulationExportPanel(QWidget):
+    """User-facing manual export panel.
+
+    Owns **only** the user's selected output directory and selection of
+    export types. The persistence of bundle artifacts to the project's
+    ``simulation_results/`` tree is handled upstream by
+    ``SimulationArtifactPersistence`` — the panel never auto-exports.
+    """
+
     def __init__(self, chart_viewer, waveform_widget, parent=None):
         super().__init__(parent)
         self._export_coordinator = SimulationExportCoordinator(chart_viewer, waveform_widget)
         self._result: Optional[SimulationResult] = None
         self._metrics: List[Any] = []
-        self._latest_project_export_root: Optional[Path] = None
         self._manual_export_directory: Optional[Path] = None
         self._selected_type_preferences: Set[str] = set(self._export_coordinator.all_export_types())
         self.retranslate_ui()
 
     def set_result(self, result: Optional[SimulationResult]):
         self._result = result
-        self._latest_project_export_root = None
 
     def set_metrics(self, metrics: List[Any]):
         self._metrics = list(metrics)
@@ -33,11 +39,6 @@ class SimulationExportPanel(QWidget):
     def clear(self):
         self._result = None
         self._metrics = []
-        self._latest_project_export_root = None
-
-    @property
-    def latest_project_export_root(self) -> Optional[Path]:
-        return self._latest_project_export_root
 
     def get_web_snapshot(self) -> Dict[str, Any]:
         return {
@@ -45,7 +46,6 @@ class SimulationExportPanel(QWidget):
             "can_export": self._can_export_selected(),
             "items": self._build_export_items(),
             "selected_directory": str(self._manual_export_directory) if self._manual_export_directory is not None else "",
-            "latest_project_export_root": str(self._latest_project_export_root) if self._latest_project_export_root is not None else "",
         }
 
     def set_selected_types(self, selected_types: List[str]):
@@ -144,24 +144,6 @@ class SimulationExportPanel(QWidget):
 
     def retranslate_ui(self):
         return
-
-    def auto_export_to_project(self, project_root: str):
-        result = self._result
-        if result is None or not project_root:
-            return None
-
-        selected_types = self._available_export_types()
-        if not selected_types:
-            return None
-
-        execution = self._export_coordinator.export_to_project_directory(
-            project_root,
-            result,
-            selected_types,
-            self._metrics,
-        )
-        self._latest_project_export_root = execution.export_root
-        return execution
 
     def _get_selected_types(self) -> List[str]:
         available_types = set(self._available_export_types())

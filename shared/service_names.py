@@ -159,6 +159,9 @@ SVC_RAG_MANAGER = "rag_manager"
 # 仿真服务 - 电路仿真协调
 SVC_SIMULATION_SERVICE = "simulation_service"
 
+# 仿真 Job 管理器 - 并发 job 提交与生命周期的唯一权威入口
+SVC_SIMULATION_JOB_MANAGER = "simulation_job_manager"
+
 # 执行器注册表 - 仿真执行器管理
 SVC_EXECUTOR_REGISTRY = "executor_registry"
 
@@ -215,6 +218,7 @@ __all__ = [
     "SVC_ITERATION_HISTORY_SERVICE",
     "SVC_RAG_MANAGER",
     "SVC_SIMULATION_SERVICE",
+    "SVC_SIMULATION_JOB_MANAGER",
     "SVC_EXECUTOR_REGISTRY",
     "SVC_WAVEFORM_DATA_SERVICE",
     "SVC_DEPENDENCY_HEALTH_SERVICE",

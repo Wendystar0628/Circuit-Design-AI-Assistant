@@ -12,18 +12,59 @@ from domain.simulation.models.simulation_result import SimulationResult
 
 
 EXPORT_SCHEMA_VERSION = 1
-PROJECT_EXPORTS_DIR_NAME = "simulation_results"
+
+# ---------------------------------------------------------------------------
+# Canonical disk layout
+#
+# Every simulation bundle — whether produced by the UI or by an agent
+# tool — lives at ``<project_root>/<CANONICAL_RESULTS_DIR>/<stem>/<ts>/``.
+# This is the **sole** authoritative source for the results directory
+# name; downstream modules must import this constant rather than
+# hardcode the literal.  ``result.json`` and all artifact subdirs
+# (``metrics/``, ``charts/``, ``waveforms/``, ``output_log/``,
+# ``analysis_info/``, ``raw_data/``, ``op_result/``) share this root.
+# ---------------------------------------------------------------------------
+CANONICAL_RESULTS_DIR = "simulation_results"
+
 DEFAULT_EXPORT_FOLDER_NAME = "simulation_result"
 
 
 class SimulationArtifactExporter:
+    def build_project_export_root(self, project_root: str | Path, result: SimulationResult) -> Path:
+        """Resolve the canonical bundle root **without** touching disk.
+
+        Callers that own persistence (``SimulationArtifactPersistence``,
+        attachment coordinators) use this helper to derive the exact
+        ``<project_root>/simulation_results/<stem>/<ts>/`` path and
+        create/reuse it themselves; this keeps path derivation purely a
+        function of ``(project_root, result)`` and leaves collision
+        handling (the ``_N`` suffix) to the single persistence entry.
+        """
+        return self._build_export_root(
+            Path(project_root) / CANONICAL_RESULTS_DIR,
+            result,
+        )
+
     def create_export_root(self, base_directory: str, result: SimulationResult) -> Path:
+        """Create a brand-new export root directly under an arbitrary
+        base directory. Used by the manual "export to external folder"
+        path — this is the only case where the exporter decides disk
+        addressing on its own.
+        """
         export_root = self._build_export_root(base_directory, result)
         export_root.mkdir(parents=True, exist_ok=False)
         return export_root
 
-    def create_project_export_root(self, project_root: str, result: SimulationResult) -> Path:
-        export_root = self._build_export_root(Path(project_root) / PROJECT_EXPORTS_DIR_NAME, result)
+    def create_project_export_root(self, project_root: str | Path, result: SimulationResult) -> Path:
+        """Resolve and physically create the canonical project bundle root.
+
+        Thin convenience wrapper for call sites that need the bundle
+        directory to exist right away (attachment fallbacks, integration
+        tests). The unique-suffix collision rule is delegated to
+        ``_build_export_root`` so two rapid-fire calls with the same
+        timestamp produce ``<ts>`` and ``<ts>_2`` respectively.
+        """
+        export_root = self.build_project_export_root(project_root, result)
         export_root.mkdir(parents=True, exist_ok=False)
         return export_root
 
@@ -460,4 +501,6 @@ simulation_artifact_exporter = SimulationArtifactExporter()
 __all__ = [
     "SimulationArtifactExporter",
     "simulation_artifact_exporter",
+    "CANONICAL_RESULTS_DIR",
+    "EXPORT_SCHEMA_VERSION",
 ]

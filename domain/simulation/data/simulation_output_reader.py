@@ -19,31 +19,12 @@
         SimulationOutputReader,
         simulation_output_reader,
     )
-    
-    # 从仿真结果文件读取日志
+
+    # 从仿真结果文件读取日志（路径为权威单树相对路径）
     log_lines = simulation_output_reader.get_output_log(
-        sim_result_path="sim_results/run_001.json",
+        sim_result_path="simulation_results/amp/2026-04-06_00-10-00/result.json",
         project_root="/path/to/project",
-        max_lines=1000
-    )
-    
-    # 获取错误行
-    errors = simulation_output_reader.get_error_lines(
-        sim_result_path="sim_results/run_001.json",
-        project_root="/path/to/project"
-    )
-    
-    # 搜索日志
-    matches = simulation_output_reader.search_log(
-        sim_result_path="sim_results/run_001.json",
-        project_root="/path/to/project",
-        keyword="convergence"
-    )
-    
-    # 获取仿真摘要
-    summary = simulation_output_reader.get_simulation_summary(
-        sim_result_path="sim_results/run_001.json",
-        project_root="/path/to/project"
+        max_lines=1000,
     )
 """
 
@@ -54,8 +35,6 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-
-from shared.constants.paths import SYSTEM_DIR
 
 
 # ============================================================
@@ -519,18 +498,12 @@ class SimulationOutputReader:
         """
         if not sim_result_path or not project_root:
             return None
-        
-        root_path = Path(project_root)
-        candidate_paths = [
-            root_path / sim_result_path,
-            root_path / SYSTEM_DIR / sim_result_path,
-        ]
 
-        full_path = next((path for path in candidate_paths if path.exists()), None)
-        if full_path is None:
-            self._logger.warning(f"仿真结果文件不存在: {candidate_paths[0]}")
+        full_path = Path(project_root) / sim_result_path
+        if not full_path.exists():
+            self._logger.warning(f"仿真结果文件不存在: {full_path}")
             return None
-        
+
         try:
             with open(full_path, 'r', encoding='utf-8') as f:
                 return json.load(f)

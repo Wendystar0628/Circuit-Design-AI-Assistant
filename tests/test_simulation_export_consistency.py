@@ -325,29 +325,50 @@ def test_chart_and_waveform_exports_follow_common_payload_schema(qapp, sample_re
     assert waveform_payload["summary"]["row_count"] == 4
 
 
-def test_export_panel_auto_exports_current_result_into_project_results_tree(qapp, sample_result: SimulationResult, sample_metrics, tmp_path: Path):
-    chart_viewer = ChartViewer()
-    chart_viewer.load_result(sample_result)
+def test_artifact_persistence_writes_authoritative_bundle_regardless_of_ui_selection(
+    sample_result: SimulationResult, tmp_path: Path
+):
+    """``SimulationArtifactPersistence`` is the sole owner of the
+    canonical ``simulation_results/<stem>/<ts>/`` bundle.
 
-    waveform_widget = WaveformWidget()
-    waveform_widget.load_waveform(sample_result, "V(out)")
-    waveform_widget.add_waveform(sample_result, "V(in)")
+    It runs after every simulation (UI or agent) with no user-facing
+    selection: the bundle always contains ``result.json`` plus the
+    pure-data categories. Chart/waveform PNG rendering is intentionally
+    excluded here — it is a display-side concern rendered on demand by
+    dedicated attachment/read tools.
+    """
+    from domain.simulation.data.simulation_artifact_persistence import (
+        simulation_artifact_persistence,
+    )
 
-    export_panel = SimulationExportPanel(chart_viewer, waveform_widget)
-    export_panel.set_result(sample_result)
-    export_panel.set_metrics(sample_metrics)
-    export_panel.set_all_types_selected(False)
-    export_panel.set_export_type_selected("metrics", True)
+    outcome = simulation_artifact_persistence.persist_bundle(
+        project_root=str(tmp_path),
+        result=sample_result,
+        metric_targets={},
+    )
 
-    execution = export_panel.auto_export_to_project(str(tmp_path))
+    assert outcome.success is True
+    assert outcome.errors == []
+    assert outcome.export_root.relative_to(tmp_path).parts == (
+        "simulation_results",
+        "export_consistency",
+        "2026-04-06_00-10-00",
+    )
+    assert outcome.result_path.replace("\\", "/") == (
+        "simulation_results/export_consistency/2026-04-06_00-10-00/result.json"
+    )
 
-    assert execution is not None
-    assert execution.errors == []
-    assert execution.selected_types == ["metrics", "charts", "waveforms", "analysis_info", "raw_data", "output_log"]
-    assert execution.export_root.relative_to(tmp_path).parts == ("simulation_results", "export_consistency", "2026-04-06_00-10-00")
-    assert (execution.export_root / "export_manifest.json").exists()
-    assert (execution.export_root / "charts" / "charts.json").exists()
-    assert (execution.export_root / "waveforms" / "waveform.json").exists()
+    bundle_root = outcome.export_root
+    assert (bundle_root / "result.json").exists()
+    assert (bundle_root / "metrics" / "metrics.json").exists()
+    assert (bundle_root / "metrics" / "metrics.csv").exists()
+    assert (bundle_root / "analysis_info" / "analysis_info.json").exists()
+    assert (bundle_root / "raw_data" / "raw_data.json").exists()
+    assert (bundle_root / "output_log" / "output_log.json").exists()
+    assert (bundle_root / "export_manifest.json").exists()
+    # Display-only artefacts must not be written by the headless path.
+    assert not (bundle_root / "charts").exists()
+    assert not (bundle_root / "waveforms").exists()
 
 
 def test_export_panel_snapshot_tracks_selection_and_directory_state(qapp, sample_result: SimulationResult, tmp_path: Path):

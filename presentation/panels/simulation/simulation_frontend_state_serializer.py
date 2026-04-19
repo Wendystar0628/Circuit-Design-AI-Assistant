@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional, Sequence
 
 from domain.simulation.data.op_result_data_builder import op_result_data_builder
 from domain.simulation.models.simulation_result import SimulationResult
+from domain.simulation.service.simulation_result_repository import SimulationResultSummary
 from presentation.panels.simulation.simulation_view_model import DisplayMetric
 
 
@@ -47,7 +48,7 @@ class SimulationFrontendStateSerializer:
         simulation_status: Any = "idle",
         status_message: str = "",
         error_message: str = "",
-        history_results: Optional[Sequence[Dict[str, Any]]] = None,
+        history_results: Optional[Sequence[SimulationResultSummary]] = None,
         latest_project_export_root: str = "",
         awaiting_confirmation: bool = False,
         analysis_chart_snapshot: Optional[Dict[str, Any]] = None,
@@ -70,7 +71,7 @@ class SimulationFrontendStateSerializer:
         normalized_history = [
             self.serialize_history_item(item, current_result_path=normalized_result_path)
             for item in (history_results or [])
-            if isinstance(item, dict)
+            if isinstance(item, SimulationResultSummary)
         ]
         has_result = result is not None
         signal_names = self._signal_names(result)
@@ -518,19 +519,30 @@ class SimulationFrontendStateSerializer:
 
     def serialize_history_item(
         self,
-        item: Dict[str, Any],
+        item: SimulationResultSummary,
         *,
         current_result_path: str,
     ) -> Dict[str, Any]:
-        result_path = self._normalize_result_path(str(item.get("path", "") or ""))
+        """Flatten a repository summary into the history-tab row schema.
+
+        Post-Step-8 the serializer consumes the typed
+        :class:`SimulationResultSummary` directly — the old
+        ``Dict[str, Any]`` shape has been eliminated at the repository
+        boundary, so there is no ``.get(...)`` defensiveness needed
+        here anymore. ``result_path`` is the bundle-relative posix
+        path and also acts as the identity key the frontend compares
+        against the "current" result for the ``is_current`` highlight.
+        """
+        result_path = self._normalize_result_path(item.result_path)
+        circuit_file = item.circuit_file
         return {
-            "id": str(item.get("id", "") or ""),
+            "id": item.id,
             "result_path": result_path,
-            "file_path": str(item.get("file_path", "") or ""),
-            "file_name": Path(str(item.get("file_path", "") or "")).name if str(item.get("file_path", "") or "") else "",
-            "analysis_type": str(item.get("analysis_type", "") or ""),
-            "success": bool(item.get("success", False)),
-            "timestamp": str(item.get("timestamp", "") or ""),
+            "file_path": circuit_file,
+            "file_name": Path(circuit_file).name if circuit_file else "",
+            "analysis_type": item.analysis_type,
+            "success": item.success,
+            "timestamp": item.timestamp,
             "is_current": bool(result_path and result_path == current_result_path),
             "can_load": bool(result_path),
         }

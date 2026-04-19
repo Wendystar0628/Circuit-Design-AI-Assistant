@@ -20,19 +20,19 @@
 """
 
 import logging
-from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from domain.simulation.measure.measure_metadata import measure_metadata_resolver
-from domain.simulation.measure.measure_result import MeasureResult, MeasureStatus
-from presentation.core.base_view_model import BaseViewModel
+from domain.simulation.models.display_metric import DisplayMetric
 from domain.simulation.models.simulation_result import SimulationResult
+from domain.simulation.service.display_metric_builder import display_metric_builder
+from presentation.core.base_view_model import BaseViewModel
 from shared.event_types import (
     EVENT_SIM_STARTED,
     EVENT_SIM_COMPLETE,
     EVENT_SIM_ERROR,
 )
+from shared.sim_event_payload import extract_sim_payload
 
 
 class SimulationStatus(Enum):
@@ -42,36 +42,6 @@ class SimulationStatus(Enum):
     RUNNING = "running"
     COMPLETE = "complete"
     ERROR = "error"
-
-
-@dataclass
-class DisplayMetric:
-    """UI \u53cb\u597d\u7684\u6307\u6807\u5c55\u793a\u683c\u5f0f\u3002
-
-    \u4e0e ``MeasureResult`` \u7684\u5dee\u522b\uff1a``MeasureResult`` \u662f\u6267\u884c\u7ed3\u679c\uff0c
-    ``DisplayMetric`` \u662f\u5df2\u683c\u5f0f\u5316\u3001\u9644\u5e26\u7528\u6237\u76ee\u6807\u503c\u7684\u5c55\u793a\u5c42\u89c6\u56fe
-    \u3002\u5b57\u6bb5\u523b\u610f\u6536\u7a84\u5230\u771f\u6b63\u88ab\u4e0b\u6e38\uff08\u524d\u7aef\u8868\u683c\u3001JSON
-    \u5bfc\u51fa\u3001Agent \u9644\u4ef6\uff09\u6d88\u8d39\u7684\u51e0\u4e2a\u5217\uff0c\u4ee5\u514d\u9057\u7559\u6b7b\u5bf9\u9f50\u3002
-    """
-
-    name: str
-    """\u6307\u6807\u6807\u8bc6\u540d\uff08.MEASURE \u8bed\u53e5\u4e2d\u7684\u540d\u79f0\uff09\u3002"""
-
-    display_name: str
-    """\u5df2\u56fd\u9645\u5316\u7684\u5c55\u793a\u540d\u3002"""
-
-    value: str
-    """\u683c\u5f0f\u5316\u540e\u7684\u6570\u503c\u5b57\u7b26\u4e32\uff08\u5982 ``"20.5 dB"``\uff09\u3002"""
-
-    unit: str
-    """\u5355\u4f4d\uff08\u5982 ``dB`` / ``Hz`` / ``V``\uff09\u3002"""
-
-    raw_value: Optional[float] = None
-    """\u539f\u59cb\u6570\u503c\uff0c\u4f9b Agent / \u5bfc\u51fa\u7ba1\u7ebf\u7528\u4e8e\u8fd0\u7b97\u3002"""
-
-    target: str = ""
-    """\u7528\u6237\u8bbe\u5b9a\u7684\u76ee\u6807\u503c\u6587\u672c\uff08\u5982 ``"\u2265 20 dB"``\uff09\u3002
-    \u7a7a\u5b57\u7b26\u4e32\u8868\u793a\u8be5\u6307\u6807\u672a\u8bbe\u5b9a\u76ee\u6807\u3002"""
 
 
 class SimulationViewModel(BaseViewModel):
@@ -141,25 +111,36 @@ class SimulationViewModel(BaseViewModel):
     # ------------------------------------------------------------------
 
     def _on_simulation_started(self, event_data: Dict[str, Any]):
+        payload = extract_sim_payload(EVENT_SIM_STARTED, event_data)
         self._set_status(SimulationStatus.RUNNING)
         self._error_message = ""
         self.notify_property_changed("simulation_status", self._simulation_status)
         self.notify_property_changed("error_message", self._error_message)
         self._logger.info(
-            f"Simulation started: {event_data.get('circuit_file', 'unknown')}"
+            f"Simulation started: job_id={payload['job_id']} "
+            f"origin={payload['origin']} circuit_file={payload['circuit_file']}"
         )
 
     def _on_simulation_complete(self, event_data: Dict[str, Any]):
+        payload = extract_sim_payload(EVENT_SIM_COMPLETE, event_data)
         self._set_status(SimulationStatus.COMPLETE)
         self.notify_property_changed("simulation_status", self._simulation_status)
-        self._logger.info("Simulation complete")
+        self._logger.info(
+            f"Simulation complete: job_id={payload['job_id']} "
+            f"origin={payload['origin']} result_path={payload['result_path']}"
+        )
 
     def _on_simulation_error(self, event_data: Dict[str, Any]):
+        payload = extract_sim_payload(EVENT_SIM_ERROR, event_data)
         self._set_status(SimulationStatus.ERROR)
-        self._error_message = event_data.get("error_message", "Unknown error")
+        self._error_message = payload["error_message"]
         self.notify_property_changed("simulation_status", self._simulation_status)
         self.notify_property_changed("error_message", self._error_message)
-        self._logger.error(f"Simulation error: {self._error_message}")
+        self._logger.error(
+            f"Simulation error: job_id={payload['job_id']} "
+            f"origin={payload['origin']} cancelled={payload['cancelled']} "
+            f"message={self._error_message}"
+        )
 
     def _set_status(self, status: SimulationStatus):
         self._simulation_status = status
@@ -178,11 +159,7 @@ class SimulationViewModel(BaseViewModel):
         self._current_result = result
 
         if result.success and result.data is not None:
-            measurements = result.measurements or []
-            self._metrics_list = self._load_metrics_from_measurements(
-                measurements,
-                result.file_path,
-            )
+            self._metrics_list = self._load_metrics_from_measurements(result)
             self._set_status(SimulationStatus.COMPLETE)
             self._error_message = ""
         else:
@@ -226,92 +203,16 @@ class SimulationViewModel(BaseViewModel):
 
     def _load_metrics_from_measurements(
         self,
-        measurements: List[Any],
-        source_file_path: str,
+        result: SimulationResult,
     ) -> List[DisplayMetric]:
-        targets = self._resolve_targets(source_file_path)
-        display_metrics: List[DisplayMetric] = []
+        """Bridge the view-model cache to the pure domain builder.
 
-        for measure in measurements:
-            if not isinstance(measure, MeasureResult):
-                continue
-            if measure.status != MeasureStatus.OK or measure.value is None:
-                continue
-            metadata = measure_metadata_resolver.resolve(
-                measure.name,
-                statement=measure.statement,
-                description=measure.description,
-                fallback_unit=measure.unit,
-            )
-            display_name = measure.display_name or metadata.display_name
-            display_metrics.append(
-                self._build_display_metric(
-                    name=measure.name,
-                    value=measure.value,
-                    unit=metadata.unit,
-                    display_name=display_name,
-                    target=targets.get(measure.name, ""),
-                )
-            )
-        return display_metrics
-
-    def _build_display_metric(
-        self,
-        *,
-        name: str,
-        value: Any,
-        unit: str,
-        display_name: str,
-        target: str,
-    ) -> DisplayMetric:
-        raw_value: Optional[float] = None
-        formatted_value: str = str(value) if value is not None else "N/A"
-
-        if isinstance(value, (int, float)):
-            raw_value = float(value)
-            formatted_value = self._format_value_with_unit(raw_value, unit)
-        elif isinstance(value, str):
-            import re
-
-            match = re.match(r"^([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?)\s*(.*)$", value.strip())
-            if match:
-                try:
-                    raw_value = float(match.group(1))
-                    unit = match.group(2) or unit
-                    formatted_value = value
-                except ValueError:
-                    pass
-
-        return DisplayMetric(
-            name=name,
-            display_name=display_name,
-            value=formatted_value,
-            unit=unit,
-            raw_value=raw_value,
-            target=target,
-        )
-
-    def _format_value_with_unit(self, value: float, unit: str) -> str:
-        abs_value = abs(value)
-        if abs_value == 0:
-            formatted = "0"
-        elif abs_value >= 1e9:
-            formatted = f"{value / 1e9:.2f}G"
-        elif abs_value >= 1e6:
-            formatted = f"{value / 1e6:.2f}M"
-        elif abs_value >= 1e3:
-            formatted = f"{value / 1e3:.2f}k"
-        elif abs_value >= 1:
-            formatted = f"{value:.2f}"
-        elif abs_value >= 1e-3:
-            formatted = f"{value * 1e3:.2f}m"
-        elif abs_value >= 1e-6:
-            formatted = f"{value * 1e6:.2f}\u03bc"
-        elif abs_value >= 1e-9:
-            formatted = f"{value * 1e9:.2f}n"
-        else:
-            formatted = f"{value:.2e}"
-        return f"{formatted} {unit}" if unit else formatted
+        The UI only adds the project-scoped target lookup; every other
+        row-formatting decision lives in ``display_metric_builder``.
+        """
+        source_file = getattr(result, "file_path", "") or ""
+        targets = self._resolve_targets(source_file)
+        return display_metric_builder.build(result, targets)
 
     def _resolve_targets(self, source_file_path: str) -> Dict[str, str]:
         service = self.metric_target_service

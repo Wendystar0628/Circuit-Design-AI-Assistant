@@ -4,24 +4,26 @@
 
 职责：
 - 应用参数修改到电路文件
-- 执行调参仿真
 - 管理文件备份和恢复
 
 设计说明：
 - 参数提取功能由 parameter_extractor.py 实现
-- 本服务专注于调参仿真的执行流程
+- 本服务只负责"把新参数写入网表 + 备份/恢复原文件"；
+  仿真执行属于 SimulationJobManager 的权威入口，任何调参流程
+  应先调用 apply_parameter_changes/restore_original，再单独
+  通过 SimulationJobManager.submit 发起仿真——调参服务自己不
+  再提供"一键跑仿真"的便捷方法。
 
 工作流程：
 1. 备份原始文件到 .circuit_ai/temp/{filename}.bak
 2. 解析文件内容，定位参数所在行
 3. 替换参数值，保持原有格式
 4. 写入修改后的文件
-5. 调用 SimulationService.run_simulation() 执行仿真
+5. 调用方（UI 或 agent）通过 SimulationJobManager 提交仿真
 6. 可选：恢复原始文件
 
 被调用方：
 - TuningPanel（UI）
-- SimulationService
 """
 
 import logging
@@ -355,85 +357,6 @@ class TuningService:
         except Exception as e:
             self._logger.exception(f"恢复文件失败: {e}")
             return False
-    
-    def run_tuning_simulation(
-        self,
-        file_path: str,
-        changes: Dict[str, float],
-        project_root: str,
-        analysis_config: Optional[Dict[str, Any]] = None,
-        *,
-        version: int = 1,
-        session_id: str = "",
-        restore_after: bool = False,
-    ):
-        """
-        执行调参仿真
-        
-        流程：
-        1. 应用参数修改
-        2. 执行仿真
-        3. 可选：恢复原始文件
-        
-        Args:
-            file_path: 电路文件路径
-            changes: 参数变更字典
-            project_root: 项目根目录
-            analysis_config: 仿真配置
-            version: 版本号
-            session_id: 会话 ID
-            restore_after: 仿真后是否恢复原始文件
-            
-        Returns:
-            SimulationResult: 仿真结果
-        """
-        from domain.services.simulation_service import SimulationService
-        from domain.simulation.models.simulation_result import create_error_result
-        from domain.simulation.models.simulation_error import (
-            SimulationError,
-            SimulationErrorType,
-            ErrorSeverity,
-        )
-        
-        # 1. 应用参数修改
-        apply_result = self.apply_parameter_changes(
-            file_path, changes, project_root
-        )
-        
-        if not apply_result.success:
-            error = SimulationError(
-                code="E020",
-                type=SimulationErrorType.PARAMETER_INVALID,
-                severity=ErrorSeverity.HIGH,
-                message=f"参数应用失败: {apply_result.error_message}",
-                file_path=file_path,
-            )
-            return create_error_result(
-                executor="tuning",
-                file_path=file_path,
-                analysis_type=analysis_config.get("analysis_type", "ac") if analysis_config else "ac",
-                error=error,
-                version=version,
-                session_id=session_id,
-            )
-        
-        try:
-            # 2. 执行仿真
-            service = SimulationService()
-            result = service.run_simulation(
-                file_path=file_path,
-                analysis_config=analysis_config,
-                project_root=project_root,
-                version=version,
-                session_id=session_id,
-            )
-            
-            return result
-            
-        finally:
-            # 3. 可选：恢复原始文件
-            if restore_after:
-                self.restore_original(file_path, project_root)
     
     def _publish_applied_event(
         self,

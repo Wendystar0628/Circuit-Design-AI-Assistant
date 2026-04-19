@@ -1,129 +1,95 @@
-# Simulation Service - Simulation Execution and Result Management
+"""``SimulationService`` — stateless, reentrant simulation execution unit.
+
+This module is deliberately kept narrow: pick an executor, run it,
+persist the bundle, return ``(result, result_path)``. Nothing else.
+
+What this module is **not**
+---------------------------
+
+- **Not** a lifecycle owner. Running / terminal status, event
+  broadcasting, cancellation, concurrent submission — all of that
+  belongs to :class:`~domain.services.simulation_job_manager.SimulationJobManager`.
+- **Not** an event publisher. This service never imports ``EventBus``
+  or any ``EVENT_SIM_*`` constant. The manager is the sole authority
+  on simulation lifecycle events; double-publishing from two layers
+  is the exact design pathology the job-manager rollout is meant to
+  eliminate.
+- **Not** stateful. The service carries no running-flag, no
+  last-file memory, no running-job index, no hidden counters. Any
+  code that used to ask the service "are you busy right now?" or
+  "what ran last?" must ask the manager (``query`` / ``list``)
+  instead — that is the single source of truth.
+
+Thread safety
+-------------
+
+Every ``run_simulation`` call is self-contained: its inputs come via
+arguments, its outputs via the return value, and its only mutable
+side effect is the filesystem bundle it writes. The service instance
+holds only the executor registry and the artifact persistence it
+was handed at construction time; both are themselves safe to share.
+That means manager workers can share one service across threads, or
+spin up per-worker instances — either works.
+
+Return contract
+---------------
+
+``run_simulation`` returns ``(SimulationResult, result_path)``. The
+``result_path`` is the project-relative POSIX path of
+``result.json`` inside the freshly-written bundle, or the empty
+string when ``project_root`` is falsy (headless tests that skip
+persistence). No other output channel exists; callers consume the
+tuple directly.
 """
-仿真服务 - 仿真执行与结果管理
 
-职责：
-- 提供仿真执行的统一入口
-- 管理仿真状态
-- 协调执行器和配置
-- 存储和加载仿真结果
-- 发布仿真事件
-
-设计原则：
-- 作为仿真域的核心服务，直接实现仿真执行逻辑
-- 无状态设计：仿真结果直接写入文件
-- 幂等性：相同输入产生相同输出
-
-存储路径：
-- 仿真结果：{project_root}/.circuit_ai/sim_results/{uuid}.json
-
-被调用方：
-- simulation_worker.py: 后台仿真任务
-- main_window.py: UI 触发仿真
-- tool_executor.py: LLM 工具调用
-
-使用示例：
-    from domain.services.simulation_service import SimulationService
-    
-    service = SimulationService()
-    
-    # 执行仿真
-    result = service.run_simulation(
-        file_path="amplifier.cir",
-        analysis_config={"analysis_type": "ac"}
-    )
-    
-"""
+from __future__ import annotations
 
 import logging
 import time
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Mapping, Optional, Tuple
 
-from domain.simulation.executor.executor_registry import ExecutorRegistry, executor_registry
+from domain.simulation.data.simulation_artifact_persistence import (
+    SimulationArtifactPersistence,
+    simulation_artifact_persistence,
+)
+from domain.simulation.executor.executor_registry import (
+    ExecutorRegistry,
+    executor_registry,
+)
+from domain.simulation.models.simulation_error import (
+    ErrorSeverity,
+    SimulationError,
+    SimulationErrorType,
+)
 from domain.simulation.models.simulation_result import (
     SimulationResult,
     create_error_result,
 )
-from domain.simulation.service.simulation_result_repository import SimulationResultRepository, simulation_result_repository
-from domain.simulation.models.simulation_error import (
-    SimulationError,
-    SimulationErrorType,
-    ErrorSeverity,
-)
-from shared.models.load_result import LoadResult
-from shared.event_bus import EventBus
-from shared.event_types import (
-    EVENT_SIM_STARTED,
-    EVENT_SIM_COMPLETE,
-    EVENT_SIM_ERROR,
-)
-
-# 全局事件总线实例（延迟获取）
-_event_bus: Optional[EventBus] = None
 
 
-def _get_event_bus() -> Optional[EventBus]:
-    """获取事件总线实例"""
-    global _event_bus
-    if _event_bus is None:
-        try:
-            from shared.service_locator import ServiceLocator
-            from shared.service_names import SVC_EVENT_BUS
-            _event_bus = ServiceLocator.get(SVC_EVENT_BUS)
-        except Exception:
-            # 服务未注册，创建临时实例
-            _event_bus = EventBus()
-    return _event_bus
+_logger = logging.getLogger(__name__)
 
-
-# ============================================================
-# 常量定义
-# ============================================================
-
-# 默认超时时间（秒）
-DEFAULT_TIMEOUT = 300
-
-# ============================================================
-# SimulationService - 仿真服务
-# ============================================================
 
 class SimulationService:
+    """Stateless simulation orchestrator: executor lookup → run → persist.
+
+    One instance can safely back every manager worker in the pool;
+    there is no per-call state the object keeps between invocations.
+    All inputs flow in through :meth:`run_simulation` arguments,
+    all outputs flow back through the returned tuple.
     """
-    仿真服务
-    
-    提供仿真执行的统一入口，管理仿真状态，协调执行器和配置。
-    
-    特性：
-    - 统一入口：所有仿真请求通过此服务
-    - 自动选择执行器：根据文件扩展名自动选择合适的执行器
-    - 事件发布：仿真开始、完成、错误时发布事件
-    - 结果持久化：仿真结果自动保存到文件
-    """
-    
+
     def __init__(
         self,
         registry: Optional[ExecutorRegistry] = None,
-        result_repository: Optional[SimulationResultRepository] = None,
-    ):
-        """
-        初始化仿真服务
-        
-        Args:
-            registry: 执行器注册表（可选，默认使用全局单例）
-        """
-        self._logger = logging.getLogger(__name__)
+        artifact_persistence: Optional[SimulationArtifactPersistence] = None,
+    ) -> None:
         self._registry = registry or executor_registry
-        self._result_repository = result_repository or simulation_result_repository
-        
-        # 内部状态
-        self._is_running = False
-        self._last_simulation_file: Optional[Path] = None
-    
-    # ============================================================
-    # 核心仿真方法
-    # ============================================================
-    
+        self._artifact_persistence = (
+            artifact_persistence or simulation_artifact_persistence
+        )
+
     def run_simulation(
         self,
         file_path: str,
@@ -131,87 +97,52 @@ class SimulationService:
         project_root: Optional[str] = None,
         version: int = 1,
         session_id: str = "",
-    ) -> SimulationResult:
-        """
-        执行仿真并返回结果
-        
+        metric_targets: Optional[Mapping[str, str]] = None,
+    ) -> Tuple[SimulationResult, str]:
+        """Execute one simulation and persist its bundle.
+
         Args:
-            file_path: 电路文件路径
-            analysis_config: 仿真配置字典
-            project_root: 项目根目录（用于保存结果）
-            version: 版本号（对应 GraphState.iteration_count + 1）
-            session_id: 会话 ID
-            
+            file_path: Circuit source (absolute or project-relative).
+            analysis_config: Optional executor config; ``analysis_type``
+                is read here, everything else is forwarded untouched.
+            project_root: Absolute project directory. When empty, the
+                bundle is **not** written and ``result_path`` is ``""``
+                — only headless unit tests should rely on this.
+            version: Iteration version stamped onto the result.
+            session_id: Session id stamped onto the result.
+            metric_targets: ``{metric_name: target_text}``. UI callers
+                pass ``MetricTargetService.get_targets_for_file``;
+                headless callers pass ``{}``.
+
         Returns:
-            SimulationResult: 仿真结果
+            ``(SimulationResult, result_path)``. ``result_path`` is the
+            project-relative POSIX path of ``result.json``; callers
+            must treat it as opaque and never predict the value.
+
+        Raises:
+            Every executor failure is captured into an error-shaped
+            ``SimulationResult`` and returned, never raised. Persistence
+            errors, by contrast, propagate out: a "successful" return
+            from this method means the bundle is on disk.
         """
         start_time = time.time()
-        analysis_type = self._get_analysis_type(analysis_config)
-        if not analysis_type:
-            analysis_type = self._detect_analysis_type_from_file(file_path)
-        
-        # 标记正在运行
-        self._is_running = True
-        self._last_simulation_file = Path(file_path)
-        
-        try:
-            # 发布仿真开始事件
-            self._publish_started_event(file_path, analysis_type, analysis_config)
-            
-            # 获取执行器
-            executor = self._registry.get_executor_for_file(file_path)
-            if executor is None:
-                error = SimulationError(
-                    code="E011",
-                    type=SimulationErrorType.PARAMETER_INVALID,
-                    severity=ErrorSeverity.HIGH,
-                    message=f"没有执行器支持文件类型: {Path(file_path).suffix}",
-                    file_path=file_path,
-                    recovery_suggestion=f"支持的扩展名: {', '.join(self._registry.get_all_supported_extensions())}",
-                )
-                result = create_error_result(
-                    executor="unknown",
-                    file_path=file_path,
-                    analysis_type=analysis_type,
-                    error=error,
-                    duration_seconds=time.time() - start_time,
-                    version=version,
-                    session_id=session_id,
-                )
-                saved_result_path = ""
-                if project_root:
-                    saved_result_path = self._result_repository.save(project_root, result)
-                    self._logger.info(f"仿真结果已保存: {saved_result_path}")
-                self._publish_complete_event(result, saved_result_path)
-                return result
-            
-            # 执行仿真
-            self._logger.info(f"使用执行器 '{executor.get_name()}' 执行仿真: {file_path}")
-            result = executor.execute(file_path, analysis_config)
-            
-            # 补充版本和会话信息
-            result.version = version
-            result.session_id = session_id
-            
-            # 保存结果到文件
-            saved_result_path = ""
-            if project_root:
-                saved_result_path = self._result_repository.save(project_root, result)
-                self._logger.info(f"仿真结果已保存: {saved_result_path}")
-            
-            # 发布完成事件（传递保存的结果路径）
-            self._publish_complete_event(result, saved_result_path)
-            
-            return result
-            
-        except Exception as e:
-            self._logger.exception(f"仿真执行异常: {e}")
+        analysis_type = self._resolve_analysis_type(analysis_config, file_path)
+
+        executor = self._registry.get_executor_for_file(file_path)
+        if executor is None:
             error = SimulationError(
-                code="E999",
-                type=SimulationErrorType.NGSPICE_CRASH,
-                severity=ErrorSeverity.CRITICAL,
-                message=str(e),
+                code="E011",
+                type=SimulationErrorType.PARAMETER_INVALID,
+                severity=ErrorSeverity.HIGH,
+                message=(
+                    f"No executor supports file type: "
+                    f"{Path(file_path).suffix}"
+                ),
                 file_path=file_path,
+                recovery_suggestion=(
+                    "Supported extensions: "
+                    + ", ".join(self._registry.get_all_supported_extensions())
+                ),
             )
             result = create_error_result(
                 executor="unknown",
@@ -222,133 +153,94 @@ class SimulationService:
                 version=version,
                 session_id=session_id,
             )
-            saved_result_path = ""
-            if project_root:
-                saved_result_path = self._result_repository.save(project_root, result)
-                self._logger.info(f"仿真结果已保存: {saved_result_path}")
-            self._publish_complete_event(result, saved_result_path)
-            return result
-            
-        finally:
-            self._is_running = False
-    
-    # ============================================================
-    # 仿真控制方法
-    # ============================================================
+        else:
+            try:
+                result = executor.execute(file_path, analysis_config)
+            except Exception as exc:
+                _logger.exception(
+                    "Executor '%s' raised while running %s: %s",
+                    executor.get_name(),
+                    file_path,
+                    exc,
+                )
+                error = SimulationError(
+                    code="E999",
+                    type=SimulationErrorType.NGSPICE_CRASH,
+                    severity=ErrorSeverity.CRITICAL,
+                    message=str(exc),
+                    file_path=file_path,
+                )
+                result = create_error_result(
+                    executor=executor.get_name(),
+                    file_path=file_path,
+                    analysis_type=analysis_type,
+                    error=error,
+                    duration_seconds=time.time() - start_time,
+                    version=version,
+                    session_id=session_id,
+                )
+            else:
+                result.version = version
+                result.session_id = session_id
 
-    def is_running(self) -> bool:
-        """
-        检查是否有仿真正在运行
-        
-        Returns:
-            bool: 是否正在运行
-        """
-        return self._is_running
-    
-    def get_last_simulation_file(self) -> Optional[Path]:
-        """
-        获取上次仿真的文件路径
-        
-        Returns:
-            Optional[Path]: 文件路径，若无则返回 None
-        """
-        return self._last_simulation_file
+        result_path = ""
+        if project_root:
+            outcome = self._artifact_persistence.persist_bundle(
+                project_root=project_root,
+                result=result,
+                metric_targets=metric_targets,
+            )
+            result_path = outcome.result_path
+            _logger.info(
+                "Simulation bundle persisted: %s (files=%d, errors=%d)",
+                result_path,
+                len(outcome.written_files),
+                len(outcome.errors),
+            )
+        return result, result_path
 
-    # ============================================================
-    # 内部辅助方法
-    # ============================================================
-    
-    def _detect_analysis_type_from_file(self, file_path: str) -> str:
-        """从网表文件中检测最后一条分析命令的类型"""
-        try:
-            content = Path(file_path).read_text(encoding="utf-8", errors="ignore")
-        except Exception:
-            return ""
-
-        analysis_type = ""
-        for line in content.splitlines():
-            stripped = line.strip().lower()
-            if stripped.startswith("*"):
-                continue
-            for cmd in (".ac", ".dc", ".tran", ".noise", ".op"):
-                if stripped == cmd or (
-                    stripped.startswith(cmd)
-                    and len(stripped) > len(cmd)
-                    and stripped[len(cmd)] in (" ", "\t")
-                ):
-                    analysis_type = cmd[1:]
-                    break
-        return analysis_type
-
-    def _get_analysis_type(self, analysis_config: Optional[Dict[str, Any]]) -> str:
-        """从配置中提取分析类型，若未指定则返回空字符串（由执行器自动检测）"""
-        if analysis_config is None:
-            return ""
-        return analysis_config.get("analysis_type", "")
-    
-    def _publish_started_event(
-        self,
+    @staticmethod
+    def _resolve_analysis_type(
+        analysis_config: Optional[Dict[str, Any]],
         file_path: str,
-        analysis_type: str,
-        config: Optional[Dict[str, Any]],
-    ) -> None:
-        """发布仿真开始事件"""
-        bus = _get_event_bus()
-        if bus:
-            bus.publish(EVENT_SIM_STARTED, {
-                "circuit_file": file_path,
-                "simulation_type": analysis_type,
-                "config": config or {},
-            })
-    
-    def _publish_complete_event(self, result: SimulationResult, result_path: str = "") -> None:
-        """
-        发布仿真完成事件
-        
-        Args:
-            result: 仿真结果对象
-            result_path: 仿真结果文件的相对路径
-        """
-        bus = _get_event_bus()
-        if bus:
-            bus.publish(EVENT_SIM_COMPLETE, {
-                "result_path": result_path,
-                "duration_seconds": result.duration_seconds,
-                "success": result.success,
-            })
-    
-    def _publish_error_event(self, result: SimulationResult) -> None:
-        """发布仿真错误事件"""
-        error = result.error
-        error_type = ""
-        error_message = ""
-        
-        if isinstance(error, SimulationError):
-            error_type = error.type.value if error.type else ""
-            error_message = error.message
-        elif error is not None:
-            error_message = str(error)
-        
-        bus = _get_event_bus()
-        if bus:
-            bus.publish(EVENT_SIM_ERROR, {
-                "error_type": error_type,
-                "error_message": error_message,
-                "file": result.file_path,
-                "recoverable": False,
-            })
+    ) -> str:
+        """Prefer the config's ``analysis_type``; fall back to netlist scan."""
+        if analysis_config:
+            configured = analysis_config.get("analysis_type", "")
+            if configured:
+                return str(configured)
+        return _detect_analysis_type_from_netlist(file_path)
 
 
+def _detect_analysis_type_from_netlist(file_path: str) -> str:
+    """Scan a netlist for its last ``.ac`` / ``.dc`` / ``.tran`` / ``.noise``
+    / ``.op`` directive.
 
+    Best-effort: returns ``""`` when the file cannot be read or no
+    directive is present. Only used to fill the ``analysis_type``
+    field on a synthesised error result when the caller didn't
+    specify one up front.
+    """
+    try:
+        content = Path(file_path).read_text(encoding="utf-8", errors="ignore")
+    except Exception:
+        return ""
+    analysis_type = ""
+    for line in content.splitlines():
+        stripped = line.strip().lower()
+        if stripped.startswith("*"):
+            continue
+        for cmd in (".ac", ".dc", ".tran", ".noise", ".op"):
+            if stripped == cmd or (
+                stripped.startswith(cmd)
+                and len(stripped) > len(cmd)
+                and stripped[len(cmd)] in (" ", "\t")
+            ):
+                analysis_type = cmd[1:]
+                break
+    return analysis_type
 
-
-# ============================================================
-# 模块导出
-# ============================================================
 
 __all__ = [
-    # 类
     "SimulationService",
-    # 类型
-    "LoadResult",
 ]

@@ -3,8 +3,9 @@
 仿真结果文件监控器
 
 职责：
-- 监控仿真结果目录的文件变化
-- 过滤出 .circuit_ai/sim_results/ 目录下的 .json 文件
+- 监控 simulation_results/ 权威结果目录下的 result.json 变化
+- 过滤出单树布局中 ``<project_root>/simulation_results/<stem>/<ts>/result.json``
+  的 created / modified 事件
 - 发布 EVENT_SIM_RESULT_FILE_CREATED 事件
 
 设计原则：
@@ -37,13 +38,14 @@ import time
 from pathlib import Path
 from typing import Dict, Optional, Set
 
+from domain.simulation.data.simulation_artifact_exporter import CANONICAL_RESULTS_DIR
+from domain.simulation.service.simulation_result_repository import RESULT_JSON_FILENAME
 from shared.event_types import (
     EVENT_FILE_CHANGED,
     EVENT_SIM_RESULT_FILE_CREATED,
     EVENT_STATE_PROJECT_OPENED,
     EVENT_STATE_PROJECT_CLOSED,
 )
-from shared.constants.paths import SIM_RESULTS_DIR
 
 
 # ============================================================
@@ -52,9 +54,6 @@ from shared.constants.paths import SIM_RESULTS_DIR
 
 # 防抖间隔（秒）
 DEBOUNCE_INTERVAL_SECONDS = 0.5
-
-# 仿真结果文件扩展名
-SIM_RESULT_EXTENSION = ".json"
 
 
 # ============================================================
@@ -297,45 +296,37 @@ class SimulationResultWatcher:
         self._publish_result_created_event(relative_path)
     
     def _is_sim_result_file(self, file_path: str) -> bool:
-        """
-        判断是否为仿真结果文件
-        
-        Args:
-            file_path: 文件路径
-            
-        Returns:
-            bool: 是否为仿真结果文件
+        """Return ``True`` when ``file_path`` names the canonical
+        ``simulation_results/<stem>/<ts>/result.json`` artifact.
+
+        Two checks are combined so both relative and absolute-path
+        event payloads match:
+
+        1. Filename is exactly ``result.json`` (case-insensitive).
+        2. Path sits beneath the project's ``simulation_results/``
+           root (when the project is known) or at least mentions the
+           authoritative directory segment.
         """
         try:
             path = Path(file_path)
-            
-            # 检查扩展名
-            if path.suffix.lower() != SIM_RESULT_EXTENSION:
+            if path.name.lower() != RESULT_JSON_FILENAME:
                 return False
-            
-            # 检查是否在仿真结果目录下
-            # 支持绝对路径和相对路径
-            path_str = str(path)
-            
-            # 检查路径中是否包含仿真结果目录
-            if SIM_RESULTS_DIR in path_str:
+
+            parts_lower = {segment.lower() for segment in path.parts}
+            if CANONICAL_RESULTS_DIR.lower() in parts_lower:
                 return True
-            
-            # 检查相对于项目根目录的路径
+
             if self._project_root:
                 try:
                     root_path = Path(self._project_root).resolve()
                     abs_path = path.resolve()
                     relative = abs_path.relative_to(root_path)
-                    if str(relative).startswith(SIM_RESULTS_DIR.replace("/", "\\")):
-                        return True
-                    if str(relative).startswith(SIM_RESULTS_DIR):
-                        return True
+                    return relative.parts[:1] == (CANONICAL_RESULTS_DIR,)
                 except ValueError:
                     pass
-            
+
             return False
-            
+
         except Exception:
             return False
     
@@ -403,5 +394,4 @@ __all__ = [
     "SimulationResultWatcher",
     "simulation_result_watcher",
     "DEBOUNCE_INTERVAL_SECONDS",
-    "SIM_RESULT_EXTENSION",
 ]

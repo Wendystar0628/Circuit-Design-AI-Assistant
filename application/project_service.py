@@ -62,9 +62,11 @@ MAX_RECENT_PROJECTS = 10
 MIN_DISK_SPACE_MB = 100
 
 # 项目隐藏目录结构
+# 仿真结果已迁出 ``.circuit_ai/``，改由权威单树
+# ``<project_root>/simulation_results/<stem>/<ts>/`` 承载；
+# 这里不再为 ``sim_results`` 预建空目录。
 HIDDEN_DIR_STRUCTURE = [
     "snapshots",      # 全量快照目录
-    "sim_results",    # 仿真结果目录
     "conversations",  # 会话数据目录（消息和信息卡片）
     "bom_reports",    # BOM 报告目录
     "diffs",          # Diff 文件目录

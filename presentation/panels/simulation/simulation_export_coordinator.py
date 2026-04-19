@@ -49,17 +49,15 @@ class SimulationExportCoordinator:
         selected_types: Sequence[str],
         metrics: List[Any],
     ) -> SimulationExportExecution:
-        export_root = simulation_artifact_exporter.create_export_root(base_directory, result)
-        return self._export_to_root(export_root, result, selected_types, metrics)
+        """Manual export to a user-chosen folder (outside the project's
+        canonical bundle tree).
 
-    def export_to_project_directory(
-        self,
-        project_root: str,
-        result: SimulationResult,
-        selected_types: Sequence[str],
-        metrics: List[Any],
-    ) -> SimulationExportExecution:
-        export_root = simulation_artifact_exporter.create_project_export_root(project_root, result)
+        This is the **only** disk-writing path that this UI coordinator
+        owns; project-internal persistence runs through the headless
+        ``SimulationArtifactPersistence`` and is invoked by
+        ``SimulationService`` immediately after a result is computed.
+        """
+        export_root = simulation_artifact_exporter.create_export_root(base_directory, result)
         return self._export_to_root(export_root, result, selected_types, metrics)
 
     def _export_to_root(

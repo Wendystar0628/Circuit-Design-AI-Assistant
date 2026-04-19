@@ -676,6 +676,13 @@ class MainWindow(QMainWindow):
         if self._session_manager is not None:
             self._session_manager.save_session_state()
 
+        if self._simulation_command_controller is not None:
+            # Symmetric with the subscribe in the controller's __init__.
+            # Without this the EventBus keeps a reference to the handler
+            # methods, which keeps the controller (and transitively the
+            # main window) alive across window reopen cycles in tests.
+            self._simulation_command_controller.shutdown()
+
         self._unsubscribe_events()
 
         cleaned = set()

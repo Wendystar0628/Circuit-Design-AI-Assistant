@@ -381,39 +381,13 @@ def ensure_main_thread(handler: Callable) -> Callable:
 class CommonEventBridges:
     """
     常用事件桥接预设
-    
-    提供常见事件的快捷桥接方法
+
+    提供常见事件的快捷桥接方法。仿真生命周期事件不再通过此处预设：
+    所有仿真订阅者都必须直接用 ``shared.sim_event_payload.extract_sim_payload``
+    在 handler 入口解包并校验 payload，中间再套一层 bridge helper 只会
+    把"订阅者第一步做什么"这件事模糊化。
     """
-    
-    @staticmethod
-    def bridge_simulation_events(
-        bridge: UIEventBridge,
-        on_sim_started: Optional[Callable] = None,
-        on_sim_complete: Optional[Callable] = None,
-        on_sim_error: Optional[Callable] = None,
-    ):
-        """
-        桥接仿真相关事件
-        
-        Args:
-            bridge: UIEventBridge 实例
-            on_sim_started: 仿真开始处理器
-            on_sim_complete: 仿真完成处理器
-            on_sim_error: 仿真错误处理器
-        """
-        from shared.event_types import (
-            EVENT_SIM_STARTED,
-            EVENT_SIM_COMPLETE,
-            EVENT_SIM_ERROR,
-        )
-        
-        if on_sim_started:
-            bridge.bridge_event(EVENT_SIM_STARTED, on_sim_started)
-        if on_sim_complete:
-            bridge.bridge_event(EVENT_SIM_COMPLETE, on_sim_complete)
-        if on_sim_error:
-            bridge.bridge_event(EVENT_SIM_ERROR, on_sim_error)
-    
+
     @staticmethod
     def bridge_workflow_events(
         bridge: UIEventBridge,

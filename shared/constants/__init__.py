@@ -7,7 +7,6 @@
 
 from shared.constants.paths import (
     SYSTEM_DIR,
-    SIM_RESULTS_DIR,
     SIM_CONFIG_FILE,
     DESIGN_GOALS_FILE,
     ITERATION_HISTORY_FILE,
@@ -20,7 +19,6 @@ from shared.constants.paths import (
 __all__ = [
     # 从 paths 模块导出
     "SYSTEM_DIR",
-    "SIM_RESULTS_DIR",
     "SIM_CONFIG_FILE",
     "DESIGN_GOALS_FILE",
     "ITERATION_HISTORY_FILE",

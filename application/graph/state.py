@@ -136,7 +136,12 @@ class GraphState:
     """主电路文件相对路径（如 amplifier.cir）"""
     
     sim_result_path: str = ""
-    """最新仿真结果文件相对路径（如 .circuit_ai/sim_results/run_001.json）"""
+    """最新仿真结果文件相对路径（如 ``simulation_results/<stem>/<ts>/result.json``）。
+
+    指针由 ``SimulationResultRepository`` 在落盘时返回，指向权威单树
+    bundle 内的 ``result.json``；同目录下还落有 metrics / charts /
+    waveforms / output_log / analysis_info / raw_data / op_result /
+    export_manifest 等工件。"""
     
     design_goals_path: str = ".circuit_ai/design_goals.json"
     """设计目标文件相对路径"""

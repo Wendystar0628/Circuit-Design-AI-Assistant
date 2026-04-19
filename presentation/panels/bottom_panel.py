@@ -29,6 +29,7 @@ from shared.event_types import (
     EVENT_LANGUAGE_CHANGED,
     EVENT_SIM_COMPLETE,
 )
+from shared.sim_event_payload import extract_sim_payload
 
 
 # ============================================================
@@ -175,7 +176,18 @@ class BottomPanel(QWidget):
         self.retranslate_ui()
     
     def _on_simulation_complete(self, event_data: dict):
-        """处理仿真完成事件，自动切换到仿真标签页"""
+        """处理仿真完成事件：按权威 schema 解包 → 按 job_id routing → 切 tab
+
+        BottomPanel 本身不追踪 displayed job_id（它只关心"仿真结束后把
+        结果面板带到前台"这件事），但订阅者契约要求入口第一步就解包并
+        校验 payload——缺字段直接 raise，不允许偷偷回落到"总是切 tab"
+        的无条件行为掩盖 producer bug。
+        """
+        payload = extract_sim_payload(EVENT_SIM_COMPLETE, event_data)
+        self._logger.debug(
+            f"BottomPanel: auto-switching to simulation tab for "
+            f"job_id={payload['job_id']} origin={payload['origin']}"
+        )
         self.switch_to_simulation()
     
     # ============================================================
@@ -222,7 +234,7 @@ class BottomPanel(QWidget):
         """刷新当前标签页"""
         current_index = self._tab_widget.currentIndex()
         if current_index == TAB_SIMULATION:
-            self._simulation_tab.reload_latest_result()
+            self._simulation_tab.refresh_history_index()
         elif current_index == TAB_REPORT and self._report_tab is not None:
             if hasattr(self._report_tab, "refresh"):
                 self._report_tab.refresh()

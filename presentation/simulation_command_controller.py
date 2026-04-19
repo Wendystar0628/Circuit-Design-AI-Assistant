@@ -1,14 +1,65 @@
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from PyQt6.QtCore import QObject
 from PyQt6.QtWidgets import QMainWindow, QMessageBox
 
-from application.tasks.simulation_task import SimulationTask
+from shared.event_types import (
+    EVENT_SIM_COMPLETE,
+    EVENT_SIM_ERROR,
+    EVENT_SIM_STARTED,
+)
+from shared.service_locator import ServiceLocator
+from shared.service_names import (
+    SVC_EVENT_BUS,
+    SVC_SESSION_STATE,
+    SVC_SIMULATION_JOB_MANAGER,
+)
+from shared.sim_event_payload import extract_sim_payload
 from shared.workspace_file_types import is_simulatable_circuit_extension
 
 
 class SimulationCommandController(QObject):
+    """UI-editor Run button: submits jobs to ``SimulationJobManager``
+    and observes the lifecycle of *its own* submissions.
+
+    Submission model
+    ----------------
+
+    The controller no longer owns a thread; it is purely a submitter.
+    Every Run-button click goes through ``manager.submit(origin=
+    JobOrigin.UI_EDITOR, ...)`` and the returned ``job_id`` is
+    recorded in :attr:`_submitted_jobs`. That set is the only
+    authority the controller uses to decide "is one of *my* jobs
+    in flight?" — it never asks "is *any* simulation running?".
+    Agent-origin jobs and other UI-origin jobs (in a future
+    multi-window world) flow through the same EventBus events but
+    are filtered out at the handler entry point.
+
+    UX policy
+    ---------
+
+    MVP keeps a single in-flight UI submission at a time: while
+    :meth:`_has_active_submission` is true the Run button is
+    disabled and a redundant programmatic invocation surfaces an
+    info dialog. This is **a UX choice**, not an architectural
+    constraint — the underlying ``SimulationJobManager`` already
+    runs jobs concurrently. Relaxing the policy in the future means
+    only changing the gate inside :meth:`run_simulation`; nothing
+    else in this file assumes "at most one job".
+
+    Decoupling from ``SimulationTab``
+    ---------------------------------
+
+    The controller and the result tab are intentionally **not**
+    connected by signals or direct method calls. Both subscribe to
+    ``EVENT_SIM_*`` and each filters by an identity field that
+    matches its concern: the controller filters by its own
+    submitted ``job_id`` set; the tab filters by ``origin``
+    (Step 5 wired the tab to the authoritative payload helper).
+    This keeps either side replaceable without touching the other.
+    """
+
     def __init__(self, main_window: QMainWindow):
         super().__init__(main_window)
         self._main_window = main_window
@@ -18,10 +69,21 @@ class SimulationCommandController(QObject):
         self._current_file_path = ""
         self._current_file_name = ""
         self._current_file_dirty = False
-        self._task = SimulationTask(self)
-        self._task.simulation_started.connect(self._on_simulation_started)
-        self._task.simulation_completed.connect(self._on_simulation_completed)
-        self._task.simulation_error.connect(self._on_simulation_error)
+
+        # job_ids of submissions that originated from this controller.
+        # Lifecycle:
+        #   - added in run_simulation() right after manager.submit returns
+        #   - removed in _on_sim_complete_event / _on_sim_error_event
+        # The set is the single source of truth for "is this event mine?"
+        # Snapshotting (tuple(self._submitted_jobs)) before iteration is
+        # how we tolerate a worker thread pushing an event into the
+        # set's owner thread mid-iteration.
+        self._submitted_jobs: Set[str] = set()
+
+        # (event_type, handler) pairs we registered with the EventBus,
+        # tracked so shutdown() can unsubscribe symmetrically.
+        self._event_subscriptions: List[Tuple[str, Any]] = []
+        self._subscribe_simulation_events()
 
     @property
     def logger(self):
@@ -71,9 +133,17 @@ class SimulationCommandController(QObject):
             self._code_editor.set_simulation_control_state(state)
 
     def run_simulation(self) -> None:
-        if self._task.is_running:
-            return
+        """Validate the UI preconditions, then submit a job to the manager.
 
+        The prelude (workspace open, active file present, file
+        simulatable, dirty file saved, single-in-flight UX gate)
+        lives in this method because every gate is a *UI-layer*
+        decision — the manager itself accepts any well-formed
+        submission regardless of UI state. Once gating passes,
+        ``manager.submit(origin=JobOrigin.UI_EDITOR, ...)`` is the
+        only path used; ``EVENT_SIM_*`` events come back through
+        the bus and are routed by ``job_id``.
+        """
         project_root = self._get_project_root()
         if not project_root:
             QMessageBox.warning(
@@ -106,6 +176,22 @@ class SimulationCommandController(QObject):
             )
             return
 
+        # UX policy gate (see class docstring): MVP keeps a single
+        # in-flight UI submission. The same gate is also reflected
+        # in canRun=False so the button is normally disabled —
+        # this branch handles the keyboard-shortcut / tested
+        # invocation paths that bypass the disabled visual state.
+        if self._has_active_submission():
+            QMessageBox.information(
+                self._main_window,
+                self._get_text("dialog.info.title", "Info"),
+                self._get_text(
+                    "simulation.another_run_in_progress",
+                    "当前已有仿真正在进行，请等待其结束后再发起新的仿真。"
+                )
+            )
+            return
+
         if self._current_file_dirty and self._code_editor is not None:
             if not self._code_editor.save_file():
                 QMessageBox.warning(
@@ -118,30 +204,166 @@ class SimulationCommandController(QObject):
                 )
                 return
 
-        if not self._task.run_file(file_path, project_root):
+        manager = ServiceLocator.get_optional(SVC_SIMULATION_JOB_MANAGER)
+        if manager is None:
+            # The job manager is registered by application.bootstrap;
+            # missing it at runtime is a startup-order bug, not a
+            # user-recoverable error. Surface it loudly.
+            raise RuntimeError(
+                "SimulationJobManager is not registered in ServiceLocator; "
+                "this is a bootstrap-time bug (expected SVC_SIMULATION_JOB_MANAGER)."
+            )
+
+        # Local import: avoids dragging the domain layer into module
+        # import time (which would break the strict layer ordering
+        # the rest of the codebase enforces).
+        from domain.simulation.models.simulation_job import JobOrigin
+
+        job = manager.submit(
+            circuit_file=file_path,
+            origin=JobOrigin.UI_EDITOR,
+            project_root=project_root,
+        )
+        self._submitted_jobs.add(job.job_id)
+        if self.logger:
+            self.logger.info(
+                f"SimulationCommandController submitted job_id={job.job_id} "
+                f"circuit_file={file_path}"
+            )
+        # Refresh immediately so the button flips to disabled before
+        # the manager's first EVENT_SIM_STARTED roundtrip lands.
+        self.refresh_ui_state()
+
+    # ------------------------------------------------------------------
+    # EventBus subscription
+    # ------------------------------------------------------------------
+
+    def _subscribe_simulation_events(self) -> None:
+        """Subscribe to the three simulation lifecycle events.
+
+        Handlers run on the UI main thread (the EventBus dispatches
+        cross-thread publishes via ``QMetaObject.invokeMethod``), so
+        :class:`QMessageBox` calls inside them are safe.
+        """
+        bus = ServiceLocator.get_optional(SVC_EVENT_BUS)
+        if bus is None:
+            return
+        for event_type, handler in (
+            (EVENT_SIM_STARTED, self._on_sim_started_event),
+            (EVENT_SIM_COMPLETE, self._on_sim_complete_event),
+            (EVENT_SIM_ERROR, self._on_sim_error_event),
+        ):
+            bus.subscribe(event_type, handler)
+            self._event_subscriptions.append((event_type, handler))
+
+    def shutdown(self) -> None:
+        """Symmetrically unsubscribe from the EventBus.
+
+        Idempotent: safe to call multiple times. Called by
+        ``MainWindow.closeEvent``; tests can also call it to keep
+        the bus clean across cases.
+        """
+        bus = ServiceLocator.get_optional(SVC_EVENT_BUS)
+        if bus is not None:
+            for event_type, handler in self._event_subscriptions:
+                try:
+                    bus.unsubscribe(event_type, handler)
+                except Exception:
+                    pass
+        self._event_subscriptions.clear()
+
+    def _on_sim_started_event(self, event_data: dict) -> None:
+        payload = extract_sim_payload(EVENT_SIM_STARTED, event_data)
+        if payload["job_id"] not in self._submitted_jobs:
+            # Not one of ours — agent backend or a future second UI
+            # submission channel. Ignore so we never flip our button
+            # state on someone else's run.
+            return
+        # The button is already disabled (set in run_simulation), but
+        # external state can shift between submit and STARTED — refresh
+        # so tooltip / canRun stay consistent with manager state.
+        self.refresh_ui_state()
+
+    def _on_sim_complete_event(self, event_data: dict) -> None:
+        payload = extract_sim_payload(EVENT_SIM_COMPLETE, event_data)
+        job_id = payload["job_id"]
+        if job_id not in self._submitted_jobs:
+            return
+        self._submitted_jobs.discard(job_id)
+        if self.logger:
+            self.logger.info(
+                f"SimulationCommandController: job_id={job_id} completed "
+                f"result_path={payload['result_path']}"
+            )
+        self.refresh_ui_state()
+
+    def _on_sim_error_event(self, event_data: dict) -> None:
+        payload = extract_sim_payload(EVENT_SIM_ERROR, event_data)
+        job_id = payload["job_id"]
+        if job_id not in self._submitted_jobs:
+            return
+        self._submitted_jobs.discard(job_id)
+        cancelled = bool(payload["cancelled"])
+        error_message = payload["error_message"] or "unknown"
+        if self.logger:
+            self.logger.info(
+                f"SimulationCommandController: job_id={job_id} "
+                f"{'cancelled' if cancelled else 'failed'}: {error_message}"
+            )
+        if not cancelled:
+            # Cancellation was a deliberate user (or future scripted)
+            # action — popping a dialog "you cancelled successfully"
+            # would just be noise. Real failures, on the other hand,
+            # demand acknowledgement.
             QMessageBox.warning(
                 self._main_window,
-                self._get_text("dialog.warning.title", "Warning"),
-                self._get_text("simulation.start_failed", "无法启动仿真任务")
+                self._get_text("dialog.error.title", "Error"),
+                self._get_text(
+                    "simulation.job_failed",
+                    "仿真执行失败：{message}"
+                ).format(message=error_message)
             )
-            self.refresh_ui_state()
-            return
-
-        if self.logger:
-            self.logger.info(f"Started simulation for active editor file: {file_path}")
         self.refresh_ui_state()
+
+    def _has_active_submission(self) -> bool:
+        """True iff any controller-submitted job is still non-terminal.
+
+        The manager is the authoritative state owner. The local set
+        is just a filter telling us *which* jobs are ours; status
+        comes from ``manager.query``. Iterating a snapshot
+        (``tuple(self._submitted_jobs)``) prevents the
+        ``RuntimeError: Set changed size during iteration`` we'd
+        otherwise risk if a terminal event arrives mid-check.
+        """
+        if not self._submitted_jobs:
+            return False
+        manager = ServiceLocator.get_optional(SVC_SIMULATION_JOB_MANAGER)
+        if manager is None:
+            return False
+        for job_id in tuple(self._submitted_jobs):
+            job = manager.query(job_id)
+            if job is not None and not job.is_terminal:
+                return True
+        return False
 
     def _build_ui_state(self) -> Dict[str, Any]:
         project_root = self._get_project_root()
-        is_running = self._task.is_running
         has_active_circuit_file = bool(
             self._current_file_path and is_simulatable_circuit_extension(self._current_file_path)
         )
-        can_run = bool(project_root and has_active_circuit_file and not is_running)
-        if is_running:
+        # Authoritatively answered by the manager, filtered to this
+        # controller's own submitted jobs — so a concurrent
+        # agent-origin simulation does NOT disable the UI Run button.
+        has_inflight_submission = self._has_active_submission()
+        can_run = bool(project_root and has_active_circuit_file) and not has_inflight_submission
+
+        # Tooltip selection is ordered by urgency: in-flight run trumps
+        # every static precondition because it is the one transient
+        # state the user is actively waiting on.
+        if has_inflight_submission:
             primary_tooltip = self._get_text(
-                "simulation.running_current_file",
-                "仿真运行中"
+                "simulation.another_run_in_progress",
+                "当前已有仿真正在进行，请等待其结束后再发起新的仿真。"
             )
         elif not project_root:
             primary_tooltip = self._get_text(
@@ -174,10 +396,10 @@ class SimulationCommandController(QObject):
             "currentFileName": self._current_file_name,
             "isCurrentFileDirty": self._current_file_dirty,
             "hasActiveCircuitFile": has_active_circuit_file,
-            "isRunning": is_running,
             "canRun": can_run,
             "primaryEnabled": can_run,
             "primaryTooltip": primary_tooltip,
+            "isRunning": has_inflight_submission,
         }
 
     def _on_workspace_file_state_changed(self, state: Dict[str, Any]) -> None:
@@ -197,30 +419,8 @@ class SimulationCommandController(QObject):
             self._current_file_dirty = bool(active_item.get("is_dirty", False))
         self.refresh_ui_state()
 
-    def _on_simulation_started(self, file_path: str) -> None:
-        if self.logger:
-            self.logger.info(f"Simulation started: {file_path}")
-        self.refresh_ui_state()
-
-    def _on_simulation_completed(self, result: object) -> None:
-        if self.logger:
-            self.logger.info(f"Simulation completed: success={getattr(result, 'success', False)}")
-        self.refresh_ui_state()
-
-    def _on_simulation_error(self, error_type: str, error_message: str) -> None:
-        if self.logger:
-            self.logger.error(f"Simulation error: {error_type} - {error_message}")
-        QMessageBox.critical(
-            self._main_window,
-            self._get_text("dialog.error.title", "Error"),
-            f"{error_type}\n{error_message}"
-        )
-        self.refresh_ui_state()
-
     def _get_project_root(self) -> Optional[str]:
         try:
-            from shared.service_locator import ServiceLocator
-            from shared.service_names import SVC_SESSION_STATE
             session_state = ServiceLocator.get_optional(SVC_SESSION_STATE)
             if session_state:
                 return str(session_state.project_root or "") or None

@@ -26,7 +26,7 @@
 - __pycache__/ - Python 缓存
 - .git/ - Git 仓库
 - *.pyc - 编译文件
-- simulation_results/ - 仿真结果（可重新生成）
+- simulation_results/ - 仿真结果 bundle（可重新生成）
 
 被调用方：
 - user_checkpoint_node: 用户确认时创建快照（使用 create_snapshot_async）
@@ -61,8 +61,7 @@ DEFAULT_KEEP_COUNT = 10
 # 快照时忽略的模式
 IGNORE_PATTERNS = [
     ".circuit_ai/snapshots",  # 避免递归快照
-    ".circuit_ai/sim_results",
-    "simulation_results",
+    "simulation_results",     # 仿真 bundle 可重新生成
     "__pycache__",
     ".git",
     "*.pyc",
@@ -945,7 +944,6 @@ def _is_protected_restore_path(relative_path: Path) -> bool:
         Path("__pycache__"),
         Path(".pytest_cache"),
         Path(".circuit_ai") / "snapshots",
-        Path(".circuit_ai") / "sim_results",
         Path("simulation_results"),
     }
     normalized = Path(*relative_path.parts) if relative_path.parts else Path()

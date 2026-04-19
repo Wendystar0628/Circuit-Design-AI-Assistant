@@ -201,30 +201,52 @@ EVENT_WEB_SEARCH_COMPLETE = "web_search_complete"
 EVENT_WEB_SEARCH_ERROR = "web_search_error"
 
 # ============================================================
-# 仿真事件
+# 仿真生命周期事件（权威 schema，由 SimulationJobManager 独占发布）
+# ------------------------------------------------------------
+# 这三个事件是"一次仿真发生了什么"的唯一权威广播通道。manager
+# 发事件时按 schema 填全身份字段；订阅者必须从 payload["job_id"]
+# 路由，不允许按 "circuit_file" / 文件 mtime 或 "谁最后到"猜。
+#
+# 字段说明（所有字段均为**必填**，缺字段视作 producer bug）：
+#
+# - job_id       : str — 全局唯一仿真 job 标识；订阅者 routing key
+# - origin       : str — 触发来源（"ui" / "agent" / ...）；用于 UI
+#                        区分人类触发与 agent 后台触发的结果
+# - circuit_file : str — 仿真输入电路文件绝对路径
+# - project_root : str — 项目根目录绝对路径
+#
+# 订阅者入口**第一步**必须是"从 envelope 解包 payload、校验必填
+# 字段、读取 job_id"；任何"缺 job_id 就回退到老路径"的分支都是
+# 非法设计。用 :func:`shared.sim_event_payload.extract_sim_payload`
+# 统一做这件事，不要在每个订阅者里手搓 envelope 解包。
 # ============================================================
 
-# 仿真开始
-# 携带数据：
-#   - circuit_file: str - 电路文件路径
-#   - simulation_type: str - 仿真类型（"transient", "ac", "dc", "noise" 等）
-#   - config: dict - 仿真配置参数
+# 仿真开始 —— 一次 job 进入 RUNNING 时发布
+# payload 在上述通用身份字段之上额外携带：
+#   - analysis_type : str  — 解析后的分析类型（"tran"/"ac"/"dc"/"op"/"noise"...）
+#   - config        : dict — 原始 analysis_config（副本，订阅者可自由读取）
 EVENT_SIM_STARTED = "sim_started"
 
-# 仿真完成
-# 携带数据：
-#   - result_path: str - 结果文件路径
-#   - metrics: dict - 性能指标摘要
-#   - duration_seconds: float - 总耗时（秒）
+# 仿真完成 —— 一次 job 进入 SUCCEEDED 时发布
+# payload 在通用身份字段之上额外携带：
+#   - result_path      : str   — 项目根相对的 result.json 路径（必填，
+#                                 作为结果 bundle 的唯一锚点）
+#   - export_root      : str   — bundle 目录绝对路径
+#   - success          : bool  — 结果 success 标志（恒为 True，冗余但
+#                                 用于下游契约对称）
+#   - duration_seconds : float — 本次仿真总耗时（秒）
 EVENT_SIM_COMPLETE = "sim_complete"
 
-# 仿真错误
-# 携带数据：
-#   - error_type: str - 错误类型
-#   - error_message: str - 错误信息
-#   - file: str - 错误文件（可选）
-#   - line: int - 错误行号（可选）
-#   - recoverable: bool - 是否可恢复
+# 仿真错误 —— 一次 job 进入 FAILED / CANCELLED 时发布
+# payload 在通用身份字段之上额外携带：
+#   - error_message    : str   — 人类可读错误消息（executor / persistence
+#                                 / cancellation 三类失败统一汇聚到此）
+#   - result_path      : str   — 失败也落盘日志 bundle，此处给出
+#                                 result.json 相对路径供 agent 读取；
+#                                 bundle 写不成功时可以是 ""，但字段必须存在
+#   - export_root      : str   — 失败 bundle 目录绝对路径；写不成功时为 ""
+#   - cancelled        : bool  — 是否因取消导致（True 表示 CANCELLED）
+#   - duration_seconds : float — 失败前耗时（秒）
 EVENT_SIM_ERROR = "sim_error"
 
 # 仿真暂停

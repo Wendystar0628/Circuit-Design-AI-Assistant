@@ -30,6 +30,11 @@ from domain.simulation.models.simulation_error import (
     create_syntax_error,
     create_timeout_error,
 )
+from domain.simulation.models.simulation_job import (
+    JobOrigin,
+    JobStatus,
+    SimulationJob,
+)
 from domain.simulation.models.simulation_result import (
     SimulationData,
     SimulationResult,
@@ -45,6 +50,10 @@ __all__ = [
     "create_success_result",
     "create_error_result",
     "ChartType",
+    # Simulation Job
+    "SimulationJob",
+    "JobOrigin",
+    "JobStatus",
     # Simulation Error
     "SimulationError",
     "SimulationErrorType",

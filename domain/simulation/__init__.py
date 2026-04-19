@@ -18,11 +18,18 @@
   - tuning_service.py: 调参服务
 
 服务层（位于 domain/services/）：
-- simulation_service.py: 仿真服务（统一入口）
+- simulation_service.py: 无状态、可重入的仿真执行函数
+  （接受文件 + 配置 → 选执行器 → 跑 → 落盘 → 返回
+  ``(SimulationResult, result_path)``）
+- simulation_job_manager.py: 仿真生命周期的权威入口，唯一对外
+  暴露的仿真"提交 / 查询 / 取消 / 等待"通道，并独占发布
+  ``EVENT_SIM_STARTED`` / ``EVENT_SIM_COMPLETE`` / ``EVENT_SIM_ERROR``
 
 设计说明：
 - SPICE 执行器采用工作目录切换策略，利用 ngspice 原生的相对路径解析能力
 - Python 执行器采用基础进程隔离，不实现完整沙箱
 - CircuitAnalyzer 提供电路文件扫描和依赖关系分析功能
-- SimulationService 作为仿真域的统一入口，协调执行器和结果产物
+- SimulationJobManager 是仿真在仓库中唯一的启动入口；
+  SimulationService 只作为 manager worker 里的"跑一次"原子操作，
+  不持有运行态、不发事件，可被任意线程重入调用
 """

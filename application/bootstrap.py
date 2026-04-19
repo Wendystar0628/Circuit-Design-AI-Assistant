@@ -628,6 +628,14 @@ def _delayed_init():
         _init_executor_registry()
 
         # --------------------------------------------------------
+        # 3.5.3.1 SimulationJobManager 初始化
+        # 依赖：ExecutorRegistry、EventBus、SimulationArtifactPersistence
+        # 职责：作为仓库里唯一能启动仿真的入口，管理并发 job 提交、
+        #       查询、等待、取消及权威事件广播
+        # --------------------------------------------------------
+        _init_simulation_job_manager()
+
+        # --------------------------------------------------------
         # 3.5.5 TracingLogger 初始化
         # 依赖：EventBus、TracingStore
         # 职责：内存缓冲 + 定时刷新追踪日志
@@ -806,6 +814,32 @@ def _init_executor_registry():
             _logger.warning(f"Phase 3.5.4 ExecutorRegistry 初始化失败（非致命）: {e}")
         else:
             print(f"[Phase 3.5.4] ExecutorRegistry 初始化失败: {e}")
+
+
+def _init_simulation_job_manager():
+    """初始化 SimulationJobManager（Phase 3.5.3.1）
+
+    注册 ``SVC_SIMULATION_JOB_MANAGER`` 作为仿真提交的唯一权威入口。
+    依赖 ExecutorRegistry（用于选择执行器）、SimulationArtifactPersistence
+    （用于落盘工件束）与 EventBus（用于权威广播 EVENT_SIM_* 事件）。
+    """
+    try:
+        from domain.services.simulation_job_manager import SimulationJobManager
+        from shared.service_locator import ServiceLocator
+        from shared.service_names import SVC_SIMULATION_JOB_MANAGER
+
+        manager = SimulationJobManager()
+        ServiceLocator.register(SVC_SIMULATION_JOB_MANAGER, manager)
+
+        if _logger:
+            _logger.info("Phase 3.5.3.1 SimulationJobManager 初始化完成")
+    except Exception as exc:
+        if _logger:
+            _logger.warning(
+                f"Phase 3.5.3.1 SimulationJobManager 初始化失败（非致命）: {exc}"
+            )
+        else:
+            print(f"[Phase 3.5.3.1] SimulationJobManager 初始化失败: {exc}")
 
 
 def _init_tracing_logger():

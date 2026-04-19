@@ -21,6 +21,7 @@
 
 import copy
 import logging
+from pathlib import Path
 from typing import List, Optional
 
 from PyQt6.QtCore import QTimer, pyqtSignal
@@ -37,7 +38,10 @@ from presentation.panels.simulation.simulation_view_model import (
     SimulationStatus,
     DisplayMetric,
 )
-from domain.simulation.service.simulation_result_repository import simulation_result_repository
+from domain.simulation.service.simulation_result_repository import (
+    SimulationResultSummary,
+    simulation_result_repository,
+)
 from presentation.panels.simulation.simulation_backend_runtime import SimulationBackendRuntime
 from presentation.panels.simulation.simulation_conversation_attachment_coordinator import SimulationConversationAttachmentCoordinator
 from presentation.panels.simulation.simulation_frontend_state_serializer import SimulationFrontendStateSerializer
@@ -57,6 +61,7 @@ from shared.event_types import (
     EVENT_ITERATION_USER_CONFIRMED,
     EVENT_SIM_RESULT_FILE_CREATED,
 )
+from shared.sim_event_payload import extract_sim_payload
 
 
 class SimulationTab(QWidget):
@@ -86,7 +91,31 @@ class SimulationTab(QWidget):
         
         # 项目状态
         self._project_root: Optional[str] = None
-        self._last_loaded_result_path: Optional[str] = None
+        # Displayed-result triple — the single authoritative answer
+        # to "what is the panel currently showing?".
+        #
+        # Exactly three writers are permitted to touch this triple
+        # (each in a clearly-named function, never ad-hoc):
+        #
+        #   (a) ``_on_simulation_started`` — only when the STARTED
+        #       payload carries ``origin == ui_editor``. Writes
+        #       ``job_id`` + ``circuit_file``; ``result_path`` stays
+        #       ``None`` until the corresponding COMPLETE arrives.
+        #   (b) ``load_history_result`` (entry for both user-picked
+        #       history tabs *and* project-open restore). Writes
+        #       ``result_path`` + ``circuit_file``; ``job_id`` is
+        #       explicitly cleared to ``None`` — this is the
+        #       historical-load branch and carries no live job.
+        #   (c) ``clear`` — all three back to ``None``.
+        #
+        # Critically, ``_on_sim_result_file_created`` does **not** write
+        # to these fields; that callback's sole job is to refresh the
+        # history index so an agent-origin simulation shows up in the
+        # history list without ever replacing what the user is
+        # currently viewing.
+        self._displayed_job_id: Optional[str] = None
+        self._displayed_result_path: Optional[str] = None
+        self._displayed_circuit_file: Optional[str] = None
         self._awaiting_confirmation = False
         self._active_frontend_tab = "metrics"
         self._runtime_status_message = ""
@@ -98,7 +127,7 @@ class SimulationTab(QWidget):
         self._authoritative_raw_data_viewport = self._state_serializer.serialize_raw_data_viewport()
         self._raw_data_copy_sequence = 0
         self._authoritative_raw_data_copy_result = self._state_serializer.serialize_raw_data_copy_result()
-        self._history_results_cache: List[dict] = []
+        self._history_results_cache: List[SimulationResultSummary] = []
         self._bound_web_bridge: Optional[SimulationWebBridge] = None
         
         # EventBus 引用
@@ -252,13 +281,13 @@ class SimulationTab(QWidget):
             project_root=self._project_root or "",
             active_tab=self._normalize_frontend_tab_id(self._active_frontend_tab),
             current_result=self._view_model.current_result,
-            current_result_path=self._last_loaded_result_path or "",
+            current_result_path=self._displayed_result_path or "",
             metrics=self._view_model.metrics_list,
             simulation_status=self._view_model.simulation_status,
             status_message=self._runtime_status_message,
             error_message=self._view_model.error_message,
             history_results=list(self._history_results_cache),
-            latest_project_export_root=self._get_latest_project_export_root() or "",
+            latest_project_export_root=self._current_displayed_bundle_dir() or "",
             awaiting_confirmation=self._awaiting_confirmation,
             analysis_chart_snapshot=snapshot_payloads["analysis_chart_snapshot"],
             waveform_snapshot=snapshot_payloads["waveform_snapshot"],
@@ -456,35 +485,65 @@ class SimulationTab(QWidget):
         self.clear()
 
     def _on_simulation_started(self, event_data: dict):
-        """处理仿真开始事件"""
-        # 事件数据在 "data" 字段中
-        data = event_data.get("data", event_data)
-        circuit_file = data.get("circuit_file", "")
-        self._logger.info(f"Simulation started: {circuit_file}")
+        """STARTED handler — UI-editor jobs claim the displayed triple.
+
+        Identity routing rules (Step 7):
+          * ``origin != ui_editor`` → ignore. Agent jobs run in the
+            background; their progress must never replace what the user
+            is currently looking at.
+          * ``origin == ui_editor`` → take ownership of the triple by
+            writing ``displayed_job_id`` and ``displayed_circuit_file``.
+            ``displayed_result_path`` is reset to ``None`` because the
+            job has not yet produced a bundle; the matching COMPLETE
+            event will fill it.
+
+        UX policy (single in-flight UI submission, enforced by
+        :class:`SimulationCommandController`) means this handler can
+        unconditionally overwrite the triple on a UI-editor STARTED:
+        there is at most one such job at a time.
+        """
+        payload = extract_sim_payload(EVENT_SIM_STARTED, event_data)
+        if payload["origin"] != "ui_editor":
+            return
+        job_id = payload["job_id"]
+        self._displayed_job_id = job_id
+        self._displayed_circuit_file = payload["circuit_file"]
+        self._displayed_result_path = None
+        self._logger.info(
+            f"Simulation started (UI): job_id={job_id} "
+            f"circuit_file={payload['circuit_file']}"
+        )
         self._awaiting_confirmation = False
         self._runtime_status_message = self._get_text("simulation.running", "仿真进行中，请等待...")
         self._update_frontend_payloads()
-    
+
     def _on_simulation_complete(self, event_data: dict):
-        """处理仿真完成事件"""
-        # 事件数据在 "data" 字段中
-        data = event_data.get("data", event_data)
-        result_path = data.get("result_path")
-        success = data.get("success", False)
-        
-        self._logger.info(f"Simulation complete: result_path={result_path}, success={success}")
+        """COMPLETE handler — only loads when ``job_id`` matches the
+        currently displayed one.
+
+        Why ``job_id`` and not ``origin``: by the time COMPLETE fires
+        the originating UI-editor STARTED has already stamped its
+        ``job_id`` on the triple, so identity comparison is exact and
+        survives the (theoretical) corner case of two UI submissions
+        racing through the bus before the first COMPLETE lands.
+
+        ``result_path`` is the authoritative field from the payload;
+        there is no scan-disk / ``get_latest`` fallback. A missing
+        ``result_path`` is a producer bug surfaced by
+        :func:`extract_sim_payload` at the very first line of the
+        handler, not by silent loss of state here.
+        """
+        payload = extract_sim_payload(EVENT_SIM_COMPLETE, event_data)
+        job_id = payload["job_id"]
+        if job_id != self._displayed_job_id:
+            return
+        self._logger.info(
+            f"Simulation complete (mine): job_id={job_id} "
+            f"result_path={payload['result_path']} success={payload['success']}"
+        )
         self._awaiting_confirmation = False
         self._runtime_status_message = ""
-        loaded = False
-        if result_path and self._project_root:
-            loaded = self._load_simulation_result(result_path, activate_op_tab=True)
-        elif not result_path:
-            self._logger.warning("No result_path in event, trying to load latest result")
-            loaded = self._load_project_simulation_result(activate_op_tab=True)
-
-        if loaded and self._project_root:
-            self._auto_export_current_result()
-        self._update_frontend_payloads()
+        self._apply_completed_job(payload)
 
     def _on_language_changed(self, event_data: dict):
         """处理语言切换事件"""
@@ -508,11 +567,22 @@ class SimulationTab(QWidget):
         self._update_frontend_payloads()
 
     def _on_simulation_error(self, event_data: dict):
-        """处理仿真错误事件"""
-        # 事件数据在 "data" 字段中
-        data = event_data.get("data", event_data)
-        error_message = data.get("error_message", "")
-        self._logger.error(f"Simulation error: {error_message}")
+        """ERROR handler — only touches UI when ``job_id`` matches.
+
+        Agent-origin errors are logged (at error level so they remain
+        diagnosable) but must not overwrite the status message of a
+        UI-displayed bundle: the user would see "failed" text while
+        looking at an unrelated successful result.
+        """
+        payload = extract_sim_payload(EVENT_SIM_ERROR, event_data)
+        job_id = payload["job_id"]
+        if job_id != self._displayed_job_id:
+            return
+        error_message = payload["error_message"]
+        self._logger.error(
+            f"Simulation error (mine): job_id={job_id} "
+            f"cancelled={payload['cancelled']} message={error_message}"
+        )
         self._awaiting_confirmation = False
         self._runtime_status_message = error_message
         self._update_frontend_payloads()
@@ -524,7 +594,7 @@ class SimulationTab(QWidget):
         try:
             self._conversation_attachment_coordinator.attach_metrics(
                 self._project_root or "",
-                self._get_latest_project_export_root(),
+                self._current_displayed_bundle_dir(),
                 result,
                 self._view_model.metrics_list,
             )
@@ -538,7 +608,7 @@ class SimulationTab(QWidget):
         try:
             self._conversation_attachment_coordinator.attach_chart_image(
                 self._project_root or "",
-                self._get_latest_project_export_root(),
+                self._current_displayed_bundle_dir(),
                 result,
             )
         except Exception as exc:
@@ -551,7 +621,7 @@ class SimulationTab(QWidget):
         try:
             self._conversation_attachment_coordinator.attach_op_result(
                 self._project_root or "",
-                self._get_latest_project_export_root(),
+                self._current_displayed_bundle_dir(),
                 result,
             )
         except Exception as exc:
@@ -564,7 +634,7 @@ class SimulationTab(QWidget):
         try:
             self._conversation_attachment_coordinator.attach_waveform_image(
                 self._project_root or "",
-                self._get_latest_project_export_root(),
+                self._current_displayed_bundle_dir(),
                 result,
             )
         except Exception as exc:
@@ -577,54 +647,35 @@ class SimulationTab(QWidget):
         try:
             self._conversation_attachment_coordinator.attach_output_log(
                 self._project_root or "",
-                self._get_latest_project_export_root(),
+                self._current_displayed_bundle_dir(),
                 result,
             )
         except Exception as exc:
             self._show_add_to_conversation_error(exc)
     
     def _on_sim_result_file_created(self, event_data: dict):
+        """File-watcher callback — refreshes the history index, nothing
+        else.
+
+        Before Step 7 this handler doubled as a "new result detected,
+        swap displayed bundle" trigger. That behaviour is now
+        architecturally forbidden: the displayed triple can only be
+        rewritten by (a) a UI-editor-origin SIM_COMPLETE that matches
+        ``displayed_job_id`` or (b) an explicit ``load_history_result``
+        call. A stray file write — e.g. an agent-origin job finishing
+        in the background — must appear in the history list but must
+        **not** hijack the user's current view.
         """
-        处理仿真结果文件创建事件（文件监控触发）
-        
-        Args:
-            event_data: 事件数据，包含 file_path 和 project_root
-        """
-        # 事件数据在 "data" 字段中
         data = event_data.get("data", event_data)
-        file_path = data.get("file_path", "")
         event_project_root = data.get("project_root", "")
-        
-        # 检查是否为当前项目
         if self._project_root and event_project_root:
             if self._project_root != event_project_root:
                 return
-        
-        self._logger.info(f"Sim result file created: {file_path}")
-        
-        # 检查是否需要重新加载
-        if self._should_reload(file_path):
-            self._load_simulation_result(file_path)
-    
-    def _should_reload(self, file_path: str) -> bool:
-        """
-        判断是否需要重新加载
-        
-        避免重复加载相同的结果文件
-        
-        Args:
-            file_path: 结果文件路径
-            
-        Returns:
-            bool: 是否需要重新加载
-        """
-        normalized_path = self._normalize_result_path(file_path)
-        if not normalized_path:
-            return False
-
-        if normalized_path == self._last_loaded_result_path:
-            return False
-        return True
+        self._logger.info(
+            f"Sim result file created: {data.get('file_path', '')} (refreshing history index only)"
+        )
+        self._refresh_history_results_cache()
+        self._update_frontend_payloads()
 
     def bind_web_bridge(self, bridge: Optional[SimulationWebBridge]):
         if bridge is None or bridge is self._bound_web_bridge:
@@ -720,10 +771,9 @@ class SimulationTab(QWidget):
         result = self._view_model.current_result
         if result is None:
             return
-        export_root_str = self._get_latest_project_export_root()
+        export_root_str = self._current_displayed_bundle_dir()
         if not export_root_str:
             return
-        from pathlib import Path
         from domain.simulation.data.simulation_artifact_exporter import simulation_artifact_exporter
 
         export_root = Path(export_root_str)
@@ -933,21 +983,23 @@ class SimulationTab(QWidget):
             return
         self._on_add_metrics_to_conversation_clicked()
     
-    def load_result(self, result, result_path: Optional[str] = None, activate_op_tab: bool = False):
-        """
-        加载仿真结果
-        
-        Args:
-            result: SimulationResult 对象
-        """
-        if result_path:
-            self._last_loaded_result_path = self._normalize_result_path(result_path)
+    def _render_result(self, result, *, activate_op_tab: bool) -> None:
+        """Pure UI-injection step — populates the backend runtime from a
+        loaded ``SimulationResult`` without touching the displayed
+        triple.
 
+        Every caller (``_apply_completed_job``, ``load_history_result``)
+        is responsible for setting the triple *before* calling this
+        function. Separating "decide what we're displaying" from
+        "inject it into widgets" is what makes the two branches
+        visually distinct while still sharing the widget-population
+        logic.
+        """
         self._backend_runtime.clear()
         self._view_model.load_result(result)
         self._backend_runtime.analysis_info_panel.load_result(result)
         self._backend_runtime.export_panel.set_result(result)
-        
+
         if getattr(result, 'success', False) and getattr(result, 'data', None) is not None:
             self._load_waveform_data(result)
             self._backend_runtime.raw_data_table.load_data(result)
@@ -968,14 +1020,70 @@ class SimulationTab(QWidget):
         self._backend_runtime.spice_schematic_document.load_from_result_file(str(getattr(result, 'file_path', '') or ''))
         self._update_frontend_payloads(include_raw_data=True)
 
-    def _restore_project_result_after_project_opened(self):
+    def _apply_completed_job(self, payload: dict) -> None:
+        """Display-branch for "my UI-editor job just finished".
+
+        Invariants by the time this is called:
+          * ``payload["job_id"] == self._displayed_job_id`` — the
+            STARTED handler already claimed the triple.
+          * ``payload["result_path"]`` is non-empty (guaranteed by
+            :func:`extract_sim_payload`).
+
+        The triple is re-stamped here rather than only in STARTED
+        because ``result_path`` is only known now; this is the single
+        statement that "fills the hole" left open at start time.
+        """
         if not self._project_root:
             return
-
-        if self._view_model.current_result is not None or self._last_loaded_result_path:
+        result_path = payload["result_path"]
+        circuit_file = payload["circuit_file"]
+        try:
+            load_result = simulation_result_repository.load(self._project_root, result_path)
+        except Exception as exc:
+            self._logger.warning(
+                f"Exception loading completed-job bundle {result_path}: {exc}"
+            )
             return
+        if not load_result.success or load_result.data is None:
+            self._logger.warning(
+                f"Failed to load completed-job bundle {result_path}: {load_result.error_message}"
+            )
+            return
+        self._displayed_result_path = result_path
+        self._displayed_circuit_file = circuit_file
+        # _displayed_job_id stays as-is (matched in caller).
+        self._render_result(load_result.data, activate_op_tab=True)
 
-        self._load_project_simulation_result()
+    def _restore_project_result_after_project_opened(self):
+        """Project-open restore — a convenience UX that replays "show
+        the most recent historical bundle" on open.
+
+        Implemented **as a history load**, not as an event replay: the
+        triple therefore ends with ``displayed_job_id is None``, which
+        is the whole point. This means no subsequent SIM_COMPLETE can
+        match against a stale "job id I had at project open" — the
+        trio becomes inert until either the user runs a simulation or
+        picks another history entry.
+
+        Step 8 pins the entry point to
+        :meth:`SimulationResultRepository.list_by_circuit` — "first
+        group's first result" — instead of the flat history list. The
+        two are guaranteed equivalent by the repository (groups are
+        sorted by their newest bundle), and routing through the
+        aggregation API keeps ``get_latest`` off the UI path as
+        required by the plan.
+        """
+        if not self._project_root:
+            return
+        if self._view_model.current_result is not None or self._displayed_result_path:
+            return
+        groups = simulation_result_repository.list_by_circuit(self._project_root)
+        if not groups or not groups[0].results:
+            return
+        most_recent = groups[0].results[0]
+        if not most_recent.result_path:
+            return
+        self.load_history_result(most_recent.result_path)
 
     def _load_waveform_data(self, result):
         """
@@ -1031,8 +1139,16 @@ class SimulationTab(QWidget):
             self._logger.warning(f"Interactive chart loading failed: {e}")
     
     def clear(self):
-        """清空所有显示"""
-        self._last_loaded_result_path = None
+        """Reset the displayed triple and wipe every widget-held result.
+
+        ``clear`` is one of the three permitted triple-writers (see the
+        ``__init__`` docstring). After this call the panel is in the
+        same state as a freshly-constructed instance with no project
+        ever opened.
+        """
+        self._displayed_job_id = None
+        self._displayed_result_path = None
+        self._displayed_circuit_file = None
         self._awaiting_confirmation = False
         self._active_frontend_tab = "metrics"
         self._runtime_status_message = ""
@@ -1040,10 +1156,24 @@ class SimulationTab(QWidget):
         self._view_model.clear()
         self._update_frontend_payloads(include_raw_data=True)
 
-    def reload_latest_result(self):
-        """刷新显示"""
-        if self._project_root:
-            self._load_project_simulation_result()
+    def refresh_history_index(self) -> None:
+        """Rebuild the history-results cache and republish frontend state.
+
+        Replaces the pre-Step-7 ``reload_latest_result`` used by the
+        bottom-panel refresh button. The old behaviour silently
+        overwrote the displayed bundle with "whatever
+        :meth:`SimulationResultRepository.get_latest` returns", which
+        clashes with Step 7's invariant that the displayed triple is
+        only mutated by STARTED/COMPLETE with a matching job id or by
+        an explicit history load. Refresh, post-Step-7, therefore only
+        re-scans the on-disk history index — newly-persisted bundles
+        from agent jobs become visible in the history tab without
+        hijacking the user's current view.
+        """
+        if not self._project_root:
+            return
+        self._refresh_history_results_cache()
+        self._update_frontend_payloads()
 
     def activate_result_tab(self, tab_id: str) -> bool:
         normalized_tab_id = self._normalize_frontend_tab_id(tab_id)
@@ -1056,7 +1186,40 @@ class SimulationTab(QWidget):
         return True
 
     def load_history_result(self, result_path: str) -> bool:
-        return self._load_simulation_result(result_path, activate_op_tab=False)
+        """History-load branch — the user (or project-open restore)
+        explicitly asks to display a historical bundle.
+
+        Semantics:
+          * ``displayed_job_id`` is set to ``None``. A history load
+            is not an "in-flight job", and pairing it with a job id
+            would create a ghost match for whatever COMPLETE arrives
+            next.
+          * ``displayed_result_path`` / ``displayed_circuit_file``
+            are populated from the freshly-loaded bundle. The circuit
+            file comes from the persisted ``SimulationResult.file_path``
+            rather than from a parallel cache so the triple stays
+            self-consistent.
+
+        Returns ``True`` iff the bundle was successfully loaded and
+        rendered.
+        """
+        if not self._project_root or not result_path:
+            return False
+        try:
+            load_result = simulation_result_repository.load(self._project_root, result_path)
+        except Exception as exc:
+            self._logger.warning(f"Exception loading history bundle {result_path}: {exc}")
+            return False
+        if not load_result.success or load_result.data is None:
+            self._logger.warning(
+                f"Failed to load history bundle {result_path}: {load_result.error_message}"
+            )
+            return False
+        self._displayed_job_id = None
+        self._displayed_result_path = result_path
+        self._displayed_circuit_file = str(getattr(load_result.data, "file_path", "") or "")
+        self._render_result(load_result.data, activate_op_tab=False)
+        return True
     
     def retranslate_ui(self):
         """重新翻译 UI 文本"""
@@ -1090,77 +1253,33 @@ class SimulationTab(QWidget):
             message,
         )
     
-    def _load_project_simulation_result(self, activate_op_tab: bool = False) -> bool:
-        """加载项目的仿真结果"""
-        if not self._project_root:
-            return False
-        
-        try:
-            load_result = simulation_result_repository.get_latest(self._project_root)
-            if load_result.success and load_result.data:
-                self._last_loaded_result_path = self._normalize_result_path(load_result.file_path)
-                self.load_result(load_result.data, load_result.file_path, activate_op_tab=activate_op_tab)
-                self._logger.info(f"Loaded simulation result: {load_result.file_path}")
-                return True
-            else:
-                self._logger.info(f"No simulation result found: {load_result.error_message}")
-                self.clear()
-                return False
-                
-        except Exception as e:
-            self._logger.warning(f"Failed to load simulation result: {e}")
-            self.clear()
-            return False
-    
-    def _load_simulation_result(self, result_path: str, activate_op_tab: bool = False) -> bool:
-        """加载指定的仿真结果"""
-        if not self._project_root:
-            return False
-        
-        try:
-            load_result = simulation_result_repository.load(self._project_root, result_path)
-            if load_result.success and load_result.data:
-                # load_result.data 已经是 SimulationResult 对象
-                self._last_loaded_result_path = self._normalize_result_path(result_path)
-                self.load_result(load_result.data, result_path, activate_op_tab=activate_op_tab)
-                return True
-            else:
-                self._logger.warning(f"Failed to load result: {load_result.error_message}")
-                return False
-                
-        except Exception as e:
-            self._logger.warning(f"Failed to load simulation result: {e}")
-            return False
+    def _current_displayed_bundle_dir(self) -> Optional[str]:
+        """Resolve the on-disk bundle directory of the currently displayed result.
 
-    def _auto_export_current_result(self):
-        execution = self._backend_runtime.export_panel.auto_export_to_project(self._project_root or "")
-        if execution is None:
-            return
-        if execution.errors:
-            self._logger.warning(
-                "Project auto export completed with errors: root=%s, errors=%s",
-                execution.export_root,
-                execution.errors,
-            )
-            self._update_frontend_payloads()
-            return
-        self._logger.info(
-            "Project auto export completed: root=%s, files=%s",
-            execution.export_root,
-            len(execution.exported_files),
+        Delegates to
+        :meth:`SimulationResultRepository.resolve_bundle_dir` — the
+        single authority for ``result_path → export_root`` post-Step-8.
+        Attachment tooling and the metrics-refresh path both consume
+        this method; by concentrating the resolution in the
+        repository we ensure every disk hit uses the same parsing
+        rules (POSIX normalisation, existence check) instead of each
+        call site rolling its own :class:`Path` math.
+
+        The source of truth remains ``_displayed_result_path`` — the
+        only answer to "what is the panel showing?". No
+        :meth:`SimulationResultRepository.get_latest` scan, no
+        parallel cache: attachments must read from exactly the bundle
+        the user is looking at, regardless of which agent jobs
+        finished after it.
+        """
+        bundle_dir = simulation_result_repository.resolve_bundle_dir(
+            self._project_root or "",
+            self._displayed_result_path or "",
         )
-        self._update_frontend_payloads()
-
-    def _get_latest_project_export_root(self) -> Optional[str]:
-        export_root = self._backend_runtime.export_panel.latest_project_export_root
-        if export_root is None:
+        if bundle_dir is None:
             return None
-        return str(export_root)
+        return str(bundle_dir)
 
-    def _normalize_result_path(self, result_path: str) -> str:
-        if not result_path:
-            return ""
-        return result_path.replace('\\', '/').lower()
     
     def _get_text(self, key: str, default: str) -> str:
         """获取国际化文本"""

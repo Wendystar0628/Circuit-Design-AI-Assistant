@@ -66,7 +66,7 @@ def test_session_state_manager_session_changed_event_omits_sim_result_path():
     manager._current_session_id = "session-001"
     manager._project_root = ""
     manager._get_current_state = lambda: {
-        "sim_result_path": ".circuit_ai/sim_results/run_001.json",
+        "sim_result_path": "simulation_results/amp/2026-04-06_00-10-00/result.json",
         "circuit_file_path": "designs/amp.cir",
         "design_goals_path": ".circuit_ai/design_goals.json",
     }
@@ -87,12 +87,15 @@ def test_session_state_manager_session_changed_event_omits_sim_result_path():
 
 
 def test_create_snapshot_excludes_persisted_simulation_artifacts(tmp_path: Path):
+    """Snapshots should never carry the regeneratable bundle tree.
+
+    The authoritative simulation artifacts live under
+    ``simulation_results/<stem>/<ts>/`` (single-tree contract); the legacy
+    ``.circuit_ai/sim_results/`` location no longer exists. Snapshots
+    only need to capture user-authored sources.
+    """
     design_file = tmp_path / "amp.cir"
     design_file.write_text("before", encoding="utf-8")
-
-    hidden_result = tmp_path / ".circuit_ai" / "sim_results" / "run_001.json"
-    hidden_result.parent.mkdir(parents=True, exist_ok=True)
-    hidden_result.write_text('{"result": "hidden"}', encoding="utf-8")
 
     export_file = tmp_path / "simulation_results" / "amp" / "export_manifest.json"
     export_file.parent.mkdir(parents=True, exist_ok=True)
@@ -103,17 +106,15 @@ def test_create_snapshot_excludes_persisted_simulation_artifacts(tmp_path: Path)
     snapshot_dir = tmp_path / SNAPSHOTS_DIR / "iter_001"
     assert snapshot_dir.exists()
     assert (snapshot_dir / "amp.cir").read_text(encoding="utf-8") == "before"
-    assert not (snapshot_dir / ".circuit_ai" / "sim_results").exists()
     assert not (snapshot_dir / "simulation_results").exists()
 
 
 def test_restore_snapshot_preserves_persisted_simulation_artifacts(tmp_path: Path):
+    """Restoring a snapshot must leave the live simulation bundle tree
+    untouched so the most recent results stay visible after a rollback.
+    """
     design_file = tmp_path / "amp.cir"
     design_file.write_text("before", encoding="utf-8")
-
-    hidden_result = tmp_path / ".circuit_ai" / "sim_results" / "run_001.json"
-    hidden_result.parent.mkdir(parents=True, exist_ok=True)
-    hidden_result.write_text('{"result": "old-hidden"}', encoding="utf-8")
 
     export_file = tmp_path / "simulation_results" / "amp" / "export_manifest.json"
     export_file.parent.mkdir(parents=True, exist_ok=True)
@@ -124,14 +125,12 @@ def test_restore_snapshot_preserves_persisted_simulation_artifacts(tmp_path: Pat
     design_file.write_text("after", encoding="utf-8")
     extra_file = tmp_path / "stale.txt"
     extra_file.write_text("stale", encoding="utf-8")
-    hidden_result.write_text('{"result": "new-hidden"}', encoding="utf-8")
     export_file.write_text('{"result": "new-export"}', encoding="utf-8")
 
     restore_snapshot(str(tmp_path), "iter_001", backup_current=False)
 
     assert design_file.read_text(encoding="utf-8") == "before"
     assert not extra_file.exists()
-    assert hidden_result.read_text(encoding="utf-8") == '{"result": "new-hidden"}'
     assert export_file.read_text(encoding="utf-8") == '{"result": "new-export"}'
 
 

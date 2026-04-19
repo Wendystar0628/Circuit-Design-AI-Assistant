@@ -2,14 +2,18 @@
 """
 统一路径常量
 
-所有系统生成的数据统一存储在 .circuit_ai/ 目录下。
-本模块定义所有路径常量，确保路径一致性。
+系统生成的数据分布在两棵权威目录：
+- ``.circuit_ai/`` 下承载会话、快照、设计目标等元数据
+- ``simulation_results/`` 下承载每次仿真产出的完整 bundle
+  （由 ``domain.simulation.data.simulation_artifact_exporter`` 权威定义）
+
+本模块定义系统隐藏目录相关常量；仿真结果磁盘位置的权威来源
+固定在 ``simulation_artifact_exporter.CANONICAL_RESULTS_DIR``。
 
 使用示例：
-    from shared.constants.paths import SIM_RESULTS_DIR, SYSTEM_DIR
-    
-    # 构建仿真结果完整路径
-    result_path = Path(project_root) / SIM_RESULTS_DIR / f"{uuid}.json"
+    from shared.constants.paths import SYSTEM_DIR, SIM_CONFIG_FILE
+
+    config_path = Path(project_root) / SIM_CONFIG_FILE
 """
 
 # ============================================================
@@ -22,9 +26,6 @@ SYSTEM_DIR = ".circuit_ai"
 # ============================================================
 # 仿真相关路径
 # ============================================================
-
-# 仿真结果目录（相对于项目根目录）
-SIM_RESULTS_DIR = f"{SYSTEM_DIR}/sim_results"
 
 # 仿真配置文件（相对于项目根目录）
 SIM_CONFIG_FILE = f"{SYSTEM_DIR}/simulation_config.json"
@@ -73,7 +74,6 @@ CHECKPOINTS_DB = f"{SYSTEM_DIR}/checkpoints.sqlite3"
 
 __all__ = [
     "SYSTEM_DIR",
-    "SIM_RESULTS_DIR",
     "SIM_CONFIG_FILE",
     "DESIGN_GOALS_FILE",
     "ITERATION_HISTORY_FILE",

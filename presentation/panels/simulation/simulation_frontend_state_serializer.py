@@ -5,7 +5,10 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from domain.simulation.data.op_result_data_builder import op_result_data_builder
 from domain.simulation.models.simulation_result import SimulationResult
-from domain.simulation.service.simulation_result_repository import SimulationResultSummary
+from domain.simulation.service.simulation_result_repository import (
+    CircuitResultGroup,
+    SimulationResultSummary,
+)
 from presentation.panels.simulation.simulation_view_model import DisplayMetric
 
 
@@ -59,11 +62,12 @@ class SimulationFrontendStateSerializer:
         active_tab: str = "metrics",
         current_result: Optional[SimulationResult] = None,
         current_result_path: str = "",
+        displayed_circuit_file: str = "",
         metrics: Optional[Sequence[DisplayMetric]] = None,
         simulation_status: Any = "idle",
         status_message: str = "",
         error_message: str = "",
-        history_results: Optional[Sequence[SimulationResultSummary]] = None,
+        circuit_groups: Optional[Sequence[CircuitResultGroup]] = None,
         latest_project_export_root: str = "",
         awaiting_confirmation: bool = False,
         analysis_chart_snapshot: Optional[Dict[str, Any]] = None,
@@ -71,6 +75,18 @@ class SimulationFrontendStateSerializer:
         output_log_snapshot: Optional[Dict[str, Any]] = None,
         export_snapshot: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
+        """Compose the authoritative main-state payload for the panel.
+
+        ``circuit_groups`` is the single by-circuit aggregated index
+        produced by :meth:`SimulationResultRepository.list_by_circuit`
+        and cached in ``SimulationTab._history_index_cache`` — both the
+        flat history-tab view and the grouped circuit-selection view
+        are derived from this one input, so the two surfaces cannot
+        drift. The pre-Step-11 ``history_results=`` entry point, which
+        forced the caller to pre-flatten the groups, has been removed;
+        its signature is now expressed end-to-end in terms of the
+        aggregated cache.
+        """
         result = current_result if isinstance(current_result, SimulationResult) else None
         normalized_metrics = [
             self.serialize_metric(metric) for metric in (metrics or []) if isinstance(metric, DisplayMetric)
@@ -82,11 +98,17 @@ class SimulationFrontendStateSerializer:
         status_phase = self._resolve_status_phase(simulation_status, awaiting_confirmation)
         normalized_active_tab = active_tab if active_tab in available_tabs else "metrics"
         normalized_result_path = self._normalize_result_path(current_result_path)
+        normalized_groups = [
+            group for group in (circuit_groups or []) if isinstance(group, CircuitResultGroup)
+        ]
         normalized_history = [
             self.serialize_history_item(item, current_result_path=normalized_result_path)
-            for item in (history_results or [])
-            if isinstance(item, SimulationResultSummary)
+            for item in self._flatten_history_groups(normalized_groups)
         ]
+        circuit_selection_view = self.serialize_circuit_selection_view(
+            circuit_groups=normalized_groups,
+            displayed_circuit_file=displayed_circuit_file,
+        )
         has_result = result is not None
         signal_names = self._signal_names(result)
         has_waveform = bool(signal_names)
@@ -246,6 +268,7 @@ class SimulationFrontendStateSerializer:
                 "selected_result_path": normalized_result_path,
                 "can_load": bool(project_root),
             },
+            "circuit_selection_view": circuit_selection_view,
             "op_result_view": op_result_view,
         }
 
@@ -561,6 +584,114 @@ class SimulationFrontendStateSerializer:
             "can_load": bool(result_path),
         }
 
+    def serialize_circuit_selection_view(
+        self,
+        *,
+        circuit_groups: Sequence[CircuitResultGroup],
+        displayed_circuit_file: str,
+    ) -> Dict[str, Any]:
+        """Compose the per-circuit card grid for the circuit-selection tab.
+
+        One card per :class:`CircuitResultGroup` — the incoming sequence
+        is the authoritative by-circuit aggregation produced by
+        :meth:`SimulationResultRepository.list_by_circuit` and cached
+        in ``SimulationTab._history_index_cache``. No fallback to the
+        flat ``list`` tier, no per-card disk hit, no ``get_latest``.
+
+        The input is already group-newest-first (repository contract
+        at :meth:`list_by_circuit`), so the card order here is a
+        direct echo of that ordering — "circuits whose most recent
+        run is newest come first", which is exactly the UX the plan
+        asks for. Cards are **never truncated**: circuit counts are
+        naturally small and hiding old circuits just makes them
+        unreachable.
+
+        ``is_current`` is a circuit-level predicate: it is true iff
+        the card's ``circuit_file`` matches the panel's currently-
+        displayed circuit. It is deliberately *not* a ``result_path``
+        match — clicking a card will switch circuits, not re-select
+        a specific historical bundle, and keying ``is_current`` off
+        ``result_path`` would make the card flip off the moment the
+        user drilled into a second run of the same circuit.
+
+        Each card embeds the group's newest
+        :class:`SimulationResultSummary` as ``latest_result`` via the
+        same :meth:`serialize_history_item` used by the history-results
+        tab — this is how the field-level deduplication invariant from
+        the plan is realised at the wire level: there is exactly one
+        ``result_path`` / ``analysis_type`` / ``timestamp`` / ``success``
+        shape in the payload, shared by both surfaces.
+        """
+        normalized_displayed = self._normalize_circuit_file(displayed_circuit_file)
+        items: List[Dict[str, Any]] = []
+        for group in circuit_groups:
+            if not group.results:
+                continue
+            latest = group.results[0]
+            normalized_circuit_file = self._normalize_circuit_file(group.circuit_file)
+            items.append({
+                "circuit_file": normalized_circuit_file,
+                "circuit_absolute_path": str(group.circuit_absolute_path or ""),
+                "circuit_display_name": self._derive_circuit_display_name(group.circuit_file),
+                "run_count": len(group.results),
+                "is_current": bool(
+                    normalized_circuit_file
+                    and normalized_circuit_file == normalized_displayed
+                ),
+                # ``current_result_path=""`` intentionally zeroes out
+                # the embedded history item's ``is_current`` field —
+                # per-run currency is not meaningful inside a card
+                # whose currency is already decided at the circuit
+                # level above.
+                "latest_result": self.serialize_history_item(
+                    latest,
+                    current_result_path="",
+                ),
+            })
+        return {
+            "items": items,
+            "selected_circuit_file": normalized_displayed,
+        }
+
+    @staticmethod
+    def _flatten_history_groups(
+        groups: Sequence[CircuitResultGroup],
+    ) -> List[SimulationResultSummary]:
+        """Derive the flat time-descending history view from the
+        by-circuit aggregation.
+
+        Groups are already per-circuit timestamp-descending
+        (repository contract), so flattening + one global timestamp
+        sort yields the same ordering the deprecated
+        :meth:`SimulationResultRepository.list` used to hand out.
+        Living here, rather than on :class:`SimulationTab`, is what
+        lets the panel hand a single ``circuit_groups`` input to the
+        serializer and have both the flat history tab and the
+        circuit-selection tab derive from it without the caller
+        pre-shaping two parallel views.
+        """
+        flat: List[SimulationResultSummary] = []
+        for group in groups:
+            flat.extend(group.results)
+        flat.sort(key=lambda summary: summary.timestamp, reverse=True)
+        return flat
+
+    @staticmethod
+    def _derive_circuit_display_name(circuit_file: str) -> str:
+        """Human-readable label for a circuit card.
+
+        Prefer the file *stem* (``amp`` for ``circuits/amp.cir``) —
+        short, unambiguous, and matches how users refer to their
+        circuits in conversation. Falls back to the full basename
+        when a stem cannot be extracted (unusual, but protects
+        against pathological ``circuit_file`` values coming out of
+        legacy ``result.json`` headers).
+        """
+        if not circuit_file:
+            return ""
+        path = Path(str(circuit_file).replace("\\", "/"))
+        return path.stem or path.name
+
     def serialize_op_result(self, result: Optional[SimulationResult]) -> Dict[str, Any]:
         payload = op_result_data_builder.build(result)
         return {
@@ -647,6 +778,19 @@ class SimulationFrontendStateSerializer:
             return None
 
     def _normalize_result_path(self, value: str) -> str:
+        return str(value or "").replace("\\", "/").lower()
+
+    def _normalize_circuit_file(self, value: str) -> str:
+        """POSIX + case-fold normalisation for circuit-file identity.
+
+        Applied symmetrically to the ``displayed_circuit_file`` and to
+        each :class:`CircuitResultGroup` ``circuit_file`` before the
+        ``is_current`` comparison — Windows-born paths may differ in
+        case or separator from the persisted header while referring
+        to the same file, so the comparison must collapse both axes.
+        Mirrors :meth:`_normalize_result_path` so the two identity
+        relations in the payload use the same rule.
+        """
         return str(value or "").replace("\\", "/").lower()
 
     def _normalize_source_file_path(self, result: Optional[SimulationResult]) -> str:

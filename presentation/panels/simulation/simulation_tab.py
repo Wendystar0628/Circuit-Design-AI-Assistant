@@ -133,11 +133,15 @@ class SimulationTab(QWidget):
         self._authoritative_raw_data_copy_result = self._state_serializer.serialize_raw_data_copy_result()
         # Step 9 — single by-circuit aggregated history-index cache.
         # The shared data source feeding both the history-results tab
-        # (via :meth:`_history_index_flat_view`) and any future
-        # circuit-selection tab. Refreshed via one and only one
-        # disk-scan entry point (``_refresh_history_index``) hooked to
-        # the Step 9 trigger set: project open/close, SIM_COMPLETE,
-        # SIM_ERROR, and the file-watcher fallback.
+        # and the Step 11 circuit-selection tab. Handed verbatim to
+        # :meth:`SimulationFrontendStateSerializer.serialize_main_state`
+        # via the ``circuit_groups=`` input, which derives the flat
+        # time-descending history view and the grouped card grid from
+        # this one cache — no consumer ever hits the repository on
+        # its own. Refreshed via one and only one disk-scan entry
+        # point (``_refresh_history_index``) hooked to the Step 9
+        # trigger set: project open/close, SIM_COMPLETE, SIM_ERROR,
+        # and the file-watcher fallback.
         self._history_index_cache: List[CircuitResultGroup] = []
         self._bound_web_bridge: Optional[SimulationWebBridge] = None
         
@@ -260,8 +264,10 @@ class SimulationTab(QWidget):
         """Rebuild the by-circuit aggregated history index (Step 9).
 
         **The single disk-scan entry point** for the simulation panel:
-        every other consumer — the history-results tab's flat view,
-        any future circuit-selection tab, the project-open restore
+        every other consumer — the flat history-results view and the
+        Step-11 circuit-selection grid (both derived inside
+        :meth:`SimulationFrontendStateSerializer.serialize_main_state`
+        from the ``circuit_groups=`` input), the project-open restore
         flow — reads from :attr:`_history_index_cache` instead of
         hitting the repository on its own. A grep in
         ``presentation/panels/simulation/`` must show exactly one
@@ -298,23 +304,6 @@ class SimulationTab(QWidget):
             self._history_index_cache = []
             self._logger.warning(f"Failed to refresh simulation history index: {exc}")
 
-    def _history_index_flat_view(self) -> List[SimulationResultSummary]:
-        """Project the aggregated cache into the flat time-descending
-        view consumed by the history-results tab.
-
-        Equivalent to what ``simulation_result_repository.list`` used
-        to return, but derived from :attr:`_history_index_cache` so
-        only **one** scan ever hits disk per refresh cycle. Groups
-        are already per-circuit-sorted newest-first by the repository,
-        so flattening + global timestamp-descending sort yields the
-        same ordering as the tier-2 flat browse.
-        """
-        flat: List[SimulationResultSummary] = []
-        for group in self._history_index_cache:
-            flat.extend(group.results)
-        flat.sort(key=lambda summary: summary.timestamp, reverse=True)
-        return flat
-
     def _build_frontend_runtime_snapshots(self):
         active_tab = self._normalize_frontend_tab_id(self._active_frontend_tab)
         current_result = self._view_model.current_result
@@ -341,11 +330,12 @@ class SimulationTab(QWidget):
             active_tab=self._normalize_frontend_tab_id(self._active_frontend_tab),
             current_result=self._view_model.current_result,
             current_result_path=self._displayed_result_path or "",
+            displayed_circuit_file=self._displayed_circuit_file or "",
             metrics=self._view_model.metrics_list,
             simulation_status=self._view_model.simulation_status,
             status_message=self._runtime_status_message,
             error_message=self._view_model.error_message,
-            history_results=self._history_index_flat_view(),
+            circuit_groups=self._history_index_cache,
             latest_project_export_root=self._current_displayed_bundle_dir() or "",
             awaiting_confirmation=self._awaiting_confirmation,
             analysis_chart_snapshot=snapshot_payloads["analysis_chart_snapshot"],

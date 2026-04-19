@@ -6,7 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Set
 
-from resources.resource_loader import get_spice_cmp_dir, get_spice_sub_dir
+from domain.simulation.spice.bundled_subcircuit_catalog import load_bundled_subcircuit_path_index
+from resources.resource_loader import get_spice_cmp_dir
 
 
 @dataclass(frozen=True)
@@ -119,23 +120,8 @@ class BundledSpiceLibraryInjector:
         if self._subckt_index is not None:
             return self._subckt_index
 
-        index: Dict[str, Path] = {}
-        sub_dir = get_spice_sub_dir()
-        if not sub_dir.exists():
-            self._subckt_index = index
-            return index
-
-        for pattern in ('*.lib', '*.sub', '*.cir', '*.sp', '*.ckt', '*.mod'):
-            for model_file in sub_dir.rglob(pattern):
-                content = self._read_text(model_file)
-                if not content:
-                    continue
-                for match in re.finditer(r'^\s*\.subckt\s+([^\s(]+)', content, re.IGNORECASE | re.MULTILINE):
-                    subckt_name = match.group(1).strip().lower()
-                    index.setdefault(subckt_name, model_file)
-
-        self._subckt_index = index
-        return index
+        self._subckt_index = dict(load_bundled_subcircuit_path_index())
+        return self._subckt_index
 
     def _read_text(self, file_path: Path) -> str:
         for encoding in ('utf-8', 'latin1'):

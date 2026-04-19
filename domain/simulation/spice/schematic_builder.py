@@ -249,6 +249,8 @@ class SpiceSchematicBuilder:
                 hints[pin.name] = "top"
             elif role in {"power_negative", "ground"}:
                 hints[pin.name] = "bottom"
+            elif role == "auxiliary":
+                hints[pin.name] = "bottom"
         return hints
 
     def _build_label_slots(self, component: SpiceComponent) -> Dict[str, str]:

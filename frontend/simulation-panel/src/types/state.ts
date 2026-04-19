@@ -304,6 +304,11 @@ export interface SchematicComponentState {
   scope_path: string[]
   source_file: string
   symbol_variant: string
+  primitive_kind: string
+  primitive_source: string
+  subckt_name: string
+  resolved_model_name: string
+  semantic_roles: string[]
   pin_roles: Record<string, string>
   port_side_hints: Record<string, string>
   label_slots: Record<string, string>
@@ -332,6 +337,7 @@ export interface SchematicSubcircuitState {
   scope_path: string[]
   source_file: string
   component_ids: string[]
+  primitive_kind: string
 }
 
 export interface SchematicParseErrorState {
@@ -830,6 +836,11 @@ function normalizeSchematicComponents(value: unknown): SchematicComponentState[]
       scope_path: asStringArray(record.scope_path),
       source_file: asString(record.source_file),
       symbol_variant: asString(record.symbol_variant),
+      primitive_kind: asString(record.primitive_kind),
+      primitive_source: asString(record.primitive_source),
+      subckt_name: asString(record.subckt_name),
+      resolved_model_name: asString(record.resolved_model_name),
+      semantic_roles: asStringArray(record.semantic_roles),
       pin_roles: asStringRecord(record.pin_roles),
       port_side_hints: asStringRecord(record.port_side_hints),
       label_slots: asStringRecord(record.label_slots),
@@ -878,6 +889,7 @@ function normalizeSchematicSubcircuits(value: unknown): SchematicSubcircuitState
       scope_path: asStringArray(record.scope_path),
       source_file: asString(record.source_file),
       component_ids: asStringArray(record.component_ids),
+      primitive_kind: asString(record.primitive_kind),
     }
   })
 }

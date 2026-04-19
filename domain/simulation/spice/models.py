@@ -67,6 +67,11 @@ class SpiceComponent:
     port_order: List[str] = field(default_factory=list)
     render_hints: Dict[str, str] = field(default_factory=dict)
     model_name: str = ""
+    primitive_kind: str = ""
+    primitive_source: str = ""
+    subckt_name: str = ""
+    resolved_model_name: str = ""
+    semantic_roles: List[str] = field(default_factory=list)
     raw_line: str = ""
 
 
@@ -85,6 +90,7 @@ class SpiceSubcircuit:
     source_file: str = ""
     source_span: Optional[SourceSpan] = None
     components: List[SpiceComponent] = field(default_factory=list)
+    primitive_kind: str = ""
 
 
 @dataclass

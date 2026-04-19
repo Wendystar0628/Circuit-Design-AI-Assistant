@@ -129,21 +129,39 @@ function renderLeadLine(x1: number, y1: number, x2: number, y2: number, stroke: 
   return <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={stroke} strokeWidth={2.2} strokeLinecap="round" />
 }
 
+function normalizeRawPinRole(role: string): 'input' | 'output' | 'power' | 'ground' | 'other' {
+  const normalized = role.trim().toLowerCase()
+  if (normalized === 'input' || normalized === 'in' || normalized === 'input_plus' || normalized === 'input_minus') {
+    return 'input'
+  }
+  if (normalized === 'output' || normalized === 'out') {
+    return 'output'
+  }
+  if (normalized === 'power' || normalized === 'power_positive' || normalized === 'power_negative' || normalized === 'vcc' || normalized === 'vdd' || normalized === 'vee' || normalized === 'vss') {
+    return 'power'
+  }
+  if (normalized === 'ground' || normalized === 'gnd') {
+    return 'ground'
+  }
+  return 'other'
+}
+
 function resolvePinSide(component: SchematicComponentState, pin: SchematicPinState, index: number): SchematicPinSide {
   const hintedSide = component.port_side_hints[pin.name]
   if (isSide(hintedSide)) {
     return hintedSide
   }
-  if (pin.role === 'ground') {
+  const role = normalizeRawPinRole(pin.role)
+  if (role === 'ground') {
     return 'bottom'
   }
-  if (pin.role === 'power') {
+  if (role === 'power') {
     return 'top'
   }
-  if (pin.role === 'output') {
+  if (role === 'output') {
     return 'right'
   }
-  if (pin.role === 'input') {
+  if (role === 'input') {
     return 'left'
   }
   if (component.pins.length <= 1) {
@@ -705,7 +723,7 @@ function resolveOpampPinAnchor(component: SchematicComponentState, pin: Schemati
     const placement = resolveSideOrder(component, sideHint, index)
     return distributeAlongSide(sideHint, placement.order, placement.total, TRIANGLE_WIDTH, TRIANGLE_HEIGHT)
   }
-  if (pin.role === 'output' || index === component.pins.length - 1) {
+  if (normalizeRawPinRole(pin.role) === 'output' || index === component.pins.length - 1) {
     return { x: TRIANGLE_WIDTH, y: TRIANGLE_HEIGHT / 2, side: 'right' }
   }
   if (index === 0) {

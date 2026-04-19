@@ -17,12 +17,6 @@ import {
   type SemanticPinRole,
   type SemanticScopeGroup,
 } from './schematicSemanticModel'
-import {
-  PRIMITIVE_SYMBOL_KIND,
-  classifySchematicPrimitiveSubckts,
-  type SchematicPrimitiveSubcktInfo,
-  type SchematicPrimitiveSubcktMap,
-} from './schematicSubcktClassifier'
 
 const POWER_NET_PATTERN = /^(vcc|vdd|vee|vss|vbb|vaa|vdda|vssa|vbus|vsupply|v_supply|v_rail|v\+|v-)$/
 const GROUND_NET_PATTERN = /^(0|gnd|agnd|dgnd|ground)$/
@@ -41,6 +35,9 @@ function scopeGroupId(path: string[]): string {
 }
 
 function resolveComponentRole(component: SchematicComponentState): SemanticComponentRole {
+  if (component.primitive_kind === 'opamp') {
+    return 'amplifier'
+  }
   switch (component.symbol_kind) {
     case 'ground':
       return 'ground'
@@ -69,13 +66,13 @@ function resolveComponentRole(component: SchematicComponentState): SemanticCompo
 
 function resolvePinRole(pin: SchematicPinState): SemanticPinRole {
   const normalized = pin.role.trim().toLowerCase()
-  if (normalized === 'input' || normalized === 'in') {
+  if (normalized === 'input' || normalized === 'in' || normalized === 'input_plus' || normalized === 'input_minus') {
     return 'input'
   }
   if (normalized === 'output' || normalized === 'out') {
     return 'output'
   }
-  if (normalized === 'power' || normalized === 'vdd' || normalized === 'vcc') {
+  if (normalized === 'power' || normalized === 'vdd' || normalized === 'vcc' || normalized === 'power_positive' || normalized === 'power_negative') {
     return 'power'
   }
   if (normalized === 'ground' || normalized === 'gnd' || normalized === 'vss') {
@@ -214,129 +211,6 @@ function sortSemanticComponents(components: SemanticComponent[]): SemanticCompon
   })
 }
 
-// ---------------------------------------------------------------------------
-// Primitive subckt absorption.
-//
-// Analog primitives like op-amps are often modelled in SPICE as a `.subckt`
-// containing a VCVS and a couple of resistors. Visually rendering those guts
-// is the wrong abstraction — every reader expects a standard triangle. The
-// normalizer therefore:
-//
-//   (a) Detects which subckts are primitives by name pattern
-//       (see `schematicSubcktClassifier.ts`).
-//   (b) For each primitive `.subckt`:
-//         - Drops all components whose ids lie inside its body.
-//         - Drops all nets whose `scope_path` sits under its scope.
-//         - Removes the scope group itself so no dashed rectangle is drawn.
-//   (c) For every top-level `X` instance that calls such a primitive:
-//         - Rewrites `symbol_kind` to the primitive's canonical kind
-//           (e.g. `'opamp'`).
-//         - Forces port-side hints so the pin renderer places `+`, `−`,
-//           `out` on the correct triangle sides regardless of the original
-//           pin order coming from the SPICE parser.
-//
-// The rewrites happen purely inside the semantic layer; the raw
-// `SchematicDocumentState` from the host is never mutated.
-// ---------------------------------------------------------------------------
-
-interface PrimitiveAbsorptionContext {
-  primitives: SchematicPrimitiveSubcktMap
-  internalComponentIds: Set<string>
-  internalScopeKeys: Set<string>
-  instanceByComponentId: Map<string, SchematicPrimitiveSubcktInfo>
-}
-
-function buildPrimitiveAbsorptionContext(
-  document: SchematicDocumentState,
-): PrimitiveAbsorptionContext {
-  const primitives = classifySchematicPrimitiveSubckts(document.subcircuits)
-  const internalComponentIds = new Set<string>()
-  const internalScopeKeys = new Set<string>()
-  for (const primitive of primitives.values()) {
-    for (const id of primitive.componentIds) {
-      internalComponentIds.add(id)
-    }
-    internalScopeKeys.add(primitive.scopePathKey)
-  }
-  const instanceByComponentId = new Map<string, SchematicPrimitiveSubcktInfo>()
-  if (primitives.size > 0) {
-    const primitivesByKey = new Map<string, SchematicPrimitiveSubcktInfo>()
-    for (const primitive of primitives.values()) {
-      const portKey = buildPortSignatureKey(primitive.portNames)
-      primitivesByKey.set(portKey, primitive)
-    }
-    for (const component of document.components) {
-      if (!isSubcktInstance(component)) continue
-      if (internalComponentIds.has(component.id)) continue
-      const pinNames = component.pins.map((pin) => pin.name)
-      const portKey = buildPortSignatureKey(pinNames)
-      const match = primitivesByKey.get(portKey)
-      if (match) {
-        instanceByComponentId.set(component.id, match)
-      }
-    }
-  }
-  return { primitives, internalComponentIds, internalScopeKeys, instanceByComponentId }
-}
-
-function isSubcktInstance(component: SchematicComponentState): boolean {
-  const kind = component.kind.trim().toUpperCase()
-  return kind === 'X' || component.symbol_kind === 'subckt_block'
-}
-
-function buildPortSignatureKey(names: readonly string[]): string {
-  return [...names].map((name) => name.trim().toLowerCase()).sort().join('|')
-}
-
-function applyPrimitiveOverrides(
-  component: SchematicComponentState,
-  primitive: SchematicPrimitiveSubcktInfo,
-): SchematicComponentState {
-  const overriddenPortSideHints: Record<string, string> = { ...component.port_side_hints }
-  for (const pin of component.pins) {
-    const roleHint = primitive.portRoleHints[pin.name]
-    if (roleHint === 'output') {
-      overriddenPortSideHints[pin.name] = 'right'
-    } else if (roleHint === 'input_plus' || roleHint === 'input_minus') {
-      overriddenPortSideHints[pin.name] = 'left'
-    }
-  }
-  return {
-    ...component,
-    symbol_kind: PRIMITIVE_SYMBOL_KIND,
-    port_side_hints: overriddenPortSideHints,
-  }
-}
-
-/**
- * Pre-compute a `(componentId, pinName) → SemanticNetCategory` lookup so
- * the component-normalization pass can decide a passive's intrinsic
- * orientation (horizontal vs vertical) based purely on local pin-to-net
- * information, without needing to re-walk `document.nets` per component.
- */
-function buildPinToNetCategoryMap(
-  document: SchematicDocumentState,
-  absorption: PrimitiveAbsorptionContext,
-): Map<string, SemanticNetCategory> {
-  const map = new Map<string, SemanticNetCategory>()
-  for (const rawNet of document.nets) {
-    const scopeKey = scopePathKey(rawNet.scope_path)
-    if (absorption.internalScopeKeys.has(scopeKey)) continue
-    const validConnections = rawNet.connections.filter(
-      (connection) => !absorption.internalComponentIds.has(connection.component_id),
-    )
-    const category = resolveNetCategory(rawNet, validConnections.length)
-    for (const connection of validConnections) {
-      map.set(buildPinToNetKey(connection.component_id, connection.pin_name), category)
-    }
-  }
-  return map
-}
-
-function buildPinToNetKey(componentId: string, pinName: string): string {
-  return `${componentId}::${pinName}`
-}
-
 const PASSIVE_SYMBOL_KINDS: ReadonlySet<string> = new Set([
   'resistor',
   'capacitor',
@@ -344,26 +218,6 @@ const PASSIVE_SYMBOL_KINDS: ReadonlySet<string> = new Set([
   'diode',
 ])
 
-/**
- * Force the port-side hints on a two-terminal passive so that any pin
- * sitting on a power / ground rail faces the corresponding trunk:
- *
- *   - `power` net  → hint `top`    (reaches the top power trunk)
- *   - `ground` net → hint `bottom` (reaches the bottom ground trunk)
- *
- * The opposite terminal is hinted to the opposite face, which triggers
- * `symbolRegistry.getPassiveDimensions` to return a vertical
- * (60×108) footprint and the renderer to draw a vertical silhouette.
- * Passives with no rail terminal (pure signal-chain couplers like a
- * bypass capacitor between two biasing nodes) are left untouched so
- * they stay horizontal along the left-to-right signal flow.
- *
- * This is a *pre-layout* authority: the finalized hints flow into every
- * downstream stage — `getPinAnchor().side` sets `elk.port.side`, which
- * in turn makes ELK pack the component vertically, which in turn makes
- * the router attach the rail stub on a straight short segment instead
- * of a U-turn around the component body.
- */
 function applyPassivePortSideHints(
   component: SchematicComponentState,
   pinToNetCategory: Map<string, SemanticNetCategory>,
@@ -411,30 +265,31 @@ function applyPassivePortSideHints(
   }
 }
 
-/**
- * Schematic visual convention: MOSFETs are drawn as 3-terminal devices
- * (gate / drain / source), with the body/substrate terminal implicit —
- * it is understood to be tied to source or to the appropriate supply.
- * SPICE however requires a 4-node `M` card (`Mx D G S B <model>`), so
- * the backend parser has to emit all four pins and their net
- * connections to stay correct for ngspice.
- *
- * This function reconciles the two views at the schematic-semantic
- * boundary: for any `symbol_kind === 'mos'` component it drops the
- * body pin (`index === 3`) from `pins` and scrubs the port-side hint
- * for that pin name. The removal is local to the normalized semantic
- * model — the underlying `SchematicDocumentState` is untouched — so
- * downstream rendering, layout, and routing see exactly 3 pins while
- * the SPICE netlist continues to carry the body node.
- *
- * The `pin_name` referenced by `document.nets` connections is handled
- * separately inside `normalizeSchematicDocument` (see the call to
- * `buildVisiblePinNames`): any net connection pointing at a dropped
- * body pin is filtered out of the semantic net so it never drives
- * layout or routing. If the body net happens to have only the MOS
- * body as its single connection, it becomes a zero-pin net and the
- * router naturally skips it.
- */
+function buildPinToNetCategoryMap(
+  document: SchematicDocumentState,
+): Map<string, SemanticNetCategory> {
+  const map = new Map<string, SemanticNetCategory>()
+  for (const rawNet of document.nets) {
+    const category = resolveNetCategory(rawNet, rawNet.connections.length)
+    for (const connection of rawNet.connections) {
+      map.set(buildPinToNetKey(connection.component_id, connection.pin_name), category)
+    }
+  }
+  return map
+}
+
+function buildPinToNetKey(componentId: string, pinName: string): string {
+  return `${componentId}::${pinName}`
+}
+
+function buildVisiblePinNames(components: SemanticComponent[]): Map<string, Set<string>> {
+  const map = new Map<string, Set<string>>()
+  for (const entry of components) {
+    map.set(entry.component.id, new Set(entry.component.pins.map((pin) => pin.name)))
+  }
+  return map
+}
+
 const MOS_VISIBLE_PIN_COUNT = 3
 
 function hideMosBulkPin(component: SchematicComponentState): SchematicComponentState {
@@ -451,74 +306,18 @@ function hideMosBulkPin(component: SchematicComponentState): SchematicComponentS
   }
 }
 
-/**
- * Build a lookup of `componentId → Set<visible pin name>` from the
- * semantic components that survived normalization (including the MOS
- * body-pin stripping performed by `hideMosBulkPin`). Used to filter
- * out net connections whose target pin is no longer visible.
- */
-function buildVisiblePinNames(components: SemanticComponent[]): Map<string, Set<string>> {
-  const map = new Map<string, Set<string>>()
-  for (const entry of components) {
-    map.set(entry.component.id, new Set(entry.component.pins.map((pin) => pin.name)))
-  }
-  return map
-}
-
-function sortPinsForPrimitive(
-  component: SchematicComponentState,
-  primitive: SchematicPrimitiveSubcktInfo,
-): SchematicComponentState {
-  // Op-amp pin-anchor resolution uses index order as the tie-breaker
-  // (index 0 → +, index 1 → −, index N-1 → output). Reorder the pins so
-  // that convention always holds regardless of the original SPICE ordering.
-  const roleOrder: Record<string, number> = {
-    input_plus: 0,
-    input_minus: 1,
-    output: 2,
-    ground: 3,
-  }
-  const enriched = component.pins.map((pin, originalIndex) => {
-    const role = primitive.portRoleHints[pin.name]
-    const order = role !== undefined ? roleOrder[role] : 10 + originalIndex
-    return { pin, order, originalIndex }
-  })
-  enriched.sort((a, b) => {
-    if (a.order !== b.order) return a.order - b.order
-    return a.originalIndex - b.originalIndex
-  })
-  return {
-    ...component,
-    pins: enriched.map((entry) => entry.pin),
-  }
-}
-
 export function normalizeSchematicDocument(document: SchematicDocumentState): SchematicSemanticModel {
   const labelMap = buildSubcircuitLabelMap(document.subcircuits)
   const scopeGroupsById = new Map<string, SemanticScopeGroup>()
   ensureScopeGroupChain(scopeGroupsById, [], labelMap)
 
-  const absorption = buildPrimitiveAbsorptionContext(document)
-  // Pre-compute the pin→net-category lookup once; it stays valid for the
-  // whole pass since neither `document.nets` nor `absorption` mutate.
-  const pinToNetCategory = buildPinToNetCategoryMap(document, absorption)
+  const pinToNetCategory = buildPinToNetCategoryMap(document)
 
   const componentsById = new Map<string, SemanticComponent>()
   const rawComponents: SemanticComponent[] = []
 
   for (const rawComponent of document.components) {
-    if (absorption.internalComponentIds.has(rawComponent.id)) {
-      continue
-    }
-    const primitive = absorption.instanceByComponentId.get(rawComponent.id)
-    const primitiveOverridden = primitive
-      ? applyPrimitiveOverrides(sortPinsForPrimitive(rawComponent, primitive), primitive)
-      : rawComponent
-    // Force rail-facing hints on two-terminal passives so that a pin on
-    // VCC/GND naturally faces the corresponding trunk. Applied after any
-    // primitive override so that op-amp / BJT / MOS hints (which come
-    // from the primitive classifier) are never clobbered by this pass.
-    const railHinted = applyPassivePortSideHints(primitiveOverridden, pinToNetCategory)
+    const railHinted = applyPassivePortSideHints(rawComponent, pinToNetCategory)
     // Strip the MOSFET body pin so downstream layout / routing / render
     // all see a 3-terminal MOS (textbook convention) while the backend
     // still emits the full 4-node `M` card for SPICE simulation.
@@ -549,11 +348,6 @@ export function normalizeSchematicDocument(document: SchematicDocumentState): Sc
   const visiblePinNames = buildVisiblePinNames(rawComponents)
 
   for (const rawNet of document.nets) {
-    const netScopeKey = scopePathKey(rawNet.scope_path)
-    if (absorption.internalScopeKeys.has(netScopeKey)) {
-      // Internal net of a primitive subckt — dropped along with its body.
-      continue
-    }
     const validConnections = rawNet.connections.filter((connection) => {
       if (!componentsById.has(connection.component_id)) return false
       const pinSet = visiblePinNames.get(connection.component_id)

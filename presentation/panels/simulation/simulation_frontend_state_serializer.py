@@ -362,6 +362,11 @@ class SimulationFrontendStateSerializer:
                     "scope_path": [str(scope or "") for scope in item.get("scope_path", [])],
                     "source_file": str(item.get("source_file") or ""),
                     "symbol_variant": str(item.get("symbol_variant") or ""),
+                    "primitive_kind": str(item.get("primitive_kind") or ""),
+                    "primitive_source": str(item.get("primitive_source") or ""),
+                    "subckt_name": str(item.get("subckt_name") or ""),
+                    "resolved_model_name": str(item.get("resolved_model_name") or ""),
+                    "semantic_roles": [str(role or "") for role in item.get("semantic_roles", []) if str(role or "")],
                     "pin_roles": {
                         str(key or ""): str(value or "")
                         for key, value in (item.get("pin_roles") or {}).items()
@@ -419,6 +424,7 @@ class SimulationFrontendStateSerializer:
                     "scope_path": [str(scope or "") for scope in item.get("scope_path", [])],
                     "source_file": str(item.get("source_file") or ""),
                     "component_ids": [str(component_id or "") for component_id in item.get("component_ids", [])],
+                    "primitive_kind": str(item.get("primitive_kind") or ""),
                 }
                 for item in payload.get("subcircuits", [])
                 if isinstance(item, dict)

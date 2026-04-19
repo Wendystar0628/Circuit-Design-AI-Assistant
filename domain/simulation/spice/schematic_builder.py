@@ -54,7 +54,8 @@ class SpiceSchematicBuilder:
 
         file_path = str(spice_document.source_file or "")
         file_name = Path(file_path).name if file_path else ""
-        all_components = self._collect_all_components(spice_document)
+        visible_subcircuits = self._collect_visible_subcircuits(spice_document)
+        all_components = self._collect_all_components(spice_document, visible_subcircuits)
         components_payload = [self._build_component_payload(component) for component in all_components]
         document_title = title or file_name or "电路"
         readonly_reasons = self._collect_readonly_reasons(all_components)
@@ -63,11 +64,11 @@ class SpiceSchematicBuilder:
             "revision": make_schematic_revision(file_path, source_text, dependency_snapshots),
             "file_path": file_path,
             "file_name": file_name,
-            "has_schematic": bool(components_payload or spice_document.subcircuits),
+            "has_schematic": bool(components_payload or visible_subcircuits),
             "title": document_title,
             "components": components_payload,
             "nets": self._build_nets_payload(all_components),
-            "subcircuits": [self._build_subcircuit_payload(item) for item in spice_document.subcircuits],
+            "subcircuits": [self._build_subcircuit_payload(item) for item in visible_subcircuits],
             "parse_errors": [self._build_parse_error_payload(item) for item in spice_document.parse_errors],
             "readonly_reasons": readonly_reasons,
         }
@@ -112,9 +113,12 @@ class SpiceSchematicBuilder:
             "error_message": str(error_message or ""),
         }
 
-    def _collect_all_components(self, spice_document: SpiceDocument) -> List[SpiceComponent]:
+    def _collect_visible_subcircuits(self, spice_document: SpiceDocument) -> List[SpiceSubcircuit]:
+        return [subcircuit for subcircuit in spice_document.subcircuits if subcircuit.primitive_kind != "opamp"]
+
+    def _collect_all_components(self, spice_document: SpiceDocument, visible_subcircuits: Iterable[SpiceSubcircuit]) -> List[SpiceComponent]:
         components = list(spice_document.components)
-        for subcircuit in spice_document.subcircuits:
+        for subcircuit in visible_subcircuits:
             components.extend(subcircuit.components)
         return components
 
@@ -125,7 +129,7 @@ class SpiceSchematicBuilder:
             "instance_name": component.instance_name,
             "kind": component.kind,
             "symbol_kind": component.symbol_kind or "unknown",
-            "display_name": component.instance_name,
+            "display_name": component.resolved_model_name or component.instance_name,
             "display_value": value_field.display_text if value_field is not None else "",
             "pins": [self._build_pin_payload(item) for item in component.pins],
             "node_ids": list(component.node_ids),
@@ -133,6 +137,11 @@ class SpiceSchematicBuilder:
             "scope_path": list(component.scope_path),
             "source_file": component.source_file,
             "symbol_variant": component.symbol_variant,
+            "primitive_kind": component.primitive_kind,
+            "primitive_source": component.primitive_source,
+            "subckt_name": component.subckt_name,
+            "resolved_model_name": component.resolved_model_name,
+            "semantic_roles": list(component.semantic_roles),
             "pin_roles": dict(component.pin_roles),
             "port_side_hints": self._build_port_side_hints(component),
             "label_slots": self._build_label_slots(component),
@@ -165,6 +174,7 @@ class SpiceSchematicBuilder:
             "scope_path": list(subcircuit.scope_path),
             "source_file": subcircuit.source_file,
             "component_ids": [component.id for component in subcircuit.components],
+            "primitive_kind": subcircuit.primitive_kind,
         }
 
     def _build_parse_error_payload(self, parse_error: SpiceParseError) -> Dict[str, Any]:
@@ -205,6 +215,8 @@ class SpiceSchematicBuilder:
         return list(grouped.values())
 
     def _build_port_side_hints(self, component: SpiceComponent) -> Dict[str, str]:
+        if component.primitive_kind == "opamp" or component.symbol_kind == "opamp":
+            return self._build_opamp_port_side_hints(component)
         port_order = list(component.port_order)
         if not port_order:
             return {}
@@ -223,6 +235,20 @@ class SpiceSchematicBuilder:
                 hints[role] = "right"
             else:
                 hints[role] = "bottom"
+        return hints
+
+    def _build_opamp_port_side_hints(self, component: SpiceComponent) -> Dict[str, str]:
+        hints: Dict[str, str] = {}
+        for pin in component.pins:
+            role = str(pin.role or "").strip().lower()
+            if role in {"input_plus", "input_minus"}:
+                hints[pin.name] = "left"
+            elif role == "output":
+                hints[pin.name] = "right"
+            elif role == "power_positive":
+                hints[pin.name] = "top"
+            elif role in {"power_negative", "ground"}:
+                hints[pin.name] = "bottom"
         return hints
 
     def _build_label_slots(self, component: SpiceComponent) -> Dict[str, str]:

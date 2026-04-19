@@ -4,7 +4,7 @@ import functools
 import hashlib
 import re
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from domain.dependency.scanner.include_parser import IncludeParser
 from domain.simulation.spice.models import (
@@ -19,6 +19,7 @@ from domain.simulation.spice.models import (
     SpiceToken,
     TokenSpan,
 )
+from domain.simulation.spice.primitive_resolver import SpicePrimitiveResolver
 
 
 @functools.lru_cache(maxsize=1)
@@ -35,8 +36,9 @@ def _load_bundled_model_variants() -> Dict[str, str]:
     from the bundled library at simulation time. For the schematic to
     know NMOS vs PMOS at *render* time (before simulation runs) we
     have to consult the same library ourselves. Local ``.model``
-    cards in the user's ``.cir`` always take precedence over the
-    bundled defaults — see the merge in ``parse_content``.
+    cards in the user's ``.cir`` always take precedence over
+    the bundled defaults so users can always
+    override a bundled part by redefining it inline.
 
     Swallows every I/O error silently: if the library is missing or
     unreadable we simply fall back to the generic ``mos`` / ``bjt``
@@ -77,7 +79,7 @@ _COMPONENT_SYMBOL_KINDS: Dict[str, str] = {
     "Q": "bjt",
     "M": "mos",
     "J": "jfet",
-    "U": "opamp",
+    "U": "subckt_block",
     "X": "subckt_block",
     "E": "controlled_source",
     "F": "controlled_source",
@@ -92,6 +94,7 @@ _READONLY_UNSUPPORTED_FIELD = "该字段当前未提供语义等价写回能力"
 class SpiceParser:
     def __init__(self) -> None:
         self._include_parser = IncludeParser()
+        self._primitive_resolver = SpicePrimitiveResolver()
 
     def parse_file(self, file_path: str) -> SpiceDocument:
         path = Path(file_path)
@@ -143,7 +146,12 @@ class SpiceParser:
 
             lowered = stripped.lower()
             if lowered.startswith(".subckt"):
-                subcircuit = self._parse_subcircuit_header(line_text, source_file, line_span)
+                subcircuit = self._parse_subcircuit_header(
+                    line_text,
+                    source_file,
+                    [item.name for item in subcircuit_stack],
+                    line_span,
+                )
                 if subcircuit is not None:
                     subcircuit_stack.append(subcircuit)
                     document.add_subcircuit(subcircuit)
@@ -185,12 +193,14 @@ class SpiceParser:
 
             absolute_offset += len(raw_line)
 
+        self._primitive_resolver.apply(document)
         return document
 
     def _parse_subcircuit_header(
         self,
         line_text: str,
         source_file: str,
+        scope_path: List[str],
         line_span: SourceSpan,
     ) -> Optional[SpiceSubcircuit]:
         tokens = self._tokenize_line(line_text, line_span.line_index, line_span.absolute_start)
@@ -201,7 +211,7 @@ class SpiceParser:
         return SpiceSubcircuit(
             name=name,
             port_names=port_names,
-            scope_path=[name],
+            scope_path=list(scope_path),
             source_file=source_file,
             source_span=line_span,
         )
@@ -227,12 +237,15 @@ class SpiceParser:
         descriptor = self._describe_component(prefix, tokens, model_variants)
         node_tokens = descriptor["node_tokens"]
         node_ids = [token.text for token in node_tokens]
-        pin_roles: Dict[str, str] = descriptor["pin_roles"]
+        pin_specs: List[Tuple[str, str]] = descriptor["pin_specs"]
+        if len(pin_specs) != len(node_tokens):
+            pin_specs = [(f"pin_{index + 1}", f"pin_{index + 1}") for index in range(len(node_tokens))]
+        pin_roles: Dict[str, str] = {name: role for name, role in pin_specs}
         pins = [
             SpicePin(
-                name=token.text,
+                name=pin_specs[index][0],
                 node_id=token.text,
-                role=pin_roles.get(token.text, f"pin_{index + 1}"),
+                role=pin_specs[index][1],
             )
             for index, token in enumerate(node_tokens)
         ]
@@ -256,6 +269,8 @@ class SpiceParser:
             port_order=descriptor["port_order"],
             render_hints=descriptor["render_hints"],
             model_name=descriptor["model_name"],
+            subckt_name=descriptor["model_name"] if prefix in {"X", "U"} else "",
+            resolved_model_name=descriptor["model_name"],
             raw_line=line_text,
         )
         return component
@@ -361,14 +376,13 @@ class SpiceParser:
     ) -> Dict[str, object]:
         if prefix in {"R", "C", "L"}:
             node_tokens = tokens[1:3]
-            node_names = [token.text for token in node_tokens]
-            pin_roles = {
-                node_names[0]: "terminal_a",
-                node_names[1]: "terminal_b",
-            } if len(node_names) == 2 else {}
+            pin_specs = [
+                ("terminal_a", "terminal_a"),
+                ("terminal_b", "terminal_b"),
+            ] if len(node_tokens) == 2 else []
             return {
                 "node_tokens": node_tokens,
-                "pin_roles": pin_roles,
+                "pin_specs": pin_specs,
                 "symbol_variant": "two_terminal",
                 "polarity_marks": {},
                 "port_order": ["terminal_a", "terminal_b"],
@@ -378,15 +392,14 @@ class SpiceParser:
 
         if prefix == "D":
             node_tokens = tokens[1:3]
-            node_names = [token.text for token in node_tokens]
-            pin_roles = {
-                node_names[0]: "anode",
-                node_names[1]: "cathode",
-            } if len(node_names) == 2 else {}
+            pin_specs = [
+                ("anode", "anode"),
+                ("cathode", "cathode"),
+            ] if len(node_tokens) == 2 else []
             model_name = tokens[3].text if len(tokens) > 3 else ""
             return {
                 "node_tokens": node_tokens,
-                "pin_roles": pin_roles,
+                "pin_specs": pin_specs,
                 "symbol_variant": "two_terminal_polarized",
                 "polarity_marks": {"anode": "+", "cathode": "-"},
                 "port_order": ["anode", "cathode"],
@@ -396,14 +409,13 @@ class SpiceParser:
 
         if prefix in {"V", "I"}:
             node_tokens = tokens[1:3]
-            node_names = [token.text for token in node_tokens]
-            pin_roles = {
-                node_names[0]: "positive",
-                node_names[1]: "negative",
-            } if len(node_names) == 2 else {}
+            pin_specs = [
+                ("positive", "positive"),
+                ("negative", "negative"),
+            ] if len(node_tokens) == 2 else []
             return {
                 "node_tokens": node_tokens,
-                "pin_roles": pin_roles,
+                "pin_specs": pin_specs,
                 "symbol_variant": "source",
                 "polarity_marks": {"positive": "+", "negative": "-"},
                 "port_order": ["positive", "negative"],
@@ -413,12 +425,11 @@ class SpiceParser:
 
         if prefix == "Q":
             node_tokens = tokens[1:4]
-            node_names = [token.text for token in node_tokens]
-            pin_roles = {
-                node_names[0]: "collector",
-                node_names[1]: "base",
-                node_names[2]: "emitter",
-            } if len(node_names) == 3 else {}
+            pin_specs = [
+                ("collector", "collector"),
+                ("base", "base"),
+                ("emitter", "emitter"),
+            ] if len(node_tokens) == 3 else []
             model_name = tokens[4].text if len(tokens) > 4 else ""
             # Resolve the BJT channel variant from the .model lookup
             # built in pass 1. Falls back to the generic "bjt" marker
@@ -430,7 +441,7 @@ class SpiceParser:
                 variant = "bjt"
             return {
                 "node_tokens": node_tokens,
-                "pin_roles": pin_roles,
+                "pin_specs": pin_specs,
                 "symbol_variant": variant,
                 "polarity_marks": {},
                 "port_order": ["collector", "base", "emitter"],
@@ -445,12 +456,11 @@ class SpiceParser:
             # terminal, which is why we can reuse the same schematic
             # layout primitives downstream.
             node_tokens = tokens[1:4]
-            node_names = [token.text for token in node_tokens]
-            pin_roles = {
-                node_names[0]: "drain",
-                node_names[1]: "gate",
-                node_names[2]: "source",
-            } if len(node_names) == 3 else {}
+            pin_specs = [
+                ("drain", "drain"),
+                ("gate", "gate"),
+                ("source", "source"),
+            ] if len(node_tokens) == 3 else []
             model_name = tokens[4].text if len(tokens) > 4 else ""
             # Resolve the JFET channel variant from the .model lookup.
             # Falls back to the generic "jfet" marker when no .model
@@ -460,7 +470,7 @@ class SpiceParser:
                 variant = "jfet"
             return {
                 "node_tokens": node_tokens,
-                "pin_roles": pin_roles,
+                "pin_specs": pin_specs,
                 "symbol_variant": variant,
                 "polarity_marks": {},
                 "port_order": ["drain", "gate", "source"],
@@ -470,13 +480,12 @@ class SpiceParser:
 
         if prefix == "M":
             node_tokens = tokens[1:5]
-            node_names = [token.text for token in node_tokens]
-            pin_roles = {
-                node_names[0]: "drain",
-                node_names[1]: "gate",
-                node_names[2]: "source",
-                node_names[3]: "body",
-            } if len(node_names) == 4 else {}
+            pin_specs = [
+                ("drain", "drain"),
+                ("gate", "gate"),
+                ("source", "source"),
+                ("body", "body"),
+            ] if len(node_tokens) == 4 else []
             model_name = tokens[5].text if len(tokens) > 5 else ""
             # Same pattern as Q: resolve NMOS vs PMOS from the .model
             # lookup. Falls back to "mos" when no .model card was
@@ -486,7 +495,7 @@ class SpiceParser:
                 variant = "mos"
             return {
                 "node_tokens": node_tokens,
-                "pin_roles": pin_roles,
+                "pin_specs": pin_specs,
                 "symbol_variant": variant,
                 "polarity_marks": {},
                 "port_order": ["drain", "gate", "source", "body"],
@@ -496,27 +505,27 @@ class SpiceParser:
 
         if prefix in {"X", "U"} and len(tokens) >= 3:
             node_tokens = tokens[1:-1]
-            pin_roles = {token.text: f"port_{index + 1}" for index, token in enumerate(node_tokens)}
+            pin_specs = [(f"port_{index + 1}", f"port_{index + 1}") for index in range(len(node_tokens))]
             model_name = tokens[-1].text
             return {
                 "node_tokens": node_tokens,
-                "pin_roles": pin_roles,
+                "pin_specs": pin_specs,
                 "symbol_variant": "block",
                 "polarity_marks": {},
-                "port_order": [f"port_{index + 1}" for index in range(len(node_tokens))],
+                "port_order": [name for name, _ in pin_specs],
                 "render_hints": {"orientation": "horizontal"},
                 "model_name": model_name,
             }
 
         node_tokens = tokens[1:-1] if len(tokens) > 3 else tokens[1:]
-        pin_roles = {token.text: f"pin_{index + 1}" for index, token in enumerate(node_tokens)}
+        pin_specs = [(f"pin_{index + 1}", f"pin_{index + 1}") for index in range(len(node_tokens))]
         model_name = tokens[-1].text if len(tokens) > 2 else ""
         return {
             "node_tokens": node_tokens,
-            "pin_roles": pin_roles,
+            "pin_specs": pin_specs,
             "symbol_variant": "generic",
             "polarity_marks": {},
-            "port_order": [f"pin_{index + 1}" for index in range(len(node_tokens))],
+            "port_order": [name for name, _ in pin_specs],
             "render_hints": {"orientation": "horizontal"},
             "model_name": model_name,
         }

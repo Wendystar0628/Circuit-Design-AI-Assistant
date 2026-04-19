@@ -13,7 +13,8 @@ Agent 工具实现模块
 - web_search     : Web 检索
 - run_simulation : 对项目内任意电路发起一次仿真并返回紧凑摘要
 - read_metrics   : 读取一次仿真的 .MEASURE 指标表（Step 17）
-- read_waveform  : 读取一次仿真波形的紧凑统计 + 锚点（Step 18）
+- read_signals   : 读取一次仿真任一信号 CSV（raw_data / 具名 chart）
+                   的紧凑统计 + 锚点（Step 18，agent 唯一信号入口）
 """
 
 from domain.llm.agent.tools.read_file import ReadFileTool
@@ -26,7 +27,7 @@ from domain.llm.agent.tools.rag_search import RAGSearchTool
 from domain.llm.agent.tools.web_search import WebSearchTool
 from domain.llm.agent.tools.run_simulation import RunSimulationTool
 from domain.llm.agent.tools.read_metrics import ReadMetricsTool
-from domain.llm.agent.tools.read_waveform import ReadWaveformTool
+from domain.llm.agent.tools.read_signals import ReadSignalsTool
 
 
 __all__ = [
@@ -40,5 +41,5 @@ __all__ = [
     "WebSearchTool",
     "RunSimulationTool",
     "ReadMetricsTool",
-    "ReadWaveformTool",
+    "ReadSignalsTool",
 ]

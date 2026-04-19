@@ -54,7 +54,7 @@ def create_default_tools() -> ToolRegistry:
     from domain.llm.agent.tools.web_search import WebSearchTool
     from domain.llm.agent.tools.run_simulation import RunSimulationTool
     from domain.llm.agent.tools.read_metrics import ReadMetricsTool
-    from domain.llm.agent.tools.read_waveform import ReadWaveformTool
+    from domain.llm.agent.tools.read_signals import ReadSignalsTool
 
     registry = ToolRegistry()
 
@@ -78,11 +78,16 @@ def create_default_tools() -> ToolRegistry:
     registry.register(RunSimulationTool())
 
     # ---- Artifact 读取工具：共享 Step 16 的解析链基座 ----
-    # 每个工具各自专注一类 artifact 的格式化（metrics 表、波形摘要
+    # 每个工具各自专注一类 artifact 的格式化（metrics 表、信号摘要
     # 等），寻址逻辑集中在 SimulationArtifactReaderBase——见
     # ``tools/simulation_artifact_reader_base.py``。
+    #
+    # ``read_signals`` 是 agent 面对仿真信号的**唯一**入口，覆盖
+    # raw_data 全量转储 + 具名 chart 两类 CSV。``waveforms/waveform.csv``
+    # 因为列由 UI 勾选过滤产生，刻意不暴露给 agent——详见
+    # ``tools/read_signals.py`` 顶部的架构说明。
     registry.register(ReadMetricsTool())
-    registry.register(ReadWaveformTool())
+    registry.register(ReadSignalsTool())
 
     logger.debug(f"Tool factory created registry: {registry!r}")
     return registry

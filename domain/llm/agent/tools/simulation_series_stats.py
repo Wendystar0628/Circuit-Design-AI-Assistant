@@ -1,12 +1,12 @@
-# Simulation Series Stats - waveform CSV 单扫流式统计 + 锚点采样
-"""跨 read 工具共用的"波形数值特征"单一权威实现。
+# Simulation Series Stats - 信号 CSV 单扫流式统计 + 锚点采样
+"""跨 read 工具共用的"时间序列数值特征"单一权威实现。
 
-Step 18 的 ``read_waveform`` 与计划中 ``read_chart`` 都要对一列列的
-数值时间序列给 LLM 同一套紧凑摘要：每条信号的
+``read_signals``（raw_data / chart 源通吃）要对一列列的数值时间
+序列给 LLM 同一套紧凑摘要：每条信号的
 ``samples / min / max / mean / initial / final / zero_crossings /
 peak_to_peak``，再加一张等距锚点小表 ``(x, y1, y2, ...)``。把这套
-统计抽到这里是**禁止两份实现**的刚性要求——两个 tool 的 `.py`
-绝不允许再自己算一次 min/max 或自行拉锚点索引。
+统计抽到这里是**禁止两份实现**的刚性要求——任何 read 工具
+的 `.py` 绝不允许再自己算一次 min/max 或自行拉锚点索引。
 
 流式契约：
 
@@ -83,7 +83,7 @@ class SeriesStats:
 
     samples: int
     """该列的非空采样点数。CSV 里某列尾部比 primary 短时那些空单元
-    不计入——和 waveform exporter 的 ``primary_x`` 对齐策略一致。"""
+    不计入——和任一 exporter 的 ``primary_x`` 对齐策略一致。"""
 
     min_value: float
     max_value: float
@@ -159,7 +159,7 @@ def read_series_csv(
     anchor_count: int = 14,
     anchor_scale: AnchorScale = AnchorScale.LINEAR,
 ) -> SeriesReadResult:
-    """扫描一份 ``{waveform,chart}.csv`` 并返回紧凑统计 + 锚点。
+    """扫描一份 ``{raw_data,chart}.csv`` 并返回紧凑统计 + 锚点。
 
     Args:
         csv_path: 绝对路径。调用方已自己校验过文件存在。
@@ -274,7 +274,7 @@ def _scan_pass1(csv_path: Path) -> _Pass1Result:
             raw = handle.readline()
             if raw == "":
                 raise ValueError(
-                    "waveform csv ended before reaching the column header"
+                    "series csv ended before reaching the column header"
                 )
             stripped = raw.rstrip("\r\n")
             if stripped.startswith("#"):
@@ -295,7 +295,7 @@ def _scan_pass1(csv_path: Path) -> _Pass1Result:
             raw = handle.readline()
             if raw == "":
                 raise ValueError(
-                    "waveform csv has a header block but no column row"
+                    "series csv has a header block but no column row"
                 )
             stripped = raw.rstrip("\r\n")
             if stripped:
@@ -309,7 +309,7 @@ def _bootstrap_pass1(
     columns: List[str],
 ) -> _Pass1Result:
     if len(columns) < 1:
-        raise ValueError("waveform csv column header is empty")
+        raise ValueError("series csv column header is empty")
     x_column = columns[0]
     signal_columns = columns[1:]
     aggregators = tuple(

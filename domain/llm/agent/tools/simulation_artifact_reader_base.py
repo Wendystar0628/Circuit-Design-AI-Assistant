@@ -56,9 +56,8 @@ op 展开、chart 图像编码）即可。
 共享 target 达标判定：
 - ``evaluate_metric_target(raw_value, target_text)`` 是"该指标是否
   达到用户目标"的**唯一**权威入口。``read_metrics`` 用它；后续任何
-  需要展示"达标/未达标"的 read 工具（比如 ``read_waveform`` 的
-  ``.ac`` 分支会引用 bandwidth / gain margin 目标）都必须共用同一
-  函数，禁止在 tool 内部手写 ``raw_value > target`` 这类比较。
+  需要展示"达标/未达标"的 read 工具都必须共用同一函数，禁止在
+  tool 内部手写 ``raw_value > target`` 这类比较。
 - 不规范化 ``MetricTargetService`` 的原文：这里现场解析用户自由
   文本（``"≥ 20 dB"`` / ``"< 1.5k"`` 等）。字段目的是"判断通过
   与否"，不涉及单位代数——详见 ``evaluate_metric_target`` 文档。

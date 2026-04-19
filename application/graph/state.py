@@ -4,14 +4,13 @@ GraphState 定义 - LangGraph 工作流的状态结构
 
 核心架构原则：Reference-Based Single Source of Truth
 - GraphState 是目录：仅存储文件路径（指针）和轻量摘要，不存储重数据
-- 文件系统是仓库：仿真结果、设计目标、对话历史等业务数据存储在文件中
+- 文件系统是仓库：仿真结果、对话历史等业务数据存储在文件中
 - 领域服务是搬运工：无状态的纯函数式服务，输入 → 处理 → 输出到文件 → 返回路径
 - LangGraph 管理版本：通过 SqliteSaver 持久化 GraphState，回滚时指针自动回退
 
 数据分类原则：
 - 存入 GraphState：流转控制、文件指针、轻量摘要、计数器
-- 存入文件系统：仿真波形数据、设计目标详情、完整对话历史、电路文件
-- 视图投影：迭代历史（从 SqliteSaver 检查点历史查询）
+- 存入文件系统：仿真波形数据、完整对话历史、电路文件
 - 不存储：RAG 检索结果（按需获取）
 
 状态修改规范：
@@ -61,10 +60,8 @@ class GraphState:
         # 文件指针（核心：存路径不存内容）
         circuit_file_path: 主电路文件相对路径
         sim_result_path: 最新仿真结果文件相对路径
-        design_goals_path: 设计目标文件相对路径
         
         # 轻量摘要（用于条件边判断和 UI 显示）
-        design_goals_summary: 设计目标摘要
         last_metrics: 最新仿真指标摘要
         error_context: 错误上下文
         
@@ -143,21 +140,9 @@ class GraphState:
     waveforms / output_log / analysis_info / raw_data / op_result /
     export_manifest 等工件。"""
     
-    design_goals_path: str = ".circuit_ai/design_goals.json"
-    """设计目标文件相对路径"""
-    
     # ============================================================
     # 轻量摘要（用于条件边判断和 UI 显示）
     # ============================================================
-    
-    design_goals_summary: Dict[str, Any] = field(default_factory=dict)
-    """
-    设计目标摘要，用于条件边判断
-    示例：{
-        "gain": {"target": "20dB", "tolerance": "±2dB"},
-        "bandwidth": {"target": "10MHz", "tolerance": "±1MHz"}
-    }
-    """
     
     last_metrics: Dict[str, Any] = field(default_factory=dict)
     """
@@ -249,9 +234,7 @@ class GraphState:
             # 文件指针
             "circuit_file_path": self.circuit_file_path,
             "sim_result_path": self.sim_result_path,
-            "design_goals_path": self.design_goals_path,
             # 轻量摘要
-            "design_goals_summary": self.design_goals_summary,
             "last_metrics": self.last_metrics,
             "error_context": self.error_context,
             "working_context_summary": self.working_context_summary,
@@ -285,8 +268,6 @@ class GraphState:
             termination_reason=data.get("termination_reason", ""),
             circuit_file_path=data.get("circuit_file_path", ""),
             sim_result_path=data.get("sim_result_path", ""),
-            design_goals_path=data.get("design_goals_path", ".circuit_ai/design_goals.json"),
-            design_goals_summary=data.get("design_goals_summary", {}),
             last_metrics=data.get("last_metrics", {}),
             error_context=data.get("error_context", ""),
             working_context_summary=data.get("working_context_summary", ""),
@@ -333,7 +314,6 @@ def create_initial_state(
         session_id=session_id,
         project_root=project_root,
         current_node="start",
-        design_goals_path=".circuit_ai/design_goals.json",
     )
 
 

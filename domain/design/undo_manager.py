@@ -10,7 +10,6 @@
 架构说明：
 - 本模块是协调器，不重复实现快照创建/恢复逻辑
 - 快照存储：复用 domain/services/snapshot_service.py
-- 迭代历史：复用 domain/services/iteration_history_service.py
 - 本模块职责：协调任务取消、快照恢复、事件发布
 
 撤销机制区分：

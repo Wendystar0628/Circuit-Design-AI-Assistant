@@ -74,9 +74,7 @@ HIDDEN_DIR_STRUCTURE = [
 ]
 
 # 初始化创建的 JSON 文件
-INIT_JSON_FILES = {
-    "design_goals.json": {},
-}
+INIT_JSON_FILES = {}
 
 
 # ============================================================
@@ -103,7 +101,6 @@ class ProjectInfo:
     name: str
     status: ProjectStatus
     has_checkpoints: bool
-    has_design_goals: bool
     disk_space_mb: float
     is_degraded: bool
     degraded_reason: Optional[str]
@@ -293,9 +290,8 @@ class ProjectService:
             checkpoint_file = hidden_dir / "checkpoints.sqlite3"
             is_existing = checkpoint_file.exists()
             
-            # 检查是否有历史记录（设计目标或检查点）
-            design_goals_file = hidden_dir / "design_goals.json"
-            has_history = self._check_has_history(design_goals_file, checkpoint_file)
+            # 检查是否有历史记录
+            has_history = self._check_has_history(checkpoint_file)
             
             if self.logger:
                 if is_existing:
@@ -310,8 +306,6 @@ class ProjectService:
             # 7. TODO: 从 GraphState 恢复各组件状态（阶段五实现）
             # - 对话面板：加载完整 messages 和 working_context_* 压缩状态
             # - 仿真结果面板：加载 simulation_results
-            # - 设计目标：加载 design_goals
-            # - 迭代历史：加载 iteration_history
             
             # 初始化 JSON 文件（仅新项目）
             if not is_existing:
@@ -390,28 +384,19 @@ class ProjectService:
     
     def _check_has_history(
         self,
-        design_goals_file: Path,
         checkpoint_file: Path
     ) -> bool:
         """
         检查项目是否有历史记录
         
         Args:
-            design_goals_file: 设计目标文件路径
             checkpoint_file: 检查点数据库文件路径
             
         Returns:
             bool: 是否有历史记录
         """
         try:
-            # 检查设计目标是否非空
-            if design_goals_file.exists():
-                from infrastructure.utils.json_utils import safe_json_load_file
-                goals = safe_json_load_file(design_goals_file, default={})
-                if goals:
-                    return True
-            
-            # 检查检查点数据库是否存在（迭代历史从此处查询）
+            # 检查检查点数据库是否存在
             if checkpoint_file.exists():
                 return True
             
@@ -758,7 +743,6 @@ class ProjectService:
                 name="",
                 status=ProjectStatus.NOT_OPENED,
                 has_checkpoints=False,
-                has_design_goals=False,
                 disk_space_mb=0,
                 is_degraded=False,
                 degraded_reason=None,
@@ -772,14 +756,10 @@ class ProjectService:
         # 检查文件存在性
         checkpoint_file = hidden_dir / "checkpoints.sqlite3"
         has_checkpoints = checkpoint_file.exists()
-        has_design_goals = (hidden_dir / "design_goals.json").exists()
         
         # 检查是否为已有项目和是否有历史
         is_existing = has_checkpoints
-        has_history = self._check_has_history(
-            hidden_dir / "design_goals.json",
-            checkpoint_file
-        )
+        has_history = self._check_has_history(checkpoint_file)
         
         # 获取磁盘空间
         try:
@@ -793,7 +773,6 @@ class ProjectService:
             name=path.name,
             status=self._status,
             has_checkpoints=has_checkpoints,
-            has_design_goals=has_design_goals,
             disk_space_mb=disk_space_mb,
             is_degraded=self._degraded_reason is not None,
             degraded_reason=self._degraded_reason,

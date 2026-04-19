@@ -63,10 +63,8 @@ SESSION_TERMINATION_REASON = "termination_reason"
 
 # 当前文件（从 GraphState 投影）
 SESSION_ACTIVE_CIRCUIT_FILE = "active_circuit_file"
-SESSION_DESIGN_GOALS_PATH = "design_goals_path"
 
 # 轻量摘要（从 GraphState 投影）
-SESSION_DESIGN_GOALS_SUMMARY = "design_goals_summary"
 SESSION_LAST_METRICS = "last_metrics"
 SESSION_ERROR_CONTEXT = "error_context"
 SESSION_WORKING_CONTEXT_SUMMARY = "working_context_summary"
@@ -128,9 +126,7 @@ class SessionState:
             SESSION_TERMINATION_REASON: "",
             # 当前文件
             SESSION_ACTIVE_CIRCUIT_FILE: "",
-            SESSION_DESIGN_GOALS_PATH: ".circuit_ai/design_goals.json",
             # 轻量摘要
-            SESSION_DESIGN_GOALS_SUMMARY: {},
             SESSION_LAST_METRICS: {},
             SESSION_ERROR_CONTEXT: "",
             SESSION_WORKING_CONTEXT_SUMMARY: "",
@@ -387,11 +383,6 @@ class SessionState:
         return self.get(SESSION_ACTIVE_CIRCUIT_FILE, "")
 
     @property
-    def design_goals_summary(self) -> Dict[str, Any]:
-        """设计目标摘要"""
-        return self.get(SESSION_DESIGN_GOALS_SUMMARY, {})
-
-    @property
     def last_metrics(self) -> Dict[str, Any]:
         """最新仿真指标摘要"""
         return self.get(SESSION_LAST_METRICS, {})
@@ -459,8 +450,6 @@ __all__ = [
     "SESSION_IS_COMPLETED",
     "SESSION_TERMINATION_REASON",
     "SESSION_ACTIVE_CIRCUIT_FILE",
-    "SESSION_DESIGN_GOALS_PATH",
-    "SESSION_DESIGN_GOALS_SUMMARY",
     "SESSION_LAST_METRICS",
     "SESSION_ERROR_CONTEXT",
     "SESSION_WORKING_CONTEXT_SUMMARY",

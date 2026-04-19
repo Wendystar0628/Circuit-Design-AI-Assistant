@@ -33,7 +33,6 @@ class GraphStateLike(Protocol):
     """GraphState 协议，用于类型提示"""
     circuit_file_path: str
     sim_result_path: str
-    design_goals_path: str
     project_root: str
 
 
@@ -81,23 +80,6 @@ class FileReferenceValidator:
         """
         return self.validate_path(project_root, sim_result_path)
     
-    def validate_design_goals_path(
-        self,
-        project_root: str,
-        design_goals_path: str
-    ) -> bool:
-        """
-        校验设计目标路径
-        
-        Args:
-            project_root: 项目根目录路径
-            design_goals_path: 设计目标文件相对路径
-            
-        Returns:
-            bool: 路径是否有效
-        """
-        return self.validate_path(project_root, design_goals_path)
-    
     def validate_circuit_file_path(
         self,
         project_root: str,
@@ -137,11 +119,6 @@ class FileReferenceValidator:
             if not self.validate_sim_result_path(project_root, state.sim_result_path):
                 invalid_fields.append("sim_result_path")
         
-        # 校验设计目标路径（仅当路径非空时校验）
-        if state.design_goals_path:
-            if not self.validate_design_goals_path(project_root, state.design_goals_path):
-                invalid_fields.append("design_goals_path")
-        
         # 校验电路文件路径（仅当路径非空时校验）
         if state.circuit_file_path:
             if not self.validate_circuit_file_path(project_root, state.circuit_file_path):
@@ -169,10 +146,6 @@ class FileReferenceValidator:
         sim_result_path = state_dict.get("sim_result_path", "")
         if sim_result_path and not self.validate_sim_result_path(project_root, sim_result_path):
             invalid_fields.append("sim_result_path")
-        
-        design_goals_path = state_dict.get("design_goals_path", "")
-        if design_goals_path and not self.validate_design_goals_path(project_root, design_goals_path):
-            invalid_fields.append("design_goals_path")
         
         circuit_file_path = state_dict.get("circuit_file_path", "")
         if circuit_file_path and not self.validate_circuit_file_path(project_root, circuit_file_path):

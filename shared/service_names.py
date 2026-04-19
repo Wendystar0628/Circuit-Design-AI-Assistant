@@ -150,9 +150,6 @@ SVC_CONVERSATION_ROLLBACK_SERVICE = "conversation_rollback_service"
 # 外部服务管理器 - API 调用熔断和重试
 SVC_EXTERNAL_SERVICE_MANAGER = "external_service_manager"
 
-# 迭代历史服务 - 从 SqliteSaver 查询迭代历史视图
-SVC_ITERATION_HISTORY_SERVICE = "iteration_history_service"
-
 # RAG 管理器 - RAG 业务逻辑（索引、查询）
 SVC_RAG_MANAGER = "rag_manager"
 
@@ -222,7 +219,6 @@ __all__ = [
     "SVC_SESSION_STATE_MANAGER",
     "SVC_CONVERSATION_ROLLBACK_SERVICE",
     "SVC_EXTERNAL_SERVICE_MANAGER",
-    "SVC_ITERATION_HISTORY_SERVICE",
     "SVC_RAG_MANAGER",
     "SVC_SIMULATION_SERVICE",
     "SVC_SIMULATION_JOB_MANAGER",

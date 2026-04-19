@@ -68,7 +68,6 @@ def test_session_state_manager_session_changed_event_omits_sim_result_path():
     manager._get_current_state = lambda: {
         "sim_result_path": "simulation_results/amp/2026-04-06_00-10-00/result.json",
         "circuit_file_path": "designs/amp.cir",
-        "design_goals_path": ".circuit_ai/design_goals.json",
     }
 
     manager._publish_session_changed_event(
@@ -82,7 +81,6 @@ def test_session_state_manager_session_changed_event_omits_sim_result_path():
     assert payload["action"] == "rollback"
     assert payload["previous_session_id"] == "session-000"
     assert payload["circuit_file_path"] == "designs/amp.cir"
-    assert payload["design_goals_path"] == ".circuit_ai/design_goals.json"
     assert "sim_result_path" not in payload
 
 

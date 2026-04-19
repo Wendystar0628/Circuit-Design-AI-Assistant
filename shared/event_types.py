@@ -596,17 +596,6 @@ EVENT_ITERATION_USER_STOPPED = "iteration_user_stopped"
 #   - new_path: str - 新文件路径
 EVENT_ACTIVE_FILE_CHANGED = "active_file_changed"
 
-# ============================================================
-# 设计目标事件
-# ============================================================
-
-# 设计目标更新
-# 携带数据：
-#   - goals: list - 更新后的设计目标列表
-#   - source: str - 更新来源（"dialog" 表示用户通过对话框编辑，"llm" 表示 LLM 提取）
-#   - previous_goals: list - 更新前的设计目标（用于撤销）
-EVENT_DESIGN_GOALS_UPDATED = "design_goals_updated"
-
 # 设计完成
 # 携带数据：
 #   - termination_reason: str - 终止原因（"user_accepted", "goals_satisfied", "max_checkpoints", "stagnated", "user_stopped"）
@@ -841,8 +830,6 @@ __all__ = [
     "EVENT_ITERATION_USER_CONFIRMED",
     "EVENT_ITERATION_USER_STOPPED",
     "EVENT_ACTIVE_FILE_CHANGED",
-    # 设计目标事件
-    "EVENT_DESIGN_GOALS_UPDATED",
     "EVENT_DESIGN_COMPLETED",
     "EVENT_DESIGN_ACCEPTED",
     "EVENT_DESIGN_STOPPED",

@@ -29,10 +29,6 @@
   "menu.view.conversation": "Conversation",
   "menu.view.knowledge": "Index Library",
 
-  "menu.design": "Design",
-  "menu.design.goals": "Design Goals",
-  "menu.design.iteration_history": "Iteration History",
-
   "menu.simulation": "Simulation",
   "menu.simulation.run": "Run Simulation",
 
@@ -123,9 +119,6 @@
   "dialog.select_circuit.hint": "Please select the main circuit file to run simulation",
   "dialog.select_circuit.hint_multiple": "Multiple main circuits detected, please select one",
   "dialog.select_circuit.run": "Run",
-  "dialog.design_goals.title_confirm": "Confirm Design Goals",
-  "dialog.design_goals.title_edit": "Edit Design Goals",
-  "dialog.design_goals.hint": "The following design goals were extracted from your requirements. Please review and modify if needed.",
 
   "error.file_not_found": "File not found: {path}",
   "error.permission_denied": "Permission denied: {path}",

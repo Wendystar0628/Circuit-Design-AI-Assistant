@@ -174,8 +174,6 @@ class ActionHandlers:
             "on_conversation_compress": self.on_conversation_compress,
             "on_reindex_knowledge": self.on_reindex_knowledge,
             "on_clear_knowledge": self.on_clear_knowledge,
-            "on_design_goals": self.on_design_goals,
-            "on_iteration_history": self.on_iteration_history,
             "on_api_config": self.on_api_config,
             "on_help_docs": self.on_help_docs,
             "on_about": self.on_about,
@@ -329,24 +327,6 @@ class ActionHandlers:
         elif self.config_manager:
             self.config_manager.set("recent_projects", [])
 
-
-    # ============================================================
-    # 编辑操作回调
-    # ============================================================
-
-    def _get_project_root(self) -> Optional[str]:
-        """获取当前项目根目录"""
-        try:
-            from shared.service_locator import ServiceLocator
-            from shared.service_names import SVC_SESSION_STATE
-            
-            session_state = ServiceLocator.get_optional(SVC_SESSION_STATE)
-            if session_state:
-                return session_state.project_root
-        except Exception:
-            pass
-        return None
-
     def on_edit_undo(self):
         panel = self._get_panel("code_editor")
         if panel is not None and hasattr(panel, "undo"):
@@ -423,88 +403,6 @@ class ActionHandlers:
         """
         if hasattr(self._main_window, "toggle_panel"):
             self._main_window.toggle_panel(panel_id, visible)
-
-    # ============================================================
-    # 设计操作回调
-    # ============================================================
-
-    def on_design_goals(self):
-        """打开设计目标编辑对话框"""
-        # 检查是否已打开项目
-        project_root = self._get_project_root()
-        if not project_root:
-            QMessageBox.warning(
-                self._main_window,
-                self._get_text("dialog.warning.title", "Warning"),
-                self._get_text("status.open_workspace", "Please open a workspace folder")
-            )
-            return
-        
-        try:
-            from presentation.dialogs.design_goals_dialog import DesignGoalsDialog
-            
-            dialog = DesignGoalsDialog(self._main_window)
-            dialog.load_goals(project_root)
-            dialog.exec()
-            
-        except ImportError as e:
-            QMessageBox.warning(
-                self._main_window,
-                self._get_text("dialog.warning.title", "Warning"),
-                self._get_text(
-                    "dialog.design_goals.import_error",
-                    "Failed to load Design Goals module."
-                )
-            )
-            if self.logger:
-                self.logger.error(f"Failed to import DesignGoalsDialog: {e}")
-        except Exception as e:
-            QMessageBox.critical(
-                self._main_window,
-                self._get_text("dialog.error.title", "Error"),
-                f"Failed to open design goals: {str(e)}"
-            )
-            if self.logger:
-                self.logger.error(f"Failed to open design goals dialog: {e}")
-
-    def on_iteration_history(self):
-        """打开迭代历史记录对话框"""
-        # 检查是否已打开项目
-        project_root = self._get_project_root()
-        if not project_root:
-            QMessageBox.warning(
-                self._main_window,
-                self._get_text("dialog.warning.title", "Warning"),
-                self._get_text("status.open_workspace", "Please open a workspace folder")
-            )
-            return
-        
-        try:
-            from presentation.dialogs.iteration_history_dialog import IterationHistoryDialog
-            
-            dialog = IterationHistoryDialog(self._main_window)
-            dialog.load_history(project_root)
-            dialog.exec()
-            
-        except ImportError as e:
-            QMessageBox.warning(
-                self._main_window,
-                self._get_text("dialog.warning.title", "Warning"),
-                self._get_text(
-                    "dialog.iteration_history.import_error",
-                    "Failed to load Iteration History module."
-                )
-            )
-            if self.logger:
-                self.logger.error(f"Failed to import IterationHistoryDialog: {e}")
-        except Exception as e:
-            QMessageBox.critical(
-                self._main_window,
-                self._get_text("dialog.error.title", "Error"),
-                f"Failed to open iteration history: {str(e)}"
-            )
-            if self.logger:
-                self.logger.error(f"Failed to open iteration history dialog: {e}")
 
     # ============================================================
     # 工具操作回调

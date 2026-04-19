@@ -54,8 +54,6 @@ from application.session_state import (
     SESSION_IS_COMPLETED,
     SESSION_TERMINATION_REASON,
     SESSION_ACTIVE_CIRCUIT_FILE,
-    SESSION_DESIGN_GOALS_PATH,
-    SESSION_DESIGN_GOALS_SUMMARY,
     SESSION_LAST_METRICS,
     SESSION_ERROR_CONTEXT,
     SESSION_WORKING_CONTEXT_SUMMARY,
@@ -260,12 +258,6 @@ class GraphStateProjector:
             updates[SESSION_ACTIVE_CIRCUIT_FILE] = new_circuit
             self._publish_active_file_changed(old_circuit, new_circuit)
 
-        # design_goals_path
-        new_goals_path = getattr(new_state, 'design_goals_path', '.circuit_ai/design_goals.json')
-        old_goals_path = getattr(old_state, 'design_goals_path', '.circuit_ai/design_goals.json') if old_state else '.circuit_ai/design_goals.json'
-        if new_goals_path != old_goals_path:
-            updates[SESSION_DESIGN_GOALS_PATH] = new_goals_path
-
     def _project_summary_fields(
         self,
         old_state: Optional[Any],
@@ -273,12 +265,6 @@ class GraphStateProjector:
         updates: Dict[str, Any]
     ) -> None:
         """投影轻量摘要字段"""
-        # design_goals_summary
-        new_goals = getattr(new_state, 'design_goals_summary', {})
-        old_goals = getattr(old_state, 'design_goals_summary', {}) if old_state else {}
-        if new_goals != old_goals:
-            updates[SESSION_DESIGN_GOALS_SUMMARY] = new_goals
-
         # last_metrics
         new_metrics = getattr(new_state, 'last_metrics', {})
         old_metrics = getattr(old_state, 'last_metrics', {}) if old_state else {}
@@ -400,8 +386,6 @@ class GraphStateProjector:
         updates = {
             SESSION_PROJECT_ROOT: None,
             SESSION_ACTIVE_CIRCUIT_FILE: "",
-            SESSION_DESIGN_GOALS_PATH: ".circuit_ai/design_goals.json",
-            SESSION_DESIGN_GOALS_SUMMARY: {},
             SESSION_WORKFLOW_LOCKED: False,
             SESSION_CURRENT_NODE: "",
             SESSION_PREVIOUS_NODE: "",

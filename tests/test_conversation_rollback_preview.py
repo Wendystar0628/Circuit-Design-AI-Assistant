@@ -74,9 +74,6 @@ def _prepare_checkpointed_conversation(tmp_path: Path):
         "updated": "before-anchor",
     }
     pending_edits_path.write_text(json.dumps(pending_edits_base), encoding="utf-8")
-    design_goals_path = tmp_path / ".circuit_ai" / "design_goals.json"
-    design_goals_base = {"target": "wide-band"}
-    design_goals_path.write_text(json.dumps(design_goals_base), encoding="utf-8")
 
     context_manager.add_user_message(
         "base question",
@@ -104,10 +101,6 @@ def _prepare_checkpointed_conversation(tmp_path: Path):
         json.dumps({"files": [], "updated": "after-anchor"}),
         encoding="utf-8",
     )
-    design_goals_path.write_text(
-        json.dumps({"target": "narrow-band"}),
-        encoding="utf-8",
-    )
 
     long_user_message = "anchor " + "very long message " * 20
     context_manager.add_user_message(
@@ -132,8 +125,6 @@ def _prepare_checkpointed_conversation(tmp_path: Path):
         "new_workspace_file": new_workspace_file,
         "pending_edits_path": pending_edits_path,
         "pending_edits_base": pending_edits_base,
-        "design_goals_path": design_goals_path,
-        "design_goals_base": design_goals_base,
         "long_user_message": long_user_message,
     }
 
@@ -164,7 +155,6 @@ def test_preview_rollback_to_anchor_exposes_workspace_changes_and_message_trunca
         for path in workspace_paths
     )
     assert ".circuit_ai/pending_workspace_edits.json" not in workspace_paths
-    assert ".circuit_ai/design_goals.json" not in workspace_paths
 
 
 def test_rollback_to_anchor_restores_workspace_and_session_state(tmp_path: Path):
@@ -179,7 +169,6 @@ def test_rollback_to_anchor_restores_workspace_and_session_state(tmp_path: Path)
     assert env["workspace_file"].read_text(encoding="utf-8") == "base-1\nbase-2\nbase-3\n"
     assert not env["new_workspace_file"].exists()
     assert json.loads(env["pending_edits_path"].read_text(encoding="utf-8")) == env["pending_edits_base"]
-    assert json.loads(env["design_goals_path"].read_text(encoding="utf-8")) == env["design_goals_base"]
 
     persisted_messages = context_service.load_messages(str(tmp_path), env["session_id"])
     persisted_ids = [

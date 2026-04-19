@@ -91,9 +91,6 @@ class MenuManager:
         self._register_action("view_conversation", "menu.view.conversation", "Conversation", handler=self._callbacks.get("on_show_conversation"))
         self._register_action("view_rag", "menu.view.knowledge", "Index Library", handler=self._callbacks.get("on_show_rag"))
 
-        self._register_action("design_goals", "menu.design.goals", "Design Goals", handler=self._callbacks.get("on_design_goals"))
-        self._register_action("design_iteration_history", "menu.design.iteration_history", "Iteration History", handler=self._callbacks.get("on_iteration_history"))
-
         self._register_action("sim_run", "menu.simulation.run", "Run Simulation", handler=self._callbacks.get("on_run_simulation"), enabled=False, shortcut="F5")
 
         self._register_action("conversation_new", "menu.conversation.new", "New Conversation", handler=self._callbacks.get("on_new_conversation"), shortcut="Ctrl+Shift+N")
@@ -238,14 +235,6 @@ class MenuManager:
                 "id": "view",
                 "label": self._get_text("menu.view", "View"),
                 "items": view_items,
-            },
-            {
-                "id": "design",
-                "label": self._get_text("menu.design", "Design"),
-                "items": [
-                    self._menu_item("design_goals"),
-                    self._menu_item("design_iteration_history"),
-                ],
             },
             {
                 "id": "simulation",

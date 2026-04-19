@@ -29,10 +29,6 @@
   "menu.view.conversation": "对话",
   "menu.view.knowledge": "索引库",
 
-  "menu.design": "设计",
-  "menu.design.goals": "设计目标",
-  "menu.design.iteration_history": "迭代历史",
-
   "menu.simulation": "仿真",
   "menu.simulation.run": "运行仿真",
 
@@ -123,9 +119,6 @@
   "dialog.select_circuit.hint": "请选择要运行仿真的主电路文件",
   "dialog.select_circuit.hint_multiple": "检测到多个可能的主电路，请选择一个",
   "dialog.select_circuit.run": "运行",
-  "dialog.design_goals.title_confirm": "确认设计目标",
-  "dialog.design_goals.title_edit": "编辑设计目标",
-  "dialog.design_goals.hint": "以下设计目标是从您的需求中提取的，请检查并根据需要修改。",
 
   "error.file_not_found": "文件未找到：{path}",
   "error.permission_denied": "权限被拒绝：{path}",

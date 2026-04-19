@@ -31,16 +31,6 @@ SYSTEM_DIR = ".circuit_ai"
 SIM_CONFIG_FILE = f"{SYSTEM_DIR}/simulation_config.json"
 
 # ============================================================
-# 设计相关路径
-# ============================================================
-
-# 设计目标文件（相对于项目根目录）
-DESIGN_GOALS_FILE = f"{SYSTEM_DIR}/design_goals.json"
-
-# 迭代历史文件（相对于项目根目录）
-ITERATION_HISTORY_FILE = f"{SYSTEM_DIR}/iteration_history.json"
-
-# ============================================================
 # 快照相关路径
 # ============================================================
 
@@ -75,8 +65,6 @@ CHECKPOINTS_DB = f"{SYSTEM_DIR}/checkpoints.sqlite3"
 __all__ = [
     "SYSTEM_DIR",
     "SIM_CONFIG_FILE",
-    "DESIGN_GOALS_FILE",
-    "ITERATION_HISTORY_FILE",
     "SNAPSHOTS_DIR",
     "CONVERSATIONS_DIR",
     "TEMP_DIR",

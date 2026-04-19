@@ -38,7 +38,8 @@ def create_default_tools() -> ToolRegistry:
     注册的工具：
         文件操作：read_file, patch_file, rewrite_file
         搜索导航：grep_search, find_files, list_directory
-        知识检索：rag_search
+        知识检索：rag_search, web_search
+        仿真闭环：run_simulation
 
     Returns:
         已完成注册的 ToolRegistry 实例
@@ -51,6 +52,7 @@ def create_default_tools() -> ToolRegistry:
     from domain.llm.agent.tools.list_directory import ListDirectoryTool
     from domain.llm.agent.tools.rag_search import RAGSearchTool
     from domain.llm.agent.tools.web_search import WebSearchTool
+    from domain.llm.agent.tools.run_simulation import RunSimulationTool
 
     registry = ToolRegistry()
 
@@ -66,6 +68,12 @@ def create_default_tools() -> ToolRegistry:
 
     registry.register(RAGSearchTool())
     registry.register(WebSearchTool())
+
+    # ---- 仿真闭环：对项目内任意电路发起一次仿真，返回紧凑摘要 ----
+    # 与 UI 的 Run 按钮共享 SimulationJobManager 通道，但通过
+    # origin=AGENT_TOOL 与 UI_EDITOR 严格区分；tool 内部完全不触碰
+    # presentation/* 层，UI 刷新由 EventBus 订阅自然完成。
+    registry.register(RunSimulationTool())
 
     logger.debug(f"Tool factory created registry: {registry!r}")
     return registry

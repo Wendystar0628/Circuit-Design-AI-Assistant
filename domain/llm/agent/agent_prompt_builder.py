@@ -131,6 +131,14 @@ def _build_guidelines_section(registry: ToolRegistry) -> str:
         "preserve comments and formatting."
     )
     _add(
+        "Once run_simulation returns a result_path, pass that exact "
+        "result_path verbatim to every read_* tool you call in the same "
+        "turn — never rely on the editor's current-file fallback for "
+        "simulations you just ran. The current-file fallback is reserved "
+        "for a fresh, context-free question about whatever circuit the user "
+        "is looking at right now."
+    )
+    _add(
         "If a tool fails, do not end with an empty reply. Retry only when a clear correction is available; otherwise explain the limitation and provide the best possible final answer."
     )
     _add("Show file paths clearly when working with files.")

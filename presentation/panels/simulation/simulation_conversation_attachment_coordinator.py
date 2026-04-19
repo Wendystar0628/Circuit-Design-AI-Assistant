@@ -42,7 +42,7 @@ class SimulationConversationAttachmentCoordinator:
         """
         root = self._resolve_export_root(project_root, export_root, result)
         simulation_artifact_exporter.export_metrics(root, result, metrics)
-        target_path = root / "metrics" / "metrics.json"
+        target_path = simulation_artifact_exporter.metrics_paths(root).json_path
         self._ensure_file(target_path)
         self._publish([str(target_path)])
         return str(target_path)
@@ -54,7 +54,7 @@ class SimulationConversationAttachmentCoordinator:
         result: SimulationResult,
     ) -> str:
         root = self._resolve_export_root(project_root, export_root, result)
-        target_path = root / "output_log" / "output_log.txt"
+        target_path = simulation_artifact_exporter.output_log_paths(root).text_path
         if not target_path.is_file():
             simulation_artifact_exporter.export_output_log(root, result)
         self._ensure_file(target_path)
@@ -68,8 +68,9 @@ class SimulationConversationAttachmentCoordinator:
         result: SimulationResult,
     ) -> str:
         root = self._resolve_export_root(project_root, export_root, result)
-        text_path = root / "op_result" / "op_result.txt"
-        json_path = root / "op_result" / "op_result.json"
+        op_paths = simulation_artifact_exporter.op_result_paths(root)
+        text_path = op_paths.text_path
+        json_path = op_paths.json_path
         if not text_path.is_file() or not json_path.is_file():
             simulation_artifact_exporter.export_op_result(root, result)
         self._ensure_file(text_path)
@@ -84,9 +85,9 @@ class SimulationConversationAttachmentCoordinator:
         result: SimulationResult,
     ) -> str:
         root = self._resolve_export_root(project_root, export_root, result)
-        target_dir = root / "charts"
-        target_dir.mkdir(parents=True, exist_ok=True)
-        target_path = target_dir / "current_chart.png"
+        charts_paths = simulation_artifact_exporter.charts_paths(root)
+        charts_paths.directory.mkdir(parents=True, exist_ok=True)
+        target_path = charts_paths.conversation_snapshot_png_path
         if not self._chart_viewer.export_current_image(str(target_path)):
             raise ValueError("No chart image available for conversation attachment")
         simulation_artifact_exporter.inject_png_linkage(target_path, result, "chart")
@@ -101,9 +102,9 @@ class SimulationConversationAttachmentCoordinator:
         result: SimulationResult,
     ) -> str:
         root = self._resolve_export_root(project_root, export_root, result)
-        target_dir = root / "waveforms"
-        target_dir.mkdir(parents=True, exist_ok=True)
-        target_path = target_dir / "current_waveform.png"
+        waveforms_paths = simulation_artifact_exporter.waveforms_paths(root)
+        waveforms_paths.directory.mkdir(parents=True, exist_ok=True)
+        target_path = waveforms_paths.conversation_snapshot_png_path
         if not self._waveform_widget.export_image(str(target_path)):
             raise ValueError("No waveform image available for conversation attachment")
         simulation_artifact_exporter.inject_png_linkage(target_path, result, "waveforms")

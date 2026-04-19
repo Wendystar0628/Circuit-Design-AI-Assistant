@@ -170,10 +170,18 @@ class ChartViewer(QWidget):
             return []
 
         chart_index = 1
-        base_name = f"{chart_index:02d}_{spec.chart_type.value}"
-        image_path = target_dir / f"{base_name}.png"
-        csv_path = target_dir / f"{base_name}.csv"
-        json_path = target_dir / f"{base_name}.json"
+        # Chart-entry filenames (``{idx:02d}_{chart_type}.{png,csv,json}``)
+        # are owned by ``simulation_artifact_exporter.build_chart_entry_paths``.
+        # ``target_dir`` is the canonical ``<export_root>/charts/`` directory,
+        # so we pass its parent as the effective ``export_root``.
+        image_path_canonical, csv_path_canonical, json_path_canonical = (
+            simulation_artifact_exporter.build_chart_entry_paths(
+                target_dir.parent, chart_index, spec.chart_type.value
+            )
+        )
+        image_path = target_dir / image_path_canonical.name
+        csv_path = target_dir / csv_path_canonical.name
+        json_path = target_dir / json_path_canonical.name
         file_map: Dict[str, str] = {}
 
         if page.export_image(str(image_path)):
@@ -211,7 +219,9 @@ class ChartViewer(QWidget):
             "files": file_map,
         })
 
-        manifest_path = target_dir / "charts.json"
+        manifest_path = target_dir / simulation_artifact_exporter.charts_paths(
+            target_dir.parent
+        ).manifest_json_path.name
         manifest_payload = simulation_artifact_exporter.build_artifact_payload(
             self._result,
             "charts",

@@ -1,8 +1,9 @@
 import csv
 import json
 import re
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Final, List, Optional, Tuple
 
 from domain.simulation.data.op_result_data_builder import op_result_data_builder
 from domain.simulation.data.png_metadata import inject_png_text_chunks
@@ -14,22 +15,275 @@ from domain.simulation.models.simulation_result import SimulationResult
 EXPORT_SCHEMA_VERSION = 1
 
 # ---------------------------------------------------------------------------
-# Canonical disk layout
+# Canonical disk layout — SINGLE source of truth for Step 15's
+# "stable artifact layout schema".
 #
-# Every simulation bundle — whether produced by the UI or by an agent
-# tool — lives at ``<project_root>/<CANONICAL_RESULTS_DIR>/<stem>/<ts>/``.
-# This is the **sole** authoritative source for the results directory
-# name; downstream modules must import this constant rather than
-# hardcode the literal.  ``result.json`` and all artifact subdirs
-# (``metrics/``, ``charts/``, ``waveforms/``, ``output_log/``,
-# ``analysis_info/``, ``raw_data/``, ``op_result/``) share this root.
+# Every simulation bundle — whether produced by the headless service,
+# the UI Run button, or an agent tool — lives at
+# ``<project_root>/<CANONICAL_RESULTS_DIR>/<stem>/<ts>/``. Under that
+# ``export_root`` the layout is fixed and exposed only through the
+# ``*_paths(export_root)`` helpers further down this file.
+#
+# Downstream modules (persistence, UI coordinators, bundle builders,
+# agent read tools, tests) MUST call those helpers to obtain paths.
+# Direct string concatenation like
+# ``export_root / "metrics" / "metrics.json"`` is a contract violation:
+# the grep-proof constraint in Step 15 of
+# ``AGENT_SIMULATION_TOOL_IMPLEMENTATION_PLAN.md`` states those literals
+# may appear only in this file and in the plan's schema section.
 # ---------------------------------------------------------------------------
-CANONICAL_RESULTS_DIR = "simulation_results"
+CANONICAL_RESULTS_DIR: Final[str] = "simulation_results"
 
-DEFAULT_EXPORT_FOLDER_NAME = "simulation_result"
+DEFAULT_EXPORT_FOLDER_NAME: Final[str] = "simulation_result"
+
+# Bundle root filename: every bundle's ``SimulationResult`` is serialised
+# here and all addressing flows through a ``result_path`` pointing at it.
+RESULT_JSON_FILENAME: Final[str] = "result.json"
+
+# Bundle root manifest filename: emitted by both headless persistence
+# (``SimulationArtifactPersistence``) and the UI-triggered export
+# coordinator. Two writers, same filename, one schema.
+EXPORT_MANIFEST_FILENAME: Final[str] = "export_manifest.json"
+
+# Artifact-type tag for the manifest payload itself (keeps all
+# ``artifact_type`` values authored in this file, not strewn across
+# persistence / coordinator code).
+ARTIFACT_TYPE_EXPORT_MANIFEST: Final[str] = "export_manifest"
+
+# ---- Canonical category names ----
+#
+# These names are simultaneously:
+#   1. The disk subdirectory names under ``export_root``
+#   2. The UI export-picker keys (ExportPanel, frontend state serializer)
+#   3. The keys used to index ``BundlePersistenceResult.category_files``
+# The three roles are deliberately unified — no translation layer means
+# no drift between "user picked X", "bundle has subdir X/", and
+# "persistence reports category X".
+
+CATEGORY_METRICS:       Final[str] = "metrics"
+CATEGORY_ANALYSIS_INFO: Final[str] = "analysis_info"
+CATEGORY_RAW_DATA:      Final[str] = "raw_data"
+CATEGORY_OUTPUT_LOG:    Final[str] = "output_log"
+CATEGORY_OP_RESULT:     Final[str] = "op_result"
+CATEGORY_CHARTS:        Final[str] = "charts"
+CATEGORY_WAVEFORMS:     Final[str] = "waveforms"
+
+# category name -> disk subdir name. The identity mapping is intentional:
+# renaming a subdir in the future only requires editing this dict, not
+# hunting every consumer. Any new category must also add a matching
+# ``*_paths`` helper below — a bare entry here without a helper is a
+# half-implemented contract.
+_CANONICAL_SUBDIRS: Final[Dict[str, str]] = {
+    CATEGORY_METRICS:       CATEGORY_METRICS,
+    CATEGORY_ANALYSIS_INFO: CATEGORY_ANALYSIS_INFO,
+    CATEGORY_RAW_DATA:      CATEGORY_RAW_DATA,
+    CATEGORY_OUTPUT_LOG:    CATEGORY_OUTPUT_LOG,
+    CATEGORY_OP_RESULT:     CATEGORY_OP_RESULT,
+    CATEGORY_CHARTS:        CATEGORY_CHARTS,
+    CATEGORY_WAVEFORMS:     CATEGORY_WAVEFORMS,
+}
+
+# Ordered tuples for the two consumption modes. Persistence (headless)
+# never writes chart/waveform PNGs — those are UI-side display snapshots.
+# The ExportPanel (display) can additionally trigger chart / waveform
+# bundles on top of the headless set.
+HEADLESS_ARTIFACT_CATEGORIES: Final[Tuple[str, ...]] = (
+    CATEGORY_METRICS,
+    CATEGORY_ANALYSIS_INFO,
+    CATEGORY_RAW_DATA,
+    CATEGORY_OUTPUT_LOG,
+    CATEGORY_OP_RESULT,
+)
+
+DISPLAY_EXPORT_CATEGORIES: Final[Tuple[str, ...]] = (
+    CATEGORY_METRICS,
+    CATEGORY_CHARTS,
+    CATEGORY_WAVEFORMS,
+    CATEGORY_ANALYSIS_INFO,
+    CATEGORY_RAW_DATA,
+    CATEGORY_OUTPUT_LOG,
+    CATEGORY_OP_RESULT,
+)
+
+
+# ---------------------------------------------------------------------------
+# Typed path bundles — one dataclass per artifact category
+#
+# Each dataclass exposes every canonical file path a consumer would need
+# for that category. Using a dataclass (rather than a single dict or a
+# ``get_path(category, kind)`` multiplexer) gives every caller static
+# attribute-typed access and forbids the "kind: str" polymorphism Step 15
+# explicitly bans.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class MetricsArtifactPaths:
+    """Canonical paths for the ``metrics`` artifact category."""
+    directory: Path
+    csv_path: Path
+    json_path: Path
+
+
+@dataclass(frozen=True)
+class AnalysisInfoArtifactPaths:
+    """Canonical paths for the ``analysis_info`` artifact category."""
+    directory: Path
+    json_path: Path
+    text_path: Path
+
+
+@dataclass(frozen=True)
+class RawDataArtifactPaths:
+    """Canonical paths for the ``raw_data`` artifact category."""
+    directory: Path
+    csv_path: Path
+    json_path: Path
+
+
+@dataclass(frozen=True)
+class OutputLogArtifactPaths:
+    """Canonical paths for the ``output_log`` artifact category."""
+    directory: Path
+    text_path: Path
+    json_path: Path
+
+
+@dataclass(frozen=True)
+class OpResultArtifactPaths:
+    """Canonical paths for the ``op_result`` artifact category."""
+    directory: Path
+    text_path: Path
+    json_path: Path
+
+
+@dataclass(frozen=True)
+class ChartsArtifactPaths:
+    """Canonical paths for the ``charts`` artifact category.
+
+    The ``charts/`` subdirectory holds one triplet (``{idx:02d}_{type}``
+    ``.png`` / ``.csv`` / ``.json``) per displayed chart plus a single
+    ``charts.json`` manifest listing them. A one-shot conversation
+    snapshot also lives here (``current_chart.png``).
+    """
+    directory: Path
+    manifest_json_path: Path
+    conversation_snapshot_png_path: Path
+
+
+@dataclass(frozen=True)
+class WaveformsArtifactPaths:
+    """Canonical paths for the ``waveforms`` artifact category.
+
+    The ``waveforms/`` subdirectory holds the authoritative overlay
+    triplet (``waveform.png`` / ``.csv`` / ``.json``) plus the one-shot
+    conversation snapshot (``current_waveform.png``).
+    """
+    directory: Path
+    image_path: Path
+    csv_path: Path
+    json_path: Path
+    conversation_snapshot_png_path: Path
 
 
 class SimulationArtifactExporter:
+    # ------------------------------------------------------------------
+    # Canonical path helpers — one per artifact category
+    #
+    # Every consumer that needs to locate a file inside an ``export_root``
+    # MUST call one of these helpers. They are deliberately single-purpose
+    # (no ``kind: str`` parameter, no if/elif inside) so every call site
+    # reads like ``exporter.metrics_paths(root).csv_path`` with the
+    # artifact category statically visible.
+    # ------------------------------------------------------------------
+
+    def result_json_path(self, export_root: str | Path) -> Path:
+        """Canonical ``result.json`` path at the bundle root."""
+        return Path(export_root) / RESULT_JSON_FILENAME
+
+    def export_manifest_path(self, export_root: str | Path) -> Path:
+        """Canonical ``export_manifest.json`` path at the bundle root."""
+        return Path(export_root) / EXPORT_MANIFEST_FILENAME
+
+    def metrics_paths(self, export_root: str | Path) -> MetricsArtifactPaths:
+        directory = Path(export_root) / _CANONICAL_SUBDIRS[CATEGORY_METRICS]
+        return MetricsArtifactPaths(
+            directory=directory,
+            csv_path=directory / "metrics.csv",
+            json_path=directory / "metrics.json",
+        )
+
+    def analysis_info_paths(self, export_root: str | Path) -> AnalysisInfoArtifactPaths:
+        directory = Path(export_root) / _CANONICAL_SUBDIRS[CATEGORY_ANALYSIS_INFO]
+        return AnalysisInfoArtifactPaths(
+            directory=directory,
+            json_path=directory / "analysis_info.json",
+            text_path=directory / "analysis_info.txt",
+        )
+
+    def raw_data_paths(self, export_root: str | Path) -> RawDataArtifactPaths:
+        directory = Path(export_root) / _CANONICAL_SUBDIRS[CATEGORY_RAW_DATA]
+        return RawDataArtifactPaths(
+            directory=directory,
+            csv_path=directory / "raw_data.csv",
+            json_path=directory / "raw_data.json",
+        )
+
+    def output_log_paths(self, export_root: str | Path) -> OutputLogArtifactPaths:
+        directory = Path(export_root) / _CANONICAL_SUBDIRS[CATEGORY_OUTPUT_LOG]
+        return OutputLogArtifactPaths(
+            directory=directory,
+            text_path=directory / "output_log.txt",
+            json_path=directory / "output_log.json",
+        )
+
+    def op_result_paths(self, export_root: str | Path) -> OpResultArtifactPaths:
+        directory = Path(export_root) / _CANONICAL_SUBDIRS[CATEGORY_OP_RESULT]
+        return OpResultArtifactPaths(
+            directory=directory,
+            text_path=directory / "op_result.txt",
+            json_path=directory / "op_result.json",
+        )
+
+    def charts_paths(self, export_root: str | Path) -> ChartsArtifactPaths:
+        directory = Path(export_root) / _CANONICAL_SUBDIRS[CATEGORY_CHARTS]
+        return ChartsArtifactPaths(
+            directory=directory,
+            manifest_json_path=directory / "charts.json",
+            conversation_snapshot_png_path=directory / "current_chart.png",
+        )
+
+    def waveforms_paths(self, export_root: str | Path) -> WaveformsArtifactPaths:
+        directory = Path(export_root) / _CANONICAL_SUBDIRS[CATEGORY_WAVEFORMS]
+        return WaveformsArtifactPaths(
+            directory=directory,
+            image_path=directory / "waveform.png",
+            csv_path=directory / "waveform.csv",
+            json_path=directory / "waveform.json",
+            conversation_snapshot_png_path=directory / "current_waveform.png",
+        )
+
+    def build_chart_entry_paths(
+        self,
+        export_root: str | Path,
+        chart_index: int,
+        chart_type: str,
+    ) -> Tuple[Path, Path, Path]:
+        """Return the ``(png, csv, json)`` triplet for a single chart entry.
+
+        Chart bundles enumerate one triplet per displayed chart; the
+        filename pattern ``{idx:02d}_{chart_type}.{ext}`` is anchored
+        here so the order/format contract cannot drift between the
+        writer and any future reader.
+        """
+        base = f"{int(chart_index):02d}_{str(chart_type)}"
+        directory = self.charts_paths(export_root).directory
+        return (
+            directory / f"{base}.png",
+            directory / f"{base}.csv",
+            directory / f"{base}.json",
+        )
+
     def build_project_export_root(self, project_root: str | Path, result: SimulationResult) -> Path:
         """Resolve the canonical bundle root **without** touching disk.
 
@@ -211,9 +465,8 @@ class SimulationArtifactExporter:
         upstream, so the exported payload naturally carries target
         information and the agent sees goals alongside values.
         """
-        category_dir = self._ensure_category_dir(export_root, "metrics")
-        csv_path = category_dir / "metrics.csv"
-        json_path = category_dir / "metrics.json"
+        paths = self.metrics_paths(export_root)
+        paths.directory.mkdir(parents=True, exist_ok=True)
 
         columns = [
             "display_name",
@@ -224,54 +477,52 @@ class SimulationArtifactExporter:
             "target",
         ]
         rows = [self._metric_to_row(metric) for metric in metrics]
-        self.write_csv_with_header(csv_path, result, "metrics", columns, rows)
+        self.write_csv_with_header(paths.csv_path, result, CATEGORY_METRICS, columns, rows)
 
-        self._write_json(json_path, self.build_artifact_payload(
+        self._write_json(paths.json_path, self.build_artifact_payload(
             result=result,
-            artifact_type="metrics",
+            artifact_type=CATEGORY_METRICS,
             summary={
                 "metric_count": len(rows),
                 "metrics_with_target": sum(1 for row in rows if row.get("target")),
             },
             files={
-                "csv": csv_path.name,
+                "csv": paths.csv_path.name,
             },
             data={
                 "columns": columns,
                 "rows": rows,
             },
         ))
-        return [str(csv_path), str(json_path)]
+        return [str(paths.csv_path), str(paths.json_path)]
 
     def export_analysis_info(self, export_root: Path, result: SimulationResult) -> List[str]:
-        category_dir = self._ensure_category_dir(export_root, "analysis_info")
-        json_path = category_dir / "analysis_info.json"
-        text_path = category_dir / "analysis_info.txt"
+        paths = self.analysis_info_paths(export_root)
+        paths.directory.mkdir(parents=True, exist_ok=True)
 
         payload = self._build_analysis_info_payload(result)
-        self._write_json(json_path, self.build_artifact_payload(
+        self._write_json(paths.json_path, self.build_artifact_payload(
             result,
-            "analysis_info",
+            CATEGORY_ANALYSIS_INFO,
             summary={
                 "parameter_count": len(payload.get("parameters") or {}),
             },
             files={
-                "text": text_path.name,
+                "text": paths.text_path.name,
             },
             data=payload,
         ))
         self.write_text_with_header(
-            text_path,
+            paths.text_path,
             result,
-            "analysis_info",
+            CATEGORY_ANALYSIS_INFO,
             self._build_analysis_info_text(payload),
         )
-        return [str(json_path), str(text_path)]
+        return [str(paths.json_path), str(paths.text_path)]
 
     def export_raw_data(self, export_root: Path, result: SimulationResult) -> List[str]:
-        category_dir = self._ensure_category_dir(export_root, "raw_data")
-        csv_path = category_dir / "raw_data.csv"
-        json_path = category_dir / "raw_data.json"
+        paths = self.raw_data_paths(export_root)
+        paths.directory.mkdir(parents=True, exist_ok=True)
 
         snapshot = waveform_data_service.build_table_snapshot(result)
         x_label = snapshot.x_label if snapshot is not None else result.get_x_axis_label()
@@ -280,18 +531,18 @@ class SimulationArtifactExporter:
         rows = self._build_snapshot_rows(snapshot)
         series = self._build_snapshot_series(snapshot)
 
-        self.write_csv_with_header(csv_path, result, "raw_data", columns, rows)
+        self.write_csv_with_header(paths.csv_path, result, CATEGORY_RAW_DATA, columns, rows)
 
-        self._write_json(json_path, self.build_artifact_payload(
+        self._write_json(paths.json_path, self.build_artifact_payload(
             result,
-            "raw_data",
+            CATEGORY_RAW_DATA,
             summary={
                 "row_count": len(rows),
                 "signal_count": len(signal_names),
                 "x_axis_label": x_label,
             },
             files={
-                "csv": csv_path.name,
+                "csv": paths.csv_path.name,
             },
             data={
                 "columns": columns,
@@ -299,24 +550,23 @@ class SimulationArtifactExporter:
                 "series": series,
             },
         ))
-        return [str(csv_path), str(json_path)]
+        return [str(paths.csv_path), str(paths.json_path)]
 
     def export_output_log(self, export_root: Path, result: SimulationResult) -> List[str]:
-        category_dir = self._ensure_category_dir(export_root, "output_log")
-        text_path = category_dir / "output_log.txt"
-        json_path = category_dir / "output_log.json"
+        paths = self.output_log_paths(export_root)
+        paths.directory.mkdir(parents=True, exist_ok=True)
 
         raw_output = getattr(result, "raw_output", None) or ""
-        self.write_text_with_header(text_path, result, "output_log", raw_output)
+        self.write_text_with_header(paths.text_path, result, CATEGORY_OUTPUT_LOG, raw_output)
 
         log_lines = simulation_output_reader.get_output_log_from_text(raw_output)
         error_count = sum(1 for line in log_lines if line.is_error())
         warning_count = sum(1 for line in log_lines if line.is_warning())
         info_count = len(log_lines) - error_count - warning_count
         first_error = next((line.content for line in log_lines if line.is_error()), None)
-        self._write_json(json_path, self.build_artifact_payload(
+        self._write_json(paths.json_path, self.build_artifact_payload(
             result,
-            "output_log",
+            CATEGORY_OUTPUT_LOG,
             summary={
                 "total_lines": len(log_lines),
                 "error_count": error_count,
@@ -325,47 +575,41 @@ class SimulationArtifactExporter:
                 "first_error": first_error,
             },
             files={
-                "text": text_path.name,
+                "text": paths.text_path.name,
             },
             data={
                 "raw_output": raw_output,
                 "lines": [line.to_dict() for line in log_lines],
             },
         ))
-        return [str(text_path), str(json_path)]
+        return [str(paths.text_path), str(paths.json_path)]
 
     def export_op_result(self, export_root: Path, result: SimulationResult) -> List[str]:
         if not op_result_data_builder.is_available(result):
             raise ValueError("OP result export is unavailable for the current simulation result")
-        category_dir = self._ensure_category_dir(export_root, "op_result")
-        json_path = category_dir / "op_result.json"
-        text_path = category_dir / "op_result.txt"
+        paths = self.op_result_paths(export_root)
+        paths.directory.mkdir(parents=True, exist_ok=True)
 
         payload = op_result_data_builder.build(result)
         self.write_text_with_header(
-            text_path,
+            paths.text_path,
             result,
-            "op_result",
+            CATEGORY_OP_RESULT,
             op_result_data_builder.build_text(result),
         )
-        self._write_json(json_path, self.build_artifact_payload(
+        self._write_json(paths.json_path, self.build_artifact_payload(
             result,
-            "op_result",
+            CATEGORY_OP_RESULT,
             summary={
                 "row_count": int(payload.get("row_count", 0)),
                 "section_count": int(payload.get("section_count", 0)),
             },
             files={
-                "text": text_path.name,
+                "text": paths.text_path.name,
             },
             data=payload,
         ))
-        return [str(text_path), str(json_path)]
-
-    def _ensure_category_dir(self, export_root: Path, category_name: str) -> Path:
-        category_dir = export_root / category_name
-        category_dir.mkdir(parents=True, exist_ok=True)
-        return category_dir
+        return [str(paths.text_path), str(paths.json_path)]
 
     def _metric_to_row(self, metric: Any) -> Dict[str, Any]:
         return {
@@ -499,8 +743,32 @@ class SimulationArtifactExporter:
 simulation_artifact_exporter = SimulationArtifactExporter()
 
 __all__ = [
+    # Exporter class + singleton
     "SimulationArtifactExporter",
     "simulation_artifact_exporter",
+    # Top-level layout constants
     "CANONICAL_RESULTS_DIR",
     "EXPORT_SCHEMA_VERSION",
+    "RESULT_JSON_FILENAME",
+    "EXPORT_MANIFEST_FILENAME",
+    "ARTIFACT_TYPE_EXPORT_MANIFEST",
+    # Canonical category names
+    "CATEGORY_METRICS",
+    "CATEGORY_ANALYSIS_INFO",
+    "CATEGORY_RAW_DATA",
+    "CATEGORY_OUTPUT_LOG",
+    "CATEGORY_OP_RESULT",
+    "CATEGORY_CHARTS",
+    "CATEGORY_WAVEFORMS",
+    # Ordered category tuples
+    "HEADLESS_ARTIFACT_CATEGORIES",
+    "DISPLAY_EXPORT_CATEGORIES",
+    # Typed path bundles
+    "MetricsArtifactPaths",
+    "AnalysisInfoArtifactPaths",
+    "RawDataArtifactPaths",
+    "OutputLogArtifactPaths",
+    "OpResultArtifactPaths",
+    "ChartsArtifactPaths",
+    "WaveformsArtifactPaths",
 ]

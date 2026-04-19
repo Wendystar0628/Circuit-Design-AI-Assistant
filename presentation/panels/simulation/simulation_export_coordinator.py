@@ -1,20 +1,27 @@
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Sequence
+from typing import Any, Callable, Dict, List, Sequence
 
-from domain.simulation.data.simulation_artifact_exporter import simulation_artifact_exporter
+from domain.simulation.data.simulation_artifact_exporter import (
+    ARTIFACT_TYPE_EXPORT_MANIFEST,
+    CATEGORY_ANALYSIS_INFO,
+    CATEGORY_CHARTS,
+    CATEGORY_METRICS,
+    CATEGORY_OP_RESULT,
+    CATEGORY_OUTPUT_LOG,
+    CATEGORY_RAW_DATA,
+    CATEGORY_WAVEFORMS,
+    DISPLAY_EXPORT_CATEGORIES,
+    simulation_artifact_exporter,
+)
 from domain.simulation.models.simulation_result import SimulationResult
 
 
-EXPORT_TYPE_ORDER = (
-    "metrics",
-    "charts",
-    "waveforms",
-    "analysis_info",
-    "raw_data",
-    "output_log",
-    "op_result",
-)
+# Public alias. The authoritative order lives in
+# ``simulation_artifact_exporter.DISPLAY_EXPORT_CATEGORIES`` (Step 15
+# canonical layout schema); kept as ``EXPORT_TYPE_ORDER`` for the
+# stable ``__all__`` contract consumed by ExportPanel.
+EXPORT_TYPE_ORDER = DISPLAY_EXPORT_CATEGORIES
 
 
 @dataclass
@@ -30,10 +37,33 @@ class SimulationExportExecution:
         return not self.errors
 
 
+# Type alias for the dispatch-table entries. A runner maps
+# ``(export_root, result, metrics)`` to the list of written files;
+# chart/waveform runners ignore ``result`` + ``metrics`` because their
+# content is already held by the widget.
+_CategoryRunner = Callable[[Path, SimulationResult, List[Any]], List[str]]
+
+
 class SimulationExportCoordinator:
+    """UI-triggered "Export to…" coordinator.
+
+    Unlike ``SimulationArtifactPersistence`` (headless, project-internal)
+    this writes to a **user-chosen** folder and can additionally emit
+    chart / waveform PNG bundles captured from the live widgets. The
+    on-disk filenames — both per-category and the bundle-root
+    ``export_manifest.json`` — are owned by
+    ``simulation_artifact_exporter`` (Step 15); this class never
+    constructs a path literal itself.
+    """
+
     def __init__(self, chart_viewer, waveform_widget):
         self._chart_viewer = chart_viewer
         self._waveform_widget = waveform_widget
+        self._category_runners: Dict[str, _CategoryRunner] = self._build_runners()
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
 
     def all_export_types(self) -> List[str]:
         return list(EXPORT_TYPE_ORDER)
@@ -59,6 +89,10 @@ class SimulationExportCoordinator:
         """
         export_root = simulation_artifact_exporter.create_export_root(base_directory, result)
         return self._export_to_root(export_root, result, selected_types, metrics)
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
 
     def _export_to_root(
         self,
@@ -87,10 +121,20 @@ class SimulationExportCoordinator:
                     "message": str(exc),
                 })
 
-        manifest_path = export_root / "export_manifest.json"
+        self._write_manifest(export_root, result, resolved_types, execution)
+        return execution
+
+    def _write_manifest(
+        self,
+        export_root: Path,
+        result: SimulationResult,
+        resolved_types: List[str],
+        execution: SimulationExportExecution,
+    ) -> None:
+        manifest_path = simulation_artifact_exporter.export_manifest_path(export_root)
         manifest_payload = simulation_artifact_exporter.build_artifact_payload(
             result,
-            "export_manifest",
+            ARTIFACT_TYPE_EXPORT_MANIFEST,
             summary={
                 "selected_type_count": len(resolved_types),
                 "exported_file_count": len(execution.exported_files) + 1,
@@ -102,13 +146,17 @@ class SimulationExportCoordinator:
             },
             data={
                 "selected_types": resolved_types,
-                "exported_files": self._to_relative_paths(export_root, [*execution.exported_files, str(manifest_path)]),
+                "exported_files": self._to_relative_paths(
+                    export_root, [*execution.exported_files, str(manifest_path)]
+                ),
                 "errors": execution.errors,
             },
         )
-        manifest_path.write_text(simulation_artifact_exporter.dumps_json(manifest_payload), encoding="utf-8")
+        manifest_path.write_text(
+            simulation_artifact_exporter.dumps_json(manifest_payload),
+            encoding="utf-8",
+        )
         execution.exported_files.append(str(manifest_path))
-        return execution
 
     def _export_category(
         self,
@@ -117,21 +165,44 @@ class SimulationExportCoordinator:
         export_type: str,
         metrics: List[Any],
     ) -> List[str]:
-        if export_type == "metrics":
-            return simulation_artifact_exporter.export_metrics(export_root, result, metrics)
-        if export_type == "charts":
-            return self._chart_viewer.export_bundle(str(export_root / "charts"))
-        if export_type == "waveforms":
-            return self._waveform_widget.export_bundle(str(export_root / "waveforms"))
-        if export_type == "analysis_info":
-            return simulation_artifact_exporter.export_analysis_info(export_root, result)
-        if export_type == "raw_data":
-            return simulation_artifact_exporter.export_raw_data(export_root, result)
-        if export_type == "output_log":
-            return simulation_artifact_exporter.export_output_log(export_root, result)
-        if export_type == "op_result":
-            return simulation_artifact_exporter.export_op_result(export_root, result)
-        raise ValueError(f"Unsupported export type: {export_type}")
+        """Dispatch one UI-export category to its runner.
+
+        Categories map 1:1 to entries in ``DISPLAY_EXPORT_CATEGORIES``.
+        Adding a category is an entry in the dispatch table plus a
+        matching helper in ``simulation_artifact_exporter`` (the
+        canonical layout owner).
+        """
+        runner = self._category_runners.get(export_type)
+        if runner is None:
+            raise ValueError(f"Unsupported export type: {export_type}")
+        return runner(export_root, result, metrics)
+
+    def _build_runners(self) -> Dict[str, _CategoryRunner]:
+        # Chart / waveform runners grab their output directory from
+        # the exporter's typed-paths helpers so we never spell out a
+        # subdirectory name here.
+        def run_charts(root: Path, _result: SimulationResult, _metrics: List[Any]) -> List[str]:
+            directory = simulation_artifact_exporter.charts_paths(root).directory
+            return self._chart_viewer.export_bundle(str(directory))
+
+        def run_waveforms(root: Path, _result: SimulationResult, _metrics: List[Any]) -> List[str]:
+            directory = simulation_artifact_exporter.waveforms_paths(root).directory
+            return self._waveform_widget.export_bundle(str(directory))
+
+        return {
+            CATEGORY_METRICS: lambda root, result, metrics:
+                simulation_artifact_exporter.export_metrics(root, result, metrics),
+            CATEGORY_CHARTS: run_charts,
+            CATEGORY_WAVEFORMS: run_waveforms,
+            CATEGORY_ANALYSIS_INFO: lambda root, result, _metrics:
+                simulation_artifact_exporter.export_analysis_info(root, result),
+            CATEGORY_RAW_DATA: lambda root, result, _metrics:
+                simulation_artifact_exporter.export_raw_data(root, result),
+            CATEGORY_OUTPUT_LOG: lambda root, result, _metrics:
+                simulation_artifact_exporter.export_output_log(root, result),
+            CATEGORY_OP_RESULT: lambda root, result, _metrics:
+                simulation_artifact_exporter.export_op_result(root, result),
+        }
 
     def _to_relative_paths(self, export_root: Path, file_paths: List[str]) -> List[str]:
         root = export_root.resolve()

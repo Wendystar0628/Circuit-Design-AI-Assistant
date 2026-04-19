@@ -4,15 +4,15 @@ This service owns the **disk side-effect** of every simulation, no
 matter who triggered it. It takes a fully-populated
 ``SimulationResult`` plus the project root, resolves the canonical
 bundle location (``<project_root>/simulation_results/<stem>/<ts>/``),
-and writes:
+and writes the ``result.json`` root plus every headless artifact
+category (see ``HEADLESS_ARTIFACT_CATEGORIES`` in
+``simulation_artifact_exporter``) and a bundle-root
+``export_manifest.json`` summary.
 
-- ``result.json``                          via ``SimulationResultRepository``
-- ``metrics/metrics.{csv,json}``           via ``SimulationArtifactExporter``
-- ``analysis_info/analysis_info.{json,txt}``    (same)
-- ``raw_data/raw_data.{csv,json}``              (same)
-- ``output_log/output_log.{txt,json}``          (same)
-- ``op_result/op_result.{txt,json}``            when available
-- ``export_manifest.json``                      (summary)
+Concrete file layout — including per-category filenames — is owned
+by ``simulation_artifact_exporter`` (Step 15 canonical layout schema);
+this service only decides **which** categories to emit and **in what
+order**. It never constructs artifact paths itself.
 
 UI chart/waveform PNG rendering is intentionally **not** performed
 here — that still runs in the display layer because it needs the
@@ -32,17 +32,24 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Sequence
+from typing import Dict, List, Mapping, Optional, Sequence
 
 from domain.simulation.data.op_result_data_builder import op_result_data_builder
 from domain.simulation.data.simulation_artifact_exporter import (
+    ARTIFACT_TYPE_EXPORT_MANIFEST,
+    CATEGORY_ANALYSIS_INFO,
+    CATEGORY_METRICS,
+    CATEGORY_OP_RESULT,
+    CATEGORY_OUTPUT_LOG,
+    CATEGORY_RAW_DATA,
+    HEADLESS_ARTIFACT_CATEGORIES,
+    RESULT_JSON_FILENAME,
     simulation_artifact_exporter,
 )
 from domain.simulation.models.display_metric import DisplayMetric
 from domain.simulation.models.simulation_result import SimulationResult
 from domain.simulation.service.display_metric_builder import display_metric_builder
 from domain.simulation.service.simulation_result_repository import (
-    RESULT_JSON_FILENAME,
     simulation_result_repository,
 )
 
@@ -54,17 +61,13 @@ _LOGGER = logging.getLogger(__name__)
 # Artifact categories
 # ---------------------------------------------------------------------------
 #
-# The order below is the authoritative write order and the order in
-# which ``export_manifest.json`` lists categories. ``op_result`` is
-# conditional on ``op_result_data_builder.is_available(result)``.
+# Write order: ``HEADLESS_ARTIFACT_CATEGORIES`` declared by the
+# exporter is the single source of truth. ``op_result`` is conditional
+# on ``op_result_data_builder.is_available(result)``. Exposed as
+# ``ARTIFACT_CATEGORY_ORDER`` purely for the (unchanged) public
+# ``__all__`` contract of this module.
 
-ARTIFACT_CATEGORY_ORDER = (
-    "metrics",
-    "analysis_info",
-    "raw_data",
-    "output_log",
-    "op_result",
-)
+ARTIFACT_CATEGORY_ORDER = HEADLESS_ARTIFACT_CATEGORIES
 
 
 @dataclass
@@ -122,7 +125,7 @@ class SimulationArtifactPersistence:
             result=result,
             export_root=export_root,
         )
-        result_abs_path = export_root / RESULT_JSON_FILENAME
+        result_abs_path = simulation_artifact_exporter.result_json_path(export_root)
 
         outcome = BundlePersistenceResult(
             export_root=export_root,
@@ -134,7 +137,7 @@ class SimulationArtifactPersistence:
         metrics = self._build_display_metrics(result, metric_targets)
 
         for category in ARTIFACT_CATEGORY_ORDER:
-            if category == "op_result" and not op_result_data_builder.is_available(result):
+            if category == CATEGORY_OP_RESULT and not op_result_data_builder.is_available(result):
                 continue
             try:
                 files = self._export_category(export_root, result, category, metrics)
@@ -149,7 +152,7 @@ class SimulationArtifactPersistence:
 
         manifest_path = self._write_manifest(export_root, result, outcome)
         outcome.written_files.append(str(manifest_path))
-        outcome.category_files["export_manifest"] = [manifest_path.name]
+        outcome.category_files[ARTIFACT_TYPE_EXPORT_MANIFEST] = [manifest_path.name]
 
         return outcome
 
@@ -171,19 +174,35 @@ class SimulationArtifactPersistence:
         category: str,
         metrics: Sequence[DisplayMetric],
     ) -> List[str]:
-        if category == "metrics":
-            return simulation_artifact_exporter.export_metrics(
-                export_root, result, list(metrics)
-            )
-        if category == "analysis_info":
-            return simulation_artifact_exporter.export_analysis_info(export_root, result)
-        if category == "raw_data":
-            return simulation_artifact_exporter.export_raw_data(export_root, result)
-        if category == "output_log":
-            return simulation_artifact_exporter.export_output_log(export_root, result)
-        if category == "op_result":
-            return simulation_artifact_exporter.export_op_result(export_root, result)
-        raise ValueError(f"Unknown artifact category: {category}")
+        """Dispatch one category to its exporter method.
+
+        Every entry in the dispatch table below uses the same
+        ``(export_root, result, metrics)`` signature so there is no
+        ``kind: str`` polymorphism — the category string is used once,
+        as a dict key, and never again. Adding a category is an entry
+        in the table plus a helper in ``simulation_artifact_exporter``.
+        """
+        runner = self._CATEGORY_RUNNERS.get(category)
+        if runner is None:
+            raise ValueError(f"Unknown artifact category: {category}")
+        return runner(export_root, result, metrics)
+
+    # Dispatch table: each runner accepts ``(export_root, result,
+    # metrics)`` and returns the list of written file paths. Runners
+    # that do not consume ``metrics`` simply ignore the argument — the
+    # uniform signature is what lets us avoid kind-string branching.
+    _CATEGORY_RUNNERS = {
+        CATEGORY_METRICS:       lambda root, result, metrics:
+            simulation_artifact_exporter.export_metrics(root, result, list(metrics)),
+        CATEGORY_ANALYSIS_INFO: lambda root, result, metrics:
+            simulation_artifact_exporter.export_analysis_info(root, result),
+        CATEGORY_RAW_DATA:      lambda root, result, metrics:
+            simulation_artifact_exporter.export_raw_data(root, result),
+        CATEGORY_OUTPUT_LOG:    lambda root, result, metrics:
+            simulation_artifact_exporter.export_output_log(root, result),
+        CATEGORY_OP_RESULT:     lambda root, result, metrics:
+            simulation_artifact_exporter.export_op_result(root, result),
+    }
 
     def _write_manifest(
         self,
@@ -191,7 +210,7 @@ class SimulationArtifactPersistence:
         result: SimulationResult,
         outcome: BundlePersistenceResult,
     ) -> Path:
-        manifest_path = export_root / "export_manifest.json"
+        manifest_path = simulation_artifact_exporter.export_manifest_path(export_root)
         persisted_categories = [
             category
             for category in (RESULT_JSON_FILENAME, *ARTIFACT_CATEGORY_ORDER)
@@ -199,7 +218,7 @@ class SimulationArtifactPersistence:
         ]
         payload = simulation_artifact_exporter.build_artifact_payload(
             result,
-            "export_manifest",
+            ARTIFACT_TYPE_EXPORT_MANIFEST,
             summary={
                 "category_count": len(persisted_categories),
                 "exported_file_count": len(outcome.written_files) + 1,

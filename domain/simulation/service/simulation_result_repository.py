@@ -42,14 +42,16 @@ from typing import List, Optional
 
 from domain.simulation.data.simulation_artifact_exporter import (
     CANONICAL_RESULTS_DIR,
+    RESULT_JSON_FILENAME,
     simulation_artifact_exporter,
 )
 from domain.simulation.models.simulation_result import SimulationResult
 from shared.models.load_result import LoadResult
 
-
-# File name of the serialised ``SimulationResult`` inside each bundle.
-RESULT_JSON_FILENAME = "result.json"
+# ``RESULT_JSON_FILENAME`` is re-exported here for backwards-compat of
+# the repository's public ``__all__``; the authoritative definition
+# lives in ``simulation_artifact_exporter`` as part of the canonical
+# disk-layout schema (Step 15).
 
 
 @dataclass(frozen=True)
@@ -145,7 +147,7 @@ class SimulationResultRepository:
         else:
             export_root.mkdir(parents=True, exist_ok=True)
 
-        result_path = export_root / RESULT_JSON_FILENAME
+        result_path = simulation_artifact_exporter.result_json_path(export_root)
         content = json.dumps(result.to_dict(), indent=2, ensure_ascii=False)
         result_path.write_text(content, encoding="utf-8")
 

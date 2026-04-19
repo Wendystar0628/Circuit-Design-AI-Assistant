@@ -76,10 +76,18 @@ class WaveformExportBundleBuilder:
         target_dir = Path(output_dir)
         target_dir.mkdir(parents=True, exist_ok=True)
 
+        # Canonical waveform filenames live in
+        # ``simulation_artifact_exporter.waveforms_paths`` (Step 15
+        # layout schema). ``target_dir`` is the canonical
+        # ``<export_root>/waveforms/`` directory; we read the filename
+        # portion from the schema rather than hard-coding
+        # ``waveform.png``/``.csv``/``.json`` here.
+        canonical_waveform_paths = simulation_artifact_exporter.waveforms_paths(target_dir.parent)
+
         exported_files: List[str] = []
-        image_path = target_dir / "waveform.png"
-        csv_path = target_dir / "waveform.csv"
-        json_path = target_dir / "waveform.json"
+        image_path = target_dir / canonical_waveform_paths.image_path.name
+        csv_path = target_dir / canonical_waveform_paths.csv_path.name
+        json_path = target_dir / canonical_waveform_paths.json_path.name
         file_map: Dict[str, str] = {}
 
         if export_image(str(image_path)):

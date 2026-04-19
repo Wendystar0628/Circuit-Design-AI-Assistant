@@ -167,9 +167,15 @@ class LLMExecutor(QObject):
             from domain.llm.agent.agent_prompt_builder import build_agent_system_prompt
 
             project_root = self._get_project_root()
+            current_file = self._get_active_circuit_file()
             context = ToolContext(
                 project_root=project_root,
+                current_file=current_file,
                 rag_query_service=self._get_rag_query_service(),
+                sim_job_manager=self._get_sim_job_manager(),
+                pending_workspace_edit_service=(
+                    self._get_pending_workspace_edit_service()
+                ),
             )
             registry = create_default_tools()
 
@@ -179,6 +185,7 @@ class LLMExecutor(QObject):
             system_prompt = build_agent_system_prompt(
                 registry=registry,
                 project_root=project_root,
+                current_file=current_file,
             )
 
             if messages and messages[0].get("role") == "system":
@@ -341,6 +348,62 @@ class LLMExecutor(QObject):
         except Exception as e:
             if self.logger:
                 self.logger.debug(f"Failed to get RAG query service: {e}")
+            return None
+
+    def _get_sim_job_manager(self):
+        """从 ServiceLocator 取 SimulationJobManager 注入给 ToolContext。
+
+        这是 agent 工具访问仿真能力的唯一通道——仿真系列 tool 内部
+        禁止再走 ServiceLocator。
+        """
+        try:
+            from shared.service_locator import ServiceLocator
+            from shared.service_names import SVC_SIMULATION_JOB_MANAGER
+
+            return ServiceLocator.get_optional(SVC_SIMULATION_JOB_MANAGER)
+        except Exception as e:
+            if self.logger:
+                self.logger.debug(f"Failed to get simulation job manager: {e}")
+            return None
+
+    def _get_pending_workspace_edit_service(self):
+        """从 ServiceLocator 取 PendingWorkspaceEditService 注入给 ToolContext。
+
+        PatchFileTool / RewriteFileTool 通过 context 使用此服务将
+        agent 修改排入 pending 队列由用户审核，tool 内部禁止再走
+        ServiceLocator。
+        """
+        try:
+            from shared.service_locator import ServiceLocator
+            from shared.service_names import SVC_PENDING_WORKSPACE_EDIT_SERVICE
+
+            return ServiceLocator.get_optional(SVC_PENDING_WORKSPACE_EDIT_SERVICE)
+        except Exception as e:
+            if self.logger:
+                self.logger.debug(
+                    f"Failed to get pending workspace edit service: {e}"
+                )
+            return None
+
+    def _get_active_circuit_file(self) -> Optional[str]:
+        """从 SessionState 读当前活动电路文件绝对路径。
+
+        SessionState.active_circuit_file 是 GraphStateProjector 从
+        GraphState.circuit_file_path 投影过来的唯一只读视图，
+        作为 agent 未显式传 file_path 时的回落项。无活动文件返回 None。
+        """
+        try:
+            from shared.service_locator import ServiceLocator
+            from shared.service_names import SVC_SESSION_STATE
+
+            session_state = ServiceLocator.get_optional(SVC_SESSION_STATE)
+            if session_state is None:
+                return None
+            active = session_state.active_circuit_file
+            return active or None
+        except Exception as e:
+            if self.logger:
+                self.logger.debug(f"Failed to get active circuit file: {e}")
             return None
 
     def _get_llm_client(self, model: str) -> Optional[BaseLLMClient]:

@@ -9,7 +9,8 @@ Agent RAG 检索工具
 架构位置：
 - 被 ToolRegistry 注册
 - 依赖 RAGManager（向量相似度检索）
-- 通过 ServiceLocator 延迟获取 RAGManager
+- RAGManager 由调用方通过 ToolContext.rag_query_service 注入，
+  tool 不从全局服务定位器自取
 """
 
 from typing import Any, Dict, List, Optional

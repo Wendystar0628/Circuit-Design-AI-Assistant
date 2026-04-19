@@ -1,3 +1,4 @@
+
 import type { SimulationBridge } from '../../bridge/bridge'
 import type {
   CircuitSelectionItemState,
@@ -107,8 +108,8 @@ function CircuitSelectionCard({ item, onSelect }: CircuitSelectionCardProps) {
       className={className}
       disabled={!latest.can_load}
       onClick={onSelect}
-      aria-pressed={item.is_current ? 'true' : 'false'}
       title={item.circuit_absolute_path || item.circuit_file}
+      {...(item.is_current ? { 'aria-current': 'true' as const } : null)}
     >
       <div>
         <div className="history-item__title">{displayName}</div>

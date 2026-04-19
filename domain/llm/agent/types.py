@@ -49,7 +49,17 @@ Agent 工具调用基础类型定义
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    # 仅静态分析导入：避免 domain 层在运行时反向依赖
+    # application 层（PendingWorkspaceEditService）与具体服务实现，
+    # 同时保留字段的显式类型注解。
+    from application.pending_workspace_edit_service import (
+        PendingWorkspaceEditService,
+    )
+    from domain.rag.rag_manager import RAGManager
+    from domain.services.simulation_job_manager import SimulationJobManager
 
 
 # ============================================================
@@ -130,35 +140,45 @@ class ToolSchema:
 
 @dataclass
 class ToolContext:
-    """
-    工具执行时的上下文环境
-    
-    通过依赖注入传递给工具的 execute() 方法，
-    避免工具直接依赖全局服务，便于测试和复用。
-    
-    对应 pi-mono 中 createCodingToolDefinitions(cwd) 传入 cwd 的模式，
-    但扩展为更完整的上下文对象。
-    
+    """工具执行时的上下文环境。
+
+    通过依赖注入传递给工具的 ``execute()`` 方法——工具**唯一**的
+    外部依赖入口。禁止工具内部直接访问 ``ServiceLocator`` 或任何
+    全局服务：要么 context 提供，要么工具把"调用方没提供"当成
+    is_error 返回，绝不做"context 没有就回落到 ServiceLocator"的
+    双路径。
+
+    对应 pi-mono 中 ``createCodingToolDefinitions(cwd)`` 传入 cwd
+    的模式，但扩展为更完整的依赖注入容器。
+
     Attributes:
         project_root: 当前项目根目录（绝对路径）
             - 所有文件操作的基准目录
             - 安全校验：禁止操作此目录之外的文件
-        current_file: 当前编辑器打开的文件路径（可选）
-            - 供 LLM 在系统提示词中感知当前上下文
+        current_file: 当前编辑器活动电路文件的绝对路径（可选）
+            - agent 不显式传 ``file_path`` 时的回落项
+            - 同时写入系统提示词供 LLM 感知当前上下文
         allowed_extensions: 允许操作的文件扩展名列表（可选）
             - 不设置时允许所有扩展名
-            - 设置后仅允许操作指定类型的文件
-        max_file_size_bytes: 读取文件的最大字节数限制
-            - 默认 200KB，超过此大小拒绝全文读取
-        max_read_lines: 单次读取的最大行数
-            - 默认 2000 行，与 pi-mono truncate.ts 一致
+        max_file_size_bytes: 读取文件的最大字节数限制（默认 200KB）
+        max_read_lines: 单次读取的最大行数（默认 2000，与 pi-mono
+            truncate.ts 一致）
+        rag_query_service: RAG 检索服务（RAGSearchTool 依赖）
+        sim_job_manager: 仿真 Job 管理器（仿真系列 tool 依赖，
+            SimulationJobManager 是并发 job 提交与生命周期的唯一
+            权威入口）
+        pending_workspace_edit_service: 待写工作区编辑服务
+            （PatchFileTool / RewriteFileTool 依赖，落盘前先写入
+            pending 队列由用户审核）
     """
     project_root: str
     current_file: Optional[str] = None
     allowed_extensions: Optional[List[str]] = None
     max_file_size_bytes: int = 200 * 1024  # 200KB
     max_read_lines: int = 2000
-    rag_query_service: Optional[Any] = None
+    rag_query_service: Optional["RAGManager"] = None
+    sim_job_manager: Optional["SimulationJobManager"] = None
+    pending_workspace_edit_service: Optional["PendingWorkspaceEditService"] = None
 
 
 # ============================================================

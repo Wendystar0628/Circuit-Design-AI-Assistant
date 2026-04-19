@@ -24,8 +24,6 @@ from typing import Any, Dict, List, Optional
 from domain.llm.agent.types import BaseTool, ToolContext, ToolResult
 from domain.llm.agent.utils.path_utils import validate_file_path
 from domain.llm.agent.utils.file_mutex import with_file_mutex
-from shared.service_locator import ServiceLocator
-from shared.service_names import SVC_PENDING_WORKSPACE_EDIT_SERVICE
 
 
 class RewriteFileTool(BaseTool):
@@ -111,9 +109,24 @@ class RewriteFileTool(BaseTool):
         if error:
             return ToolResult(content=f"Error: {error}", is_error=True)
 
+        # PendingWorkspaceEditService 必须由调用方通过 ToolContext
+        # 注入（权威设计：tool 不再走全局服务定位器自取）。
+        pending_edit_service = context.pending_workspace_edit_service
+        if pending_edit_service is None:
+            return ToolResult(
+                content=(
+                    "Error: PendingWorkspaceEditService is not provided by the "
+                    "caller via ToolContext; the rewrite_file tool refuses to "
+                    "write without an approval queue."
+                ),
+                is_error=True,
+            )
+
         # 文件互斥队列保护
         async with with_file_mutex(abs_path):
-            return await self._execute_write(abs_path, path, content, tool_call_id)
+            return await self._execute_write(
+                abs_path, path, content, tool_call_id, pending_edit_service
+            )
 
     async def _execute_write(
         self,
@@ -121,6 +134,7 @@ class RewriteFileTool(BaseTool):
         display_path: str,
         content: str,
         tool_call_id: str,
+        pending_edit_service: Any,
     ) -> ToolResult:
         """
         实际写入逻辑
@@ -129,18 +143,10 @@ class RewriteFileTool(BaseTool):
             abs_path: 绝对路径
             display_path: 显示路径（LLM 传入的原始路径）
             content: 写入内容
+            pending_edit_service: 由上层校验过不为 None 的待写编辑服务
         """
         try:
-            pending_workspace_edit_service = ServiceLocator.get_optional(
-                SVC_PENDING_WORKSPACE_EDIT_SERVICE
-            )
-            if pending_workspace_edit_service is None:
-                return ToolResult(
-                    content="Error: PendingWorkspaceEditService not available",
-                    is_error=True,
-                )
-
-            pending_workspace_edit_service.record_agent_edit(
+            pending_edit_service.record_agent_edit(
                 abs_path,
                 content,
                 tool_name=self.name,

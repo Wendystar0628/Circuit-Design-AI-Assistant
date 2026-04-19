@@ -139,8 +139,15 @@ def _build_guidelines_section(registry: ToolRegistry) -> str:
     _add(
         "Use read_output_log's first_error field as a clue for the next targeted inspection step."
     )
-    _add("Show file paths clearly when working with files.")
-    _add("Be concise in your responses.")
+    _add(
+        "Use read_op_result only for actual .op operating-point results; do not force it on AC / DC / TRAN / NOISE analyses, and if no .op result exists, say so explicitly."
+    )
+    _add(
+        "Show file paths clearly when working with files."
+    )
+    _add(
+        "Be concise in your responses."
+    )
 
     if not guidelines:
         return ""

@@ -74,6 +74,11 @@ from typing import Any, Dict, List, Optional, Union
 
 from domain.llm.agent.types import ToolContext, ToolResult
 from domain.llm.agent.utils.path_utils import validate_file_path
+from domain.simulation.data.op_result_payload import (
+    sort_op_result_branch_rows,
+    sort_op_result_device_rows,
+    sort_op_result_node_rows,
+)
 from domain.simulation.models.simulation_result import SimulationResult
 
 
@@ -668,4 +673,7 @@ __all__ = [
     "READ_TOOL_SHARED_GUIDELINES",
     "TargetStatus",
     "evaluate_metric_target",
+    "sort_op_result_node_rows",
+    "sort_op_result_branch_rows",
+    "sort_op_result_device_rows",
 ]

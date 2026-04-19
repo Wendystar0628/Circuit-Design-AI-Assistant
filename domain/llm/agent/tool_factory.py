@@ -55,6 +55,7 @@ def create_default_tools() -> ToolRegistry:
     from domain.llm.agent.tools.run_simulation import RunSimulationTool
     from domain.llm.agent.tools.read_metrics import ReadMetricsTool
     from domain.llm.agent.tools.read_output_log import ReadOutputLogTool
+    from domain.llm.agent.tools.read_op_result import ReadOpResultTool
     from domain.llm.agent.tools.read_signals import ReadSignalsTool
 
     registry = ToolRegistry()
@@ -89,6 +90,7 @@ def create_default_tools() -> ToolRegistry:
     # ``tools/read_signals.py`` 顶部的架构说明。
     registry.register(ReadMetricsTool())
     registry.register(ReadOutputLogTool())
+    registry.register(ReadOpResultTool())
     registry.register(ReadSignalsTool())
 
     logger.debug(f"Tool factory created registry: {registry!r}")

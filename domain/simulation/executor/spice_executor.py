@@ -55,6 +55,7 @@ from domain.simulation.executor.ngspice_shared import (
     VectorInfo,
     VectorType,
 )
+from domain.simulation.data.op_result_payload import build_op_result_payload_from_signals
 from domain.simulation.models.simulation_result import (
     SimulationData,
     SimulationResult,
@@ -1064,6 +1065,8 @@ class SpiceExecutor(SimulationExecutor):
                     signals[normalized_name] = vec_info.data
                     signal_types[normalized_name] = type_label
         
+        op_result = build_op_result_payload_from_signals(signals, signal_types) if analysis_type == "op" else {}
+        
         return SimulationData(
             frequency=frequency,
             time=time_data,
@@ -1071,6 +1074,7 @@ class SpiceExecutor(SimulationExecutor):
             sweep_name=sweep_name,
             signals=signals,
             signal_types=signal_types,
+            op_result=op_result,
         )
     
     def _normalize_signal_name(self, name: str, vec_type: int = 0) -> str:

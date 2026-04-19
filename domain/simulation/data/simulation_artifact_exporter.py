@@ -590,7 +590,7 @@ class SimulationArtifactExporter:
         paths = self.op_result_paths(export_root)
         paths.directory.mkdir(parents=True, exist_ok=True)
 
-        payload = op_result_data_builder.build(result)
+        payload = op_result_data_builder.get_payload(result)
         self.write_text_with_header(
             paths.text_path,
             result,

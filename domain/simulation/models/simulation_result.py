@@ -306,6 +306,9 @@ class SimulationData:
     signal_types: Dict[str, str] = field(default_factory=dict)
     """信号类型字典，键为信号名称，值为 voltage / current / other"""
     
+    op_result: Dict[str, Any] = field(default_factory=dict)
+    """.op 工作点结构化结果，优先供导出与 agent 读取复用"""
+    
     # ============================================================
     # 序列化方法
     # ============================================================
@@ -327,6 +330,7 @@ class SimulationData:
                 for name, data in self.signals.items()
             },
             "signal_types": dict(self.signal_types) if self.signal_types else {},
+            "op_result": dict(self.op_result) if self.op_result else {},
         }
     
     def _serialize_array(self, data: Any) -> Any:
@@ -375,6 +379,7 @@ class SimulationData:
                 for name, signal_data in data.get("signals", {}).items()
             },
             signal_types=data.get("signal_types", {}),
+            op_result=data.get("op_result", {}),
         )
     
     @classmethod

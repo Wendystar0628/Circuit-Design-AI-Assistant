@@ -130,6 +130,15 @@ def _build_guidelines_section(registry: ToolRegistry) -> str:
     _add(
         "If a tool fails, do not end with an empty reply. Retry only when a clear correction is available; otherwise explain the limitation and provide the best possible final answer."
     )
+    _add(
+        "When diagnosing a failed or suspicious simulation, prefer read_output_log without section first; its compact default view is the normal starting point."
+    )
+    _add(
+        "Do not jump straight to read_output_log(section='all') unless the compact diagnostic view is insufficient."
+    )
+    _add(
+        "Use read_output_log's first_error field as a clue for the next targeted inspection step."
+    )
     _add("Show file paths clearly when working with files.")
     _add("Be concise in your responses.")
 

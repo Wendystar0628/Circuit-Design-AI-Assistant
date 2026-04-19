@@ -27,6 +27,7 @@ from domain.llm.agent.tools.rag_search import RAGSearchTool
 from domain.llm.agent.tools.web_search import WebSearchTool
 from domain.llm.agent.tools.run_simulation import RunSimulationTool
 from domain.llm.agent.tools.read_metrics import ReadMetricsTool
+from domain.llm.agent.tools.read_output_log import ReadOutputLogTool
 from domain.llm.agent.tools.read_signals import ReadSignalsTool
 
 
@@ -41,5 +42,6 @@ __all__ = [
     "WebSearchTool",
     "RunSimulationTool",
     "ReadMetricsTool",
+    "ReadOutputLogTool",
     "ReadSignalsTool",
 ]

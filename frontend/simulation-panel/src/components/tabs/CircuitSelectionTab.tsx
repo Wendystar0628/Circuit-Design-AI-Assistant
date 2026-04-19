@@ -157,9 +157,6 @@ function CircuitSelectionCard({ item, onSelect }: CircuitSelectionCardProps) {
             </span>
           ))}
         </div>
-        <div className="circuit-selection-card__action">
-          {latest.can_load ? '加载最近结果' : '结果不可用'}
-        </div>
       </div>
     </button>
   )

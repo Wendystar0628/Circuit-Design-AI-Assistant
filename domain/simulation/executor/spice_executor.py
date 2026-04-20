@@ -432,6 +432,22 @@ class SpiceExecutor(SimulationExecutor):
         analysis_config: Optional[Dict[str, Any]]
     ) -> SimulationResult:
         """执行仿真核心逻辑"""
+        if getattr(self._ngspice, "has_fatal_error", False):
+            self._logger.warning("检测到上次仿真遗留的 ngspice 致命状态，先重建实例再继续。")
+            if not self._recreate_ngspice():
+                return create_error_result(
+                    executor=self.get_name(),
+                    file_path=file_path,
+                    analysis_type=analysis_type,
+                    error=SimulationError(
+                        code="E008",
+                        type=SimulationErrorType.NGSPICE_CRASH,
+                        severity=ErrorSeverity.CRITICAL,
+                        message="ngspice 致命状态恢复失败",
+                        file_path=file_path,
+                        recovery_suggestion="请重新初始化 ngspice 后重试",
+                    ),
+                )
         # 重置 ngspice 状态
         self._ngspice.destroy()
         
@@ -484,8 +500,10 @@ class SpiceExecutor(SimulationExecutor):
                 modified_netlist,
                 analysis_type,
             )
+            if analysis_command:
+                modified_netlist = replace_or_inject_analysis_command(modified_netlist, analysis_command)
         
-        modified_netlist = self._inject_signal_capture_options(modified_netlist)
+        modified_netlist = self._inject_signal_capture_options(modified_netlist, analysis_config)
         
         # 注入仿真选项（收敛参数和温度）
         modified_netlist = self._inject_simulation_options(modified_netlist, analysis_config)
@@ -503,10 +521,13 @@ class SpiceExecutor(SimulationExecutor):
             stdout = self._ngspice.get_stdout()
             stderr = self._ngspice.get_stderr()
             combined_output = stdout + "\n" + stderr
+            if getattr(self._ngspice, "has_fatal_error", False):
+                fatal_message = getattr(self._ngspice, "fatal_error_message", "")
+                combined_output = (combined_output + "\n" + fatal_message).strip()
             parsed_error = self._parse_ngspice_output(combined_output, file_path)
             
             # 检查是否是严重错误，需要重新初始化
-            if self._is_critical_error(combined_output):
+            if getattr(self._ngspice, "has_fatal_error", False) or self._is_critical_error(combined_output):
                 self._logger.warning("检测到 ngspice 严重错误，尝试重建 ngspice 实例...")
                 recovery_ok = self._recreate_ngspice()
                 parsed_error.recovery_attempted = True
@@ -526,9 +547,12 @@ class SpiceExecutor(SimulationExecutor):
             stdout = self._ngspice.get_stdout()
             stderr = self._ngspice.get_stderr()
             combined_output = stdout + "\n" + stderr
+            if getattr(self._ngspice, "has_fatal_error", False):
+                fatal_message = getattr(self._ngspice, "fatal_error_message", "")
+                combined_output = (combined_output + "\n" + fatal_message).strip()
             parsed_error = self._parse_ngspice_output(combined_output, file_path)
             
-            if self._is_critical_error(combined_output):
+            if getattr(self._ngspice, "has_fatal_error", False) or self._is_critical_error(combined_output):
                 self._logger.warning("检测到 ngspice 严重错误，尝试重建 ngspice 实例...")
                 recovery_ok = self._recreate_ngspice()
                 parsed_error.recovery_attempted = True
@@ -819,7 +843,24 @@ class SpiceExecutor(SimulationExecutor):
         
         return '\n'.join(result_lines)
 
-    def _inject_signal_capture_options(self, netlist: str) -> str:
+    def _inject_signal_capture_options(
+        self,
+        netlist: str,
+        analysis_config: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """
+        注入信号捕获选项
+        
+        Args:
+            netlist: 网表内容
+            analysis_config: 分析配置
+            
+        Returns:
+            str: 修改后的网表内容
+        """
+        if not analysis_config or not analysis_config.get("capture_currents"):
+            return netlist
+        
         lines = netlist.splitlines()
         for line in lines:
             stripped = line.strip().lower()
@@ -1016,6 +1057,16 @@ class SpiceExecutor(SimulationExecutor):
     ) -> SimulationError:
         """解析 ngspice 输出，提取错误信息"""
         output_lower = output.lower()
+
+        if "access violation" in output_lower or "segmentation fault" in output_lower or "fatal error" in output_lower:
+            return SimulationError(
+                code="E008",
+                type=SimulationErrorType.NGSPICE_CRASH,
+                severity=ErrorSeverity.CRITICAL,
+                message=f"ngspice 原生命令崩溃: {self._extract_error_message(output)}",
+                file_path=file_path,
+                recovery_suggestion="当前 DLL 实例已不可再用，系统应立即重建 ngspice 实例，并优先关闭触发崩溃的高风险运行时选项。",
+            )
 
         if "library file" in output_lower and "not found" in output_lower:
             missing_files = self._extract_missing_library_files(output)

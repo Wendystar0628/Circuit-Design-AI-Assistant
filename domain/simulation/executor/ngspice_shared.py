@@ -261,6 +261,7 @@ class NgSpiceWrapper:
         
         # ngspice 状态
         self._initialized = False
+        self._fatal_error_message: Optional[str] = None
         self._ngspice_id = self._get_next_id()
         
         # 加载 DLL
@@ -448,6 +449,7 @@ class NgSpiceWrapper:
                     raise NgSpiceInitError(f"ngSpice_Init 返回错误码: {result}")
                 
                 self._initialized = True
+                self._fatal_error_message = None
                 self._logger.debug("ngspice 初始化成功")
                 
             except Exception as e:
@@ -469,6 +471,9 @@ class NgSpiceWrapper:
         """
         with self._lock:
             try:
+                if self._fatal_error_message:
+                    self._logger.error(f"ngspice 已进入损坏状态，拒绝继续加载网表: {self._fatal_error_message}")
+                    return False
                 # 清空之前的输出
                 self._clear_output()
                 
@@ -487,6 +492,10 @@ class NgSpiceWrapper:
                 
                 return True
                 
+            except OSError as e:
+                self._mark_fatal_error(f"加载网表时发生原生命令异常: {e}")
+                self._logger.exception(f"加载网表失败: {e}")
+                return False
             except Exception as e:
                 self._logger.exception(f"加载网表失败: {e}")
                 return False
@@ -531,6 +540,9 @@ class NgSpiceWrapper:
         """
         with self._lock:
             try:
+                if self._fatal_error_message:
+                    self._logger.error(f"ngspice 已进入损坏状态，拒绝执行命令 '{command}': {self._fatal_error_message}")
+                    return False
                 result = self._ngspice.ngSpice_Command(command.encode('utf-8'))
                 
                 if result != 0:
@@ -539,6 +551,10 @@ class NgSpiceWrapper:
                 
                 return True
                 
+            except OSError as e:
+                self._mark_fatal_error(f"执行命令 {command} 失败: {e}")
+                self._logger.exception(f"执行命令失败: {command}, 错误: {e}")
+                return False
             except Exception as e:
                 self._logger.exception(f"执行命令失败: {command}, 错误: {e}")
                 return False
@@ -735,6 +751,9 @@ class NgSpiceWrapper:
         Returns:
             bool: 是否成功
         """
+        if self._fatal_error_message:
+            self._clear_output()
+            return False
         # 清空输出
         self._clear_output()
         # 执行 reset 命令
@@ -748,6 +767,8 @@ class NgSpiceWrapper:
             bool: 是否成功
         """
         self._clear_output()
+        if self._fatal_error_message:
+            return False
         # 先停止任何正在运行的仿真
         try:
             if self.is_running():
@@ -797,6 +818,8 @@ class NgSpiceWrapper:
                 self._logger.error(f"ngSpice_Init 重新初始化返回错误码: {result}")
                 return False
             
+            self._initialized = True
+            self._fatal_error_message = None
             self._logger.info("ngspice 重新初始化成功")
             return True
             
@@ -821,12 +844,24 @@ class NgSpiceWrapper:
         self._stdout_lines.clear()
         self._stderr_lines.clear()
         self._status_lines.clear()
+
+    def _mark_fatal_error(self, message: str) -> None:
+        self._fatal_error_message = str(message or "ngspice 原生命令异常")
+        self._initialized = False
     
     @property
     def initialized(self) -> bool:
         """是否已初始化"""
         return self._initialized
-    
+
+    @property
+    def has_fatal_error(self) -> bool:
+        return bool(self._fatal_error_message)
+
+    @property
+    def fatal_error_message(self) -> str:
+        return str(self._fatal_error_message or "")
+
     @property
     def dll_path(self) -> Path:
         """DLL 路径"""

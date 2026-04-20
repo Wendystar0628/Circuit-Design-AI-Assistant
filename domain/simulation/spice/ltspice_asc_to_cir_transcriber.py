@@ -592,7 +592,14 @@ class LtspiceAscToCirTranscriber:
                     model_kind,
                 )
                 degraded = degraded or not value_text
-            limited_nodes = nodes[:5 if lead == "M" else 4]
+            if lead == "M":
+                limited_nodes = list(nodes[:4])
+                if len(limited_nodes) == 3:
+                    limited_nodes.append(limited_nodes[2])
+                    degraded = True
+                    warnings.append(f"{symbol.source.symbol_name}: MOS 缺少 body 节点，已将 body 绑定到 source 以兼容当前运行时。")
+            else:
+                limited_nodes = nodes[:4]
             return f"{name} {' '.join(limited_nodes)} {model_name}", tuple(warnings), degraded
 
         model_name_candidates = [

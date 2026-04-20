@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, Optional
 
 from domain.simulation.models.simulation_config import (
@@ -12,6 +13,31 @@ from domain.simulation.models.simulation_config import (
 
 SUPPORTED_ANALYSIS_TYPES = ("ac", "dc", "tran", "noise", "op")
 _SUPPORTED_PREFIXES = tuple(f".{item}" for item in SUPPORTED_ANALYSIS_TYPES)
+_SPICE_NUMERIC_PATTERN = re.compile(r"^([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)([A-Za-z]+)?$")
+_SPICE_SUFFIX_SCALES = {
+    "t": 1e12,
+    "g": 1e9,
+    "meg": 1e6,
+    "k": 1e3,
+    "mil": 25.4e-6,
+    "m": 1e-3,
+    "u": 1e-6,
+    "n": 1e-9,
+    "p": 1e-12,
+    "f": 1e-15,
+}
+_SPICE_FORMAT_SCALES = (
+    (1e12, "T"),
+    (1e9, "G"),
+    (1e6, "Meg"),
+    (1e3, "k"),
+    (1.0, ""),
+    (1e-3, "m"),
+    (1e-6, "u"),
+    (1e-9, "n"),
+    (1e-12, "p"),
+    (1e-15, "f"),
+)
 
 
 def detect_last_analysis_type_from_text(netlist_text: str) -> str:
@@ -165,9 +191,65 @@ def normalize_analysis_directive(directive_text: str) -> Optional[str]:
         return ".op"
     if matched_prefix == ".ac" and len(pieces) >= 2:
         pieces[1] = pieces[1].lower()
+    if matched_prefix == ".tran":
+        return _normalize_transient_directive(pieces)
     if matched_prefix == ".noise" and len(pieces) >= 4:
         pieces[3] = pieces[3].lower()
     return " ".join(pieces)
+
+
+def _normalize_transient_directive(pieces: list[str]) -> str:
+    normalized_pieces = list(pieces)
+    has_uic = False
+    if normalized_pieces and normalized_pieces[-1].lower() == "uic":
+        normalized_pieces = normalized_pieces[:-1]
+        has_uic = True
+    if len(normalized_pieces) == 2:
+        stop_token = normalized_pieces[1]
+        normalized_pieces = [".tran", _heuristic_transient_step_token(stop_token), stop_token]
+    if has_uic:
+        normalized_pieces.append("uic")
+    return " ".join(normalized_pieces)
+
+
+def _heuristic_transient_step_token(stop_token: str) -> str:
+    stop_value = _parse_spice_numeric(stop_token)
+    if stop_value is None or stop_value <= 0:
+        return _format_spice_numeric(TransientConfig().step_time)
+    step_value = stop_value / 1000.0
+    if step_value <= 0:
+        return _format_spice_numeric(TransientConfig().step_time)
+    return _format_spice_numeric(step_value)
+
+
+def _parse_spice_numeric(token: str) -> Optional[float]:
+    match = _SPICE_NUMERIC_PATTERN.match(str(token or "").strip())
+    if match is None:
+        return None
+    try:
+        base_value = float(match.group(1))
+    except ValueError:
+        return None
+    suffix = str(match.group(2) or "").strip().lower()
+    if not suffix:
+        return base_value
+    if suffix.startswith("meg"):
+        return base_value * _SPICE_SUFFIX_SCALES["meg"]
+    if suffix.startswith("mil"):
+        return base_value * _SPICE_SUFFIX_SCALES["mil"]
+    scale = _SPICE_SUFFIX_SCALES.get(suffix[:1], 1.0)
+    return base_value * scale
+
+
+def _format_spice_numeric(value: float) -> str:
+    absolute = abs(float(value))
+    if absolute == 0:
+        return "0"
+    for scale, suffix in _SPICE_FORMAT_SCALES:
+        scaled = value / scale
+        if 1 <= abs(scaled) < 1000:
+            return f"{scaled:.12g}{suffix}"
+    return f"{value:.12g}"
 
 
 __all__ = [

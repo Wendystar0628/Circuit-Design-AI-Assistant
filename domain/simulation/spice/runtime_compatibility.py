@@ -157,6 +157,10 @@ class NetlistRuntimeCompatibilityNormalizer:
         warnings.extend(directive_warnings)
         degraded = degraded or directive_degraded
 
+        rewritten_text, primitive_warnings, primitive_degraded = normalize_primitive_instance_lines_for_runtime(rewritten_text)
+        warnings.extend(primitive_warnings)
+        degraded = degraded or primitive_degraded
+
         document = self._parser.parse_content(rewritten_text, source_file)
         defined_subckts = {str(subckt.name or "").strip().lower() for subckt in getattr(document, "subcircuits", [])}
         replacement_lines: Dict[int, str] = {}
@@ -171,7 +175,7 @@ class NetlistRuntimeCompatibilityNormalizer:
             normalized_model = model_name.lower()
             if normalized_model in defined_subckts or normalized_model in external_subckts or normalized_model in self._compatible_bundled_subckts:
                 continue
-            if str(getattr(component, "primitive_kind", "") or "").lower() != "opamp":
+            if str(getattr(component, "primitive_kind", "")).lower() != "opamp":
                 continue
             replacement_name = fallback_builder.ensure_subckt(
                 model_name,
@@ -249,6 +253,40 @@ def rewrite_library_directives_for_runtime(
     return "\n".join(result_lines), available_subckts, tuple(warnings), degraded
 
 
+def normalize_primitive_instance_lines_for_runtime(netlist_text: str) -> Tuple[str, Tuple[str, ...], bool]:
+    warnings: List[str] = []
+    degraded = False
+    normalized_lines: List[str] = []
+    for raw_line in str(netlist_text or "").splitlines():
+        rewritten_line, line_warning, line_degraded = _normalize_mos_instance_line_for_runtime(raw_line)
+        normalized_lines.append(rewritten_line)
+        if line_warning:
+            warnings.append(line_warning)
+        degraded = degraded or line_degraded
+    return "\n".join(normalized_lines), tuple(warnings), degraded
+
+
+def _normalize_mos_instance_line_for_runtime(raw_line: str) -> Tuple[str, str, bool]:
+    stripped = str(raw_line or "").strip()
+    if not stripped or stripped[0] in {"*", ";", ".", "+"}:
+        return str(raw_line or ""), "", False
+    if stripped[0].upper() != "M":
+        return str(raw_line or ""), "", False
+    pieces = stripped.split()
+    if len(pieces) < 5:
+        return str(raw_line or ""), "", False
+    model_index = _resolve_instance_model_token_index(pieces)
+    if model_index <= 0:
+        return str(raw_line or ""), "", False
+    node_tokens = pieces[1:model_index]
+    if len(node_tokens) != 3:
+        return str(raw_line or ""), "", False
+    source_node = node_tokens[2]
+    rewritten_pieces = pieces[:model_index] + [source_node] + pieces[model_index:]
+    warning = f"{pieces[0]}: MOS 缺少 body 节点，已将 body 绑定到 source 以兼容当前运行时。"
+    return " ".join(rewritten_pieces), warning, True
+
+
 @functools.lru_cache(maxsize=None)
 def analyze_spice_library_file(file_path: Path) -> SpiceLibraryCompatibility:
     resolved_path = Path(file_path).expanduser().resolve()
@@ -319,7 +357,7 @@ def _append_lines_before_end(lines: Sequence[str], append_lines: Sequence[str]) 
 
 def _pin_index_for_role(pins: Sequence[object], role: str) -> Optional[int]:
     for index, pin in enumerate(pins, start=1):
-        if str(getattr(pin, "role", "") or "").strip().lower() == role:
+        if str(getattr(pin, "role", "")).strip().lower() == role:
             return index
     return None
 
@@ -328,16 +366,19 @@ def _replace_subckt_model_name(raw_line: str, replacement_name: str) -> str:
     pieces = str(raw_line or "").split()
     if len(pieces) < 3:
         return str(raw_line or "")
-    model_index = -1
-    for index in range(len(pieces) - 1, 0, -1):
-        if "=" in pieces[index]:
-            continue
-        model_index = index
-        break
+    model_index = _resolve_instance_model_token_index(pieces)
     if model_index <= 0:
         return str(raw_line or "")
     pieces[model_index] = replacement_name
     return " ".join(pieces)
+
+
+def _resolve_instance_model_token_index(pieces: Sequence[str]) -> int:
+    for index in range(len(pieces) - 1, 0, -1):
+        if "=" in pieces[index]:
+            continue
+        return index
+    return -1
 
 
 def _sanitize_spice_identifier(value: str, *, default: str) -> str:
@@ -365,5 +406,6 @@ __all__ = [
     "SpiceLibraryCompatibility",
     "analyze_spice_library_file",
     "load_runtime_compatible_bundled_subcircuit_path_index",
+    "normalize_primitive_instance_lines_for_runtime",
     "rewrite_library_directives_for_runtime",
 ]

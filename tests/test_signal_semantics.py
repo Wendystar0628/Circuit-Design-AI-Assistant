@@ -42,13 +42,29 @@ def test_resolve_vector_signal_type_uses_noise_analysis_authority():
     ) == "current"
 
 
-def test_spice_executor_injects_savecurrents_once_before_end():
+def test_spice_executor_only_injects_savecurrents_when_explicitly_requested():
     executor = SpiceExecutor.__new__(SpiceExecutor)
 
     netlist = ".title Demo\nR1 in out 1k\n.end\n"
-    modified = executor._inject_signal_capture_options(netlist)
+    assert executor._inject_signal_capture_options(netlist) == netlist
+
+    modified = executor._inject_signal_capture_options(netlist, {"capture_currents": True})
     assert modified.count("savecurrents") == 1
     assert ".options savecurrents\n.end" in modified
 
     existing = ".title Demo\n.options abstol=1e-12 savecurrents\nR1 in out 1k\n.end\n"
-    assert executor._inject_signal_capture_options(existing) == existing
+    assert executor._inject_signal_capture_options(existing, {"capture_currents": True}) == existing
+
+
+def test_spice_executor_parses_access_violation_as_critical_ngspice_crash():
+    executor = SpiceExecutor.__new__(SpiceExecutor)
+
+    error = executor._parse_ngspice_output(
+        "stdout partial\nstderr Using SPARSE 1.3 as Direct Linear Solver\n执行命令 run 失败: exception: access violation reading 0x0000000000000000",
+        "demo.cir",
+    )
+
+    assert error.code == "E008"
+    assert error.type.value == "E008"
+    assert error.severity.value == "critical"
+    assert "ngspice 原生命令崩溃" in error.message

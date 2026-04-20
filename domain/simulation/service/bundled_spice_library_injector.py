@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Set
 
-from domain.simulation.spice.bundled_subcircuit_catalog import load_bundled_subcircuit_path_index
+from domain.simulation.spice.runtime_compatibility import load_runtime_compatible_bundled_subcircuit_path_index
 from resources.resource_loader import get_spice_cmp_dir
 
 
@@ -120,7 +120,7 @@ class BundledSpiceLibraryInjector:
         if self._subckt_index is not None:
             return self._subckt_index
 
-        self._subckt_index = dict(load_bundled_subcircuit_path_index())
+        self._subckt_index = dict(load_runtime_compatible_bundled_subcircuit_path_index())
         return self._subckt_index
 
     def _read_text(self, file_path: Path) -> str:

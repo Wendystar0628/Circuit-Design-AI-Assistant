@@ -504,9 +504,14 @@ class SpiceParser:
             }
 
         if prefix in {"X", "U"} and len(tokens) >= 3:
-            node_tokens = tokens[1:-1]
+            model_index = self._resolve_subckt_model_token_index(tokens)
+            if model_index is None:
+                node_tokens = tokens[1:-1]
+                model_name = tokens[-1].text
+            else:
+                node_tokens = tokens[1:model_index]
+                model_name = tokens[model_index].text
             pin_specs = [(f"port_{index + 1}", f"port_{index + 1}") for index in range(len(node_tokens))]
-            model_name = tokens[-1].text
             return {
                 "node_tokens": node_tokens,
                 "pin_specs": pin_specs,
@@ -529,6 +534,13 @@ class SpiceParser:
             "render_hints": {"orientation": "horizontal"},
             "model_name": model_name,
         }
+
+    def _resolve_subckt_model_token_index(self, tokens: List[SpiceToken]) -> Optional[int]:
+        for index in range(len(tokens) - 1, 0, -1):
+            if "=" in tokens[index].text:
+                continue
+            return index
+        return None
 
     def _build_editable_fields(
         self,

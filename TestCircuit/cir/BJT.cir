@@ -1,0 +1,6 @@
+.title BJT
+Q1 N001 N002 0 2N2222
+V1 N001 0 0
+I1 0 N002 0
+.dc V1 0 15V 10mV I1 0 100u 10u
+.end

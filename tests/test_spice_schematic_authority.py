@@ -63,6 +63,17 @@ def test_parser_resolves_lt1001_from_backend_library_registry() -> None:
     assert component.primitive_source.lower().endswith("ltc.lib")
 
 
+def test_parser_keeps_subckt_name_when_x_instance_has_trailing_params() -> None:
+    content = "XU1 plus minus out vcc vee CAI_COMPAT_OPAMP_5 gain=2 temp=27"
+
+    document = SpiceParser().parse_content(content, "x_with_params.cir")
+
+    component = document.components[0]
+    assert component.model_name == "CAI_COMPAT_OPAMP_5"
+    assert component.subckt_name == "CAI_COMPAT_OPAMP_5"
+    assert [pin.node_id for pin in component.pins] == ["plus", "minus", "out", "vcc", "vee"]
+
+
 def test_parser_resolves_lt6201_from_curated_bundled_registry() -> None:
     content = "XU1 nplus nminus nout vcc vee LT6201"
 

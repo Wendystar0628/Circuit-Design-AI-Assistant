@@ -49,6 +49,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Tuple
 
+from domain.simulation.spice.analysis_directive_authority import detect_last_analysis_type_from_text
 from domain.simulation.data.simulation_artifact_persistence import (
     SimulationArtifactPersistence,
     simulation_artifact_persistence,
@@ -209,36 +210,11 @@ class SimulationService:
             configured = analysis_config.get("analysis_type", "")
             if configured:
                 return str(configured)
-        return _detect_analysis_type_from_netlist(file_path)
-
-
-def _detect_analysis_type_from_netlist(file_path: str) -> str:
-    """Scan a netlist for its last ``.ac`` / ``.dc`` / ``.tran`` / ``.noise``
-    / ``.op`` directive.
-
-    Best-effort: returns ``""`` when the file cannot be read or no
-    directive is present. Only used to fill the ``analysis_type``
-    field on a synthesised error result when the caller didn't
-    specify one up front.
-    """
-    try:
-        content = Path(file_path).read_text(encoding="utf-8", errors="ignore")
-    except Exception:
-        return ""
-    analysis_type = ""
-    for line in content.splitlines():
-        stripped = line.strip().lower()
-        if stripped.startswith("*"):
-            continue
-        for cmd in (".ac", ".dc", ".tran", ".noise", ".op"):
-            if stripped == cmd or (
-                stripped.startswith(cmd)
-                and len(stripped) > len(cmd)
-                and stripped[len(cmd)] in (" ", "\t")
-            ):
-                analysis_type = cmd[1:]
-                break
-    return analysis_type
+        try:
+            content = Path(file_path).read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            return ""
+        return detect_last_analysis_type_from_text(content)
 
 
 __all__ = [

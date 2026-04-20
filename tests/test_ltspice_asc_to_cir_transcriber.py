@@ -89,9 +89,11 @@ def test_transcriber_generates_runnable_netlist_for_common_opamp_sample(tmp_path
 
     assert ".title amplifier" in result.netlist_text.lower()
     assert "XU1" in result.netlist_text
-    assert " LT1001" in result.netlist_text
+    assert "CAI_COMPAT_OPAMP_5" in result.netlist_text
+    assert " LT1001" not in result.netlist_text
     assert "R1 " in result.netlist_text
     assert ".tran 20ms" in result.netlist_text
+    assert result.degraded is True
     assert result.validation_errors == ()
 
 

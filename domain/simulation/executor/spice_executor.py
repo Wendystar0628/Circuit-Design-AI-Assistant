@@ -71,13 +71,14 @@ from domain.simulation.models.simulation_error import (
     SimulationErrorType,
     ErrorSeverity,
 )
-from domain.simulation.models.simulation_config import (
-    ACAnalysisConfig,
-    DCAnalysisConfig,
-    TransientConfig,
-    NoiseConfig,
-)
 from domain.simulation.service.bundled_spice_library_injector import BundledSpiceLibraryInjector
+from domain.simulation.spice.analysis_directive_authority import (
+    build_analysis_command,
+    detect_last_analysis_type_from_text,
+    extract_last_analysis_command,
+    replace_or_inject_analysis_command,
+)
+from domain.simulation.spice.runtime_compatibility import NetlistRuntimeCompatibilityNormalizer
 from infrastructure.utils.ngspice_config import (
     is_ngspice_available,
     get_configuration_error,
@@ -131,6 +132,7 @@ class SpiceExecutor(SimulationExecutor):
         self._ngspice: Optional[NgSpiceWrapper] = None
         self._init_error: Optional[str] = None
         self._bundled_model_injector = BundledSpiceLibraryInjector(self._logger)
+        self._runtime_normalizer = NetlistRuntimeCompatibilityNormalizer()
         
         # 尝试初始化 ngspice
         self._try_init_ngspice()
@@ -215,7 +217,7 @@ class SpiceExecutor(SimulationExecutor):
         if not analysis_type:
             try:
                 content = Path(file_path).read_text(encoding='utf-8', errors='ignore')
-                analysis_type = self._detect_analysis_from_netlist(content)
+                analysis_type = detect_last_analysis_type_from_text(content)
             except Exception:
                 pass
         
@@ -409,29 +411,6 @@ class SpiceExecutor(SimulationExecutor):
         return analysis_config.get("analysis_type", "")
 
     @staticmethod
-    def _detect_analysis_from_netlist(netlist_content: str) -> str:
-        """
-        从网表内容检测分析类型
-        
-        扫描网表中的分析命令（.ac / .dc / .tran / .noise / .op），
-        返回最后一条分析命令对应的类型。
-        """
-        analysis_type = ""
-        for line in netlist_content.splitlines():
-            stripped = line.strip().lower()
-            if stripped.startswith('*'):
-                continue
-            for cmd in ('.ac', '.dc', '.tran', '.noise', '.op'):
-                if stripped == cmd or (
-                    stripped.startswith(cmd)
-                    and len(stripped) > len(cmd)
-                    and stripped[len(cmd)] in (' ', '\t')
-                ):
-                    analysis_type = cmd[1:]  # 去掉前缀点
-                    break
-        return analysis_type
-
-    @staticmethod
     def _detect_analysis_from_plot(plot_name: str) -> str:
         """
         从 ngspice plot 名称推断分析类型
@@ -459,6 +438,11 @@ class SpiceExecutor(SimulationExecutor):
         # 读取网表内容
         circuit_path = Path(file_path)
         netlist_content = circuit_path.read_text(encoding='utf-8', errors='ignore')
+        normalized_runtime = self._runtime_normalizer.normalize(netlist_content, source_file=str(circuit_path))
+        if normalized_runtime.warnings:
+            for warning in normalized_runtime.warnings:
+                self._logger.warning(f"运行时兼容规范化: {warning}")
+        netlist_content = normalized_runtime.netlist_text
         
         # 注入内置器件模型库（自动为 Q/M/D/J 元件插入对应 .lib 引用）
         netlist_content = self._inject_model_libraries(netlist_content, circuit_path.parent)
@@ -468,7 +452,7 @@ class SpiceExecutor(SimulationExecutor):
         analysis_command = ""
         config_has_analysis = analysis_config and analysis_config.get("analysis_type")
         if config_has_analysis:
-            analysis_command = self._generate_analysis_command(analysis_type, analysis_config)
+            analysis_command = build_analysis_command(analysis_type, analysis_config)
             if not analysis_command:
                 if analysis_type == "dc":
                     error_message = "DC 分析缺少扫描源名称 source_name"
@@ -494,9 +478,9 @@ class SpiceExecutor(SimulationExecutor):
                     ),
                     analysis_command=analysis_command,
                 )
-            modified_netlist = self._inject_analysis_command(modified_netlist, analysis_command)
+            modified_netlist = replace_or_inject_analysis_command(modified_netlist, analysis_command)
         else:
-            analysis_command = self._extract_analysis_command_from_netlist(
+            analysis_command = extract_last_analysis_command(
                 modified_netlist,
                 analysis_type,
             )
@@ -687,75 +671,6 @@ class SpiceExecutor(SimulationExecutor):
         output_lower = output.lower()
         return any(pattern in output_lower for pattern in critical_patterns)
     
-    def _generate_analysis_command(
-        self,
-        analysis_type: str,
-        analysis_config: Optional[Dict[str, Any]]
-    ) -> str:
-        """生成分析命令"""
-        if analysis_type == "ac":
-            config = ACAnalysisConfig()
-            if analysis_config:
-                config = ACAnalysisConfig(
-                    start_freq=analysis_config.get("start_freq", config.start_freq),
-                    stop_freq=analysis_config.get("stop_freq", config.stop_freq),
-                    points_per_decade=analysis_config.get("points_per_decade", config.points_per_decade),
-                    sweep_type=analysis_config.get("sweep_type", config.sweep_type),
-                )
-            return f".ac {config.sweep_type} {config.points_per_decade} {config.start_freq} {config.stop_freq}"
-        
-        elif analysis_type == "dc":
-            config = DCAnalysisConfig()
-            if analysis_config:
-                config = DCAnalysisConfig(
-                    source_name=analysis_config.get("source_name", config.source_name),
-                    start_value=analysis_config.get("start_value", config.start_value),
-                    stop_value=analysis_config.get("stop_value", config.stop_value),
-                    step=analysis_config.get("step", config.step),
-                )
-            if not config.source_name:
-                return ""  # DC 分析需要指定源
-            return f".dc {config.source_name} {config.start_value} {config.stop_value} {config.step}"
-        
-        elif analysis_type == "tran":
-            config = TransientConfig()
-            if analysis_config:
-                config = TransientConfig(
-                    step_time=analysis_config.get("step_time", config.step_time),
-                    end_time=analysis_config.get("end_time", config.end_time),
-                    start_time=analysis_config.get("start_time", config.start_time),
-                    max_step=analysis_config.get("max_step", config.max_step),
-                    use_initial_conditions=analysis_config.get("use_initial_conditions", config.use_initial_conditions),
-                )
-            cmd = f".tran {config.step_time} {config.end_time}"
-            if config.start_time > 0 or config.max_step:
-                cmd += f" {config.start_time}"
-            if config.max_step:
-                cmd += f" {config.max_step}"
-            if config.use_initial_conditions:
-                cmd += " uic"
-            return cmd
-        
-        elif analysis_type == "noise":
-            config = NoiseConfig()
-            if analysis_config:
-                config = NoiseConfig(
-                    output_node=analysis_config.get("output_node", config.output_node),
-                    input_source=analysis_config.get("input_source", config.input_source),
-                    sweep_type=analysis_config.get("sweep_type", config.sweep_type),
-                    points_per_decade=analysis_config.get("points_per_decade", config.points_per_decade),
-                    start_freq=analysis_config.get("start_freq", config.start_freq),
-                    stop_freq=analysis_config.get("stop_freq", config.stop_freq),
-                )
-            if not config.output_node or not config.input_source:
-                return ""
-            return f".noise v({config.output_node}) {config.input_source} {config.sweep_type} {config.points_per_decade} {config.start_freq} {config.stop_freq}"
-        
-        elif analysis_type == "op":
-            return ".op"
-        
-        return ""
-
     def _build_axis_metadata(
         self,
         analysis_type: str,
@@ -846,65 +761,6 @@ class SpiceExecutor(SimulationExecutor):
 
         return (start, stop)
     
-    def _inject_analysis_command(self, netlist: str, analysis_command: str) -> str:
-        """将分析命令注入到网表中"""
-        if not analysis_command:
-            return netlist
-        
-        lines = netlist.splitlines()
-        result_lines = []
-        
-        # 检查网表中是否已有相同类型的分析命令
-        analysis_type = analysis_command.split()[0].lower()  # 如 ".ac", ".dc", ".tran"
-        has_analysis = False
-        has_end = False
-        
-        for line in lines:
-            stripped = line.strip().lower()
-            if stripped == analysis_type or (stripped.startswith(analysis_type) and len(stripped) > len(analysis_type) and stripped[len(analysis_type)] in (' ', '\t')):
-                # 替换现有的分析命令
-                result_lines.append(analysis_command)
-                has_analysis = True
-            elif stripped == ".end":
-                has_end = True
-                # 在 .end 之前插入分析命令（如果还没有）
-                if not has_analysis:
-                    result_lines.append(analysis_command)
-                result_lines.append(line)
-            else:
-                result_lines.append(line)
-        
-        # 如果网表没有 .end 语句，在末尾添加分析命令和 .end
-        if not has_end:
-            if not has_analysis:
-                result_lines.append(analysis_command)
-            result_lines.append(".end")
-        
-        return '\n'.join(result_lines)
-
-    def _extract_analysis_command_from_netlist(
-        self,
-        netlist: str,
-        analysis_type: str,
-    ) -> str:
-        command_prefix = f".{(analysis_type or '').lower()}"
-        if command_prefix == ".":
-            return ""
-
-        resolved_command = ""
-        for line in netlist.splitlines():
-            stripped = line.strip()
-            lowered = stripped.lower()
-            if not stripped or lowered.startswith("*"):
-                continue
-            if lowered == command_prefix or (
-                lowered.startswith(command_prefix)
-                and len(lowered) > len(command_prefix)
-                and lowered[len(command_prefix)] in (" ", "\t")
-            ):
-                resolved_command = stripped
-        return resolved_command
-
     def _inject_simulation_options(
         self,
         netlist: str,

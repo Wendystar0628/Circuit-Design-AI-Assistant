@@ -1,0 +1,10 @@
+.title non-inverting amplifier
+XU1 N005 N002 N001 N006 N003 LT1001
+V1 N004 0 SINE(0 10m 1k)
+V2 N001 0 12
+V3 0 N006 12
+R1 N005 N004 9.1k
+R2 N002 0 10k
+R3 N003 N002 100k
+.tran 20ms
+.end

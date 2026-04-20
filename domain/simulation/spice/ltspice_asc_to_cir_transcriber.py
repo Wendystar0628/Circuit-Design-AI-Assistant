@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
-from domain.simulation.spice.bundled_subcircuit_catalog import load_bundled_subcircuit_path_index
+from domain.simulation.spice.analysis_directive_authority import normalize_analysis_directive
 from domain.simulation.spice.ltspice_symbol_catalog import (
     LtspicePinDefinition,
     LtspiceSymbolCatalog,
@@ -16,6 +16,12 @@ from domain.simulation.spice.ltspice_symbol_catalog import (
     normalize_ltspice_symbol_key,
 )
 from domain.simulation.spice.parser import SpiceParser
+from domain.simulation.spice.runtime_compatibility import (
+    NetlistRuntimeCompatibilityNormalizer,
+    RuntimeFallbackLibraryBuilder,
+    analyze_spice_library_file,
+    load_runtime_compatible_bundled_subcircuit_path_index,
+)
 from resources.resource_loader import get_spice_cmp_dir
 
 
@@ -128,100 +134,6 @@ class _DisjointSet:
         self._rank[left_root] += 1
 
 
-class _FallbackLibraryBuilder:
-    def __init__(self) -> None:
-        self._model_definitions: Dict[str, Tuple[str, str]] = {}
-        self._subckt_definitions: Dict[str, Tuple[Tuple[object, ...], str]] = {}
-
-    def ensure_model(self, requested_name: str, model_text: str, model_kind: str) -> str:
-        normalized_name = _sanitize_spice_identifier(requested_name, default=f"CAI_{model_kind.upper()}_MODEL")
-        signature = (model_kind, model_text)
-        existing = self._model_definitions.get(normalized_name.lower())
-        if existing is not None:
-            if existing == signature:
-                return normalized_name
-            normalized_name = self._next_available_name(normalized_name, self._model_definitions)
-        self._model_definitions[normalized_name.lower()] = signature
-        return normalized_name
-
-    def ensure_subckt(
-        self,
-        requested_name: str,
-        *,
-        pin_count: int,
-        family: str,
-        plus_index: Optional[int],
-        minus_index: Optional[int],
-        output_index: Optional[int],
-    ) -> str:
-        base_name = _sanitize_spice_identifier(requested_name, default=f"CAI_{family.upper()}_{pin_count}")
-        signature = (pin_count, family, plus_index, minus_index, output_index)
-        existing = self._subckt_definitions.get(base_name.lower())
-        if existing is not None:
-            if existing[0] == signature:
-                return base_name
-            base_name = self._next_available_name(base_name, self._subckt_definitions)
-        self._subckt_definitions[base_name.lower()] = (signature, self._build_subckt_text(
-            base_name,
-            pin_count=pin_count,
-            family=family,
-            plus_index=plus_index,
-            minus_index=minus_index,
-            output_index=output_index,
-        ))
-        return base_name
-
-    def render(self) -> List[str]:
-        lines: List[str] = []
-        for name in sorted(self._model_definitions):
-            _kind, text = self._model_definitions[name]
-            lines.extend(text.splitlines())
-        for name in sorted(self._subckt_definitions):
-            _signature, text = self._subckt_definitions[name]
-            lines.extend(text.splitlines())
-        return lines
-
-    def _build_subckt_text(
-        self,
-        subckt_name: str,
-        *,
-        pin_count: int,
-        family: str,
-        plus_index: Optional[int],
-        minus_index: Optional[int],
-        output_index: Optional[int],
-    ) -> str:
-        ports = [f"P{index}" for index in range(1, max(1, pin_count) + 1)]
-        lines = [f".subckt {subckt_name} {' '.join(ports)}"]
-        if family in {"opamp", "comparator"} and plus_index and minus_index and output_index:
-            plus_port = ports[plus_index - 1]
-            minus_port = ports[minus_index - 1]
-            output_port = ports[output_index - 1]
-            lines.append(f"E1 NDRV 0 {plus_port} {minus_port} 1e6")
-            lines.append(f"R1 NDRV {output_port} 1")
-            lines.append(f"R2 {output_port} 0 1e9")
-            used_indexes = {plus_index, minus_index, output_index}
-        else:
-            used_indexes = set()
-        resistor_index = 3
-        for port_index, port_name in enumerate(ports, start=1):
-            if port_index in used_indexes:
-                continue
-            lines.append(f"R{resistor_index} {port_name} 0 1e12")
-            resistor_index += 1
-        lines.append(f".ends {subckt_name}")
-        return "\n".join(lines)
-
-    @staticmethod
-    def _next_available_name(base_name: str, registry: Dict[str, object]) -> str:
-        suffix = 2
-        while True:
-            candidate = f"{base_name}__CAI_{suffix}"
-            if candidate.lower() not in registry:
-                return candidate
-            suffix += 1
-
-
 class LtspiceAscToCirTranscriber:
     _EARLY_DIRECTIVE_PREFIXES = (
         ".include",
@@ -247,8 +159,9 @@ class LtspiceAscToCirTranscriber:
         self._symbol_catalog = symbol_catalog or LtspiceSymbolCatalog()
         self._logger = logger or logging.getLogger(__name__)
         self._parser = SpiceParser()
-        self._bundled_subckts = set(load_bundled_subcircuit_path_index().keys())
+        self._bundled_subckts = set(load_runtime_compatible_bundled_subcircuit_path_index().keys())
         self._bundled_models = _load_bundled_model_names()
+        self._runtime_normalizer = NetlistRuntimeCompatibilityNormalizer()
 
     def convert_files(self, asc_paths: Sequence[str], output_dir: str) -> AscBatchConversionExecution:
         output_root = Path(str(output_dir or "")).expanduser().resolve()
@@ -290,12 +203,13 @@ class LtspiceAscToCirTranscriber:
         warnings: List[str] = []
         resolved_symbols = self._resolve_symbols(document, warnings)
         point_to_net = self._resolve_point_nets(document, resolved_symbols)
-        fallback_builder = _FallbackLibraryBuilder()
-        early_directives, late_directives = self._rewrite_directives(
+        fallback_builder = RuntimeFallbackLibraryBuilder()
+        early_directives, late_directives, directive_warnings = self._rewrite_directives(
             document.directives,
             source_path=source_path,
             output_dir=Path(output_dir).expanduser().resolve(),
         )
+        warnings.extend(directive_warnings)
         external_models, external_subckts = self._scan_external_definitions([*early_directives, *late_directives])
         available_models = set(self._bundled_models) | external_models
         available_subckts = set(self._bundled_subckts) | external_subckts
@@ -323,6 +237,10 @@ class LtspiceAscToCirTranscriber:
         netlist_lines.extend(late_directives)
         netlist_lines.append(".end")
         netlist_text = "\n".join(line for line in netlist_lines if str(line or "").strip()) + "\n"
+        normalized_runtime = self._runtime_normalizer.normalize(netlist_text, source_file=str(source_path.with_suffix(".cir")))
+        netlist_text = normalized_runtime.netlist_text.rstrip() + "\n"
+        warnings.extend(normalized_runtime.warnings)
+        degraded = degraded or normalized_runtime.degraded
         validation_errors = self._validate_netlist(netlist_text, str(source_path.with_suffix(".cir")))
         return TranscribedAscNetlist(
             source_path=str(source_path),
@@ -505,34 +423,43 @@ class LtspiceAscToCirTranscriber:
         *,
         source_path: Path,
         output_dir: Path,
-    ) -> Tuple[List[str], List[str]]:
+    ) -> Tuple[List[str], List[str], Tuple[str, ...]]:
         early: List[str] = []
         late: List[str] = []
+        warnings: List[str] = []
         for record in directives:
-            rewritten = self._rewrite_single_directive(record.text, source_path=source_path, output_dir=output_dir)
+            rewritten, directive_warnings = self._rewrite_single_directive(record.text, source_path=source_path, output_dir=output_dir)
+            warnings.extend(directive_warnings)
             if not rewritten or rewritten.lower() == ".end":
                 continue
             if rewritten.lower().startswith(self._EARLY_DIRECTIVE_PREFIXES):
                 early.append(rewritten)
             else:
                 late.append(rewritten)
-        return early, late
+        return early, late, tuple(warnings)
 
-    def _rewrite_single_directive(self, directive: str, *, source_path: Path, output_dir: Path) -> str:
+    def _rewrite_single_directive(self, directive: str, *, source_path: Path, output_dir: Path) -> Tuple[str, Tuple[str, ...]]:
         text = str(directive or "").strip()
         if not text:
-            return ""
+            return "", ()
+        normalized_analysis = normalize_analysis_directive(text)
+        if normalized_analysis is not None:
+            return normalized_analysis, ()
         match = re.match(r"^(\.(?:include|lib))\s+((?:\"[^\"]+\")|(?:'[^']+')|\S+)(.*)$", text, re.IGNORECASE)
         if match is None:
-            return text
+            return text, ()
         command = match.group(1)
         raw_path = match.group(2).strip().strip('"').strip("'")
         suffix = match.group(3).rstrip()
         include_path = Path(raw_path)
         if not include_path.is_absolute():
             include_path = (source_path.parent / include_path).resolve()
+        compatibility = analyze_spice_library_file(include_path)
+        if not compatibility.is_compatible:
+            reason_text = ", ".join(compatibility.incompatible_reasons) or "包含当前项目不支持的 LTspice 专用语法"
+            return "", (f"已跳过不兼容库 {include_path.as_posix()}：{reason_text}。",)
         rewritten_path = include_path.as_posix()
-        return f"{command} \"{rewritten_path}\"{suffix}"
+        return f"{command} \"{rewritten_path}\"{suffix}", ()
 
     def _scan_external_definitions(self, directives: Sequence[str]) -> Tuple[Set[str], Set[str]]:
         model_names: Set[str] = set()
@@ -549,17 +476,11 @@ class LtspiceAscToCirTranscriber:
             if normalized_path in visited_files:
                 continue
             visited_files.add(normalized_path)
-            content = _read_optional_text(target_path)
-            if not content:
+            compatibility = analyze_spice_library_file(target_path)
+            if not compatibility.is_compatible:
                 continue
-            for line in content.splitlines():
-                model_match = re.match(r"^\s*\.model\s+([^\s]+)", line, re.IGNORECASE)
-                if model_match is not None:
-                    model_names.add(model_match.group(1).strip().lower())
-                    continue
-                subckt_match = re.match(r"^\s*\.subckt\s+([^\s(]+)", line, re.IGNORECASE)
-                if subckt_match is not None:
-                    subckt_names.add(subckt_match.group(1).strip().lower())
+            model_names.update(compatibility.model_names)
+            subckt_names.update(compatibility.subckt_names)
         return model_names, subckt_names
 
     def _emit_component_line(
@@ -567,7 +488,7 @@ class LtspiceAscToCirTranscriber:
         symbol: _ResolvedSymbolInstance,
         *,
         point_to_net: Dict[_Point, str],
-        fallback_builder: _FallbackLibraryBuilder,
+        fallback_builder: RuntimeFallbackLibraryBuilder,
         available_models: Set[str],
         available_subckts: Set[str],
     ) -> Tuple[str, Tuple[str, ...], bool]:

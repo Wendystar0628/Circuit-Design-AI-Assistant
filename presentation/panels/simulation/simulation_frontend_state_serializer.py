@@ -32,6 +32,7 @@ ALL_TAB_IDS: Tuple[str, ...] = (
     "raw_data",
     "output_log",
     "export",
+    "asc_conversion",
     "op_result",
 )
 
@@ -73,6 +74,7 @@ class SimulationFrontendStateSerializer:
         waveform_snapshot: Optional[Dict[str, Any]] = None,
         output_log_snapshot: Optional[Dict[str, Any]] = None,
         export_snapshot: Optional[Dict[str, Any]] = None,
+        asc_conversion_snapshot: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Compose the authoritative main-state payload for the panel.
 
@@ -106,6 +108,7 @@ class SimulationFrontendStateSerializer:
         has_chart = self._has_chart(result)
         output_log_snapshot_payload = output_log_snapshot if isinstance(output_log_snapshot, dict) else None
         export_snapshot_payload = export_snapshot if isinstance(export_snapshot, dict) else None
+        asc_conversion_snapshot_payload = asc_conversion_snapshot if isinstance(asc_conversion_snapshot, dict) else None
         has_output_log = bool(output_log_snapshot_payload.get("has_log")) if output_log_snapshot_payload is not None else bool(getattr(result, "raw_output", None))
         has_op_result = self._has_op_result(result)
         result_summary = self.serialize_result(result, normalized_result_path)
@@ -224,6 +227,13 @@ class SimulationFrontendStateSerializer:
         if export_snapshot_payload is not None:
             export_view.update(export_snapshot_payload)
 
+        asc_conversion_view = {
+            "can_choose_files": bool(project_root),
+            "selected_files_summary": "",
+        }
+        if asc_conversion_snapshot_payload is not None:
+            asc_conversion_view.update(asc_conversion_snapshot_payload)
+
         return {
             "simulation_runtime": {
                 "status": status_phase,
@@ -253,6 +263,7 @@ class SimulationFrontendStateSerializer:
             "analysis_info_view": self.serialize_analysis_info(result),
             "output_log_view": output_log_view,
             "export_view": export_view,
+            "asc_conversion_view": asc_conversion_view,
             "circuit_selection_view": circuit_selection_view,
             "op_result_view": op_result_view,
         }

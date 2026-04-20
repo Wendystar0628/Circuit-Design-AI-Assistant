@@ -19,6 +19,7 @@ export const SIMULATION_TAB_IDS = [
   'raw_data',
   'output_log',
   'export',
+  'asc_conversion',
   'op_result',
 ] as const
 
@@ -404,6 +405,11 @@ export interface ExportViewState {
   latest_project_export_root: string
 }
 
+export interface AscConversionViewState {
+  can_choose_files: boolean
+  selected_files_summary: string
+}
+
 export interface LoadableResultState {
   id: string
   result_path: string
@@ -479,6 +485,7 @@ export interface SimulationMainState {
   analysis_info_view: AnalysisInfoViewState
   output_log_view: OutputLogViewState
   export_view: ExportViewState
+  asc_conversion_view: AscConversionViewState
   circuit_selection_view: CircuitSelectionViewState
   op_result_view: OpResultViewState
 }
@@ -685,6 +692,10 @@ export const EMPTY_SIMULATION_STATE: SimulationMainState = {
     items: [],
     selected_directory: '',
     latest_project_export_root: '',
+  },
+  asc_conversion_view: {
+    can_choose_files: false,
+    selected_files_summary: '',
   },
   circuit_selection_view: {
     items: [],
@@ -1145,6 +1156,7 @@ export function normalizeSimulationState(input: unknown): SimulationMainState {
   const analysisInfoView = asRecord(root.analysis_info_view)
   const outputLogView = asRecord(root.output_log_view)
   const exportView = asRecord(root.export_view)
+  const ascConversionView = asRecord(root.asc_conversion_view)
   const circuitSelectionView = asRecord(root.circuit_selection_view)
   const opResultView = asRecord(root.op_result_view)
   const runtime = simulationRuntime
@@ -1259,6 +1271,10 @@ export function normalizeSimulationState(input: unknown): SimulationMainState {
       items: normalizeExportItems(exportView.items),
       selected_directory: asString(exportView.selected_directory),
       latest_project_export_root: asString(exportView.latest_project_export_root),
+    },
+    asc_conversion_view: {
+      can_choose_files: asBoolean(ascConversionView.can_choose_files),
+      selected_files_summary: asString(ascConversionView.selected_files_summary),
     },
     circuit_selection_view: {
       items: normalizeCircuitSelectionItems(circuitSelectionView.items),

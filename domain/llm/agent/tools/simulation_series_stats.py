@@ -53,7 +53,7 @@ import enum
 import math
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
 
 # ============================================================
@@ -235,6 +235,124 @@ def read_series_csv(
     )
 
 
+def read_series_table(
+    *,
+    x_column_name: str,
+    signal_column_names: Sequence[str],
+    x_values: Sequence[object],
+    signal_columns: Mapping[str, Sequence[object]],
+    header_entries: Sequence[Tuple[str, str]] = (),
+    anchor_count: int = 14,
+    anchor_scale: AnchorScale = AnchorScale.LINEAR,
+) -> SeriesReadResult:
+    """Build the same compact series summary from an in-memory table.
+
+    This is the source-authoritative path used when the caller already owns
+    structured signal data (for example ``SimulationResult.data`` routed
+    through ``WaveformDataService`` or an exported chart JSON sidecar).
+    The statistical semantics intentionally match :func:`read_series_csv`.
+    """
+    anchor_count = max(4, min(32, int(anchor_count)))
+    signal_names = tuple(str(name) for name in signal_column_names)
+    aggregators = tuple(_SignalAggregator(name=name) for name in signal_names)
+    header_tuple = tuple((str(key), str(value)) for key, value in header_entries)
+
+    x_min = float("inf")
+    x_max = float("-inf")
+    valid_rows: List[Tuple[int, float]] = []
+
+    for row_index, raw_x in enumerate(x_values):
+        x_value = _try_parse_scalar(raw_x)
+        if x_value is None:
+            continue
+        valid_rows.append((row_index, x_value))
+        if x_value < x_min:
+            x_min = x_value
+        if x_value > x_max:
+            x_max = x_value
+        _apply_signal_values(
+            aggregators,
+            _table_row_values(signal_names, signal_columns, row_index),
+        )
+
+    total_rows = len(valid_rows)
+    if total_rows == 0:
+        return SeriesReadResult(
+            header_entries=header_tuple,
+            x_column_name=str(x_column_name or "X"),
+            signal_column_names=signal_names,
+            total_rows=0,
+            x_range=(float("nan"), float("nan")),
+            stats=tuple(_stats_from_aggregator(agg) for agg in aggregators),
+            anchors=(),
+            anchor_scale_requested=anchor_scale,
+            anchor_scale_effective=anchor_scale,
+        )
+
+    effective_scale = anchor_scale
+    if anchor_scale == AnchorScale.LOG:
+        if not (
+            x_min > 0
+            and math.isfinite(x_min)
+            and math.isfinite(x_max)
+            and x_max > x_min
+        ):
+            effective_scale = AnchorScale.LINEAR
+
+    if effective_scale == AnchorScale.LINEAR:
+        target_positions = _linear_anchor_indices(total_rows, anchor_count)
+        anchors = tuple(
+            AnchorRow(
+                x=valid_rows[position][1],
+                values=tuple(
+                    _table_row_values(
+                        signal_names,
+                        signal_columns,
+                        valid_rows[position][0],
+                    )
+                ),
+            )
+            for position in target_positions
+        )
+    else:
+        target_xs = _log_anchor_targets(x_min, x_max, anchor_count)
+        best_delta: List[float] = [float("inf")] * len(target_xs)
+        picked_xs: List[Optional[AnchorRow]] = [None] * len(target_xs)
+        for row_index, x_value in valid_rows:
+            if x_value <= 0:
+                continue
+            values = tuple(_table_row_values(signal_names, signal_columns, row_index))
+            for target_index, target_x in enumerate(target_xs):
+                delta = abs(math.log10(x_value) - math.log10(target_x))
+                if delta < best_delta[target_index]:
+                    best_delta[target_index] = delta
+                    picked_xs[target_index] = AnchorRow(x=x_value, values=values)
+
+        seen_xs: set = set()
+        anchor_rows: List[AnchorRow] = []
+        for entry in picked_xs:
+            if entry is None:
+                continue
+            if entry.x in seen_xs:
+                continue
+            seen_xs.add(entry.x)
+            anchor_rows.append(entry)
+        anchor_rows.sort(key=lambda row: row.x)
+        anchors = tuple(anchor_rows)
+
+    return SeriesReadResult(
+        header_entries=header_tuple,
+        x_column_name=str(x_column_name or "X"),
+        signal_column_names=signal_names,
+        total_rows=total_rows,
+        x_range=(x_min, x_max),
+        stats=tuple(_stats_from_aggregator(agg) for agg in aggregators),
+        anchors=anchors,
+        anchor_scale_requested=anchor_scale,
+        anchor_scale_effective=effective_scale,
+    )
+
+
 # ============================================================
 # 第一遍：header + 列名 + 累加统计
 # ============================================================
@@ -339,28 +457,13 @@ def _bootstrap_pass1(
         if x_value > x_max:
             x_max = x_value
 
-        for i, agg in enumerate(aggregators):
-            cell_index = i + 1
-            if cell_index >= len(row):
-                continue
-            cell = row[cell_index]
-            y_value = _try_parse_float(cell)
-            if y_value is None:
-                continue
-            agg.samples += 1
-            agg.sum_value += y_value
-            if y_value < agg.min_value:
-                agg.min_value = y_value
-            if y_value > agg.max_value:
-                agg.max_value = y_value
-            if agg.initial_value is None:
-                agg.initial_value = y_value
-            agg.final_value = y_value
-            if agg.last_value is not None:
-                # 严格正负号翻转：两端都非零 + 乘积 < 0。
-                if agg.last_value * y_value < 0.0:
-                    agg.zero_crossings += 1
-            agg.last_value = y_value
+        _apply_signal_values(
+            aggregators,
+            [
+                _try_parse_float(row[i + 1]) if i + 1 < len(row) else None
+                for i in range(len(aggregators))
+            ],
+        )
 
     if total_rows == 0:
         # x_min / x_max 仍是 inf/-inf——用 nan 对外呈现，让调用方
@@ -548,6 +651,54 @@ def _stats_from_aggregator(agg: _SignalAggregator) -> SeriesStats:
     )
 
 
+def _apply_signal_values(
+    aggregators: Sequence[_SignalAggregator],
+    values: Sequence[Optional[float]],
+) -> None:
+    for agg, y_value in zip(aggregators, values):
+        if y_value is None:
+            continue
+        agg.samples += 1
+        agg.sum_value += y_value
+        if y_value < agg.min_value:
+            agg.min_value = y_value
+        if y_value > agg.max_value:
+            agg.max_value = y_value
+        if agg.initial_value is None:
+            agg.initial_value = y_value
+        agg.final_value = y_value
+        if agg.last_value is not None and agg.last_value * y_value < 0.0:
+            agg.zero_crossings += 1
+        agg.last_value = y_value
+
+
+def _table_row_values(
+    signal_names: Sequence[str],
+    signal_columns: Mapping[str, Sequence[object]],
+    row_index: int,
+) -> List[Optional[float]]:
+    values: List[Optional[float]] = []
+    for signal_name in signal_names:
+        column = signal_columns.get(signal_name)
+        if column is None or row_index >= len(column):
+            values.append(None)
+            continue
+        values.append(_try_parse_scalar(column[row_index]))
+    return values
+
+
+def _try_parse_scalar(value: object) -> Optional[float]:
+    if value is None:
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(parsed):
+        return None
+    return parsed
+
+
 def _try_parse_float(text: str) -> Optional[float]:
     if text is None:
         return None
@@ -581,5 +732,6 @@ __all__ = [
     "SeriesStats",
     "AnchorRow",
     "SeriesReadResult",
+    "read_series_table",
     "read_series_csv",
 ]

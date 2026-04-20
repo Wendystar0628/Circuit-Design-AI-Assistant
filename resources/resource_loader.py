@@ -53,6 +53,11 @@ def get_spice_sub_dir() -> Path:
     return get_spice_models_dir() / "sub"
 
 
+def get_spice_sym_dir() -> Path:
+    """获取 LTspice 符号目录（resources/models/sym/），存放 .asy 定义文件"""
+    return get_spice_models_dir() / "sym"
+
+
 # ============================================================
 # 样式表加载
 # ============================================================
@@ -178,6 +183,7 @@ __all__ = [
     "get_spice_models_dir",
     "get_spice_cmp_dir",
     "get_spice_sub_dir",
+    "get_spice_sym_dir",
     
     # 样式表
     "load_stylesheet",

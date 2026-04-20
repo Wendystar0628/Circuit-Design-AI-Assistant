@@ -41,6 +41,10 @@ from domain.simulation.data.resolution_pyramid import (
     get_level_data,
     DEFAULT_PYRAMID_LEVELS,
 )
+from domain.simulation.data.signal_semantics import (
+    normalize_simulation_signal_name,
+    resolve_signal_type,
+)
 from domain.simulation.models.simulation_result import SimulationResult, SimulationData
 
 
@@ -434,23 +438,7 @@ class WaveformDataService:
         Returns:
             str: "voltage" / "current" / "other"
         """
-        if signal_types and name in signal_types:
-            return signal_types[name]
-        
-        upper = name.upper()
-        if upper.startswith('V(') or upper.endswith(('_MAG', '_PHASE', '_REAL', '_IMAG')):
-            base = name.rsplit('_', 1)[0] if '_' in name else name
-            if signal_types and base in signal_types:
-                return signal_types[base]
-            if base.upper().startswith('V('):
-                return "voltage"
-            if base.upper().startswith('I('):
-                return "current"
-        if upper.startswith('I('):
-            return "current"
-        if upper.startswith('V('):
-            return "voltage"
-        return "other"
+        return resolve_signal_type(name, signal_types)
     
     @staticmethod
     def is_voltage_signal(name: str, signal_types: Optional[Dict[str, str]] = None) -> bool:
@@ -513,23 +501,32 @@ class WaveformDataService:
     ) -> List[str]:
         available_signals = set(data.get_signal_names())
         base_name, component_suffix = self._split_component_suffix(signal_name)
+        candidate_bases = [base_name]
+        normalized_base = normalize_simulation_signal_name(base_name)
+        if normalized_base not in candidate_bases:
+            candidate_bases.append(normalized_base)
         if component_suffix:
-            signal_data = self._get_signal_data(data, signal_name)
+            for candidate_base in candidate_bases:
+                candidate_name = f"{candidate_base}{component_suffix}"
+                signal_data = self._get_signal_data(data, candidate_name)
+                if signal_data is not None:
+                    return [candidate_name]
+            return []
+
+        for candidate_name in candidate_bases:
+            if candidate_name not in available_signals:
+                continue
+
+            signal_data = data.get_signal(candidate_name)
             if signal_data is None:
-                return []
-            return [signal_name]
+                continue
 
-        if signal_name not in available_signals:
-            return []
+            if np.iscomplexobj(signal_data):
+                return [f"{candidate_name}{suffix}" for suffix in TABLE_COMPLEX_SUFFIXES]
 
-        signal_data = data.get_signal(signal_name)
-        if signal_data is None:
-            return []
+            return [candidate_name]
 
-        if np.iscomplexobj(signal_data):
-            return [f"{signal_name}{suffix}" for suffix in TABLE_COMPLEX_SUFFIXES]
-
-        return [signal_name]
+        return []
 
     def _get_signal_sort_key(
         self,

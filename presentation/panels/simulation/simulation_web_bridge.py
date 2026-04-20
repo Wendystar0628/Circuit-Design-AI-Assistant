@@ -36,6 +36,7 @@ class SimulationWebBridge(QObject):
     export_directory_pick_requested = pyqtSignal()
     export_directory_clear_requested = pyqtSignal()
     export_requested = pyqtSignal()
+    asc_conversion_pick_requested = pyqtSignal()
     add_to_conversation_requested = pyqtSignal(str)
     update_metric_targets_requested = pyqtSignal(dict)
     text_clipboard_copy_requested = pyqtSignal(str)
@@ -167,6 +168,10 @@ class SimulationWebBridge(QObject):
     @pyqtSlot()
     def requestExport(self) -> None:
         self.export_requested.emit()
+
+    @pyqtSlot()
+    def chooseAscFilesForConversion(self) -> None:
+        self.asc_conversion_pick_requested.emit()
 
     @pyqtSlot(str)
     def addToConversation(self, target: str) -> None:

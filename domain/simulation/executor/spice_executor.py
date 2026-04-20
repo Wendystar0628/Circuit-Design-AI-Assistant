@@ -56,6 +56,10 @@ from domain.simulation.executor.ngspice_shared import (
     VectorType,
 )
 from domain.simulation.data.op_result_payload import build_op_result_payload_from_signals
+from domain.simulation.data.signal_semantics import (
+    normalize_simulation_signal_name,
+    resolve_vector_signal_type,
+)
 from domain.simulation.models.simulation_result import (
     SimulationData,
     SimulationResult,
@@ -497,6 +501,8 @@ class SpiceExecutor(SimulationExecutor):
                 analysis_type,
             )
         
+        modified_netlist = self._inject_signal_capture_options(modified_netlist)
+        
         # 注入仿真选项（收敛参数和温度）
         modified_netlist = self._inject_simulation_options(modified_netlist, analysis_config)
         
@@ -570,7 +576,7 @@ class SpiceExecutor(SimulationExecutor):
                 analysis_type = actual_type
         
         # 提取仿真数据
-        sim_data = self._extract_simulation_data(analysis_type)
+        sim_data = self._extract_simulation_data(analysis_type, analysis_command)
         raw_output = self._ngspice.get_stdout()
         
         # 解析 .MEASURE 结果
@@ -956,6 +962,27 @@ class SpiceExecutor(SimulationExecutor):
                 result_lines.append(inject_line)
         
         return '\n'.join(result_lines)
+
+    def _inject_signal_capture_options(self, netlist: str) -> str:
+        lines = netlist.splitlines()
+        for line in lines:
+            stripped = line.strip().lower()
+            if not stripped or stripped.startswith('*'):
+                continue
+            if stripped.startswith('.options') and 'savecurrents' in stripped:
+                return netlist
+
+        result_lines = []
+        inserted = False
+        for line in lines:
+            if line.strip().lower() == '.end' and not inserted:
+                result_lines.append('.options savecurrents')
+                inserted = True
+            result_lines.append(line)
+        if not inserted:
+            result_lines.append('.options savecurrents')
+
+        return '\n'.join(result_lines)
     
     def _inject_measures(
         self,
@@ -997,7 +1024,7 @@ class SpiceExecutor(SimulationExecutor):
 
     # ============================================================
 
-    def _extract_simulation_data(self, analysis_type: str) -> SimulationData:
+    def _extract_simulation_data(self, analysis_type: str, analysis_command: str) -> SimulationData:
         """
         从 ngspice 提取仿真数据
         
@@ -1035,10 +1062,15 @@ class SpiceExecutor(SimulationExecutor):
                 continue
             
             # 标准化信号名称（ngspice 返回小写，统一转为大写 V/I 开头）
-            normalized_name = self._normalize_signal_name(vec_name, vec_info.type)
+            normalized_name = normalize_simulation_signal_name(vec_name, vec_info.type)
             
             # 确定信号类型标签
-            type_label = self._get_signal_type_label(vec_info.type)
+            type_label = resolve_vector_signal_type(
+                vec_name,
+                vec_info.type,
+                analysis_type=analysis_type,
+                analysis_command=analysis_command,
+            )
             
             # 根据向量类型处理
             if vec_info.type == VectorType.SV_FREQUENCY:
@@ -1076,52 +1108,6 @@ class SpiceExecutor(SimulationExecutor):
             signal_types=signal_types,
             op_result=op_result,
         )
-    
-    def _normalize_signal_name(self, name: str, vec_type: int = 0) -> str:
-        """
-        标准化信号名称
-        
-        ngspice 返回的向量名称是小写的（如 v(out)），
-        将其转换为标准格式（如 V(out)）以便与指标提取器匹配。
-        
-        Args:
-            name: 原始信号名称
-            vec_type: ngspice 向量类型（VectorType 常量）
-            
-        Returns:
-            str: 标准化后的信号名称
-        """
-        # 处理电压信号 v(...) -> V(...)
-        if name.startswith('v(') and name.endswith(')'):
-            return 'V(' + name[2:-1] + ')'
-        
-        # 处理电流信号 i(...) -> I(...)
-        if name.startswith('i(') and name.endswith(')'):
-            return 'I(' + name[2:-1] + ')'
-        
-        # 处理带 #branch 的电流信号
-        if '#branch' in name.lower():
-            # 如 v1#branch -> I(V1)
-            parts = name.lower().split('#branch')
-            if parts[0]:
-                return f'I({parts[0].upper()})'
-        
-        # 处理裸节点名：根据 ngspice 向量类型添加 V()/I() 前缀
-        if vec_type == VectorType.SV_VOLTAGE and not name.upper().startswith(('V(', 'I(')):
-            return f'V({name})'
-        if vec_type == VectorType.SV_CURRENT and not name.upper().startswith(('V(', 'I(')):
-            return f'I({name})'
-        
-        return name
-    
-    def _get_signal_type_label(self, vec_type: int) -> str:
-        """将 ngspice 向量类型映射为可读分类标签"""
-        if vec_type == VectorType.SV_VOLTAGE:
-            return "voltage"
-        elif vec_type == VectorType.SV_CURRENT:
-            return "current"
-        else:
-            return "other"
     
     def _parse_measure_results(self, raw_output: str, netlist: str = "") -> list:
         """

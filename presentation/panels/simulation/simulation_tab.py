@@ -308,6 +308,7 @@ class SimulationTab(QWidget):
         waveform_snapshot = self._backend_runtime.waveform_widget.get_web_snapshot() if active_tab == "waveform" else None
         output_log_snapshot = None
         export_snapshot = self._backend_runtime.export_panel.get_web_snapshot()
+        asc_conversion_snapshot = self._backend_runtime.asc_conversion_panel.get_web_snapshot()
         if current_result is not None:
             if active_tab == "output_log":
                 output_log_snapshot = self._backend_runtime.output_log_viewer.get_web_snapshot()
@@ -318,6 +319,7 @@ class SimulationTab(QWidget):
             "waveform_snapshot": waveform_snapshot,
             "output_log_snapshot": output_log_snapshot,
             "export_snapshot": export_snapshot,
+            "asc_conversion_snapshot": asc_conversion_snapshot,
         }
      
     def _build_authoritative_frontend_state(self):
@@ -339,6 +341,7 @@ class SimulationTab(QWidget):
             waveform_snapshot=snapshot_payloads["waveform_snapshot"],
             output_log_snapshot=snapshot_payloads["output_log_snapshot"],
             export_snapshot=snapshot_payloads["export_snapshot"],
+            asc_conversion_snapshot=snapshot_payloads["asc_conversion_snapshot"],
         )
 
     def _build_authoritative_raw_data_document(self):
@@ -512,6 +515,7 @@ class SimulationTab(QWidget):
         # 事件数据在 "data" 字段中
         data = event_data.get("data", event_data)
         self._project_root = data.get("path")
+        self._backend_runtime.asc_conversion_panel.set_project_root(self._project_root or "")
         self._awaiting_confirmation = False
         self._runtime_status_message = ""
         self._logger.info(f"Project opened: {self._project_root}")
@@ -525,6 +529,7 @@ class SimulationTab(QWidget):
     def _on_project_closed(self, event_data: dict):
         """处理项目关闭事件"""
         self._project_root = None
+        self._backend_runtime.asc_conversion_panel.set_project_root("")
         self._awaiting_confirmation = False
         self._runtime_status_message = ""
         self._refresh_circuit_result_index()
@@ -773,6 +778,7 @@ class SimulationTab(QWidget):
         bridge.export_directory_pick_requested.connect(self._on_export_directory_pick_requested)
         bridge.export_directory_clear_requested.connect(self._on_export_directory_clear_requested)
         bridge.export_requested.connect(self._on_export_requested)
+        bridge.asc_conversion_pick_requested.connect(self._on_asc_conversion_pick_requested)
         bridge.add_to_conversation_requested.connect(self._on_bridge_add_to_conversation_requested)
         bridge.update_metric_targets_requested.connect(self._on_update_metric_targets_requested)
         bridge.text_clipboard_copy_requested.connect(self._on_text_clipboard_copy_requested)
@@ -1029,6 +1035,11 @@ class SimulationTab(QWidget):
 
     def _on_export_requested(self):
         execution = self._backend_runtime.export_panel.export_selected()
+        if execution is not None:
+            self._update_frontend_payloads()
+
+    def _on_asc_conversion_pick_requested(self):
+        execution = self._backend_runtime.asc_conversion_panel.choose_files_and_convert()
         if execution is not None:
             self._update_frontend_payloads()
 

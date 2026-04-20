@@ -19,6 +19,7 @@ from domain.simulation.service.simulation_result_repository import (
     SimulationResultSummary,
 )
 from presentation.panels.simulation.simulation_frontend_state_serializer import (
+    ALL_TAB_IDS,
     SimulationFrontendStateSerializer,
 )
 
@@ -105,8 +106,15 @@ def test_surface_tabs_do_not_expose_history_tab_or_flag():
     )
 
     assert "history" not in payload["surface_tabs"]["available_tabs"]
+    assert ALL_TAB_IDS.index("export") < ALL_TAB_IDS.index("asc_conversion")
+    assert ALL_TAB_IDS.index("asc_conversion") < ALL_TAB_IDS.index("op_result")
+    assert payload["surface_tabs"]["available_tabs"].index("export") < payload["surface_tabs"]["available_tabs"].index("asc_conversion")
     assert "has_history" not in payload["surface_tabs"]
     assert "history_results_view" not in payload
+    assert payload["asc_conversion_view"] == {
+        "can_choose_files": True,
+        "selected_files_summary": "",
+    }
 
 
 def test_serialize_loadable_result_normalizes_result_path_and_current_match():

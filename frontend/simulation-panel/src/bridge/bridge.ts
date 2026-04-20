@@ -73,6 +73,7 @@ export interface SimulationBridge {
   chooseExportDirectory(): void
   clearExportDirectory(): void
   requestExport(): void
+  chooseAscFilesForConversion(): void
   addToConversation(target: string): void
   updateMetricTargets(payload: MetricTargetsUpdateRequestInput): void
   copyTextToClipboard(text: string): void

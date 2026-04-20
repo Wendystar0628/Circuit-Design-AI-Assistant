@@ -88,12 +88,13 @@ from domain.llm.agent.tools.simulation_series_stats import (
     AnchorScale,
     SeriesReadResult,
     SeriesStats,
-    read_series_csv,
+    read_series_table,
 )
 from domain.llm.agent.types import BaseTool, ToolContext, ToolResult
 from domain.simulation.data.simulation_artifact_exporter import (
     simulation_artifact_exporter,
 )
+from domain.simulation.data.waveform_data_service import waveform_data_service
 
 
 # ============================================================
@@ -166,7 +167,8 @@ class _SourceDescriptor:
     """
 
     kind: SourceKind
-    csv_path: Path
+    csv_path: Optional[Path]
+    json_path: Optional[Path]
     image_path: Optional[Path]
     """chart 对应的 PNG；raw 没有画面。"""
 
@@ -178,6 +180,14 @@ class _SourceDescriptor:
 
     series_count_hint: Optional[int]
     """discovery 展示用；来自 manifest/sidecar，可能 None。"""
+
+
+@dataclass(frozen=True)
+class _LoadedSignalSource:
+    read_result: SeriesReadResult
+    full_signal_names: Tuple[str, ...]
+    matched_names: Tuple[str, ...]
+    unmatched_names: Tuple[str, ...]
 
 
 # ============================================================
@@ -199,15 +209,15 @@ class ReadSignalsTool(BaseTool):
     @property
     def description(self) -> str:
         return (
-            "Summarise a simulation bundle's signal CSV as compact "
+            "Summarise a simulation bundle's signal data as compact "
             "series statistics (samples/min/max/mean/initial/final/"
             "zero_crossings/peak_to_peak) plus a handful of anchor "
             "samples. Two sources are visible to the agent: 'raw' "
-            "(always present — the simulator's full dump under "
-            "raw_data/, written unconditionally by every simulation "
-            "and independent of any UI selection state) and 'chart' "
-            "(a specific exported UI chart under charts/ — e.g. Bode, "
-            "DC sweep, noise — addressed by chart_index; carries "
+            "(the authoritative SimulationResult.data loaded from the "
+            "bundle's result.json, with raw_data/ kept only as a mirror "
+            "artifact) and 'chart' (a specific exported UI chart under "
+            "charts/, read authoritatively from its JSON sidecar — e.g. "
+            "Bode, DC sweep, noise — addressed by chart_index; carries "
             "chart-type-specific context such as log_x axis and, for "
             "Bode charts, a reference to the bandwidth/GM/PM figures "
             "of merit in metrics.json). Default source='auto' always "
@@ -232,10 +242,11 @@ class ReadSignalsTool(BaseTool):
                         SourceKind.CHART.value,
                     ],
                     "description": (
-                        "Which CSV inside the bundle to read. 'auto' "
-                        "(default) always resolves to 'raw' — the "
-                        "simulator's full dump, independent of any UI "
-                        "selection. 'chart' additionally requires "
+                        "Which signal source inside the bundle to read. "
+                        "'auto' (default) always resolves to 'raw' — the "
+                        "authoritative SimulationResult signal table, "
+                        "independent of any UI selection. 'chart' "
+                        "additionally requires "
                         "chart_index."
                     ),
                 },
@@ -339,7 +350,7 @@ class ReadSignalsTool(BaseTool):
         bundle: ResolvedSimulationBundle,
         params: Dict[str, Any],
     ) -> ToolResult:
-        sources = self._discover_sources(bundle.bundle_dir)
+        sources = self._discover_sources(bundle)
 
         picked_or_error = self._pick_source(params, sources, bundle)
         if isinstance(picked_or_error, ToolResult):
@@ -348,37 +359,17 @@ class ReadSignalsTool(BaseTool):
 
         requested_scale = self._resolve_anchor_scale(params, target, bundle)
         anchor_count = self._resolve_anchor_count(params.get("anchor_count"))
-
-        try:
-            read_result = read_series_csv(
-                csv_path=target.csv_path,
-                anchor_count=anchor_count,
-                anchor_scale=requested_scale,
-            )
-        except OSError as exc:
-            return ToolResult(
-                content=(
-                    f"Error: failed to read signals csv "
-                    f"'{target.csv_path.as_posix()}': {exc}"
-                ),
-                is_error=True,
-            )
-        except ValueError as exc:
-            return ToolResult(
-                content=(
-                    f"Error: signals csv at "
-                    f"'{target.csv_path.as_posix()}' is malformed: "
-                    f"{exc}. The bundle on disk may be corrupted or "
-                    "have been hand-edited."
-                ),
-                is_error=True,
-            )
-
-        filter_list = self._normalize_filter(params.get("signal_filter"))
-        matched_names, unmatched_names = self._split_filter(
-            read_result.signal_column_names, filter_list
+        loaded_or_error = self._load_signal_source(
+            bundle=bundle,
+            target=target,
+            filter_list=self._normalize_filter(params.get("signal_filter")),
+            anchor_count=anchor_count,
+            anchor_scale=requested_scale,
         )
-        filtered_read = self._subset_series(read_result, matched_names)
+        if isinstance(loaded_or_error, ToolResult):
+            return loaded_or_error
+        loaded: _LoadedSignalSource = loaded_or_error
+        filtered_read = loaded.read_result
 
         # AC FOM 引用：两种条件成立才触发，任意源都不重算。
         ac_rows: List[Dict[str, Any]] = []
@@ -389,33 +380,35 @@ class ReadSignalsTool(BaseTool):
             bundle=bundle,
             target=target,
             read_result=filtered_read,
-            full_signal_names=read_result.signal_column_names,
-            matched_names=matched_names,
-            unmatched_names=unmatched_names,
+            full_signal_names=loaded.full_signal_names,
+            matched_names=loaded.matched_names,
+            unmatched_names=loaded.unmatched_names,
             anchor_count_requested=anchor_count,
             ac_rows=ac_rows,
             sources=sources,
         )
-        lines = self._apply_line_cap(lines, target.csv_path)
+        lines = self._apply_line_cap(lines, self._inspection_path(bundle, target))
 
         details: Dict[str, Any] = {
             "result_path": bundle.result_path,
             "used_fallback": bundle.used_fallback,
             "source": target.kind.value,
-            "source_csv_path": str(target.csv_path),
+            "source_authority": self._source_authority_label(target),
+            "source_csv_path": str(target.csv_path) if target.csv_path else None,
+            "source_json_path": str(target.json_path) if target.json_path else None,
             "source_image_path": (
                 str(target.image_path) if target.image_path else None
             ),
             "chart_index": target.chart_index,
             "chart_type": target.chart_type,
             "signal_count": len(filtered_read.signal_column_names),
-            "signal_count_total": len(read_result.signal_column_names),
-            "sample_count": read_result.total_rows,
+            "signal_count_total": len(loaded.full_signal_names),
+            "sample_count": filtered_read.total_rows,
             "anchor_count_requested": anchor_count,
             "anchor_count_effective": len(filtered_read.anchors),
             "anchor_scale_requested": filtered_read.anchor_scale_requested.value,
             "anchor_scale_effective": filtered_read.anchor_scale_effective.value,
-            "unmatched_filter_names": list(unmatched_names),
+            "unmatched_filter_names": list(loaded.unmatched_names),
             "ac_fom_count": len(ac_rows),
             "sources_available": [
                 self._descriptor_to_details(src) for src in sources
@@ -427,7 +420,7 @@ class ReadSignalsTool(BaseTool):
     # Source discovery
     # ------------------------------------------------------------------
 
-    def _discover_sources(self, bundle_dir: Path) -> List[_SourceDescriptor]:
+    def _discover_sources(self, bundle: ResolvedSimulationBundle) -> List[_SourceDescriptor]:
         """枚举 bundle 里对 agent 可见的信号源。
 
         顺序：raw → chart(1..N)。chart 条目按 manifest 里的
@@ -438,19 +431,21 @@ class ReadSignalsTool(BaseTool):
         """
         out: List[_SourceDescriptor] = []
 
+        bundle_dir = bundle.bundle_dir
         raw_paths = simulation_artifact_exporter.raw_data_paths(bundle_dir)
-        if raw_paths.csv_path.is_file():
+        if bundle.result.data is not None:
             out.append(
                 _SourceDescriptor(
                     kind=SourceKind.RAW,
                     csv_path=raw_paths.csv_path,
+                    json_path=raw_paths.json_path if raw_paths.json_path.is_file() else None,
                     image_path=None,
                     chart_index=None,
                     chart_type=None,
                     chart_title=None,
                     log_x_hint=None,
-                    series_count_hint=_read_json_signal_count(
-                        raw_paths.json_path
+                    series_count_hint=len(
+                        waveform_data_service.get_resolved_signal_names(bundle.result)
                     ),
                 )
             )
@@ -491,23 +486,23 @@ class ReadSignalsTool(BaseTool):
             csv_name = str(files.get("csv") or "")
             png_name = str(files.get("image") or "")
             sidecar_name = str(files.get("json") or "")
-            if not csv_name:
+            if not sidecar_name:
                 continue
-            csv_path = charts_paths.directory / csv_name
-            if not csv_path.is_file():
-                # manifest 里有但文件没落盘——静默跳过这条，其它
-                # 图表仍然可读；discovery 不因一张坏图阻断整条链。
+            json_path = charts_paths.directory / sidecar_name
+            if not json_path.is_file():
                 continue
+            csv_path = charts_paths.directory / csv_name if csv_name else None
             image_path = (
                 charts_paths.directory / png_name if png_name else None
             )
             log_x, series_count = self._read_chart_sidecar(
-                charts_paths.directory / sidecar_name if sidecar_name else None
+                json_path
             )
             out.append(
                 _SourceDescriptor(
                     kind=SourceKind.CHART,
                     csv_path=csv_path,
+                    json_path=json_path,
                     image_path=image_path,
                     chart_index=idx,
                     chart_type=ctype,
@@ -567,9 +562,10 @@ class ReadSignalsTool(BaseTool):
                 return self._missing_source_error(
                     requested, bundle, sources,
                     hint=(
-                        "raw_data/ is written by every headless "
-                        "persistence; its absence indicates a broken "
-                        "or partial bundle."
+                        "The authoritative raw source is the bundle's "
+                        "SimulationResult.data loaded from result.json; "
+                        "if it is unavailable here, this bundle is "
+                        "broken or partial."
                     ),
                 )
             return found
@@ -624,13 +620,13 @@ class ReadSignalsTool(BaseTool):
     ) -> ToolResult:
         return ToolResult(
             content=(
-                f"Error: no signal CSVs were found under "
+                f"Error: no readable signal sources were found under "
                 f"'{bundle.bundle_dir.as_posix()}'. This bundle has "
-                "neither raw_data/raw_data.csv nor an exported "
-                "charts/ entry. Result metadata: "
+                "neither a readable SimulationResult signal table nor an "
+                "exported chart JSON sidecar. Result metadata: "
                 f"analysis_type='{bundle.result.analysis_type or 'unknown'}'. "
-                "Typical causes: .op analyses (no sweep to record), a "
-                "simulation that failed before persistence, or a "
+                "Typical causes: a simulation that produced no tabular "
+                "signal data, a failed persistence step, or a "
                 "partially cleaned bundle."
             ),
             is_error=True,
@@ -712,6 +708,225 @@ class ReadSignalsTool(BaseTool):
         if isinstance(raw, (int, float)):
             return int(raw)
         return _DEFAULT_ANCHOR_COUNT
+
+    def _load_signal_source(
+        self,
+        *,
+        bundle: ResolvedSimulationBundle,
+        target: _SourceDescriptor,
+        filter_list: List[str],
+        anchor_count: int,
+        anchor_scale: AnchorScale,
+    ) -> Any:
+        if target.kind == SourceKind.RAW:
+            return self._load_raw_source(
+                bundle=bundle,
+                filter_list=filter_list,
+                anchor_count=anchor_count,
+                anchor_scale=anchor_scale,
+            )
+        return self._load_chart_source(
+            bundle=bundle,
+            target=target,
+            filter_list=filter_list,
+            anchor_count=anchor_count,
+            anchor_scale=anchor_scale,
+        )
+
+    def _load_raw_source(
+        self,
+        *,
+        bundle: ResolvedSimulationBundle,
+        filter_list: List[str],
+        anchor_count: int,
+        anchor_scale: AnchorScale,
+    ) -> Any:
+        full_signal_names = tuple(
+            waveform_data_service.get_resolved_signal_names(bundle.result)
+        )
+        matched_names, unmatched_names = self._resolve_raw_filter(
+            bundle,
+            filter_list,
+            full_signal_names,
+        )
+        snapshot = waveform_data_service.build_table_snapshot(
+            bundle.result,
+            list(matched_names) if filter_list else None,
+        )
+        if snapshot is None:
+            return ToolResult(
+                content=(
+                    f"Error: bundle '{bundle.result_path}' does not expose "
+                    "a readable raw signal table via SimulationResult.data. "
+                    f"analysis_type='{bundle.result.analysis_type or 'unknown'}'."
+                ),
+                is_error=True,
+            )
+
+        read_result = read_series_table(
+            x_column_name=snapshot.x_label,
+            signal_column_names=snapshot.signal_names,
+            x_values=snapshot.x_values,
+            signal_columns=snapshot.signal_columns,
+            header_entries=simulation_artifact_exporter.build_linkage_entries(
+                bundle.result,
+                "raw_data",
+            ),
+            anchor_count=anchor_count,
+            anchor_scale=anchor_scale,
+        )
+        return _LoadedSignalSource(
+            read_result=read_result,
+            full_signal_names=full_signal_names,
+            matched_names=matched_names,
+            unmatched_names=unmatched_names,
+        )
+
+    def _load_chart_source(
+        self,
+        *,
+        bundle: ResolvedSimulationBundle,
+        target: _SourceDescriptor,
+        filter_list: List[str],
+        anchor_count: int,
+        anchor_scale: AnchorScale,
+    ) -> Any:
+        if target.json_path is None:
+            return ToolResult(
+                content=(
+                    f"Error: chart source '{target.chart_index}' is missing its "
+                    "JSON sidecar and cannot be read authoritatively."
+                ),
+                is_error=True,
+            )
+
+        try:
+            payload = json.loads(target.json_path.read_text(encoding="utf-8"))
+        except OSError as exc:
+            return ToolResult(
+                content=(
+                    f"Error: failed to read chart json "
+                    f"'{target.json_path.as_posix()}': {exc}"
+                ),
+                is_error=True,
+            )
+        except json.JSONDecodeError as exc:
+            return ToolResult(
+                content=(
+                    f"Error: chart json at '{target.json_path.as_posix()}' is malformed: "
+                    f"{exc}. The bundle on disk may be corrupted or have been hand-edited."
+                ),
+                is_error=True,
+            )
+
+        data = payload.get("data") if isinstance(payload, dict) else None
+        if not isinstance(data, dict):
+            return ToolResult(
+                content=(
+                    f"Error: chart json at '{target.json_path.as_posix()}' is missing "
+                    "its 'data' payload."
+                ),
+                is_error=True,
+            )
+
+        raw_series = data.get("series")
+        if not isinstance(raw_series, list):
+            return ToolResult(
+                content=(
+                    f"Error: chart json at '{target.json_path.as_posix()}' is missing "
+                    "its 'series' list."
+                ),
+                is_error=True,
+            )
+
+        series_entries = [
+            entry for entry in raw_series
+            if isinstance(entry, dict) and str(entry.get("name") or "")
+        ]
+        full_signal_names = tuple(str(entry.get("name") or "") for entry in series_entries)
+        matched_names, unmatched_names = self._split_filter(full_signal_names, filter_list)
+        selected_names = matched_names if filter_list else full_signal_names
+        selected_set = set(selected_names)
+        selected_entries = [
+            entry for entry in series_entries
+            if str(entry.get("name") or "") in selected_set
+        ] if filter_list else series_entries
+
+        x_label = str(data.get("x_label") or bundle.result.get_x_axis_label() or "X")
+        reference_entries = selected_entries or series_entries
+        x_values = self._extract_chart_x_values(reference_entries, data, x_label)
+        signal_columns = {
+            str(entry.get("name") or ""): list(entry.get("y") or [])
+            for entry in selected_entries
+        }
+
+        read_result = read_series_table(
+            x_column_name=x_label,
+            signal_column_names=selected_names,
+            x_values=x_values,
+            signal_columns=signal_columns,
+            header_entries=simulation_artifact_exporter.build_linkage_entries(
+                bundle.result,
+                "chart",
+            ),
+            anchor_count=anchor_count,
+            anchor_scale=anchor_scale,
+        )
+        return _LoadedSignalSource(
+            read_result=read_result,
+            full_signal_names=full_signal_names,
+            matched_names=matched_names,
+            unmatched_names=unmatched_names,
+        )
+
+    def _resolve_raw_filter(
+        self,
+        bundle: ResolvedSimulationBundle,
+        filter_list: List[str],
+        full_signal_names: Tuple[str, ...],
+    ) -> Tuple[Tuple[str, ...], Tuple[str, ...]]:
+        if not filter_list:
+            return full_signal_names, ()
+
+        matched: List[str] = []
+        unmatched: List[str] = []
+        seen = set()
+        for requested_name in filter_list:
+            resolved_names = waveform_data_service.get_resolved_signal_names(
+                bundle.result,
+                [requested_name],
+            )
+            if not resolved_names:
+                unmatched.append(requested_name)
+                continue
+            for resolved_name in resolved_names:
+                if resolved_name in seen:
+                    continue
+                matched.append(resolved_name)
+                seen.add(resolved_name)
+        return tuple(matched), tuple(unmatched)
+
+    @staticmethod
+    def _extract_chart_x_values(
+        series_entries: List[Dict[str, Any]],
+        payload_data: Dict[str, Any],
+        x_label: str,
+    ) -> List[object]:
+        if series_entries:
+            first_x = series_entries[0].get("x")
+            if isinstance(first_x, list):
+                return list(first_x)
+
+        rows = payload_data.get("rows")
+        if not isinstance(rows, list):
+            return []
+
+        x_values: List[object] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            x_values.append(row.get(x_label))
+        return x_values
 
     # ------------------------------------------------------------------
     # Signal filtering
@@ -862,8 +1077,12 @@ class ReadSignalsTool(BaseTool):
             f"# Signals Report ({header_tag})",
             "",
             f"- source: {target.kind.value}",
-            f"- source_csv: {target.csv_path.as_posix()}",
+            f"- source_authority: {self._source_authority_label(target)}",
         ]
+        if target.json_path is not None:
+            lines.append(f"- source_json: {target.json_path.as_posix()}")
+        if target.csv_path is not None:
+            lines.append(f"- source_csv: {target.csv_path.as_posix()}")
         if target.image_path is not None:
             lines.append(f"- source_image: {target.image_path.as_posix()}")
             lines.append(
@@ -936,8 +1155,8 @@ class ReadSignalsTool(BaseTool):
             lines.extend(
                 [
                     "",
-                    "_Signals csv was readable but had no numeric "
-                    "data rows. The bundle likely encountered a "
+                    "_The selected signal source was readable but had no "
+                    "numeric data rows. The bundle likely encountered a "
                     "simulation error before samples were written._",
                 ]
             )
@@ -1054,6 +1273,11 @@ class ReadSignalsTool(BaseTool):
         target: _SourceDescriptor,
     ) -> str:
         marker = " (current)" if src is target else ""
+        path = (
+            src.json_path.as_posix()
+            if src.json_path is not None
+            else src.csv_path.as_posix() if src.csv_path is not None else "<in-memory>"
+        )
         if src.kind == SourceKind.CHART:
             series_hint = (
                 f" — {src.series_count_hint} series"
@@ -1063,7 +1287,7 @@ class ReadSignalsTool(BaseTool):
             return (
                 f"chart #{src.chart_index} ({src.chart_type}): "
                 f"{src.chart_title or ''}{series_hint} → "
-                f"{src.csv_path.as_posix()}{marker}"
+                f"{path}{marker}"
             )
         series_hint = (
             f" — {src.series_count_hint} signals"
@@ -1072,7 +1296,7 @@ class ReadSignalsTool(BaseTool):
         )
         return (
             f"{src.kind.value}{series_hint} → "
-            f"{src.csv_path.as_posix()}{marker}"
+            f"{path}{marker}"
         )
 
     def _descriptor_to_details(
@@ -1080,7 +1304,9 @@ class ReadSignalsTool(BaseTool):
     ) -> Dict[str, Any]:
         return {
             "source": src.kind.value,
-            "csv_path": str(src.csv_path),
+            "source_authority": self._source_authority_label(src),
+            "csv_path": str(src.csv_path) if src.csv_path else None,
+            "json_path": str(src.json_path) if src.json_path else None,
             "image_path": str(src.image_path) if src.image_path else None,
             "chart_index": src.chart_index,
             "chart_type": src.chart_type,
@@ -1089,23 +1315,46 @@ class ReadSignalsTool(BaseTool):
             "series_count_hint": src.series_count_hint,
         }
 
+    @staticmethod
+    def _source_authority_label(target: _SourceDescriptor) -> str:
+        if target.kind == SourceKind.RAW:
+            return "simulation_result.data"
+        if target.json_path is not None:
+            return target.json_path.as_posix()
+        return "chart"
+
+    def _inspection_path(
+        self,
+        bundle: ResolvedSimulationBundle,
+        target: _SourceDescriptor,
+    ) -> Optional[str]:
+        if target.json_path is not None:
+            return str(target.json_path)
+        if target.csv_path is not None:
+            return str(target.csv_path)
+        return str(simulation_artifact_exporter.result_json_path(bundle.bundle_dir))
+
     # ------------------------------------------------------------------
     # Line cap
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _apply_line_cap(lines: List[str], csv_path: Path) -> List[str]:
+    def _apply_line_cap(lines: List[str], inspection_path: Optional[str]) -> List[str]:
         if len(lines) <= _MAX_CONTENT_LINES:
             return lines
         kept = lines[: _MAX_CONTENT_LINES - 2]
         omitted = len(lines) - len(kept)
+        if inspection_path:
+            tail = (
+                f"_{omitted} line(s) truncated; open "
+                f"'{inspection_path}' directly for the full table._"
+            )
+        else:
+            tail = f"_{omitted} line(s) truncated._"
         kept.extend(
             [
                 "",
-                (
-                    f"_{omitted} line(s) truncated; open "
-                    f"'{csv_path}' directly for the full table._"
-                ),
+                tail,
             ]
         )
         return kept
@@ -1137,22 +1386,6 @@ def _matches_ac_keyword(text: str) -> bool:
         if keyword in needle:
             return True
     return False
-
-
-def _read_json_signal_count(json_path: Path) -> Optional[int]:
-    """``raw_data.json`` 在 ``summary.signal_count`` 暴露信号数。"""
-    if not json_path.is_file():
-        return None
-    try:
-        payload = json.loads(json_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    summary = payload.get("summary") if isinstance(payload, dict) else None
-    if isinstance(summary, dict):
-        value = summary.get("signal_count")
-        if isinstance(value, int):
-            return value
-    return None
 
 
 def _render_stats_row(stats: SeriesStats) -> str:

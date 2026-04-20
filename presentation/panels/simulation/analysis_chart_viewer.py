@@ -582,7 +582,7 @@ class ChartViewer(QWidget):
             role_rank = 1
         else:
             role_rank = 2
-        signal_type = signal_types.get(name, "")
+        signal_type = WaveformDataService.get_signal_type(name, signal_types)
         type_rank = {"voltage": 0, "current": 1, "other": 2}.get(signal_type, 2)
         return (role_rank, type_rank, name_lower)
 

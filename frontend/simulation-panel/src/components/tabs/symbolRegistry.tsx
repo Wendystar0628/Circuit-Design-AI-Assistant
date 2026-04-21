@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 
 import type { SchematicComponentState, SchematicPinState } from '../../types/state'
+import { getUiText, type UiTextMap } from '../../uiText'
 import type {
   SchematicLayoutPinStub,
   SchematicPinSide,
@@ -76,50 +77,50 @@ export function isSchematicComponentReadonly(component: SchematicComponentState)
   return component.editable_fields.every((field) => !field.editable)
 }
 
-const schematicComponentTypeLabels: Record<string, string> = {
-  r: '电阻',
-  resistor: '电阻',
-  c: '电容',
-  capacitor: '电容',
-  l: '电感',
-  inductor: '电感',
-  d: '二极管',
-  diode: '二极管',
-  v: '电压源',
-  voltage_source: '电压源',
-  i: '电流源',
-  current_source: '电流源',
-  gnd: '接地',
-  ground: '接地',
-  x: '子电路',
-  subckt: '子电路',
-  subckt_block: '子电路',
-  controlled_source: '受控源',
-  e: '受控源',
-  f: '受控源',
-  g: '受控源',
-  h: '受控源',
-  u: '运算放大器',
-  opamp: '运算放大器',
-  q: '三极管',
-  bjt: '三极管',
-  m: 'MOS 管',
-  mos: 'MOS 管',
-  j: '结型场效应管',
-  jfet: '结型场效应管',
-  unknown: '未知元件',
+const schematicComponentTypeLabels: Record<string, { key: string; fallback: string }> = {
+  r: { key: 'simulation.schematic.type.resistor', fallback: 'Resistor' },
+  resistor: { key: 'simulation.schematic.type.resistor', fallback: 'Resistor' },
+  c: { key: 'simulation.schematic.type.capacitor', fallback: 'Capacitor' },
+  capacitor: { key: 'simulation.schematic.type.capacitor', fallback: 'Capacitor' },
+  l: { key: 'simulation.schematic.type.inductor', fallback: 'Inductor' },
+  inductor: { key: 'simulation.schematic.type.inductor', fallback: 'Inductor' },
+  d: { key: 'simulation.schematic.type.diode', fallback: 'Diode' },
+  diode: { key: 'simulation.schematic.type.diode', fallback: 'Diode' },
+  v: { key: 'simulation.schematic.type.voltage_source', fallback: 'Voltage Source' },
+  voltage_source: { key: 'simulation.schematic.type.voltage_source', fallback: 'Voltage Source' },
+  i: { key: 'simulation.schematic.type.current_source', fallback: 'Current Source' },
+  current_source: { key: 'simulation.schematic.type.current_source', fallback: 'Current Source' },
+  gnd: { key: 'simulation.schematic.type.ground', fallback: 'Ground' },
+  ground: { key: 'simulation.schematic.type.ground', fallback: 'Ground' },
+  x: { key: 'simulation.schematic.type.subcircuit', fallback: 'Subcircuit' },
+  subckt: { key: 'simulation.schematic.type.subcircuit', fallback: 'Subcircuit' },
+  subckt_block: { key: 'simulation.schematic.type.subcircuit', fallback: 'Subcircuit' },
+  controlled_source: { key: 'simulation.schematic.type.controlled_source', fallback: 'Controlled Source' },
+  e: { key: 'simulation.schematic.type.controlled_source', fallback: 'Controlled Source' },
+  f: { key: 'simulation.schematic.type.controlled_source', fallback: 'Controlled Source' },
+  g: { key: 'simulation.schematic.type.controlled_source', fallback: 'Controlled Source' },
+  h: { key: 'simulation.schematic.type.controlled_source', fallback: 'Controlled Source' },
+  u: { key: 'simulation.schematic.type.opamp', fallback: 'Operational Amplifier' },
+  opamp: { key: 'simulation.schematic.type.opamp', fallback: 'Operational Amplifier' },
+  q: { key: 'simulation.schematic.type.bjt', fallback: 'BJT' },
+  bjt: { key: 'simulation.schematic.type.bjt', fallback: 'BJT' },
+  m: { key: 'simulation.schematic.type.mos', fallback: 'MOSFET' },
+  mos: { key: 'simulation.schematic.type.mos', fallback: 'MOSFET' },
+  j: { key: 'simulation.schematic.type.jfet', fallback: 'JFET' },
+  jfet: { key: 'simulation.schematic.type.jfet', fallback: 'JFET' },
+  unknown: { key: 'simulation.schematic.type.unknown', fallback: 'Unknown Component' },
 }
 
 function normalizeSchematicComponentTypeKey(value: string): string {
   return value.trim().toLowerCase()
 }
 
-export function getSchematicComponentTypeLabel(component: SchematicComponentState): string {
+export function getSchematicComponentTypeLabel(component: SchematicComponentState, uiText?: UiTextMap): string {
   const candidates = [component.symbol_kind, component.kind, component.display_name].filter((value) => Boolean(value))
   for (const candidate of candidates) {
     const label = schematicComponentTypeLabels[normalizeSchematicComponentTypeKey(candidate)]
     if (label) {
-      return label
+      return getUiText(uiText, label.key, label.fallback)
     }
   }
   return component.display_name || component.kind || component.symbol_kind || '--'

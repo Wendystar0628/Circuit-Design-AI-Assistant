@@ -5,6 +5,7 @@ from typing import Any, Dict, Optional
 from PyQt6.QtCore import QObject, Qt, pyqtSignal, pyqtSlot
 from PyQt6.QtWidgets import QLabel, QSizePolicy, QVBoxLayout, QWidget
 from PyQt6.QtWebChannel import QWebChannel
+from presentation.core.i18n_text import get_i18n_text
 from presentation.core.web_resource_host import app_resource_url, configure_app_web_view
 
 try:
@@ -49,6 +50,7 @@ class WebWorkspaceTabBar(QWidget):
         self._state: Dict[str, Any] = {
             "items": [],
             "emptyMessage": "",
+            "closeTooltip": "",
             "runIconUrl": app_resource_url("icons/toolbar/play.svg").toString(),
             "simulationControl": {
                 "isRunning": False,
@@ -67,7 +69,7 @@ class WebWorkspaceTabBar(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         if not WEBENGINE_AVAILABLE:
-            fallback = QLabel("请安装 PyQt6-WebEngine", self)
+            fallback = QLabel(get_i18n_text("dependency.pyqt_webengine_required", "Please install PyQt6-WebEngine"), self)
             fallback.setAlignment(Qt.AlignmentFlag.AlignCenter)
             fallback.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
             layout.addWidget(fallback)
@@ -96,7 +98,7 @@ class WebWorkspaceTabBar(QWidget):
         self._page_loaded = True
         self._dispatch_state()
 
-    def set_workspace_file_state(self, state: Dict[str, Any], empty_message: str) -> None:
+    def set_workspace_file_state(self, state: Dict[str, Any], empty_message: str, close_tooltip: str) -> None:
         items = []
         raw_items = state.get("items", []) if isinstance(state, dict) else []
         for item in raw_items if isinstance(raw_items, list) else []:
@@ -117,6 +119,7 @@ class WebWorkspaceTabBar(QWidget):
             })
         self._state["items"] = items
         self._state["emptyMessage"] = str(empty_message or "")
+        self._state["closeTooltip"] = str(close_tooltip or "")
         self._dispatch_state()
 
     def set_simulation_control_state(self, state: Dict[str, Any]) -> None:

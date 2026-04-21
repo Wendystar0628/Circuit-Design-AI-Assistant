@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import (
 )
 
 from shared.path_utils import normalize_absolute_path, normalize_identity_path
-from shared.workspace_file_types import file_type_label
+from shared.workspace_file_types import file_type_label, file_type_label_key
 
 from .editor import CodeEditor
 from .editor.workspace_editor_session import (
@@ -240,6 +240,18 @@ class CodeEditorPanel(QWidget):
             return self.i18n_manager.get_text(key, default)
         return default if default else key
 
+    def _localized_file_type_label(self, path_or_ext: str) -> str:
+        return self._get_text(
+            file_type_label_key(path_or_ext),
+            file_type_label(path_or_ext),
+        )
+
+    def _cursor_position_text(self, line: int, column: int) -> str:
+        return self._get_text(
+            "editor.status.cursor_position",
+            "Ln {line}, Col {column}",
+        ).format(line=line, column=column)
+
     def _setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -303,7 +315,7 @@ class CodeEditorPanel(QWidget):
         self._readonly_label.hide()
         layout.addWidget(self._readonly_label)
         layout.addStretch()
-        self._line_col_label = QLabel("Ln 1, Col 1")
+        self._line_col_label = QLabel(self._cursor_position_text(1, 1))
         layout.addWidget(self._line_col_label)
         sep1 = QFrame()
         sep1.setFrameShape(QFrame.Shape.VLine)
@@ -313,7 +325,7 @@ class CodeEditorPanel(QWidget):
         sep2 = QFrame()
         sep2.setFrameShape(QFrame.Shape.VLine)
         layout.addWidget(sep2)
-        self._file_type_label = QLabel("Plain Text")
+        self._file_type_label = QLabel(self._get_text("editor.status.plain_text", "Plain Text"))
         layout.addWidget(self._file_type_label)
         return status_bar
 
@@ -349,9 +361,9 @@ class CodeEditorPanel(QWidget):
 
     def _reset_status_bar(self) -> None:
         if self._line_col_label is not None:
-            self._line_col_label.setText("Ln 1, Col 1")
+            self._line_col_label.setText(self._cursor_position_text(1, 1))
         if self._file_type_label is not None:
-            self._file_type_label.setText("Plain Text")
+            self._file_type_label.setText(self._get_text("editor.status.plain_text", "Plain Text"))
         self._sync_readonly_label()
 
     def _sync_readonly_label(self) -> None:
@@ -804,7 +816,10 @@ class CodeEditorPanel(QWidget):
             reply = QMessageBox.question(
                 self,
                 self._get_text("dialog.confirm.title", "Confirm"),
-                f"Save changes to {os.path.basename(entry.path)}?",
+                self._get_text(
+                    "dialog.confirm.save_changes",
+                    "Save changes to {name}?",
+                ).format(name=os.path.basename(entry.path)),
                 QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel,
             )
             if reply == QMessageBox.StandardButton.Save:
@@ -900,7 +915,11 @@ class CodeEditorPanel(QWidget):
             return
         payload = state if isinstance(state, dict) else self._build_workspace_file_state()
         empty_message = self._get_text("editor.tabs.empty", "No open files")
-        self._web_tab_bar.set_workspace_file_state(payload, empty_message)
+        self._web_tab_bar.set_workspace_file_state(
+            payload,
+            empty_message,
+            self._get_text("btn.close", "Close"),
+        )
         self._web_tab_bar.set_simulation_control_state(self._simulation_control_state)
 
     def set_simulation_control_state(self, state: Dict[str, Any]) -> None:
@@ -926,22 +945,24 @@ class CodeEditorPanel(QWidget):
         editor = self._get_current_editor()
         if editor is not None:
             line, col = editor.get_cursor_position()
-            self._line_col_label.setText(f"Ln {line}, Col {col}")
+            self._line_col_label.setText(self._cursor_position_text(line, col))
         else:
-            self._line_col_label.setText("Ln 1, Col 1")
+            self._line_col_label.setText(self._cursor_position_text(1, 1))
 
     def _update_status_bar(self, path: str):
-        self._file_type_label.setText(file_type_label(path))
+        self._file_type_label.setText(self._localized_file_type_label(path))
         self._update_cursor_position()
         self._sync_readonly_label()
 
     def retranslate_ui(self):
-        for child in self._empty_widget.findChildren(QLabel):
-            if child.property("empty_hint"):
-                child.setText(self._get_text("hint.select_file", "Select a file to view"))
+        self._update_empty_state()
         if self._open_workspace_btn:
             self._open_workspace_btn.setText(self._get_text("btn.open_workspace", "Open Workspace"))
-        self._sync_readonly_label()
+        active_entry = self._get_active_entry()
+        if active_entry is not None:
+            self._update_status_bar(active_entry.path)
+        else:
+            self._reset_status_bar()
         self._sync_workspace_tab_bar()
 
     def _subscribe_events(self):

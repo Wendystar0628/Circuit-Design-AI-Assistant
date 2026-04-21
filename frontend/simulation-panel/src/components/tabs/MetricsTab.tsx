@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 
 import type { SimulationBridge } from '../../bridge/bridge'
 import type { MetricItemState, SimulationMainState } from '../../types/state'
+import { getUiText } from '../../uiText'
 
 interface MetricsTabProps {
   state: SimulationMainState
@@ -39,6 +40,7 @@ export function MetricsTab({ state, bridge }: MetricsTabProps) {
   const metrics = state.metrics_view.items
   const sourceFilePath = state.metrics_view.source_file_path
   const canAddToConversation = state.metrics_view.can_add_to_conversation
+  const uiText = state.ui_text
 
   const signature = useMemo(() => buildMetricsSignature(metrics, sourceFilePath), [metrics, sourceFilePath])
   const [drafts, setDrafts] = useState<Record<string, string>>(() => buildInitialDrafts(metrics))
@@ -99,7 +101,7 @@ export function MetricsTab({ state, bridge }: MetricsTabProps) {
           disabled={!canConfirm}
           onClick={handleConfirm}
         >
-          确认修改
+          {getUiText(uiText, 'simulation.metrics.confirm_changes', 'Confirm Changes')}
         </button>
         <button
           type="button"
@@ -107,7 +109,7 @@ export function MetricsTab({ state, bridge }: MetricsTabProps) {
           disabled={!canAddToConversation}
           onClick={handleAddToConversation}
         >
-          添加至对话
+          {getUiText(uiText, 'common.add_to_conversation', 'Add to Conversation')}
         </button>
       </div>
       {metrics.length ? (
@@ -129,7 +131,7 @@ export function MetricsTab({ state, bridge }: MetricsTabProps) {
             <tbody>
               <tr>
                 <th className="metrics-matrix__row-head" scope="row">
-                  当前值
+                  {getUiText(uiText, 'common.current_value', 'Current Value')}
                 </th>
                 {metrics.map((metric) => (
                   <td key={metric.name} className="metrics-matrix__current">
@@ -139,7 +141,7 @@ export function MetricsTab({ state, bridge }: MetricsTabProps) {
               </tr>
               <tr>
                 <th className="metrics-matrix__row-head" scope="row">
-                  目标值
+                  {getUiText(uiText, 'common.target_value', 'Target Value')}
                 </th>
                 {metrics.map((metric) => (
                   <td key={metric.name} className="metrics-matrix__target">
@@ -147,7 +149,7 @@ export function MetricsTab({ state, bridge }: MetricsTabProps) {
                       type="text"
                       className="metrics-matrix__target-input"
                       value={drafts[metric.name] ?? ''}
-                      placeholder="例: ≥ 20 dB"
+                      placeholder={getUiText(uiText, 'simulation.metrics.target_placeholder', 'e.g. ≥ 20 dB')}
                       spellCheck={false}
                       autoComplete="off"
                       onChange={(event) => handleDraftChange(metric.name, event.target.value)}
@@ -160,9 +162,9 @@ export function MetricsTab({ state, bridge }: MetricsTabProps) {
         </div>
       ) : (
         <div className="metrics-matrix-empty">
-          <div className="metrics-matrix-empty__title">暂无指标</div>
+          <div className="metrics-matrix-empty__title">{getUiText(uiText, 'simulation.metrics.empty_title', 'No Metrics')}</div>
           <div className="metrics-matrix-empty__hint">
-            在 SPICE 文件中添加 <code>.MEASURE</code> 语句后运行仿真即可生成指标。
+            {getUiText(uiText, 'simulation.metrics.empty_hint', 'Add `.MEASURE` statements to the SPICE file and run a simulation to generate metrics.')}
           </div>
         </div>
       )}

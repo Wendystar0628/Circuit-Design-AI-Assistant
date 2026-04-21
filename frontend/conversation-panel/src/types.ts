@@ -255,6 +255,7 @@ export interface RagMainState {
 
 export interface ConversationMainState {
   ui: RightPanelUiState
+  ui_text: Record<string, string>
   session: {
     id: string
     name: string
@@ -309,6 +310,15 @@ function asNumber(value: unknown, fallback = 0): number {
 
 function asBoolean(value: unknown, fallback = false): boolean {
   return typeof value === 'boolean' ? value : fallback
+}
+
+function normalizeUiText(value: unknown): Record<string, string> {
+  const incoming = asRecord(value)
+  const result: Record<string, string> = {}
+  Object.entries(incoming).forEach(([key, itemValue]) => {
+    result[key] = asString(itemValue)
+  })
+  return result
 }
 
 function normalizeSuggestionState(value: unknown): ConversationSuggestionState {
@@ -559,6 +569,7 @@ export const emptyConversationState: ConversationMainState = {
   ui: {
     active_surface: 'conversation',
   },
+  ui_text: {},
   session: {
     id: '',
     name: '',
@@ -774,6 +785,7 @@ export function normalizeConversationState(nextState: unknown): ConversationMain
     ui: {
       active_surface: asString(ui.active_surface, 'conversation'),
     },
+    ui_text: normalizeUiText(incoming.ui_text),
     session: {
       id: asString(session.id),
       name: asString(session.name),

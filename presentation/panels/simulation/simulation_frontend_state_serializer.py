@@ -48,12 +48,24 @@ class SimulationFrontendStateSerializer:
         "op_result",
     ]
     _ANALYSIS_LABELS = {
-        "ac": "AC 小信号分析",
-        "dc": "DC 扫描分析",
-        "tran": "瞬态分析",
-        "noise": "噪声分析",
-        "op": "工作点分析",
+        "ac": "AC Small-Signal Analysis",
+        "dc": "DC Sweep Analysis",
+        "tran": "Transient Analysis",
+        "noise": "Noise Analysis",
+        "op": "Operating Point Analysis",
     }
+
+    @classmethod
+    def _resolve_analysis_label(cls, analysis_type: str, ui_text: Optional[Dict[str, str]] = None) -> str:
+        normalized = str(analysis_type or "").strip().lower()
+        if not normalized:
+            return ""
+        fallback = cls._ANALYSIS_LABELS.get(normalized, str(analysis_type or ""))
+        if isinstance(ui_text, dict):
+            resolved = str(ui_text.get(f"simulation.analysis_label.{normalized}") or "")
+            if resolved:
+                return resolved
+        return fallback
 
     def serialize_main_state(
         self,
@@ -75,6 +87,7 @@ class SimulationFrontendStateSerializer:
         output_log_snapshot: Optional[Dict[str, Any]] = None,
         export_snapshot: Optional[Dict[str, Any]] = None,
         asc_conversion_snapshot: Optional[Dict[str, Any]] = None,
+        ui_text: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
         """Compose the authoritative main-state payload for the panel.
 
@@ -111,7 +124,7 @@ class SimulationFrontendStateSerializer:
         asc_conversion_snapshot_payload = asc_conversion_snapshot if isinstance(asc_conversion_snapshot, dict) else None
         has_output_log = bool(output_log_snapshot_payload.get("has_log")) if output_log_snapshot_payload is not None else bool(getattr(result, "raw_output", None))
         has_op_result = self._has_op_result(result)
-        result_summary = self.serialize_result(result, normalized_result_path)
+        result_summary = self.serialize_result(result, normalized_result_path, ui_text=ui_text)
         op_result_view = self.serialize_op_result(result)
         available_export_types = [
             export_type
@@ -233,6 +246,11 @@ class SimulationFrontendStateSerializer:
         }
         if asc_conversion_snapshot_payload is not None:
             asc_conversion_view.update(asc_conversion_snapshot_payload)
+        normalized_ui_text = {
+            str(key): str(value)
+            for key, value in (ui_text or {}).items()
+            if str(key)
+        }
 
         return {
             "simulation_runtime": {
@@ -266,6 +284,7 @@ class SimulationFrontendStateSerializer:
             "asc_conversion_view": asc_conversion_view,
             "circuit_selection_view": circuit_selection_view,
             "op_result_view": op_result_view,
+            "ui_text": normalized_ui_text,
         }
 
     def serialize_raw_data_document(
@@ -485,6 +504,7 @@ class SimulationFrontendStateSerializer:
         self,
         result: Optional[SimulationResult],
         current_result_path: str,
+        ui_text: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
         if result is None:
             return {
@@ -513,7 +533,7 @@ class SimulationFrontendStateSerializer:
             "file_path": str(result.file_path or ""),
             "file_name": Path(str(result.file_path or "")).name if str(result.file_path or "") else "",
             "analysis_type": str(result.analysis_type or ""),
-            "analysis_label": self._ANALYSIS_LABELS.get(str(result.analysis_type or "").lower(), str(result.analysis_type or "")),
+            "analysis_label": self._resolve_analysis_label(str(result.analysis_type or ""), ui_text=ui_text),
             "executor": str(result.executor or ""),
             "success": bool(result.success),
             "timestamp": str(result.timestamp or ""),

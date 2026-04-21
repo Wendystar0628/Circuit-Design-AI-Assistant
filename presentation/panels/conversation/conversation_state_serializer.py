@@ -53,6 +53,7 @@ class ConversationStateSerializer:
         rollback_in_progress: bool = False,
         active_surface: str = "conversation",
         rag_state: Optional[Dict[str, Any]] = None,
+        ui_text: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         usage_snapshot = self.serialize_usage_info(usage_info)
         pending_summary = self.serialize_pending_workspace_edit_summary(
@@ -69,6 +70,10 @@ class ConversationStateSerializer:
         return {
             "ui": {
                 "active_surface": self.serialize_active_surface(active_surface),
+            },
+            "ui_text": {
+                str(key): str(value or "")
+                for key, value in (ui_text.items() if isinstance(ui_text, dict) else [])
             },
             "session": {
                 "id": str(session_id or ""),

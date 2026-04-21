@@ -12,6 +12,7 @@ from presentation.panels.workspace_explorer_state_store import WorkspaceExplorer
 from shared.path_utils import normalize_identity_path
 from shared.workspace_file_types import (
     file_type_label,
+    file_type_label_key,
     is_hidden_workspace_entry,
     workspace_entry_icon_name,
     workspace_entry_open_icon_name,
@@ -128,11 +129,17 @@ class FileBrowserPanel(QWidget):
             return self.i18n_manager.get_text(key, default)
         return default if default else key
 
+    def _localized_file_type_label(self, path_or_ext: str) -> str:
+        return self._get_text(
+            file_type_label_key(path_or_ext),
+            file_type_label(path_or_ext),
+        )
+
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         if not WEBENGINE_AVAILABLE:
-            fallback = QLabel("请安装 PyQt6-WebEngine", self)
+            fallback = QLabel(self._get_text("dependency.pyqt_webengine_required", "Please install PyQt6-WebEngine"), self)
             fallback.setAlignment(Qt.AlignmentFlag.AlignCenter)
             fallback.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
             layout.addWidget(fallback)
@@ -597,7 +604,7 @@ class FileBrowserPanel(QWidget):
                     "isExpanded": is_expanded,
                     "iconName": workspace_entry_icon_name(entry_name, is_directory=True),
                     "openIconName": workspace_entry_open_icon_name(entry_name, is_directory=True),
-                    "typeLabel": "Folder",
+                    "typeLabel": self._get_text("workspace.folder", "Folder"),
                     "children": child_nodes,
                 })
                 continue
@@ -615,7 +622,7 @@ class FileBrowserPanel(QWidget):
                 "isActive": is_active,
                 "iconName": workspace_entry_icon_name(entry_name),
                 "openIconName": workspace_entry_open_icon_name(entry_name),
-                "typeLabel": file_type_label(entry_name),
+                "typeLabel": self._localized_file_type_label(entry_name),
                 "children": [],
             })
 

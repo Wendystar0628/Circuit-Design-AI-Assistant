@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 
 import type { SimulationBridge } from '../../bridge/bridge'
 import type { SimulationMainState } from '../../types/state'
+import { getUiText } from '../../uiText'
 
 interface OutputLogTabProps {
   state: SimulationMainState
@@ -10,6 +11,7 @@ interface OutputLogTabProps {
 
 export function OutputLogTab({ state, bridge }: OutputLogTabProps) {
   const logView = state.output_log_view
+  const uiText = state.ui_text
   const [searchKeyword, setSearchKeyword] = useState(logView.search_keyword)
   const [filterLevel, setFilterLevel] = useState(logView.current_filter || 'all')
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copied'>('idle')
@@ -37,33 +39,35 @@ export function OutputLogTab({ state, bridge }: OutputLogTabProps) {
     window.setTimeout(() => setCopyStatus('idle'), 1500)
   }
 
-  const copyLabel = copyStatus === 'copied' ? '已复制' : '复制'
+  const copyLabel = copyStatus === 'copied'
+    ? getUiText(uiText, 'common.copied', 'Copied')
+    : getUiText(uiText, 'common.copy', 'Copy')
 
   return (
     <div className="tab-surface">
       <div className="content-card content-card--scrollable">
         <div className="table-toolbar-grid">
           <label className="field-row field-row--grow">
-            <span className="field-row__label">关键词</span>
-            <input className="field-input" value={searchKeyword} onChange={(event: { target: { value: string } }) => setSearchKeyword(event.target.value)} placeholder="输入搜索关键词" />
+            <span className="field-row__label">{getUiText(uiText, 'simulation.output_log.keyword', 'Keyword')}</span>
+            <input className="field-input" value={searchKeyword} onChange={(event: { target: { value: string } }) => setSearchKeyword(event.target.value)} placeholder={getUiText(uiText, 'simulation.output_log.search_placeholder', 'Enter search keyword')} />
           </label>
           <button type="button" className="sim-compact-button" onClick={() => bridge?.searchOutputLog(searchKeyword)}>
-            搜索
+            {getUiText(uiText, 'common.search', 'Search')}
           </button>
           <label className="field-row">
-            <span className="field-row__label">过滤</span>
+            <span className="field-row__label">{getUiText(uiText, 'common.filter', 'Filter')}</span>
             <select className="field-select" value={filterLevel} onChange={(event: { target: { value: string } }) => setFilterLevel(event.target.value)}>
-              <option value="all">全部</option>
-              <option value="error">错误</option>
-              <option value="warning">警告</option>
-              <option value="info">信息</option>
+              <option value="all">{getUiText(uiText, 'common.all', 'All')}</option>
+              <option value="error">{getUiText(uiText, 'common.error', 'Error')}</option>
+              <option value="warning">{getUiText(uiText, 'common.warning', 'Warning')}</option>
+              <option value="info">{getUiText(uiText, 'common.info', 'Info')}</option>
             </select>
           </label>
           <button type="button" className="sim-compact-button" onClick={() => bridge?.filterOutputLog(filterLevel)}>
-            应用过滤
+            {getUiText(uiText, 'simulation.output_log.apply_filter', 'Apply Filter')}
           </button>
           <button type="button" className="sim-compact-button sim-compact-button--accent" disabled={!logView.can_add_to_conversation} onClick={() => bridge?.addToConversation('output_log')}>
-            添加至对话
+            {getUiText(uiText, 'common.add_to_conversation', 'Add to Conversation')}
           </button>
           <button type="button" className="sim-compact-button" disabled={!logView.lines.length} onClick={handleCopyLog}>
             {copyLabel}
@@ -78,7 +82,7 @@ export function OutputLogTab({ state, bridge }: OutputLogTabProps) {
               <span className="log-line__number">{line.line_number}</span>
               <span className="log-line__content">{line.content}</span>
             </div>
-          )) : <div className="muted-text">当前没有可显示的日志行。</div>}
+          )) : <div className="muted-text">{getUiText(uiText, 'simulation.output_log.empty', 'There are currently no log lines to display.')}</div>}
         </div>
       </div>
     </div>

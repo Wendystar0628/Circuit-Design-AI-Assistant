@@ -1,10 +1,10 @@
-
 import type { SimulationBridge } from '../../bridge/bridge'
 import { useElementSize } from '../../hooks/useElementSize'
 import type {
   CircuitSelectionItemState,
   SimulationMainState,
 } from '../../types/state'
+import { getUiText } from '../../uiText'
 
 interface CircuitSelectionTabProps {
   state: SimulationMainState
@@ -49,6 +49,7 @@ function resolveCircuitSelectionColumnCount(width: number): number {
 export function CircuitSelectionTab({ state, bridge }: CircuitSelectionTabProps) {
   const runtime = state.simulation_runtime
   const { items } = state.circuit_selection_view
+  const uiText = state.ui_text
   const { ref: surfaceRef, width: surfaceWidth } = useElementSize<HTMLDivElement>()
   const columnCount = resolveCircuitSelectionColumnCount(surfaceWidth)
   const gridClassName = [
@@ -64,13 +65,13 @@ export function CircuitSelectionTab({ state, bridge }: CircuitSelectionTabProps)
       >
         {!runtime.has_project ? (
           <div className="surface-state-card surface-state-card--empty">
-            <div className="card-title">尚未打开项目</div>
-            <div className="muted-text">请先打开项目并运行仿真后再在此选择电路。</div>
+            <div className="card-title">{getUiText(uiText, 'simulation.circuit_selection.no_project', 'No project is open yet')}</div>
+            <div className="muted-text">{getUiText(uiText, 'simulation.circuit_selection.no_project_hint', 'Open a project and run a simulation before choosing a circuit here.')}</div>
           </div>
         ) : items.length === 0 ? (
           <div className="surface-state-card surface-state-card--empty">
-            <div className="card-title">尚无仿真历史</div>
-            <div className="muted-text">请先运行一次仿真，完成后此处会按电路聚合展示。</div>
+            <div className="card-title">{getUiText(uiText, 'simulation.circuit_selection.no_history', 'No simulation history yet')}</div>
+            <div className="muted-text">{getUiText(uiText, 'simulation.circuit_selection.no_history_hint', 'Run a simulation once and results will be grouped by circuit here.')}</div>
           </div>
         ) : (
           <div className={gridClassName}>
@@ -78,6 +79,7 @@ export function CircuitSelectionTab({ state, bridge }: CircuitSelectionTabProps)
               <CircuitSelectionCard
                 key={item.circuit_absolute_path || item.circuit_file}
                 item={item}
+                uiText={uiText}
                 onSelect={() => {
                   const target = item.latest_result
                   if (!bridge || !target.can_load || !target.result_path) {
@@ -96,6 +98,7 @@ export function CircuitSelectionTab({ state, bridge }: CircuitSelectionTabProps)
 
 interface CircuitSelectionCardProps {
   item: CircuitSelectionItemState
+  uiText: Record<string, string>
   onSelect: () => void
 }
 
@@ -110,23 +113,23 @@ interface CircuitSelectionCardProps {
  * malformed ``result_path``) should not be clickable, without the tab
  * re-deriving that rule itself.
  */
-function CircuitSelectionCard({ item, onSelect }: CircuitSelectionCardProps) {
+function CircuitSelectionCard({ item, uiText, onSelect }: CircuitSelectionCardProps) {
   const latest = item.latest_result
   const metaParts = [
     latest.analysis_type,
     latest.timestamp,
   ].filter(Boolean)
   const badges = [
-    !latest.success ? { label: '最近失败', modifier: ' circuit-selection-card__badge--error' } : null,
-    item.is_current ? { label: '当前', modifier: ' circuit-selection-card__badge--current' } : null,
-    !latest.can_load ? { label: '不可加载', modifier: '' } : null,
+    !latest.success ? { label: getUiText(uiText, 'simulation.circuit_selection.latest_failed', 'Latest Failed'), modifier: ' circuit-selection-card__badge--error' } : null,
+    item.is_current ? { label: getUiText(uiText, 'common.current', 'Current'), modifier: ' circuit-selection-card__badge--current' } : null,
+    !latest.can_load ? { label: getUiText(uiText, 'simulation.circuit_selection.not_loadable', 'Not Loadable'), modifier: '' } : null,
   ].filter((badge): badge is { label: string; modifier: string } => badge !== null)
   const className = [
     'circuit-selection-card',
     item.is_current ? 'circuit-selection-card--active' : '',
     !latest.can_load ? 'circuit-selection-card--disabled' : '',
   ].filter(Boolean).join(' ')
-  const displayName = item.circuit_display_name || latest.file_name || '未命名电路'
+  const displayName = item.circuit_display_name || latest.file_name || getUiText(uiText, 'simulation.circuit_selection.unnamed_circuit', 'Unnamed Circuit')
 
   return (
     <button
@@ -141,10 +144,12 @@ function CircuitSelectionCard({ item, onSelect }: CircuitSelectionCardProps) {
         <div className="circuit-selection-card__title-block">
           <div className="circuit-selection-card__title">{displayName}</div>
           <div className="circuit-selection-card__meta">
-            {metaParts.length ? `最近一次：${metaParts.join(' · ')}` : '最近一次：无元数据'}
+            {metaParts.length
+              ? getUiText(uiText, 'simulation.circuit_selection.latest_run', 'Latest: {meta}', { meta: metaParts.join(' · ') })
+              : getUiText(uiText, 'simulation.circuit_selection.latest_run_empty', 'Latest: No metadata')}
           </div>
         </div>
-        <div className="circuit-selection-card__run-count">共 {item.run_count} 次</div>
+        <div className="circuit-selection-card__run-count">{getUiText(uiText, 'simulation.circuit_selection.run_count', '{count} runs', { count: item.run_count })}</div>
       </div>
       <div className="circuit-selection-card__footer">
         <div className="circuit-selection-card__badge-row">

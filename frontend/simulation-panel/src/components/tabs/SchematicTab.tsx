@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import type { SimulationBridge } from '../../bridge/bridge'
 import type { SchematicComponentState, SchematicDocumentState, SchematicEditableFieldState, SchematicWriteResultState } from '../../types/state'
+import { getUiText, type UiTextMap } from '../../uiText'
 import { ResponsivePane } from '../layout/ResponsivePane'
 import { SchematicCanvas } from './SchematicCanvasSurface'
 import { SchematicPropertyPanel } from './SchematicPropertyPanel'
@@ -12,6 +13,7 @@ interface SchematicTabProps {
   bridge: SimulationBridge | null
   schematicDocument: SchematicDocumentState
   schematicWriteResult: SchematicWriteResultState
+  uiText: UiTextMap
 }
 
 function getDraftKey(componentId: string, fieldKey: string): string {
@@ -22,6 +24,7 @@ interface SchematicLayoutState {
   result: SchematicLayoutResult | null
   pending: boolean
   error: string
+  fallbackErrorKey: string
 }
 
 interface ViewportSize {
@@ -42,6 +45,7 @@ function createEmptyLayoutState(): SchematicLayoutState {
     result: null,
     pending: false,
     error: '',
+    fallbackErrorKey: '',
   }
 }
 
@@ -60,11 +64,11 @@ function getPendingWriteKey(componentId: string, fieldKey: string): string {
   return `${componentId}::${fieldKey}`
 }
 
-export function SchematicTab({ bridge, schematicDocument, schematicWriteResult }: SchematicTabProps) {
+export function SchematicTab({ bridge, schematicDocument, schematicWriteResult, uiText }: SchematicTabProps) {
   const [selectedComponentId, setSelectedComponentId] = useState<string | null>(null)
   const [fieldDrafts, setFieldDrafts] = useState<Record<string, string>>({})
   const [pendingWriteRequests, setPendingWriteRequests] = useState<Record<string, PendingSchematicWriteRequest>>({})
-  const [staleDraftNotice, setStaleDraftNotice] = useState('')
+  const [hasStaleDraftNotice, setHasStaleDraftNotice] = useState(false)
   const [layoutState, setLayoutState] = useState<SchematicLayoutState>(createEmptyLayoutState)
   const [viewState, setViewState] = useState(createEmptySchematicViewState)
   const [viewportSize, setViewportSize] = useState<ViewportSize>(createEmptyViewportSize)
@@ -85,7 +89,7 @@ export function SchematicTab({ bridge, schematicDocument, schematicWriteResult }
     const hadUnsavedDrafts = Object.keys(fieldDrafts).length > 0
     const hadPendingWrites = Object.keys(pendingWriteRequests).length > 0
     if (latestDocumentKeyRef.current && latestDocumentKeyRef.current !== nextDocumentKey && hadUnsavedDrafts && !hadPendingWrites) {
-      setStaleDraftNotice('检测到权威文档已刷新，旧 revision 的本地草稿已丢弃。')
+      setHasStaleDraftNotice(true)
     }
     latestDocumentKeyRef.current = nextDocumentKey
     setFieldDrafts({})
@@ -132,6 +136,7 @@ export function SchematicTab({ bridge, schematicDocument, schematicWriteResult }
       result: current.result,
       pending: true,
       error: '',
+      fallbackErrorKey: '',
     }))
 
     let disposed = false
@@ -145,6 +150,7 @@ export function SchematicTab({ bridge, schematicDocument, schematicWriteResult }
           result,
           pending: false,
           error: '',
+          fallbackErrorKey: '',
         })
       })
       .catch((error: unknown) => {
@@ -154,7 +160,8 @@ export function SchematicTab({ bridge, schematicDocument, schematicWriteResult }
         setLayoutState((current) => ({
           result: current.result,
           pending: false,
-          error: error instanceof Error ? error.message : '电路布局计算失败。',
+          error: error instanceof Error ? error.message : '',
+          fallbackErrorKey: error instanceof Error ? '' : 'simulation.schematic.layout_failed',
         }))
       })
 
@@ -218,7 +225,7 @@ export function SchematicTab({ bridge, schematicDocument, schematicWriteResult }
     if (selectedComponent === null) {
       return
     }
-    setStaleDraftNotice('')
+    setHasStaleDraftNotice(false)
     setFieldDrafts((current) => ({
       ...current,
       [getDraftKey(selectedComponent.id, fieldKey)]: nextValue,
@@ -240,7 +247,7 @@ export function SchematicTab({ bridge, schematicDocument, schematicWriteResult }
     if (pendingWriteRequests[getPendingWriteKey(selectedComponent.id, field.field_key)]) {
       return
     }
-    setStaleDraftNotice('')
+    setHasStaleDraftNotice(false)
     requestSequenceRef.current += 1
     const requestId = `${Date.now()}-${requestSequenceRef.current}`
     setPendingWriteRequests((current) => ({
@@ -262,6 +269,12 @@ export function SchematicTab({ bridge, schematicDocument, schematicWriteResult }
       requestId,
     })
   }
+  const staleDraftNotice = hasStaleDraftNotice
+    ? getUiText(uiText, 'simulation.schematic.stale_draft_notice', 'The authoritative document was refreshed and local drafts for the old revision were discarded.')
+    : ''
+  const layoutErrorMessage = layoutState.error || (layoutState.fallbackErrorKey
+    ? getUiText(uiText, layoutState.fallbackErrorKey, 'Failed to compute the schematic layout.')
+    : '')
 
   return (
     <div className="tab-surface">
@@ -280,6 +293,7 @@ export function SchematicTab({ bridge, schematicDocument, schematicWriteResult }
             fieldDrafts={selectedFieldDrafts}
             pendingFieldRequestIds={selectedPendingFieldRequestIds}
             staleDraftNotice={staleDraftNotice}
+            uiText={uiText}
             onDraftChange={handleDraftChange}
             onSubmitField={handleSubmitField}
           />
@@ -290,8 +304,9 @@ export function SchematicTab({ bridge, schematicDocument, schematicWriteResult }
               schematicDocument={schematicDocument}
               layoutResult={layoutState.result}
               layoutPending={layoutState.pending}
-              layoutError={layoutState.error}
+              layoutError={layoutErrorMessage}
               selectedComponentId={selectedComponentId}
+              uiText={uiText}
               viewState={viewState}
               onViewStateChange={handleViewStateChange}
               onViewportSizeChange={handleViewportSizeChange}

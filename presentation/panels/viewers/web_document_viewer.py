@@ -6,6 +6,9 @@ from PyQt6.QtCore import QEvent, Qt, QUrl
 from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import QLabel, QSizePolicy, QVBoxLayout, QWidget
 
+from presentation.core.i18n_text import get_i18n_text
+from presentation.core.web_resource_host import configure_app_web_view
+
 try:
     from PyQt6.QtWebEngineCore import QWebEngineSettings
     from PyQt6.QtWebEngineWidgets import QWebEngineView
@@ -14,8 +17,6 @@ except ImportError:
     QWebEngineSettings = None
     QWebEngineView = None
     WEBENGINE_AVAILABLE = False
-
-from presentation.core.web_resource_host import configure_app_web_view
 
 _COMMON_STYLES = """
     :root {
@@ -218,7 +219,7 @@ class WebDocumentViewer(QWidget):
         layout.setSpacing(0)
 
         if not WEBENGINE_AVAILABLE:
-            fallback = QLabel("请安装 PyQt6-WebEngine", self)
+            fallback = QLabel(get_i18n_text("dependency.pyqt_webengine_required", "Please install PyQt6-WebEngine"), self)
             fallback.setAlignment(Qt.AlignmentFlag.AlignCenter)
             fallback.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
             layout.addWidget(fallback)

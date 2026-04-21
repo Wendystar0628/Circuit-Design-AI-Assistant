@@ -1,8 +1,10 @@
 import type { ConversationBridge } from '../bridge'
+import { getUiText, type UiTextMap } from '../uiText'
 
 interface RightPanelTabsProps {
   activeSurface: string
   bridge: ConversationBridge | null
+  uiText?: UiTextMap
 }
 
 function ChatIcon() {
@@ -34,22 +36,22 @@ function LibraryIcon() {
   )
 }
 
-export function RightPanelTabs({ activeSurface, bridge }: RightPanelTabsProps) {
+export function RightPanelTabs({ activeSurface, bridge, uiText }: RightPanelTabsProps) {
   const tabs = [
     {
       id: 'conversation',
-      label: '对话',
+      label: getUiText(uiText, 'panel.conversation', 'Conversation'),
       icon: <ChatIcon />,
     },
     {
       id: 'rag',
-      label: '索引库',
+      label: getUiText(uiText, 'panel.rag', 'Index Library'),
       icon: <LibraryIcon />,
     },
   ]
 
   return (
-    <div className="right-panel-tabs" aria-label="右侧面板导航">
+    <div className="right-panel-tabs" aria-label={getUiText(uiText, 'conversation.right_panel_navigation', 'Right panel navigation')}>
       {tabs.map((tab) => {
         const isActive = activeSurface === tab.id
         return (

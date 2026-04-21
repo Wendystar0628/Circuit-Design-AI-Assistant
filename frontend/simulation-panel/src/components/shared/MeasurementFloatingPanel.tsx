@@ -1,3 +1,5 @@
+import { getUiText, type UiTextMap } from '../../uiText'
+
 export interface MeasurementFloatingPanelSignalOption {
   id: string
   label: string
@@ -19,6 +21,7 @@ interface MeasurementFloatingPanelProps {
   onSelectedSignalChange: (signalId: string) => void
   rows: MeasurementFloatingPanelRow[]
   emptyMessage: string
+  uiText?: UiTextMap
 }
 
 export function MeasurementFloatingPanel({
@@ -28,6 +31,7 @@ export function MeasurementFloatingPanel({
   onSelectedSignalChange,
   rows,
   emptyMessage,
+  uiText,
 }: MeasurementFloatingPanelProps) {
   const selectedSignal = signalOptions.find((item) => item.id === selectedSignalId) ?? signalOptions[0] ?? null
 
@@ -35,12 +39,12 @@ export function MeasurementFloatingPanel({
     <div className="measurement-floating-panel">
       <div className="measurement-floating-panel__drag-bar" data-floating-panel-drag-handle="true">
         <div className="measurement-floating-panel__title">{title}</div>
-        <div className="measurement-floating-panel__drag-hint">拖拽移动</div>
+        <div className="measurement-floating-panel__drag-hint">{getUiText(uiText, 'simulation.measurement.drag_hint', 'Drag to move')}</div>
       </div>
       <div className="measurement-floating-panel__header">
         {signalOptions.length > 1 ? (
-          <label className="measurement-floating-panel__selector" aria-label="选择测量信号" data-floating-panel-no-drag="true">
-            <span className="measurement-floating-panel__selector-label">信号</span>
+          <label className="measurement-floating-panel__selector" aria-label={getUiText(uiText, 'simulation.measurement.select_signal_aria', 'Select measurement signal')} data-floating-panel-no-drag="true">
+            <span className="measurement-floating-panel__selector-label">{getUiText(uiText, 'common.signal', 'Signal')}</span>
             <select
               className="measurement-floating-panel__select"
               value={selectedSignalId}
@@ -58,7 +62,7 @@ export function MeasurementFloatingPanel({
       {rows.length ? (
         <>
           <div className="measurement-floating-panel__columns" aria-hidden="true">
-            <span>信号</span>
+            <span>{getUiText(uiText, 'common.signal', 'Signal')}</span>
             <span>A</span>
             <span>B</span>
             <span>Δ</span>

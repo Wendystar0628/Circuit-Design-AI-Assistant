@@ -6,6 +6,7 @@ from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import QLabel, QSizePolicy, QVBoxLayout, QWidget
 from PyQt6.QtWebChannel import QWebChannel
 
+from presentation.core.i18n_text import get_i18n_text
 from presentation.core.web_resource_host import app_resource_url, configure_app_web_view
 
 try:
@@ -88,7 +89,7 @@ class WebMenuBar(QWidget):
         layout.setSpacing(0)
 
         if not WEBENGINE_AVAILABLE:
-            fallback = QLabel("请安装 PyQt6-WebEngine", self)
+            fallback = QLabel(get_i18n_text("dependency.pyqt_webengine_required", "Please install PyQt6-WebEngine"), self)
             fallback.setAlignment(Qt.AlignmentFlag.AlignCenter)
             fallback.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
             layout.addWidget(fallback)
@@ -183,7 +184,7 @@ class WebMenuBar(QWidget):
     def _dispatch_bar_state(self) -> None:
         if self._web_view is None or not self._bar_page_loaded:
             if self._fallback_label is not None:
-                self._fallback_label.setText(self._state.get("brandLabel") or "Circuit AI")
+                self._fallback_label.setText(self._state.get("brandLabel") or get_i18n_text("app.title.short", "Circuit AI"))
             return
         payload = {
             "brandLabel": self._state.get("brandLabel", ""),

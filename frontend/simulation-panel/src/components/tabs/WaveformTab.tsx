@@ -7,6 +7,7 @@ import { MeasurementFloatingPanel } from '../shared/MeasurementFloatingPanel'
 import { SignalSelectionSidebar } from '../shared/SignalSelectionSidebar'
 import { SeriesSvgChart } from '../shared/SeriesSvgChart'
 import { formatMeasurementNumber } from '../shared/chartValueFormatting'
+import { getUiText } from '../../uiText'
 
 interface WaveformTabProps {
   state: SimulationMainState
@@ -22,6 +23,7 @@ function formatMeasurementDelta(valueA: number | null, valueB: number | null): s
 
 export function WaveformTab({ state, bridge }: WaveformTabProps) {
   const waveform = state.waveform_view
+  const uiText = state.ui_text
   const [selectedMeasurementSignalId, setSelectedMeasurementSignalId] = useState('')
   const normalizedAnalysisType = (state.analysis_info_view.analysis_type || '').trim().toLowerCase()
   const viewWindow = useMemo(() => ({
@@ -54,13 +56,13 @@ export function WaveformTab({ state, bridge }: WaveformTabProps) {
       return ''
     }
     if (normalizedAnalysisType === 'tran') {
-      return '时域波形图'
+      return getUiText(uiText, 'simulation.waveform.time_domain_title', 'Time-Domain Waveform')
     }
     if (normalizedAnalysisType === 'dc') {
-      return '直流扫描波形图'
+      return getUiText(uiText, 'simulation.waveform.dc_sweep_title', 'DC Sweep Waveform')
     }
-    return '波形图'
-  }, [normalizedAnalysisType, waveform.has_waveform])
+    return getUiText(uiText, 'simulation.waveform.default_title', 'Waveform')
+  }, [normalizedAnalysisType, uiText, waveform.has_waveform])
   const waveformHeaderActions = waveform.has_waveform ? (
     <>
       <button
@@ -69,7 +71,7 @@ export function WaveformTab({ state, bridge }: WaveformTabProps) {
         disabled={!waveform.has_waveform}
         onClick={() => bridge?.resetWaveformViewport()}
       >
-        Fit
+        {getUiText(uiText, 'common.fit', 'Fit')}
       </button>
       <button
         type="button"
@@ -77,7 +79,9 @@ export function WaveformTab({ state, bridge }: WaveformTabProps) {
         disabled={!waveform.has_waveform}
         onClick={() => bridge?.setCursorVisible('a', !waveform.cursor_a_visible)}
       >
-        {waveform.cursor_a_visible ? '隐藏 A' : '显示 A'}
+        {waveform.cursor_a_visible
+          ? getUiText(uiText, 'simulation.waveform.hide_cursor_a', 'Hide A')
+          : getUiText(uiText, 'simulation.waveform.show_cursor_a', 'Show A')}
       </button>
       <button
         type="button"
@@ -85,7 +89,9 @@ export function WaveformTab({ state, bridge }: WaveformTabProps) {
         disabled={!waveform.has_waveform}
         onClick={() => bridge?.setCursorVisible('b', !waveform.cursor_b_visible)}
       >
-        {waveform.cursor_b_visible ? '隐藏 B' : '显示 B'}
+        {waveform.cursor_b_visible
+          ? getUiText(uiText, 'simulation.waveform.hide_cursor_b', 'Hide B')
+          : getUiText(uiText, 'simulation.waveform.show_cursor_b', 'Show B')}
       </button>
       <button
         type="button"
@@ -93,7 +99,7 @@ export function WaveformTab({ state, bridge }: WaveformTabProps) {
         disabled={!waveform.signal_catalog.length}
         onClick={() => bridge?.clearAllSignals()}
       >
-        清空信号
+        {getUiText(uiText, 'simulation.waveform.clear_signals', 'Clear Signals')}
       </button>
       <button
         type="button"
@@ -101,7 +107,7 @@ export function WaveformTab({ state, bridge }: WaveformTabProps) {
         disabled={!waveform.can_add_to_conversation}
         onClick={() => bridge?.addToConversation('waveform')}
       >
-        添加至对话
+        {getUiText(uiText, 'common.add_to_conversation', 'Add to Conversation')}
       </button>
     </>
   ) : undefined
@@ -161,12 +167,12 @@ export function WaveformTab({ state, bridge }: WaveformTabProps) {
         }}
         sidebar={
           <SignalSelectionSidebar
-            selectableTitle="选择信号"
+            selectableTitle={getUiText(uiText, 'simulation.waveform.select_signals', 'Select Signals')}
             selectableItems={selectableSignalItems}
-            emptySelectableMessage="当前结果没有可用波形信号。"
-            visibleTitle="已显示"
+            emptySelectableMessage={getUiText(uiText, 'simulation.waveform.no_selectable_signals', 'No waveform signals are available for the current result.')}
+            visibleTitle={getUiText(uiText, 'simulation.waveform.visible_signals', 'Visible')}
             visibleItems={visibleSignalItems}
-            emptyVisibleMessage="当前没有已显示信号。"
+            emptyVisibleMessage={getUiText(uiText, 'simulation.waveform.no_visible_signals', 'No signals are currently visible.')}
             defaultPrimaryRatio={0.7}
           />
         }
@@ -182,12 +188,13 @@ export function WaveformTab({ state, bridge }: WaveformTabProps) {
                   defaultRight: 16,
                   content: (
                     <MeasurementFloatingPanel
-                      title="测量"
+                      title={getUiText(uiText, 'simulation.waveform.measurement', 'Measurement')}
                       signalOptions={measurementSignals.map((signal) => ({ id: signal.id, label: signal.label }))}
                       selectedSignalId={activeMeasurementSignal?.id ?? ''}
                       onSelectedSignalChange={setSelectedMeasurementSignalId}
                       rows={measurementPanelRows}
-                      emptyMessage="当前所选信号没有可展示的测量值。"
+                      emptyMessage={getUiText(uiText, 'simulation.waveform.measurement_empty', 'No measurement values are available for the selected signal.')}
+                      uiText={uiText}
                     />
                   ),
                 },
@@ -206,7 +213,9 @@ export function WaveformTab({ state, bridge }: WaveformTabProps) {
               yLabel={waveform.y_label || 'Waveform'}
               secondaryYLabel={waveform.secondary_y_label}
               logX={waveform.log_x}
-              emptyMessage={waveform.has_waveform ? '当前未显示任何波形，请在左侧勾选信号。' : '当前结果没有可用波形。'}
+              emptyMessage={waveform.has_waveform
+                ? getUiText(uiText, 'simulation.waveform.empty_hidden', 'No waveform is currently displayed. Select signals from the left sidebar.')
+                : getUiText(uiText, 'simulation.waveform.empty_no_waveform', 'No waveform is available for the current result.')}
             />
           </div>
         }

@@ -6,6 +6,7 @@ import { RagPanel } from './components/RagPanel'
 import { RightPanelTabs } from './components/RightPanelTabs'
 import { ConversationTimeline } from './components/ConversationTimeline'
 import type { ConversationAttachmentState, ConversationMainState } from './types'
+import { getUiText } from './uiText'
 
 interface AppProps {
   state: ConversationMainState
@@ -23,16 +24,26 @@ export function App({
   registerClearDraftAttachmentsHandler,
 }: AppProps) {
   const activeSurface = state.ui.active_surface === 'rag' ? 'rag' : 'conversation'
+  const conversationBridgeBanner = getUiText(
+    state.ui_text,
+    'conversation.bridge.disconnected',
+    'Frontend bridge is not connected yet. Message display and input actions may be temporarily unavailable.',
+  )
+  const ragBridgeBanner = getUiText(
+    state.ui_text,
+    'conversation.bridge.disconnected_rag',
+    'Frontend bridge is not connected yet. Index library actions may be temporarily unavailable.',
+  )
 
   return (
     <div className="app-shell">
-      <RightPanelTabs activeSurface={activeSurface} bridge={bridge} />
+      <RightPanelTabs activeSurface={activeSurface} bridge={bridge} uiText={state.ui_text} />
       {activeSurface === 'conversation' ? (
         <>
           <ConversationHeader state={state} bridge={bridge} bridgeConnected={bridgeConnected} />
           <div className="app-main">
             {!bridgeConnected ? (
-              <div className="bridge-banner">前端桥接尚未连接，消息显示和输入动作可能暂时不可用。</div>
+              <div className="bridge-banner">{conversationBridgeBanner}</div>
             ) : null}
             <ConversationTimeline state={state} bridge={bridge} />
           </div>
@@ -47,7 +58,7 @@ export function App({
       ) : (
         <div className="app-main app-main--single-surface">
           {!bridgeConnected ? (
-            <div className="bridge-banner">前端桥接尚未连接，索引库动作可能暂时不可用。</div>
+            <div className="bridge-banner">{ragBridgeBanner}</div>
           ) : null}
           <RagPanel state={state} bridge={bridge} bridgeConnected={bridgeConnected} />
         </div>

@@ -9,6 +9,7 @@ import { SignalSelectionSidebar } from '../shared/SignalSelectionSidebar'
 import { SeriesSvgChart, type SeriesSvgChartFloatingPanel } from '../shared/SeriesSvgChart'
 import { buildChartMeasurementPresentationGroups } from '../shared/chartMeasurementPresentation'
 import { formatMeasurementNumber } from '../shared/chartValueFormatting'
+import { getUiText } from '../../uiText'
 
 interface ChartTabProps {
   state: SimulationMainState
@@ -24,8 +25,9 @@ function formatMeasurementDelta(valueA: number | null, valueB: number | null): s
 
 export function ChartTab({ state, bridge }: ChartTabProps) {
   const chart = state.analysis_chart_view
+  const uiText = state.ui_text
   const [selectedMeasurementGroupId, setSelectedMeasurementGroupId] = useState('')
-  const chartDisplayName = chart.chart_type_display_name || chart.title || chart.chart_type || '图表'
+  const chartDisplayName = chart.chart_type_display_name || chart.title || chart.chart_type || getUiText(uiText, 'simulation.chart.default_title', 'Chart')
   const viewWindow = useMemo(() => ({
     active: chart.viewport.active,
     xMin: chart.viewport.x_min,
@@ -47,7 +49,7 @@ export function ChartTab({ state, bridge }: ChartTabProps) {
         disabled={!chart.has_chart}
         onClick={() => bridge?.resetChartViewport()}
       >
-        Fit
+        {getUiText(uiText, 'common.fit', 'Fit')}
       </button>
       <button
         type="button"
@@ -55,7 +57,9 @@ export function ChartTab({ state, bridge }: ChartTabProps) {
         disabled={!chart.has_chart}
         onClick={() => bridge?.setChartMeasurementEnabled(!chart.measurement_enabled)}
       >
-        {chart.measurement_enabled ? '关闭测量' : '开启测量'}
+        {chart.measurement_enabled
+          ? getUiText(uiText, 'simulation.chart.disable_measurement', 'Disable Measurement')
+          : getUiText(uiText, 'simulation.chart.enable_measurement', 'Enable Measurement')}
       </button>
       <button
         type="button"
@@ -63,7 +67,9 @@ export function ChartTab({ state, bridge }: ChartTabProps) {
         disabled={!canToggleMeasurementPoint}
         onClick={() => bridge?.setChartMeasurementPointEnabled(!chart.measurement_point.enabled)}
       >
-        {chart.measurement_point.enabled ? '关闭测量点' : '开启测量点'}
+        {chart.measurement_point.enabled
+          ? getUiText(uiText, 'simulation.chart.disable_measurement_point', 'Disable Measurement Point')
+          : getUiText(uiText, 'simulation.chart.enable_measurement_point', 'Enable Measurement Point')}
       </button>
       <button
         type="button"
@@ -71,7 +77,7 @@ export function ChartTab({ state, bridge }: ChartTabProps) {
         disabled={!chart.available_series.length}
         onClick={() => bridge?.clearAllChartSeries()}
       >
-        清空信号
+        {getUiText(uiText, 'simulation.chart.clear_signals', 'Clear Signals')}
       </button>
       <button
         type="button"
@@ -79,7 +85,7 @@ export function ChartTab({ state, bridge }: ChartTabProps) {
         disabled={!chart.can_add_to_conversation}
         onClick={() => bridge?.addToConversation('chart')}
       >
-        添加至对话
+        {getUiText(uiText, 'common.add_to_conversation', 'Add to Conversation')}
       </button>
     </>
   ) : undefined
@@ -149,12 +155,13 @@ export function ChartTab({ state, bridge }: ChartTabProps) {
         defaultRight: 16,
         content: (
           <MeasurementPointFloatingPanel
-            title="测量点"
+            title={getUiText(uiText, 'simulation.chart.measurement_point', 'Measurement Point')}
             signalOptions={measurementSignalOptions}
             selectedSignalId={measurementPointTargetId}
             onSelectedSignalChange={(signalId) => bridge?.setChartMeasurementPointTarget(signalId)}
             rows={measurementPointPanelRows}
-            emptyMessage="当前测量点没有可展示的采样值。"
+            emptyMessage={getUiText(uiText, 'simulation.chart.measurement_point_empty', 'No sampled values are available for the current measurement point.')}
+            uiText={uiText}
           />
         ),
       })
@@ -166,18 +173,19 @@ export function ChartTab({ state, bridge }: ChartTabProps) {
         defaultRight: 16,
         content: (
           <MeasurementFloatingPanel
-            title="测量"
+            title={getUiText(uiText, 'simulation.chart.measurement', 'Measurement')}
             signalOptions={measurementSignalOptions}
             selectedSignalId={activeMeasurementGroup?.id ?? ''}
             onSelectedSignalChange={setSelectedMeasurementGroupId}
             rows={measurementPanelRows}
-            emptyMessage="当前所选信号没有可展示的测量值。"
+            emptyMessage={getUiText(uiText, 'simulation.chart.measurement_empty', 'No measurement values are available for the selected signal.')}
+            uiText={uiText}
           />
         ),
       })
     }
     return panels
-  }, [activeMeasurementGroup?.id, bridge, chart.measurement_enabled, chart.measurement_point.enabled, measurementPanelRows, measurementPointPanelRows, measurementPointTargetId, measurementSignalOptions])
+  }, [activeMeasurementGroup?.id, bridge, chart.measurement_enabled, chart.measurement_point.enabled, measurementPanelRows, measurementPointPanelRows, measurementPointTargetId, measurementSignalOptions, uiText])
 
   return (
     <div className="tab-surface">
@@ -191,12 +199,12 @@ export function ChartTab({ state, bridge }: ChartTabProps) {
         }}
         sidebar={
           <SignalSelectionSidebar
-            selectableTitle="选择信号"
+            selectableTitle={getUiText(uiText, 'simulation.chart.select_signals', 'Select Signals')}
             selectableItems={selectableSeriesItems}
-            emptySelectableMessage="当前结果没有可用图表序列。"
-            visibleTitle="已显示"
+            emptySelectableMessage={getUiText(uiText, 'simulation.chart.no_selectable_series', 'No chart series are available for the current result.')}
+            visibleTitle={getUiText(uiText, 'simulation.chart.visible_series', 'Visible')}
             visibleItems={visibleSeriesItems}
-            emptyVisibleMessage="当前没有已显示信号。"
+            emptyVisibleMessage={getUiText(uiText, 'simulation.chart.no_visible_series', 'No signals are currently visible.')}
             defaultPrimaryRatio={0.7}
           />
         }
@@ -229,7 +237,9 @@ export function ChartTab({ state, bridge }: ChartTabProps) {
               logX={chart.log_x}
               logY={chart.log_y}
               rightLogY={chart.right_log_y}
-              emptyMessage={chart.has_chart ? '当前未显示任何序列，请在左侧重新勾选。' : '当前结果没有可用图表。'}
+              emptyMessage={chart.has_chart
+                ? getUiText(uiText, 'simulation.chart.empty_hidden', 'No series are currently displayed. Re-select them from the left sidebar.')
+                : getUiText(uiText, 'simulation.chart.empty_no_chart', 'No chart is available for the current result.')}
             />
           </div>
         }

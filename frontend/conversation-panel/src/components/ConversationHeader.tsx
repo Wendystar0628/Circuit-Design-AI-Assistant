@@ -2,6 +2,7 @@ import { useEffect, useState, type KeyboardEvent } from 'react'
 
 import type { ConversationBridge } from '../bridge'
 import type { ConversationMainState } from '../types'
+import { getUiText } from '../uiText'
 
 interface ConversationHeaderProps {
   state: ConversationMainState
@@ -14,7 +15,8 @@ export function ConversationHeader({
   bridge,
   bridgeConnected,
 }: ConversationHeaderProps) {
-  const sessionName = state.session.name || '新对话'
+  const untitledSessionLabel = getUiText(state.ui_text, 'conversation.header.untitled_session', 'New Conversation')
+  const sessionName = state.session.name || untitledSessionLabel
   const [draftName, setDraftName] = useState(sessionName)
   const [isEditing, setIsEditing] = useState(false)
 
@@ -63,8 +65,8 @@ export function ConversationHeader({
             onKeyDown={handleNameKeyDown}
             autoFocus
             disabled={!bridgeConnected}
-            title="会话名称"
-            placeholder="输入会话名称"
+            title={getUiText(state.ui_text, 'conversation.header.session_name', 'Conversation name')}
+            placeholder={getUiText(state.ui_text, 'conversation.header.session_name_placeholder', 'Enter conversation name')}
           />
         ) : (
           <button
@@ -72,7 +74,7 @@ export function ConversationHeader({
             className="conversation-header__title"
             onClick={() => setIsEditing(true)}
             disabled={!bridgeConnected}
-            title="重命名会话"
+            title={getUiText(state.ui_text, 'conversation.header.rename_session', 'Rename conversation')}
           >
             {sessionName}
           </button>
@@ -85,7 +87,7 @@ export function ConversationHeader({
           onClick={() => bridge?.requestNewConversation?.()}
           disabled={!bridgeConnected}
         >
-          新对话
+          {getUiText(state.ui_text, 'btn.new_conversation', 'New Conversation')}
         </button>
         <button
           type="button"
@@ -93,7 +95,7 @@ export function ConversationHeader({
           onClick={() => bridge?.requestHistory?.()}
           disabled={!bridgeConnected}
         >
-          历史
+          {getUiText(state.ui_text, 'btn.history', 'History')}
         </button>
         <button
           type="button"
@@ -101,7 +103,7 @@ export function ConversationHeader({
           onClick={() => bridge?.requestCompressContext?.()}
           disabled={!bridgeConnected}
         >
-          压缩
+          {getUiText(state.ui_text, 'menu.conversation.compress', 'Compress Context')}
         </button>
       </div>
     </div>

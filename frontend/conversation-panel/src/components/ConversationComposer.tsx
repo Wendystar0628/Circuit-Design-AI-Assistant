@@ -5,6 +5,7 @@ import type {
   ConversationMainState,
   PendingWorkspaceEditSummaryState,
 } from '../types'
+import { getUiText } from '../uiText'
 
 interface ConversationComposerProps {
   state: ConversationMainState
@@ -43,7 +44,10 @@ function mergeAttachments(
   return merged
 }
 
-function createInlineAttachmentChip(attachment: ConversationAttachmentState): HTMLSpanElement {
+function createInlineAttachmentChip(
+  attachment: ConversationAttachmentState,
+  uiText: Record<string, string>,
+): HTMLSpanElement {
   const chip = document.createElement('span')
   chip.className = 'composer-inline-chip'
   chip.contentEditable = 'false'
@@ -52,7 +56,7 @@ function createInlineAttachmentChip(attachment: ConversationAttachmentState): HT
 
   const label = document.createElement('span')
   label.className = 'composer-inline-chip__label'
-  label.textContent = attachment.name || '未命名文件'
+  label.textContent = attachment.name || getUiText(uiText, 'common.unnamed_file', 'Unnamed File')
 
   const remove = document.createElement('span')
   remove.className = 'composer-inline-chip__remove'
@@ -95,11 +99,15 @@ function ensureEditorSelection(editor: HTMLDivElement): Range {
   return range
 }
 
-function insertInlineAttachmentChip(editor: HTMLDivElement, attachment: ConversationAttachmentState): void {
+function insertInlineAttachmentChip(
+  editor: HTMLDivElement,
+  attachment: ConversationAttachmentState,
+  uiText: Record<string, string>,
+): void {
   const range = ensureEditorSelection(editor)
   range.deleteContents()
   const fragment = document.createDocumentFragment()
-  const chip = createInlineAttachmentChip(attachment)
+  const chip = createInlineAttachmentChip(attachment, uiText)
   const trailingCursorHost = document.createTextNode('\u200b')
   fragment.append(chip, trailingCursorHost)
   range.insertNode(fragment)
@@ -229,16 +237,16 @@ function formatCompactTokenCount(value: number): string {
   return `${Math.round(normalized)}`
 }
 
-function primaryActionLabel(mode: string): string {
+function primaryActionLabel(mode: string, uiText: Record<string, string>): string {
   switch (mode) {
     case 'stop':
-      return '停止'
+      return getUiText(uiText, 'conversation.composer.action.stop', 'Stop')
     case 'stopping':
-      return '停止中'
+      return getUiText(uiText, 'conversation.composer.action.stopping', 'Stopping')
     case 'rollbacking':
-      return '撤回中'
+      return getUiText(uiText, 'conversation.composer.action.rollbacking', 'Rolling Back')
     default:
-      return '发送'
+      return getUiText(uiText, 'conversation.composer.action.send', 'Send')
   }
 }
 
@@ -255,9 +263,11 @@ function usageTone(state: string): string {
 function PendingEditSummary({
   summary,
   bridge,
+  uiText,
 }: {
   summary: PendingWorkspaceEditSummaryState
   bridge: ConversationBridge | null
+  uiText: Record<string, string>
 }) {
   const [expanded, setExpanded] = useState(false)
   if (!summary.file_count) {
@@ -268,19 +278,21 @@ function PendingEditSummary({
     <section className="composer-summary">
       <div className="composer-summary__header">
         <div className="composer-summary__stats">
-          <span>{summary.file_count} 个待处理文件</span>
+          <span>{getUiText(uiText, 'conversation.composer.pending_files_count', '{count} pending files', { count: summary.file_count })}</span>
           <span>+{summary.added_lines}</span>
           <span>-{summary.deleted_lines}</span>
         </div>
         <div className="composer-summary__actions">
           <button type="button" className="secondary-button" onClick={() => bridge?.acceptAllPendingEdits?.()}>
-            全部接受
+            {getUiText(uiText, 'conversation.composer.pending_accept_all', 'Accept All')}
           </button>
           <button type="button" className="secondary-button secondary-button--danger" onClick={() => bridge?.rejectAllPendingEdits?.()}>
-            全部拒绝
+            {getUiText(uiText, 'conversation.composer.pending_reject_all', 'Reject All')}
           </button>
           <button type="button" className="ghost-button" onClick={() => setExpanded((current) => !current)}>
-            {expanded ? '收起' : '展开'}
+            {expanded
+              ? getUiText(uiText, 'common.collapse', 'Collapse')
+              : getUiText(uiText, 'common.expand', 'Expand')}
           </button>
         </div>
       </div>
@@ -316,6 +328,7 @@ const clearNonceRef = useRef(state.composer.clear_draft_nonce)
 const [draftAttachments, setDraftAttachments] = useState<ConversationAttachmentState[]>([])
 const [plainTextValue, setPlainTextValue] = useState('')
 const bridgeReady = bridgeConnected && Boolean(bridge)
+ const uiText = state.ui_text
 
 useEffect(() => {
 draftAttachmentsRef.current = draftAttachments
@@ -353,7 +366,7 @@ requestAnimationFrame(() => {
 refreshComposerState()
 })
 },
-[refreshComposerState],
+[refreshComposerState, uiText],
 )
 
 const appendAttachments = useCallback(
@@ -372,7 +385,7 @@ const inlineAttachments = uniqueIncoming.filter((attachment) => isInlineAttachme
 if (inlineAttachments.length) {
 editor.focus()
 inlineAttachments.forEach((attachment) => {
-insertInlineAttachmentChip(editor, attachment)
+insertInlineAttachmentChip(editor, attachment, uiText)
 })
 }
 }
@@ -380,7 +393,7 @@ requestAnimationFrame(() => {
 refreshComposerState()
 })
 },
-[refreshComposerState],
+[refreshComposerState, uiText],
 )
 
 useEffect(() => {
@@ -467,18 +480,18 @@ const galleryAttachments = draftAttachments.filter((attachment) => !isInlineAtta
 
 return (
   <section className="composer-shell">
-    <PendingEditSummary summary={state.composer.pending_workspace_edit_summary} bridge={bridge} />
+    <PendingEditSummary summary={state.composer.pending_workspace_edit_summary} bridge={bridge} uiText={uiText} />
 
     {galleryAttachments.length ? (
       <div className="composer-gallery">
         {galleryAttachments.map((attachment) => (
           <div key={attachmentKey(attachment)} className="composer-gallery__item">
             <div className="composer-gallery__meta">
-              <span className="composer-gallery__name">{attachment.name || '未命名附件'}</span>
+              <span className="composer-gallery__name">{attachment.name || getUiText(uiText, 'common.unnamed_attachment', 'Unnamed Attachment')}</span>
               <span className="composer-gallery__path">{attachment.path}</span>
             </div>
             <button type="button" className="ghost-button ghost-button--danger" onClick={() => removeAttachment(attachmentKey(attachment))}>
-              移除
+              {getUiText(uiText, 'common.remove', 'Remove')}
             </button>
           </div>
         ))}
@@ -505,10 +518,10 @@ return (
           contentEditable={bridgeReady}
           suppressContentEditableWarning
           role="textbox"
-          aria-label="消息输入框"
+          aria-label={getUiText(uiText, 'conversation.composer.input_aria_label', 'Message input')}
           aria-multiline="true"
           data-empty="true"
-          data-placeholder="输入消息。Shift+Enter 换行，Enter 发送。"
+          data-placeholder={getUiText(uiText, 'conversation.composer.input_placeholder', 'Enter your message. Shift+Enter for newline, Enter to send.')}
           onFocus={() => {
             if (editorRef.current && editorRef.current.textContent === '') {
               editorRef.current.dataset.empty = draftAttachments.length ? 'false' : 'true'
@@ -602,18 +615,18 @@ return (
             className="icon-button composer-control-button"
             onClick={() => bridge?.requestUploadImage?.()}
             disabled={!bridgeReady}
-            title="上传图片"
+            title={getUiText(uiText, 'btn.upload_image', 'Upload Image')}
           >
-            图片
+            {getUiText(uiText, 'conversation.composer.image', 'Image')}
           </button>
           <button
             type="button"
             className="icon-button composer-control-button"
             onClick={() => bridge?.requestSelectFile?.()}
             disabled={!bridgeReady}
-            title="选择文件"
+            title={getUiText(uiText, 'btn.select_file', 'Select File')}
           >
-            文件
+            {getUiText(uiText, 'conversation.composer.file', 'File')}
           </button>
           <div className={`usage-card composer-usage-pill usage-card--${usageTone(state.composer.compress_button_state)}`}>
             <span className="usage-card__tokens">
@@ -626,7 +639,7 @@ return (
             onClick={() => bridge?.requestModelConfig?.()}
             disabled={!bridgeReady}
           >
-            {state.composer.model_display_name || '模型'}
+            {state.composer.model_display_name || getUiText(uiText, 'conversation.composer.model_fallback', 'Model')}
           </button>
         </div>
         <button
@@ -643,7 +656,7 @@ return (
             }
           }}
         >
-          {primaryActionLabel(actionMode)}
+          {primaryActionLabel(actionMode, uiText)}
         </button>
       </div>
     </div>

@@ -56,7 +56,7 @@
 
     const brand = document.createElement('div');
     brand.className = 'brand-pill';
-    brand.textContent = state.brandLabel || 'CIRCUIT AI';
+    brand.textContent = state.brandLabel || '';
     bar.appendChild(brand);
 
     const buttonGroup = document.createElement('div');

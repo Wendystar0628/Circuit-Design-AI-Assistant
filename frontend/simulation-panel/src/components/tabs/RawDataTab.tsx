@@ -11,6 +11,7 @@ import {
 
 import type { SimulationBridge } from '../../bridge/bridge'
 import type { RawDataCopyResultState, RawDataDocumentState, RawDataViewportState } from '../../types/state'
+import { getUiText, type UiTextMap } from '../../uiText'
 
 const FALLBACK_ROW_HEIGHT_PX = 28
 const FALLBACK_COLUMN_HEADER_HEIGHT_PX = 32
@@ -28,6 +29,13 @@ interface GridSelectionState {
   anchor: GridCellPosition
   focus: GridCellPosition
 }
+
+type CopyFeedbackState =
+  | { kind: 'copy_failed' }
+  | { kind: 'copy_success'; rows: number; cols: number }
+  | { kind: 'copying' }
+  | { kind: 'copying_selection'; selection: string }
+  | null
 
 function clamp(value: number, min: number, max: number): number {
   if (value < min) {
@@ -81,16 +89,17 @@ interface RawDataTabProps {
   rawDataDocument: RawDataDocumentState
   rawDataViewport: RawDataViewportState
   bridge: SimulationBridge | null
+  uiText: UiTextMap
 }
 
-export const RawDataTab = memo(function RawDataTab({ rawDataCopyResult, rawDataDocument, rawDataViewport, bridge }: RawDataTabProps) {
+export const RawDataTab = memo(function RawDataTab({ rawDataCopyResult, rawDataDocument, rawDataViewport, bridge, uiText }: RawDataTabProps) {
   const bodyScrollRef = useRef<HTMLDivElement | null>(null)
   const [bodySize, setBodySize] = useState({ width: 0, height: 0 })
   const [scrollLeft, setScrollLeft] = useState(0)
   const [scrollTop, setScrollTop] = useState(0)
   const [selection, setSelection] = useState<GridSelectionState | null>(null)
   const [dragging, setDragging] = useState(false)
-  const [copyFeedback, setCopyFeedback] = useState('')
+  const [copyFeedback, setCopyFeedback] = useState<CopyFeedbackState>(null)
   const [pendingCopySequence, setPendingCopySequence] = useState(0)
 
   const rowCount = rawDataDocument.row_count
@@ -141,7 +150,7 @@ export const RawDataTab = memo(function RawDataTab({ rawDataCopyResult, rawDataD
     setScrollLeft(0)
     setScrollTop(0)
     setPendingCopySequence(0)
-    setCopyFeedback('')
+    setCopyFeedback(null)
     if (rawDataDocument.has_data && rowCount > 0 && columnCount > 0) {
       setSelection({ anchor: { row: 0, col: 0 }, focus: { row: 0, col: 0 } })
       return
@@ -154,7 +163,7 @@ export const RawDataTab = memo(function RawDataTab({ rawDataCopyResult, rawDataD
       return
     }
     const handle = window.setTimeout(() => {
-      setCopyFeedback('')
+      setCopyFeedback(null)
     }, 1200)
     return () => {
       window.clearTimeout(handle)
@@ -173,12 +182,12 @@ export const RawDataTab = memo(function RawDataTab({ rawDataCopyResult, rawDataD
     }
     setPendingCopySequence(0)
     if (!rawDataCopyResult.success) {
-      setCopyFeedback('复制失败')
+      setCopyFeedback({ kind: 'copy_failed' })
       return
     }
     const rowCountLabel = Math.max(rawDataCopyResult.row_count, 0)
     const colCountLabel = Math.max(rawDataCopyResult.col_count, 0)
-    setCopyFeedback(`已复制 ${rowCountLabel} × ${colCountLabel}`)
+    setCopyFeedback({ kind: 'copy_success', rows: rowCountLabel, cols: colCountLabel })
   }, [pendingCopySequence, rawDataCopyResult, rawDataDocument.dataset_id, rawDataDocument.version])
 
   const viewportRowMap = useMemo(() => {
@@ -356,7 +365,9 @@ export const RawDataTab = memo(function RawDataTab({ rawDataCopyResult, rawDataD
       colEnd: selectionRange.endCol + 1,
       includeHeaders,
     })
-    setCopyFeedback(selectionLabel ? `正在复制 ${selectionLabel}` : '正在复制')
+    setCopyFeedback(selectionLabel
+      ? { kind: 'copying_selection', selection: selectionLabel }
+      : { kind: 'copying' })
   }, [bridge, rawDataCopyResult.sequence, rawDataDocument.dataset_id, rawDataDocument.has_data, rawDataDocument.version, selectionLabel, selectionRange])
 
   const handleBodyScroll = useCallback(() => {
@@ -511,13 +522,29 @@ export const RawDataTab = memo(function RawDataTab({ rawDataCopyResult, rawDataD
       }}
     />
   ) : null
+  const copyFeedbackText = !copyFeedback
+    ? ''
+    : copyFeedback.kind === 'copy_failed'
+      ? getUiText(uiText, 'simulation.raw_data.copy_failed', 'Copy failed')
+      : copyFeedback.kind === 'copy_success'
+        ? getUiText(uiText, 'simulation.raw_data.copy_success', 'Copied {rows} × {cols}', { rows: copyFeedback.rows, cols: copyFeedback.cols })
+        : copyFeedback.kind === 'copying_selection'
+          ? getUiText(uiText, 'simulation.raw_data.copying_selection', 'Copying {selection}', { selection: copyFeedback.selection })
+          : getUiText(uiText, 'simulation.raw_data.copying', 'Copying')
+  const emptyMessage = getUiText(uiText, 'simulation.raw_data.empty', 'No raw data is available to display.')
+  const statusSummary = rawDataDocument.has_data
+    ? getUiText(uiText, 'simulation.raw_data.grid_summary', '{rows} rows · {cols} columns', { rows: rowCount, cols: columnCount })
+    : emptyMessage
+  const shortcutHint = rawDataDocument.has_data
+    ? getUiText(uiText, 'simulation.raw_data.copy_shortcuts', 'Ctrl/Cmd + C to copy selection, Ctrl/Cmd + A to select all.')
+    : ''
 
   return (
     <div className="tab-surface">
       <div className="raw-data-grid-shell">
         <div className="raw-data-grid__statusbar">
-          <span>{rawDataDocument.has_data ? `共 ${rowCount} 行 · ${columnCount} 列` : '当前没有可展示的原始数据。'}</span>
-          <span>{copyFeedback || (rawDataDocument.has_data ? 'Ctrl/Cmd + C 复制选区，Ctrl/Cmd + A 全选。' : '')}</span>
+          <span>{statusSummary}</span>
+          <span>{copyFeedbackText || shortcutHint}</span>
         </div>
         {rawDataDocument.has_data ? (
           <div className="raw-data-grid__viewport-shell" style={{ gridTemplateColumns: `${rowHeaderWidth}px minmax(0, 1fr)`, gridTemplateRows: `${columnHeaderHeight}px minmax(0, 1fr)` }}>
@@ -538,7 +565,7 @@ export const RawDataTab = memo(function RawDataTab({ rawDataCopyResult, rawDataD
             </div>
           </div>
         ) : (
-          <div className="muted-text">当前没有可展示的原始数据。</div>
+          <div className="muted-text">{emptyMessage}</div>
         )}
       </div>
     </div>

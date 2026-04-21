@@ -7,6 +7,7 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import QLabel, QSizePolicy, QVBoxLayout, QWidget
 from PyQt6.QtWebChannel import QWebChannel
 
+from presentation.core.i18n_text import get_i18n_text
 from presentation.core.web_resource_host import app_resource_url, configure_app_web_view
 from presentation.panels.conversation.conversation_web_bridge import ConversationWebBridge
 
@@ -74,7 +75,7 @@ class ReactConversationHost(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         if not WEBENGINE_AVAILABLE:
-            fallback = QLabel("请安装 PyQt6-WebEngine", self)
+            fallback = QLabel(get_i18n_text("dependency.pyqt_webengine_required", "Please install PyQt6-WebEngine"), self)
             fallback.setAlignment(Qt.AlignmentFlag.AlignCenter)
             fallback.setSizePolicy(
                 QSizePolicy.Policy.Expanding,
@@ -166,7 +167,7 @@ class ReactConversationHost(QWidget):
         if self._web_view is None or not self._page_loaded:
             if self._fallback_label is not None:
                 session = self._state.get("session", {}) if isinstance(self._state, dict) else {}
-                self._fallback_label.setText(str(session.get("name", "Conversation")))
+                self._fallback_label.setText(str(session.get("name") or get_i18n_text("panel.conversation", "Conversation")))
             return
         script = "window.conversationApp && window.conversationApp.setState(%s);" % json.dumps(
             self._state,

@@ -27,6 +27,7 @@ interface SimulationAppProps {
 
 export function SimulationApp({ state, schematicDocument, schematicWriteResult, rawDataCopyResult, rawDataDocument, rawDataViewport, bridge, bridgeConnected, onTabSelect }: SimulationAppProps) {
   const activeTab = state.surface_tabs.active_tab
+  const uiText = state.ui_text
   const shouldMountSchematicSurface = activeTab === 'schematic' || Boolean(schematicDocument.file_path)
   const shouldMountRawDataSurface = activeTab === 'raw_data' || rawDataDocument.has_data
 
@@ -43,12 +44,12 @@ export function SimulationApp({ state, schematicDocument, schematicWriteResult, 
       )}
       {shouldMountSchematicSurface ? (
         <div className={activeTab === 'schematic' ? 'tab-surface-shell' : 'tab-surface-shell tab-surface-shell--hidden'}>
-          <SchematicTab bridge={bridge} schematicDocument={schematicDocument} schematicWriteResult={schematicWriteResult} />
+          <SchematicTab bridge={bridge} schematicDocument={schematicDocument} schematicWriteResult={schematicWriteResult} uiText={uiText} />
         </div>
       ) : null}
       {shouldMountRawDataSurface ? (
         <div className={activeTab === 'raw_data' ? 'tab-surface-shell' : 'tab-surface-shell tab-surface-shell--hidden'}>
-          <RawDataTab rawDataCopyResult={rawDataCopyResult} rawDataDocument={rawDataDocument} rawDataViewport={rawDataViewport} bridge={bridge} />
+          <RawDataTab rawDataCopyResult={rawDataCopyResult} rawDataDocument={rawDataDocument} rawDataViewport={rawDataViewport} bridge={bridge} uiText={uiText} />
         </div>
       ) : null}
     </SimulationLayoutShell>

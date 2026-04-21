@@ -1,4 +1,5 @@
 import type { MeasurementFloatingPanelSignalOption } from './MeasurementFloatingPanel'
+import { getUiText, type UiTextMap } from '../../uiText'
 
 export interface MeasurementPointFloatingPanelRow {
   id: string
@@ -13,6 +14,7 @@ interface MeasurementPointFloatingPanelProps {
   onSelectedSignalChange: (signalId: string) => void
   rows: MeasurementPointFloatingPanelRow[]
   emptyMessage: string
+  uiText?: UiTextMap
 }
 
 export function MeasurementPointFloatingPanel({
@@ -22,6 +24,7 @@ export function MeasurementPointFloatingPanel({
   onSelectedSignalChange,
   rows,
   emptyMessage,
+  uiText,
 }: MeasurementPointFloatingPanelProps) {
   const selectedSignal = signalOptions.find((item) => item.id === selectedSignalId) ?? signalOptions[0] ?? null
 
@@ -29,12 +32,12 @@ export function MeasurementPointFloatingPanel({
     <div className="measurement-floating-panel measurement-floating-panel--point">
       <div className="measurement-floating-panel__drag-bar" data-floating-panel-drag-handle="true">
         <div className="measurement-floating-panel__title">{title}</div>
-        <div className="measurement-floating-panel__drag-hint">拖拽移动</div>
+        <div className="measurement-floating-panel__drag-hint">{getUiText(uiText, 'simulation.measurement.drag_hint', 'Drag to move')}</div>
       </div>
       <div className="measurement-floating-panel__header">
         {signalOptions.length > 1 ? (
-          <label className="measurement-floating-panel__selector" aria-label="选择测量点信号" data-floating-panel-no-drag="true">
-            <span className="measurement-floating-panel__selector-label">信号</span>
+          <label className="measurement-floating-panel__selector" aria-label={getUiText(uiText, 'simulation.measurement_point.select_signal_aria', 'Select measurement-point signal')} data-floating-panel-no-drag="true">
+            <span className="measurement-floating-panel__selector-label">{getUiText(uiText, 'common.signal', 'Signal')}</span>
             <select
               className="measurement-floating-panel__select"
               value={selectedSignalId}

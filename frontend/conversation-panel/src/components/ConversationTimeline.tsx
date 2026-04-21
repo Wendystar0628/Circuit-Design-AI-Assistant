@@ -15,6 +15,7 @@ import type {
 } from '../types'
 import type { ConversationBridge } from '../bridge'
 import { RichHtml } from './RichHtml'
+import { getUiText } from '../uiText'
 
 interface ConversationTimelineProps {
   state: ConversationMainState
@@ -47,23 +48,23 @@ function toFileUrl(filePath: string): string {
   return encodeURI(normalized)
 }
 
-function stopReasonLabel(reason: string): string {
+function stopReasonLabel(reason: string, uiText: Record<string, string>): string {
   return {
-    user_requested: '已由用户停止',
-    timeout: '响应超时，已中断',
-    error: '生成出现错误，内容为部分结果',
-    session_switch: '会话切换，中断了当前输出',
-    app_shutdown: '应用关闭，中断了当前输出',
-  }[reason] ?? '该回复未完整生成'
+    user_requested: getUiText(uiText, 'conversation.timeline.stop_reason.user_requested', 'Stopped by user'),
+    timeout: getUiText(uiText, 'conversation.timeline.stop_reason.timeout', 'Response timed out and was interrupted'),
+    error: getUiText(uiText, 'conversation.timeline.stop_reason.error', 'Generation encountered an error and the content is partial'),
+    session_switch: getUiText(uiText, 'conversation.timeline.stop_reason.session_switch', 'Session switched and interrupted the current response'),
+    app_shutdown: getUiText(uiText, 'conversation.timeline.stop_reason.app_shutdown', 'Application shutdown interrupted the current response'),
+  }[reason] ?? getUiText(uiText, 'conversation.timeline.stop_reason.incomplete', 'This response was not completed')
 }
 
-function searchStateLabel(state: string): string {
+function searchStateLabel(state: string, uiText: Record<string, string>): string {
   return {
-    idle: '未开始',
-    running: '搜索中',
-    complete: '已完成',
-    error: '失败',
-  }[state] ?? '处理中'
+    idle: getUiText(uiText, 'conversation.timeline.search_state.idle', 'Not Started'),
+    running: getUiText(uiText, 'conversation.timeline.search_state.running', 'Searching'),
+    complete: getUiText(uiText, 'conversation.timeline.search_state.complete', 'Completed'),
+    error: getUiText(uiText, 'conversation.timeline.search_state.error', 'Failed'),
+  }[state] ?? getUiText(uiText, 'common.processing', 'Processing')
 }
 
 function stringifyValue(value: unknown): string {
@@ -77,13 +78,13 @@ function stringifyValue(value: unknown): string {
   }
 }
 
-function summarizeSearchResult(result: Record<string, unknown>): {
+function summarizeSearchResult(result: Record<string, unknown>, uiText: Record<string, string>): {
   title: string
   url: string
   snippet: string
   details: string
 } {
-  const title = String(result.title ?? result.name ?? result.display_name ?? '搜索结果')
+  const title = String(result.title ?? result.name ?? result.display_name ?? getUiText(uiText, 'conversation.timeline.search_result', 'Search Result'))
   const url = String(result.url ?? result.link ?? '')
   const snippet = String(result.snippet ?? result.summary ?? result.description ?? '')
   return {
@@ -97,9 +98,11 @@ function summarizeSearchResult(result: Record<string, unknown>): {
 const AttachmentGallery = memo(function AttachmentGallery({
   attachments,
   bridge,
+  uiText,
 }: {
   attachments: ConversationAttachmentState[]
   bridge: ConversationBridge | null
+  uiText: Record<string, string>
 }) {
   const galleryAttachments = attachments.filter((attachment) => !isInlineAttachment(attachment))
   if (!galleryAttachments.length) {
@@ -124,14 +127,14 @@ const AttachmentGallery = memo(function AttachmentGallery({
           {isImageAttachment(attachment) && attachment.path ? (
             <img className="attachment-card__thumb" src={toFileUrl(attachment.path)} alt={attachment.name} />
           ) : (
-            <div className="attachment-card__icon">文件</div>
+            <div className="attachment-card__icon">{getUiText(uiText, 'common.file', 'File')}</div>
           )}
           <div className="attachment-card__meta">
             <div className="attachment-card__name" title={attachment.name}>
-              {attachment.name || '未命名附件'}
+              {attachment.name || getUiText(uiText, 'common.unnamed_attachment', 'Unnamed Attachment')}
             </div>
             <div className="attachment-card__path" title={attachment.path}>
-              {attachment.path || '未解析路径'}
+              {attachment.path || getUiText(uiText, 'conversation.timeline.unresolved_path', 'Unresolved Path')}
             </div>
           </div>
         </button>
@@ -144,10 +147,12 @@ const DetailCard = memo(function DetailCard({
   title,
   subtitle,
   children,
+  uiText,
 }: {
   title: string
   subtitle?: string
   children: ReactNode
+  uiText: Record<string, string>
 }) {
   const [expanded, setExpanded] = useState(false)
 
@@ -165,7 +170,7 @@ const DetailCard = memo(function DetailCard({
           <span className="detail-card__title">{title}</span>
           {subtitle ? <span className="detail-card__subtitle">{subtitle}</span> : null}
         </div>
-        <span className="detail-card__toggle">{expanded ? '收起' : '展开'}</span>
+        <span className="detail-card__toggle">{expanded ? getUiText(uiText, 'common.collapse', 'Collapse') : getUiText(uiText, 'common.expand', 'Expand')}</span>
       </button>
       <div className="detail-card__body-wrap">
         <div className="detail-card__body">{children}</div>
@@ -174,20 +179,20 @@ const DetailCard = memo(function DetailCard({
   )
 })
 
-const ToolCallView = memo(function ToolCallView({ toolCall }: { toolCall: ConversationToolCallState }) {
+const ToolCallView = memo(function ToolCallView({ toolCall, uiText }: { toolCall: ConversationToolCallState; uiText: Record<string, string> }) {
   return (
     <div className={`tool-call ${toolCall.is_error ? 'tool-call--error' : ''}`}>
       <div className="tool-call__header">
-        <span className="tool-call__name">{toolCall.tool_name || '工具'}</span>
-        <span className="tool-call__status">{toolCall.is_error ? '失败' : '完成'}</span>
+        <span className="tool-call__name">{toolCall.tool_name || getUiText(uiText, 'conversation.timeline.tool', 'Tool')}</span>
+        <span className="tool-call__status">{toolCall.is_error ? getUiText(uiText, 'conversation.timeline.tool_status_failed', 'Failed') : getUiText(uiText, 'conversation.timeline.tool_status_completed', 'Completed')}</span>
       </div>
       <div className="tool-call__section">
-        <div className="tool-call__label">参数</div>
+        <div className="tool-call__label">{getUiText(uiText, 'conversation.timeline.tool_arguments', 'Arguments')}</div>
         <pre className="tool-call__code">{stringifyValue(toolCall.arguments)}</pre>
       </div>
       {toolCall.result_content ? (
         <div className="tool-call__section">
-          <div className="tool-call__label">结果</div>
+          <div className="tool-call__label">{getUiText(uiText, 'conversation.timeline.tool_result', 'Result')}</div>
           <pre className="tool-call__code">{toolCall.result_content}</pre>
         </div>
       ) : null}
@@ -198,18 +203,20 @@ const ToolCallView = memo(function ToolCallView({ toolCall }: { toolCall: Conver
 const SearchResultsView = memo(function SearchResultsView({
   results,
   bridge,
+  uiText,
 }: {
   results: Array<Record<string, unknown>>
   bridge: ConversationBridge | null
+  uiText: Record<string, string>
 }) {
   if (!results.length) {
-    return <div className="search-results__empty">暂无结果</div>
+    return <div className="search-results__empty">{getUiText(uiText, 'conversation.timeline.no_results', 'No results')}</div>
   }
 
   return (
     <div className="search-results">
       {results.map((result, index) => {
-        const summary = summarizeSearchResult(result)
+        const summary = summarizeSearchResult(result, uiText)
         return (
           <article key={`${summary.url}:${index}`} className="search-result-card">
             <div className="search-result-card__header">
@@ -220,7 +227,7 @@ const SearchResultsView = memo(function SearchResultsView({
                   className="search-result-card__link"
                   onClick={() => bridge?.openLink?.(summary.url)}
                 >
-                  打开链接
+                  {getUiText(uiText, 'conversation.timeline.open_link', 'Open Link')}
                 </button>
               ) : null}
             </div>
@@ -238,10 +245,12 @@ const AgentStepCard = memo(function AgentStepCard({
   step,
   bridge,
   runtime,
+  uiText,
 }: {
   step: ConversationAgentStepState
   bridge: ConversationBridge | null
   runtime: boolean
+  uiText: Record<string, string>
 }) {
   const hasSearchDetails = Boolean(step.web_search_query || step.web_search_message || step.web_search_results.length)
   const hasToolDetails = step.tool_calls.length > 0
@@ -250,7 +259,11 @@ const AgentStepCard = memo(function AgentStepCard({
     <div className={`message-bubble message-bubble--assistant ${runtime ? 'message-bubble--runtime' : ''}`}>
       {step.reasoning_content_html ? (
         <div className="detail-card-list">
-          <DetailCard title="思考过程" subtitle={step.is_complete ? '已完成' : '进行中'}>
+          <DetailCard
+            title={getUiText(uiText, 'conversation.timeline.reasoning', 'Reasoning')}
+            subtitle={step.is_complete ? getUiText(uiText, 'conversation.timeline.completed', 'Completed') : getUiText(uiText, 'conversation.timeline.in_progress', 'In Progress')}
+            uiText={uiText}
+          >
             <RichHtml html={step.reasoning_content_html} bridge={bridge} />
           </DetailCard>
         </div>
@@ -258,27 +271,27 @@ const AgentStepCard = memo(function AgentStepCard({
       {step.content_html ? (
         <RichHtml html={step.content_html} bridge={bridge} className="message-bubble__content" />
       ) : (
-        <div className="step-placeholder">{runtime ? '正在生成内容…' : '暂无内容'}</div>
+        <div className="step-placeholder">{runtime ? getUiText(uiText, 'conversation.timeline.generating', 'Generating content…') : getUiText(uiText, 'conversation.timeline.no_content', 'No content yet')}</div>
       )}
-      {step.is_partial ? <div className="partial-badge">{stopReasonLabel(step.stop_reason)}</div> : null}
+      {step.is_partial ? <div className="partial-badge">{stopReasonLabel(step.stop_reason, uiText)}</div> : null}
       <div className="detail-card-list">
         {hasSearchDetails ? (
-          <DetailCard title="搜索过程" subtitle={searchStateLabel(step.web_search_state)}>
+          <DetailCard title={getUiText(uiText, 'conversation.timeline.search_process', 'Search Process')} subtitle={searchStateLabel(step.web_search_state, uiText)} uiText={uiText}>
             {step.web_search_query ? (
               <div className="detail-label-group">
-                <span className="detail-label">查询</span>
+                <span className="detail-label">{getUiText(uiText, 'conversation.timeline.query', 'Query')}</span>
                 <span className="detail-label__value">{step.web_search_query}</span>
               </div>
             ) : null}
             {step.web_search_message ? <div className="detail-note">{step.web_search_message}</div> : null}
-            <SearchResultsView results={step.web_search_results} bridge={bridge} />
+            <SearchResultsView results={step.web_search_results} bridge={bridge} uiText={uiText} />
           </DetailCard>
         ) : null}
         {hasToolDetails ? (
-          <DetailCard title="工具调用" subtitle={`${step.tool_calls.length} 个调用`}>
+          <DetailCard title={getUiText(uiText, 'conversation.timeline.tool_calls', 'Tool Calls')} subtitle={getUiText(uiText, 'conversation.timeline.call_count', '{count} calls', { count: step.tool_calls.length })} uiText={uiText}>
             <div className="tool-call-list">
               {step.tool_calls.map((toolCall) => (
-                <ToolCallView key={toolCall.tool_call_id || toolCall.tool_name} toolCall={toolCall} />
+                <ToolCallView key={toolCall.tool_call_id || toolCall.tool_name} toolCall={toolCall} uiText={uiText} />
               ))}
             </div>
           </DetailCard>
@@ -331,9 +344,11 @@ const SuggestionBlock = memo(function SuggestionBlock({
 const MessageBlock = memo(function MessageBlock({
   message,
   bridge,
+  uiText,
 }: {
   message: ConversationMessageState
   bridge: ConversationBridge | null
+  uiText: Record<string, string>
 }) {
   const isUser = message.role === 'user'
   const messageClassName = `timeline-row ${isUser ? 'timeline-row--user' : 'timeline-row--assistant'}`
@@ -343,15 +358,15 @@ const MessageBlock = memo(function MessageBlock({
       {isUser ? (
         <div className="message-bubble message-bubble--user">
           <div className="message-bubble__meta">
-            <span>你</span>
+            <span>{getUiText(uiText, 'conversation.timeline.you', 'You')}</span>
             {message.can_rollback ? (
               <button type="button" className="message-bubble__action" onClick={() => bridge?.requestRollback?.(message.id)}>
-                撤回到此处
+                {getUiText(uiText, 'conversation.timeline.rollback_here', 'Rollback to here')}
               </button>
             ) : null}
           </div>
           <RichHtml html={message.content_html} bridge={bridge} className="message-bubble__content" />
-          <AttachmentGallery attachments={message.attachments} bridge={bridge} />
+          <AttachmentGallery attachments={message.attachments} bridge={bridge} uiText={uiText} />
         </div>
       ) : (
         <div className="message-stack">
@@ -362,22 +377,23 @@ const MessageBlock = memo(function MessageBlock({
                 step={step}
                 bridge={bridge}
                 runtime={false}
+                uiText={uiText}
               />
             ))
           ) : message.suggestions.length ? (
             <div className="message-bubble message-bubble--assistant">
               <div className="message-bubble__meta">
-                <span>助手</span>
+                <span>{getUiText(uiText, 'role.assistant', 'Assistant')}</span>
               </div>
               <SuggestionBlock message={message} bridge={bridge} />
             </div>
           ) : (
             <div className="message-bubble message-bubble--assistant">
               <div className="message-bubble__meta">
-                <span>助手</span>
+                <span>{getUiText(uiText, 'role.assistant', 'Assistant')}</span>
               </div>
               <RichHtml html={message.content_html} bridge={bridge} className="message-bubble__content" />
-              <AttachmentGallery attachments={message.attachments} bridge={bridge} />
+              <AttachmentGallery attachments={message.attachments} bridge={bridge} uiText={uiText} />
               {message.status_summary ? <div className="message-status">{message.status_summary}</div> : null}
             </div>
           )}
@@ -396,6 +412,7 @@ export function ConversationTimeline({ state, bridge }: ConversationTimelineProp
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const contentRef = useRef<HTMLDivElement | null>(null)
   const stickToBottomRef = useRef(true)
+  const uiText = state.ui_text
 
   const scrollToBottom = useCallback(() => {
     const container = scrollRef.current
@@ -446,24 +463,24 @@ export function ConversationTimeline({ state, bridge }: ConversationTimelineProp
           stickToBottomRef.current = distanceToBottom < 36
         }}
       >
-       <div ref={contentRef} className="timeline-content">
-         {!hasAnyItems ? (
-           <div className="timeline-empty-state">
-             <div className="timeline-empty-state__title">开始一段新的对话</div>
-             <div className="timeline-empty-state__description">发送消息、拖入文件，或让助手继续处理你的工作区变更。</div>
-           </div>
-         ) : null}
-         {state.conversation.messages.map((message) => (
-           <MessageBlock key={message.id} message={message} bridge={bridge} />
-         ))}
-         {state.conversation.runtime_steps.map((step) => (
-           <article key={step.step_id || `runtime:${step.step_index}`} className="timeline-row timeline-row--assistant">
-             <div className="message-stack">
-               <AgentStepCard step={step} bridge={bridge} runtime={true} />
-             </div>
-           </article>
-         ))}
-       </div>
+        <div ref={contentRef} className="timeline-content">
+          {!hasAnyItems ? (
+            <div className="timeline-empty-state">
+              <div className="timeline-empty-state__title">{getUiText(uiText, 'conversation.timeline.empty_title', 'Start a new conversation')}</div>
+              <div className="timeline-empty-state__description">{getUiText(uiText, 'conversation.timeline.empty_description', 'Send a message, drop files, or let the assistant continue working on your workspace changes.')}</div>
+            </div>
+          ) : null}
+          {state.conversation.messages.map((message) => (
+            <MessageBlock key={message.id} message={message} bridge={bridge} uiText={uiText} />
+          ))}
+          {state.conversation.runtime_steps.map((step) => (
+            <article key={step.step_id || `runtime:${step.step_index}`} className="timeline-row timeline-row--assistant">
+              <div className="message-stack">
+                <AgentStepCard step={step} bridge={bridge} runtime={true} uiText={uiText} />
+              </div>
+            </article>
+          ))}
+        </div>
       </div>
     </section>
   )

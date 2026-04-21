@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ConversationBridge } from '../bridge'
 import type { ConversationMainState, RagFileState } from '../types'
+import { getUiText } from '../uiText'
 
 interface RagPanelProps {
   state: ConversationMainState
@@ -64,6 +65,7 @@ export function RagPanel({ state, bridge, bridgeConnected }: RagPanelProps) {
   const [query, setQuery] = useState('')
   const [isSearchViewActive, setIsSearchViewActive] = useState(Boolean(state.rag.search.result_text))
   const rag = state.rag
+  const uiText = state.ui_text
   const previousResultTextRef = useRef(state.rag.search.result_text)
 
   useEffect(() => {
@@ -87,11 +89,11 @@ export function RagPanel({ state, bridge, bridgeConnected }: RagPanelProps) {
   }, [rag.progress.processed, rag.progress.total])
 
   const stats = [
-    { label: '文档', value: String(rag.stats.total_files) },
-    { label: '分块', value: String(rag.stats.total_chunks) },
-    { label: '排除', value: String(rag.stats.excluded) },
-    { label: '失败', value: String(rag.stats.failed) },
-    { label: '存储', value: formatStorageSize(rag.stats.storage_size_mb) },
+    { label: getUiText(uiText, 'conversation.rag.stats.documents', 'Documents'), value: String(rag.stats.total_files) },
+    { label: getUiText(uiText, 'common.chunks', 'Chunks'), value: String(rag.stats.total_chunks) },
+    { label: getUiText(uiText, 'conversation.rag.stats.excluded', 'Excluded'), value: String(rag.stats.excluded) },
+    { label: getUiText(uiText, 'conversation.rag.stats.failed', 'Failed'), value: String(rag.stats.failed) },
+    { label: getUiText(uiText, 'common.storage', 'Storage'), value: formatStorageSize(rag.stats.storage_size_mb) },
   ]
 
   const canSearch = bridgeConnected && rag.actions.can_search && query.trim().length > 0 && !rag.search.is_running
@@ -100,12 +102,12 @@ export function RagPanel({ state, bridge, bridgeConnected }: RagPanelProps) {
     <div className="rag-shell">
       <div className="rag-header">
         <div className="rag-header__identity">
-          <div className="rag-header__eyebrow">Index Library</div>
-          <div className="rag-header__title">索引库</div>
-          <div className="rag-header__subtitle">统一管理项目索引状态、检索验证与文件入口。</div>
+          <div className="rag-header__eyebrow">{getUiText(uiText, 'conversation.rag.header.eyebrow', 'Index Library')}</div>
+          <div className="rag-header__title">{getUiText(uiText, 'panel.rag', 'Index Library')}</div>
+          <div className="rag-header__subtitle">{getUiText(uiText, 'conversation.rag.header.subtitle', 'Manage project index status, retrieval validation, and file entry points in one place.')}</div>
         </div>
         <span className={`status-badge status-badge--${statusToneClass(rag.status.tone)}`}>
-          {rag.status.label || '等待项目'}
+          {rag.status.label || getUiText(uiText, 'conversation.rag.status.waiting', 'Waiting for project')}
         </span>
       </div>
 
@@ -116,7 +118,7 @@ export function RagPanel({ state, bridge, bridgeConnected }: RagPanelProps) {
           onClick={() => bridge?.requestReindexKnowledge?.()}
           disabled={!bridgeConnected || !rag.actions.can_reindex}
         >
-          索引项目文件
+          {getUiText(uiText, 'menu.knowledge.rebuild', 'Rebuild Index')}
         </button>
         <button
           type="button"
@@ -124,14 +126,14 @@ export function RagPanel({ state, bridge, bridgeConnected }: RagPanelProps) {
           onClick={() => bridge?.requestClearKnowledge?.()}
           disabled={!bridgeConnected || !rag.actions.can_clear}
         >
-          清空索引库
+          {getUiText(uiText, 'menu.knowledge.clear', 'Clear Index')}
         </button>
       </div>
 
       {rag.progress.is_visible ? (
         <div className="rag-progress-card">
           <div className="rag-progress-card__meta">
-            <span>索引进度</span>
+            <span>{getUiText(uiText, 'conversation.rag.progress', 'Index Progress')}</span>
             <span>
               {rag.progress.processed}/{rag.progress.total}
             </span>
@@ -139,7 +141,7 @@ export function RagPanel({ state, bridge, bridgeConnected }: RagPanelProps) {
           <progress className="rag-progress-bar" max={100} value={progressRatio} />
           {rag.progress.current_file ? (
             <div className="rag-progress-card__file" title={rag.progress.current_file}>
-              正在处理：{rag.progress.current_file}
+              {getUiText(uiText, 'conversation.rag.processing_file', 'Processing: {path}', { path: rag.progress.current_file })}
             </div>
           ) : null}
         </div>
@@ -161,13 +163,13 @@ export function RagPanel({ state, bridge, bridgeConnected }: RagPanelProps) {
       ) : null}
 
       <div className="rag-search-card">
-        <div className="rag-section-heading">检索测试</div>
+        <div className="rag-section-heading">{getUiText(uiText, 'conversation.rag.search_section', 'Retrieval Test')}</div>
         <div className="rag-search-row">
           <textarea
             className="rag-search-input"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="输入检索内容..."
+            placeholder={getUiText(uiText, 'conversation.rag.search_placeholder', 'Enter retrieval query...')}
           />
           {isSearchViewActive ? (
             <div className="rag-search-actions">
@@ -177,14 +179,16 @@ export function RagPanel({ state, bridge, bridgeConnected }: RagPanelProps) {
                 onClick={() => bridge?.requestRagSearch?.(query.trim())}
                 disabled={!canSearch}
               >
-                {rag.search.is_running ? '检索中...' : '检索'}
+                {rag.search.is_running
+                  ? getUiText(uiText, 'conversation.rag.search_running', 'Searching...')
+                  : getUiText(uiText, 'common.search', 'Search')}
               </button>
               <button
                 type="button"
                 className="secondary-button rag-search-button rag-search-button--stacked"
                 onClick={() => setIsSearchViewActive(false)}
               >
-                返回
+                {getUiText(uiText, 'common.back', 'Back')}
               </button>
             </div>
           ) : (
@@ -194,23 +198,25 @@ export function RagPanel({ state, bridge, bridgeConnected }: RagPanelProps) {
               onClick={() => bridge?.requestRagSearch?.(query.trim())}
               disabled={!canSearch}
             >
-              {rag.search.is_running ? '检索中...' : '检索'}
+              {rag.search.is_running
+                ? getUiText(uiText, 'conversation.rag.search_running', 'Searching...')
+                : getUiText(uiText, 'common.search', 'Search')}
             </button>
           )}
         </div>
         {isSearchViewActive ? (
-          <div className="rag-search-result">{rag.search.result_text || '检索结果将显示在此处'}</div>
+          <div className="rag-search-result">{rag.search.result_text || getUiText(uiText, 'conversation.rag.search_empty_result', 'Retrieval results will appear here')}</div>
         ) : null}
       </div>
 
       <div className="rag-files-card">
-        <div className="rag-section-heading">已索引文档</div>
+        <div className="rag-section-heading">{getUiText(uiText, 'conversation.rag.indexed_documents', 'Indexed Documents')}</div>
         <div className="rag-file-table">
           <div className="rag-file-table__head">
-            <span>文件</span>
-            <span>状态</span>
-            <span>分块</span>
-            <span>索引时间</span>
+            <span>{getUiText(uiText, 'common.file', 'File')}</span>
+            <span>{getUiText(uiText, 'common.status', 'Status')}</span>
+            <span>{getUiText(uiText, 'common.chunks', 'Chunks')}</span>
+            <span>{getUiText(uiText, 'common.indexed_at', 'Indexed At')}</span>
           </div>
           <div className="rag-file-table__body">
             {rag.files.length ? (
@@ -229,7 +235,7 @@ export function RagPanel({ state, bridge, bridgeConnected }: RagPanelProps) {
                     disabled={!canOpen}
                     title={file.tooltip || file.relative_path}
                   >
-                    <span className="rag-file-row__path">{file.relative_path || '未命名文件'}</span>
+                    <span className="rag-file-row__path">{file.relative_path || getUiText(uiText, 'common.unnamed_file', 'Unnamed File')}</span>
                     <span className="rag-file-row__status">{file.status_label || file.status}</span>
                     <span>{file.chunks_count}</span>
                     <span>{file.indexed_at || '—'}</span>
@@ -237,7 +243,7 @@ export function RagPanel({ state, bridge, bridgeConnected }: RagPanelProps) {
                 )
               })
             ) : (
-              <div className="rag-file-empty">当前还没有可展示的索引文件。</div>
+              <div className="rag-file-empty">{getUiText(uiText, 'conversation.rag.empty_files', 'No indexed files are available to display yet.')}</div>
             )}
           </div>
         </div>

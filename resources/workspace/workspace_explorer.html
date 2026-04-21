@@ -281,27 +281,27 @@
     }
   </style>
 </head>
-<body>
-  <div id="app-root">
-    <div id="header">
-      <div id="title">EXPLORER</div>
-      <div id="header-actions">
-        <button id="collapse-all" class="header-btn" type="button" title="Collapse All">−</button>
-        <button id="refresh-tree" class="header-btn" type="button" title="Refresh">↻</button>
-      </div>
-    </div>
-    <div id="tree-scroll">
-      <div id="tree-root"></div>
-      <div id="empty-state"></div>
-    </div>
-  </div>
-  <div id="context-menu">
-    <button class="context-menu-item" data-action="add_to_conversation" type="button">Add to Conversation</button>
-    <button class="context-menu-item" data-action="copy_path" type="button">Copy Path</button>
-    <button class="context-menu-item" data-action="rename" type="button">Rename</button>
-    <button class="context-menu-item danger" data-action="delete_file" type="button">Delete</button>
-  </div>
-  <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
-  <script src="./workspace_explorer_app.js"></script>
+ <body>
+   <div id="app-root">
+     <div id="header">
+       <div id="title"></div>
+       <div id="header-actions">
+         <button id="collapse-all" class="header-btn" type="button" title="">−</button>
+         <button id="refresh-tree" class="header-btn" type="button" title="">↻</button>
+       </div>
+     </div>
+     <div id="tree-scroll">
+       <div id="tree-root"></div>
+       <div id="empty-state"></div>
+     </div>
+   </div>
+   <div id="context-menu">
+     <button class="context-menu-item" data-action="add_to_conversation" type="button"></button>
+     <button class="context-menu-item" data-action="copy_path" type="button"></button>
+     <button class="context-menu-item" data-action="rename" type="button"></button>
+     <button class="context-menu-item danger" data-action="delete_file" type="button"></button>
+   </div>
+   <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+   <script src="./workspace_explorer_app.js"></script>
 </body>
 </html>

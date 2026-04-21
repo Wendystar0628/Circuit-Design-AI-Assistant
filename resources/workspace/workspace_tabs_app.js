@@ -6,6 +6,7 @@
   const state = {
     items: [],
     emptyMessage: '',
+    closeTooltip: '',
     runIconUrl: '',
     simulationControl: {
       isRunning: false,
@@ -71,7 +72,7 @@
       closeBtn.className = 'close-btn';
       closeBtn.type = 'button';
       closeBtn.textContent = '×';
-      closeBtn.title = 'Close';
+      closeBtn.title = state.closeTooltip || '';
       closeBtn.addEventListener('click', (event) => {
         event.stopPropagation();
         if (item && item.path) {
@@ -123,6 +124,7 @@
       const incoming = nextState && typeof nextState === 'object' ? nextState : {};
       state.items = Array.isArray(incoming.items) ? incoming.items : [];
       state.emptyMessage = incoming.emptyMessage || '';
+      state.closeTooltip = incoming.closeTooltip || '';
       state.runIconUrl = incoming.runIconUrl || '';
       state.simulationControl = incoming.simulationControl && typeof incoming.simulationControl === 'object'
         ? incoming.simulationControl

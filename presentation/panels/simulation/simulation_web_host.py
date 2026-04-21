@@ -6,6 +6,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QLabel, QSizePolicy, QVBoxLayout, QWidget
 from PyQt6.QtWebChannel import QWebChannel
 
+from presentation.core.i18n_text import get_i18n_text
 from presentation.core.web_resource_host import app_resource_url, configure_app_web_view
 from presentation.panels.simulation.simulation_web_bridge import SimulationWebBridge
 
@@ -46,7 +47,7 @@ class SimulationWebHost(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         if not WEBENGINE_AVAILABLE:
-            fallback = QLabel("请安装 PyQt6-WebEngine", self)
+            fallback = QLabel(get_i18n_text("dependency.pyqt_webengine_required", "Please install PyQt6-WebEngine"), self)
             fallback.setAlignment(Qt.AlignmentFlag.AlignCenter)
             fallback.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
             layout.addWidget(fallback)
@@ -214,7 +215,7 @@ class SimulationWebHost(QWidget):
         if self._web_view is None or not self._page_loaded or not self._frontend_ready:
             if self._fallback_label is not None:
                 runtime = self._state.get("simulation_runtime", {}) if isinstance(self._state, dict) else {}
-                self._fallback_label.setText(str(runtime.get("project_root", "Simulation")))
+                self._fallback_label.setText(str(runtime.get("project_root") or get_i18n_text("panel.simulation", "Simulation Results")))
             return
         script = "window.simulationApp && window.simulationApp.setState(%s);" % json.dumps(
             self._state,

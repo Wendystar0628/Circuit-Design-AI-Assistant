@@ -488,6 +488,7 @@ export interface SimulationMainState {
   asc_conversion_view: AscConversionViewState
   circuit_selection_view: CircuitSelectionViewState
   op_result_view: OpResultViewState
+  ui_text: Record<string, string>
 }
 
 const EMPTY_RESULT: SimulationResultSummary = {
@@ -710,6 +711,7 @@ export const EMPTY_SIMULATION_STATE: SimulationMainState = {
     sections: [],
     can_add_to_conversation: false,
   },
+  ui_text: {},
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -762,6 +764,10 @@ function asNumberRecord(value: unknown): Record<string, number> {
 function asStringRecord(value: unknown): Record<string, string> {
   const record = asRecord(value)
   return Object.fromEntries(Object.entries(record).map(([key, item]) => [key, asString(item)]))
+}
+
+function normalizeUiText(value: unknown): Record<string, string> {
+  return asStringRecord(value)
 }
 
 function normalizeSurfaceViewport(value: unknown): SimulationSurfaceViewportState {
@@ -1289,6 +1295,7 @@ export function normalizeSimulationState(input: unknown): SimulationMainState {
       sections: normalizeOpResultSections(opResultView.sections),
       can_add_to_conversation: asBoolean(opResultView.can_add_to_conversation),
     },
+    ui_text: normalizeUiText(root.ui_text),
   }
 }
 

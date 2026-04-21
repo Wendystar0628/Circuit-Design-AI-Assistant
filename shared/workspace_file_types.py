@@ -178,6 +178,54 @@ def language_for_extension(path_or_ext: PathLike) -> str:
     return language_map.get(extension, "plaintext")
 
 
+def file_type_label_key(path_or_ext: PathLike) -> str:
+    extension = get_extension(path_or_ext)
+    keys = {
+        ".cir": "file_type.spice",
+        ".sp": "file_type.spice",
+        ".spice": "file_type.spice",
+        ".ckt": "file_type.spice",
+        ".lib": "file_type.spice_library",
+        ".sub": "file_type.spice_subcircuit",
+        ".inc": "file_type.spice_include",
+        ".mod": "file_type.spice_model",
+        ".net": "file_type.netlist",
+        ".json": "file_type.json",
+        ".txt": "file_type.plain_text",
+        ".py": "file_type.python",
+        ".md": "file_type.markdown",
+        ".markdown": "file_type.markdown",
+        ".csv": "file_type.csv_table",
+        ".tsv": "file_type.tsv_table",
+        ".docx": "file_type.word_document",
+        ".pdf": "file_type.pdf_document",
+        ".png": "file_type.png_image",
+        ".jpg": "file_type.jpeg_image",
+        ".jpeg": "file_type.jpeg_image",
+        ".gif": "file_type.gif_image",
+        ".bmp": "file_type.bitmap_image",
+        ".webp": "file_type.webp_image",
+        ".svg": "file_type.svg_image",
+        ".ico": "file_type.icon_image",
+        ".yaml": "file_type.yaml",
+        ".yml": "file_type.yaml",
+        ".toml": "file_type.toml",
+        ".ini": "file_type.ini",
+        ".cfg": "file_type.config",
+        ".xml": "file_type.xml",
+        ".html": "file_type.html",
+        ".css": "file_type.css",
+        ".js": "file_type.javascript",
+        ".ts": "file_type.typescript",
+        ".tsx": "file_type.typescript",
+        ".jsx": "file_type.javascript",
+        ".diff": "file_type.diff",
+        ".patch": "file_type.patch",
+        ".log": "file_type.log",
+    }
+    return keys.get(extension, "file_type.file")
+
+
 def file_type_label(path_or_ext: PathLike) -> str:
     extension = get_extension(path_or_ext)
     labels = {
@@ -318,6 +366,7 @@ __all__ = [
     "is_tabular_extension",
     "is_document_preview_extension",
     "language_for_extension",
+    "file_type_label_key",
     "file_type_label",
     "workspace_entry_icon_name",
     "workspace_entry_open_icon_name",

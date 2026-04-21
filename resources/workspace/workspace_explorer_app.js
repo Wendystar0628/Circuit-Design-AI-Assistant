@@ -9,15 +9,15 @@
   const contextMenuItemEls = Array.from(document.querySelectorAll('.context-menu-item'));
 
   const state = {
-    title: 'EXPLORER',
+    title: '',
     emptyMessage: '',
-    collapseTooltip: 'Collapse All',
-    refreshTooltip: 'Refresh',
+    collapseTooltip: '',
+    refreshTooltip: '',
     contextMenu: {
-      addToConversation: 'Add to Conversation',
-      copyPath: 'Copy Path',
-      rename: 'Rename',
-      delete: 'Delete',
+      addToConversation: '',
+      copyPath: '',
+      rename: '',
+      delete: '',
     },
     iconSpriteUrl: '',
     tree: [],
@@ -61,13 +61,13 @@
     for (const itemEl of contextMenuItemEls) {
       const action = String(itemEl.dataset.action || '');
       if (action === 'add_to_conversation') {
-        itemEl.textContent = labels.addToConversation || 'Add to Conversation';
+        itemEl.textContent = labels.addToConversation || '';
       } else if (action === 'copy_path') {
-        itemEl.textContent = labels.copyPath || 'Copy Path';
+        itemEl.textContent = labels.copyPath || '';
       } else if (action === 'rename') {
-        itemEl.textContent = labels.rename || 'Rename';
+        itemEl.textContent = labels.rename || '';
       } else if (action === 'delete_file') {
-        itemEl.textContent = labels.delete || 'Delete';
+        itemEl.textContent = labels.delete || '';
       }
     }
   }
@@ -252,9 +252,9 @@
   }
 
   function render() {
-    titleEl.textContent = state.title || 'EXPLORER';
-    collapseAllBtn.title = state.collapseTooltip || 'Collapse All';
-    refreshBtn.title = state.refreshTooltip || 'Refresh';
+    titleEl.textContent = state.title || '';
+    collapseAllBtn.title = state.collapseTooltip || '';
+    refreshBtn.title = state.refreshTooltip || '';
     updateContextMenuLabels();
     renderTree();
   }
@@ -314,22 +314,22 @@
   window.workspaceExplorerApp = {
     setState(nextState) {
       const incoming = nextState && typeof nextState === 'object' ? nextState : {};
-      state.title = incoming.title || 'EXPLORER';
+      state.title = incoming.title || '';
       state.emptyMessage = incoming.emptyMessage || '';
-      state.collapseTooltip = incoming.collapseTooltip || 'Collapse All';
-      state.refreshTooltip = incoming.refreshTooltip || 'Refresh';
+      state.collapseTooltip = incoming.collapseTooltip || '';
+      state.refreshTooltip = incoming.refreshTooltip || '';
       state.contextMenu = incoming.contextMenu && typeof incoming.contextMenu === 'object'
         ? {
-            addToConversation: incoming.contextMenu.addToConversation || 'Add to Conversation',
-            copyPath: incoming.contextMenu.copyPath || 'Copy Path',
-            rename: incoming.contextMenu.rename || 'Rename',
-            delete: incoming.contextMenu.delete || 'Delete',
+            addToConversation: incoming.contextMenu.addToConversation || '',
+            copyPath: incoming.contextMenu.copyPath || '',
+            rename: incoming.contextMenu.rename || '',
+            delete: incoming.contextMenu.delete || '',
           }
         : {
-            addToConversation: 'Add to Conversation',
-            copyPath: 'Copy Path',
-            rename: 'Rename',
-            delete: 'Delete',
+            addToConversation: '',
+            copyPath: '',
+            rename: '',
+            delete: '',
           };
       state.iconSpriteUrl = incoming.iconSpriteUrl || '';
       state.tree = asArray(incoming.tree);

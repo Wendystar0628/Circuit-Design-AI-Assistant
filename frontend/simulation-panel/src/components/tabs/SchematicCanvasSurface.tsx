@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { useElementSize } from '../../hooks/useElementSize'
 import type { SchematicDocumentState } from '../../types/state'
+import { getUiText, type UiTextMap } from '../../uiText'
 import {
   getSchematicSymbolDefinition,
   isSchematicComponentReadonly,
@@ -24,6 +25,7 @@ interface SchematicCanvasProps {
   layoutPending: boolean
   layoutError: string
   selectedComponentId: string | null
+  uiText: UiTextMap
   viewState: SchematicCanvasViewState
   onViewStateChange(nextViewState: SchematicCanvasViewState): void
   onViewportSizeChange(size: { width: number; height: number }): void
@@ -103,6 +105,7 @@ export function SchematicCanvas({
   layoutPending,
   layoutError,
   selectedComponentId,
+  uiText,
   viewState,
   onViewStateChange,
   onViewportSizeChange,
@@ -295,18 +298,18 @@ export function SchematicCanvas({
   const svgHeight = Math.max(height, 240)
 
   const emptyStateTitle = !hasSourceFile
-    ? '暂无可用电路文件'
+    ? getUiText(uiText, 'simulation.schematic.empty_no_source_title', 'No schematic source file is available')
     : layoutPending && schematicDocument.has_schematic
-      ? '正在计算电路布局'
+      ? getUiText(uiText, 'simulation.schematic.empty_layout_pending_title', 'Computing schematic layout')
       : layoutError
-        ? '电路布局失败'
-        : '当前文档没有可渲染电路图'
+        ? getUiText(uiText, 'simulation.schematic.empty_layout_failed_title', 'Schematic layout failed')
+        : getUiText(uiText, 'simulation.schematic.empty_not_renderable_title', 'The current document has no renderable schematic')
 
   const emptyStateDescription = !hasSourceFile
-    ? '当前结果还没有可供电路页消费的源文件路径。'
+    ? getUiText(uiText, 'simulation.schematic.empty_no_source_description', 'The current result does not yet provide a source file path that the schematic tab can consume.')
     : layoutPending && schematicDocument.has_schematic
-      ? '正在基于最新 schematic_document 计算电路布局。'
-      : layoutError || schematicDocument.file_name || schematicDocument.title || '当前 schematic_document 未提供可绘制元件。'
+      ? getUiText(uiText, 'simulation.schematic.empty_layout_pending_description', 'Computing the schematic layout from the latest schematic document.')
+      : layoutError || schematicDocument.file_name || schematicDocument.title || getUiText(uiText, 'simulation.schematic.empty_not_renderable_description', 'The current schematic document did not provide drawable components.')
 
   return (
     <div className="schematic-canvas">
@@ -433,7 +436,7 @@ export function SchematicCanvas({
                     }}
                     tabIndex={0}
                     role="button"
-                    aria-label={`选择器件 ${getSchematicComponentDisplayName(item.component) || item.component.id}`}
+                    aria-label={getUiText(uiText, 'simulation.schematic.select_component', 'Select component {name}', { name: getSchematicComponentDisplayName(item.component) || item.component.id })}
                   >
                     <rect
                       className="schematic-canvas__component-hit"
@@ -522,19 +525,19 @@ export function SchematicCanvas({
             <div className="schematic-canvas__floating-banner-stack">
               {layoutPending ? (
                 <div className="surface-state-card">
-                  <div className="card-title">布局计算中</div>
-                  <div className="muted-text">只会采纳当前最新 `document_id + revision` 的布局结果。</div>
+                  <div className="card-title">{getUiText(uiText, 'simulation.schematic.banner_layout_pending_title', 'Layout computation in progress')}</div>
+                  <div className="muted-text">{getUiText(uiText, 'simulation.schematic.banner_layout_pending_description', 'Only the latest layout result for the current document and revision will be applied.')}</div>
                 </div>
               ) : null}
               {layoutError ? (
                 <div className="surface-state-card surface-state-card--warning">
-                  <div className="card-title">布局失败</div>
+                  <div className="card-title">{getUiText(uiText, 'simulation.schematic.banner_layout_failed_title', 'Layout failed')}</div>
                   <div className="muted-text">{layoutError}</div>
                 </div>
               ) : null}
               {hasSourceFile && hasRenderableLayout && schematicDocument.parse_errors.length > 0 ? (
                 <div className="surface-state-card surface-state-card--warning">
-                  <div className="card-title">解析提示</div>
+                  <div className="card-title">{getUiText(uiText, 'simulation.schematic.banner_parse_warnings_title', 'Parse Warnings')}</div>
                   {schematicDocument.parse_errors.slice(0, 2).map((item, index) => (
                     <div className="muted-text" key={`${item.source_file}-${item.line_index}-${index}`}>
                       {item.message}
@@ -553,7 +556,7 @@ export function SchematicCanvas({
             onPointerDown={(event) => event.stopPropagation()}
             onClick={handleFit}
           >
-            Fit
+            {getUiText(uiText, 'common.fit', 'Fit')}
           </button>
         </div>
       </div>

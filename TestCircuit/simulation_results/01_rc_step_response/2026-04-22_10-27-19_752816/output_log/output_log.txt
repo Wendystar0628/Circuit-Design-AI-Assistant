@@ -1,0 +1,23 @@
+# artifact_type: output_log
+# circuit_file: 01_rc_step_response.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\transient_analysis\01_rc_step_response.cir
+# analysis_type: tran
+# executor: spice
+# timestamp: 2026-04-22T10:27:19.752816
+
+stdout Note: No compatibility mode selected!
+stdout Circuit: RC Step Response
+stdout Doing analysis at TEMP = 27.000000 and TNOM = 27.000000
+stderr Using SPARSE 1.3 as Direct Linear Solver
+stdout Initial Transient Solution
+stdout --------------------------
+stdout Node                                   Voltage
+stdout ----                                   -------
+stdout in                                           0
+stdout cap                                          0
+stdout vin#branch                                   0
+ Reference value :  0.00000e+00
+stdout No. of Data Rows : 1019
+stdout Measurements for Transient Analysis
+stdout v_final             =  4.999318e+00
+stdout t_rise_90           =   2.40306e-03

@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "artifact_type": "metrics",
+  "metadata": {
+    "artifact_type": "metrics",
+    "file_name": "02_lm741_inverting_amplifier.cir",
+    "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\opamp_circuits\\02_lm741_inverting_amplifier.cir",
+    "analysis_type": "ac",
+    "timestamp": "2026-04-22T10:27:04.275848",
+    "success": true,
+    "executor": "spice",
+    "duration_seconds": 0.010237455368041992,
+    "analysis_command": ".ac dec 20 10 1Meg",
+    "x_axis_kind": "frequency",
+    "x_axis_label": "Frequency (Hz)",
+    "x_axis_scale": "log",
+    "requested_x_range": null,
+    "actual_x_range": [
+      10.0,
+      999999.9999999914
+    ]
+  },
+  "summary": {
+    "metric_count": 0,
+    "metrics_with_target": 0
+  },
+  "files": {
+    "csv": "metrics.csv"
+  },
+  "data": {
+    "columns": [
+      "display_name",
+      "name",
+      "value",
+      "unit",
+      "raw_value",
+      "target"
+    ],
+    "rows": []
+  }
+}

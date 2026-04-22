@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "artifact_type": "op_result",
+  "metadata": {
+    "artifact_type": "op_result",
+    "file_name": "06_bjt_diff_pair.cir",
+    "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\op_analysis\\06_bjt_diff_pair.cir",
+    "analysis_type": "op",
+    "timestamp": "2026-04-22T10:26:58.512727",
+    "success": true,
+    "executor": "spice",
+    "duration_seconds": 0.007022857666015625,
+    "analysis_command": ".op",
+    "x_axis_kind": "none",
+    "x_axis_label": "X",
+    "x_axis_scale": "none",
+    "requested_x_range": null,
+    "actual_x_range": null
+  },
+  "summary": {
+    "row_count": 9,
+    "section_count": 2
+  },
+  "files": {
+    "text": "op_result.txt"
+  },
+  "data": {
+    "nodes": [
+      {
+        "name": "vdd",
+        "voltage": 10.0,
+        "formatted": "10 V"
+      },
+      {
+        "name": "vss",
+        "voltage": -10.0,
+        "formatted": "-10 V"
+      },
+      {
+        "name": "tail",
+        "voltage": -0.6359541364661109,
+        "formatted": "-0.635954 V"
+      },
+      {
+        "name": "cm",
+        "voltage": 0.0,
+        "formatted": "0 V"
+      },
+      {
+        "name": "col1",
+        "voltage": 5.015839026421417,
+        "formatted": "5.01584 V"
+      },
+      {
+        "name": "col2",
+        "voltage": 5.015839026421459,
+        "formatted": "5.01584 V"
+      }
+    ],
+    "branches": [
+      {
+        "device": "VCM",
+        "current": -3.167815326537635e-06,
+        "formatted": "-3.16782e-06 A"
+      },
+      {
+        "device": "VDD",
+        "current": -0.0009968321947157123,
+        "formatted": "-0.000996832 A"
+      },
+      {
+        "device": "VSS",
+        "current": 0.001,
+        "formatted": "0.001 A"
+      }
+    ],
+    "devices": [],
+    "row_count": 9,
+    "section_count": 2
+  }
+}

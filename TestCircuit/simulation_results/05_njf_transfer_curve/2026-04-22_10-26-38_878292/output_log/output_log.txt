@@ -1,0 +1,20 @@
+# artifact_type: output_log
+# circuit_file: 05_njf_transfer_curve.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\dc_analysis\05_njf_transfer_curve.cir
+# analysis_type: dc
+# executor: spice
+# timestamp: 2026-04-22T10:26:38.878292
+
+stdout Note: No compatibility mode selected!
+stdout Circuit: NJF Transfer Curve
+stderr Warning: Model issue on line 7 :
+stderr .model 2n3819 njf(beta=1.304m betatce=-.5 rd=1 rs=1 lambda=2.25m vto=-3  ...
+stderr unrecognized parameter (isr) - ignored
+stderr unrecognized parameter (n) - ignored
+stderr unrecognized parameter (nr) - ignored
+stderr unrecognized parameter (alpha) - ignored
+stderr unrecognized parameter (vk) - ignored
+stdout Doing analysis at TEMP = 27.000000 and TNOM = 27.000000
+stderr Using SPARSE 1.3 as Direct Linear Solver
+ Reference value : -3.00000e+00
+stdout No. of Data Rows : 151

@@ -1,0 +1,20 @@
+# artifact_type: analysis_info
+# circuit_file: 01_rc_discharge.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\by_device\capacitor\01_rc_discharge.cir
+# analysis_type: tran
+# executor: spice
+# timestamp: 2026-04-22T10:24:15.018414
+
+analysis_command: .tran 100u 50m uic
+x_axis_kind: time
+x_axis_label: Time (s)
+x_axis_scale: linear
+requested_x_range: None
+actual_x_range: [1e-06, 0.05]
+
+parameters:
+  step_time: 100u
+  stop_time: 50m
+  start_time: 
+  max_step: 
+  use_initial_conditions: uic

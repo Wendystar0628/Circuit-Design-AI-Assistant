@@ -1,0 +1,8 @@
+# artifact_type: metrics
+# circuit_file: 02_opamp_buffer_noise.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\noise_analysis\02_opamp_buffer_noise.cir
+# analysis_type: noise
+# executor: spice
+# timestamp: 2026-04-22T10:26:44.626953
+
+display_name,name,value,unit,raw_value,target

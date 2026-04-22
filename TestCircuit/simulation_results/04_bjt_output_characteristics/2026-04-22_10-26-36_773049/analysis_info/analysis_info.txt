@@ -1,0 +1,19 @@
+# artifact_type: analysis_info
+# circuit_file: 04_bjt_output_characteristics.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\dc_analysis\04_bjt_output_characteristics.cir
+# analysis_type: dc
+# executor: spice
+# timestamp: 2026-04-22T10:26:36.773049
+
+analysis_command: .dc Vce 0 10 0.05 Ib 10u 50u 10u
+x_axis_kind: sweep
+x_axis_label: Vce
+x_axis_scale: linear
+requested_x_range: [0.0, 10.0]
+actual_x_range: [0.0, 10.000000000000007]
+
+parameters:
+  source_name: Vce
+  start_value: 0
+  stop_value: 10
+  step: 0.05

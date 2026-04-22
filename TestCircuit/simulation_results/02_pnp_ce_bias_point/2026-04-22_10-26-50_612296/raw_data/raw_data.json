@@ -1,0 +1,100 @@
+{
+  "schema_version": 1,
+  "artifact_type": "raw_data",
+  "metadata": {
+    "artifact_type": "raw_data",
+    "file_name": "02_pnp_ce_bias_point.cir",
+    "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\op_analysis\\02_pnp_ce_bias_point.cir",
+    "analysis_type": "op",
+    "timestamp": "2026-04-22T10:26:50.612296",
+    "success": true,
+    "executor": "spice",
+    "duration_seconds": 0.005503654479980469,
+    "analysis_command": ".op",
+    "x_axis_kind": "none",
+    "x_axis_label": "X",
+    "x_axis_scale": "none",
+    "requested_x_range": null,
+    "actual_x_range": null
+  },
+  "summary": {
+    "row_count": 1,
+    "signal_count": 5,
+    "x_axis_label": "Index"
+  },
+  "files": {
+    "csv": "raw_data.csv"
+  },
+  "data": {
+    "columns": [
+      "Index",
+      "V(base)",
+      "V(col)",
+      "V(emit)",
+      "V(vss)",
+      "I(VSS)"
+    ],
+    "rows": [
+      {
+        "Index": 0.0,
+        "V(base)": -1.7472018306262773,
+        "V(col)": -6.896871897950792,
+        "V(emit)": -1.0909482259750614,
+        "V(vss)": -12.0,
+        "I(VSS)": 0.0012365483802734753
+      }
+    ],
+    "series": [
+      {
+        "name": "V(base)",
+        "x": [
+          0.0
+        ],
+        "y": [
+          -1.7472018306262773
+        ],
+        "point_count": 1
+      },
+      {
+        "name": "V(col)",
+        "x": [
+          0.0
+        ],
+        "y": [
+          -6.896871897950792
+        ],
+        "point_count": 1
+      },
+      {
+        "name": "V(emit)",
+        "x": [
+          0.0
+        ],
+        "y": [
+          -1.0909482259750614
+        ],
+        "point_count": 1
+      },
+      {
+        "name": "V(vss)",
+        "x": [
+          0.0
+        ],
+        "y": [
+          -12.0
+        ],
+        "point_count": 1
+      },
+      {
+        "name": "I(VSS)",
+        "x": [
+          0.0
+        ],
+        "y": [
+          0.0012365483802734753
+        ],
+        "point_count": 1
+      }
+    ]
+  }
+}

@@ -1,0 +1,9 @@
+# artifact_type: raw_data
+# circuit_file: 01_npn_ce_bias_point.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\op_analysis\01_npn_ce_bias_point.cir
+# analysis_type: op
+# executor: spice
+# timestamp: 2026-04-22T10:26:48.496639
+
+Index,V(base),V(col),V(emit),V(vdd),I(VDD)
+0.0,1.7641741716362835,6.811266307648722,1.1074982212864406,12.0,-0.0012545127424067471

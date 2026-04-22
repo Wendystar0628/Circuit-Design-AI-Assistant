@@ -1,0 +1,23 @@
+# artifact_type: output_log
+# circuit_file: 03_diode_halfwave_rectifier.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\transient_analysis\03_diode_halfwave_rectifier.cir
+# analysis_type: tran
+# executor: spice
+# timestamp: 2026-04-22T10:27:23.765357
+
+stdout Note: No compatibility mode selected!
+stdout Circuit: Diode Half-Wave Rectifier
+stdout Doing analysis at TEMP = 27.000000 and TNOM = 27.000000
+stderr Using SPARSE 1.3 as Direct Linear Solver
+stdout Initial Transient Solution
+stdout --------------------------
+stdout Node                                   Voltage
+stdout ----                                   -------
+stdout ac_in                                        0
+stdout rect                              -1.26036e-22
+stdout vac#branch                         1.26036e-26
+ Reference value :  0.00000e+00
+stdout No. of Data Rows : 1012
+stdout Measurements for Transient Analysis
+stdout v_peak              =  4.334792e+00 at=  8.570810e-02
+stdout v_avg               =  4.295822e+00 from=  6.000000e-02 to=  1.000000e-01

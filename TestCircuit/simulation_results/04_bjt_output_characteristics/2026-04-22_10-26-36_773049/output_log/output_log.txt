@@ -1,0 +1,13 @@
+# artifact_type: output_log
+# circuit_file: 04_bjt_output_characteristics.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\dc_analysis\04_bjt_output_characteristics.cir
+# analysis_type: dc
+# executor: spice
+# timestamp: 2026-04-22T10:26:36.773049
+
+stdout Note: No compatibility mode selected!
+stdout Circuit: NPN BJT Output Characteristics
+stdout Doing analysis at TEMP = 27.000000 and TNOM = 27.000000
+stderr Using SPARSE 1.3 as Direct Linear Solver
+ Reference value :  0.00000e+00
+stdout No. of Data Rows : 1005

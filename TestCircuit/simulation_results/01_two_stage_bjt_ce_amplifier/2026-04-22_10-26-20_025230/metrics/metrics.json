@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "artifact_type": "metrics",
+  "metadata": {
+    "artifact_type": "metrics",
+    "file_name": "01_two_stage_bjt_ce_amplifier.cir",
+    "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\comprehensive_circuits\\01_two_stage_bjt_ce_amplifier.cir",
+    "analysis_type": "ac",
+    "timestamp": "2026-04-22T10:26:20.025230",
+    "success": true,
+    "executor": "spice",
+    "duration_seconds": 0.008969306945800781,
+    "analysis_command": ".ac dec 20 1 100Meg",
+    "x_axis_kind": "frequency",
+    "x_axis_label": "Frequency (Hz)",
+    "x_axis_scale": "log",
+    "requested_x_range": null,
+    "actual_x_range": [
+      1.0,
+      99999999.99999873
+    ]
+  },
+  "summary": {
+    "metric_count": 3,
+    "metrics_with_target": 0
+  },
+  "files": {
+    "csv": "metrics.csv"
+  },
+  "data": {
+    "columns": [
+      "display_name",
+      "name",
+      "value",
+      "unit",
+      "raw_value",
+      "target"
+    ],
+    "rows": [
+      {
+        "display_name": "Av Midband",
+        "name": "av_midband",
+        "value": "84.09 dB",
+        "unit": "dB",
+        "raw_value": 84.09135,
+        "target": ""
+      },
+      {
+        "display_name": "Av Low End",
+        "name": "av_low_end",
+        "value": "65.60 dB",
+        "unit": "dB",
+        "raw_value": 65.59671,
+        "target": ""
+      },
+      {
+        "display_name": "Av High End",
+        "name": "av_high_end",
+        "value": "69.34 dB",
+        "unit": "dB",
+        "raw_value": 69.33975,
+        "target": ""
+      }
+    ]
+  }
+}

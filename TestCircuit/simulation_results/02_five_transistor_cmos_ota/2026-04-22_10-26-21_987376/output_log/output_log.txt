@@ -1,0 +1,19 @@
+# artifact_type: output_log
+# circuit_file: 02_five_transistor_cmos_ota.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\comprehensive_circuits\02_five_transistor_cmos_ota.cir
+# analysis_type: ac
+# executor: spice
+# timestamp: 2026-04-22T10:26:21.987376
+
+stdout Note: No compatibility mode selected!
+stdout Circuit: 5-Transistor CMOS OTA
+stdout Doing analysis at TEMP = 27.000000 and TNOM = 27.000000
+stderr Using SPARSE 1.3 as Direct Linear Solver
+stderr Note: vinn: has no value, DC 0 assumed
+stderr Note: vinp: has no value, DC 0 assumed
+ Reference value :  1.00000e+00
+stdout No. of Data Rows : 181
+stdout Measurements for AC Analysis
+stdout a_dc                =  5.955450e+01
+stdout a_1khz              =  5.811513e+01
+stdout a_1meg              =  3.832328e+00

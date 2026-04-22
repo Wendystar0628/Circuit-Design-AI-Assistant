@@ -1,0 +1,8 @@
+# artifact_type: metrics
+# circuit_file: differential_amplifier.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\cir\differential_amplifier.cir
+# analysis_type: tran
+# executor: spice
+# timestamp: 2026-04-22T10:26:08.046607
+
+display_name,name,value,unit,raw_value,target

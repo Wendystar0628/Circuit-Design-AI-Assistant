@@ -1,0 +1,88 @@
+{
+  "schema_version": 1,
+  "artifact_type": "raw_data",
+  "metadata": {
+    "artifact_type": "raw_data",
+    "file_name": "05_bjt_current_mirror.cir",
+    "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\op_analysis\\05_bjt_current_mirror.cir",
+    "analysis_type": "op",
+    "timestamp": "2026-04-22T10:26:56.562105",
+    "success": true,
+    "executor": "spice",
+    "duration_seconds": 0.006521940231323242,
+    "analysis_command": ".op",
+    "x_axis_kind": "none",
+    "x_axis_label": "X",
+    "x_axis_scale": "none",
+    "requested_x_range": null,
+    "actual_x_range": null
+  },
+  "summary": {
+    "row_count": 1,
+    "signal_count": 4,
+    "x_axis_label": "Index"
+  },
+  "files": {
+    "csv": "raw_data.csv"
+  },
+  "data": {
+    "columns": [
+      "Index",
+      "V(mirror)",
+      "V(ref)",
+      "V(vdd)",
+      "I(VDD)"
+    ],
+    "rows": [
+      {
+        "Index": 0.0,
+        "V(mirror)": 4.82681579446904,
+        "V(ref)": 0.6551759207754995,
+        "V(vdd)": 10.0,
+        "I(VDD)": -0.002034636841106192
+      }
+    ],
+    "series": [
+      {
+        "name": "V(mirror)",
+        "x": [
+          0.0
+        ],
+        "y": [
+          4.82681579446904
+        ],
+        "point_count": 1
+      },
+      {
+        "name": "V(ref)",
+        "x": [
+          0.0
+        ],
+        "y": [
+          0.6551759207754995
+        ],
+        "point_count": 1
+      },
+      {
+        "name": "V(vdd)",
+        "x": [
+          0.0
+        ],
+        "y": [
+          10.0
+        ],
+        "point_count": 1
+      },
+      {
+        "name": "I(VDD)",
+        "x": [
+          0.0
+        ],
+        "y": [
+          -0.002034636841106192
+        ],
+        "point_count": 1
+      }
+    ]
+  }
+}

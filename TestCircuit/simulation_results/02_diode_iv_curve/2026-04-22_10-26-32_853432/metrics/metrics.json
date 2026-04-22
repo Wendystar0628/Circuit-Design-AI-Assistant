@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "artifact_type": "metrics",
+  "metadata": {
+    "artifact_type": "metrics",
+    "file_name": "02_diode_iv_curve.cir",
+    "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\dc_analysis\\02_diode_iv_curve.cir",
+    "analysis_type": "dc",
+    "timestamp": "2026-04-22T10:26:32.853432",
+    "success": true,
+    "executor": "spice",
+    "duration_seconds": 0.007027387619018555,
+    "analysis_command": ".dc Vin 0 2 0.01",
+    "x_axis_kind": "sweep",
+    "x_axis_label": "Vin",
+    "x_axis_scale": "linear",
+    "requested_x_range": [
+      0.0,
+      2.0
+    ],
+    "actual_x_range": [
+      0.0,
+      2.0000000000000013
+    ]
+  },
+  "summary": {
+    "metric_count": 0,
+    "metrics_with_target": 0
+  },
+  "files": {
+    "csv": "metrics.csv"
+  },
+  "data": {
+    "columns": [
+      "display_name",
+      "name",
+      "value",
+      "unit",
+      "raw_value",
+      "target"
+    ],
+    "rows": []
+  }
+}

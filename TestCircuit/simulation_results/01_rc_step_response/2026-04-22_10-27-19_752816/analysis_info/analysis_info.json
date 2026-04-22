@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "artifact_type": "analysis_info",
+  "metadata": {
+    "artifact_type": "analysis_info",
+    "file_name": "01_rc_step_response.cir",
+    "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\transient_analysis\\01_rc_step_response.cir",
+    "analysis_type": "tran",
+    "timestamp": "2026-04-22T10:27:19.752816",
+    "success": true,
+    "executor": "spice",
+    "duration_seconds": 0.008515596389770508,
+    "analysis_command": ".tran 10u 10m",
+    "x_axis_kind": "time",
+    "x_axis_label": "Time (s)",
+    "x_axis_scale": "linear",
+    "requested_x_range": null,
+    "actual_x_range": [
+      0.0,
+      0.01
+    ]
+  },
+  "summary": {
+    "parameter_count": 4
+  },
+  "files": {
+    "text": "analysis_info.txt"
+  },
+  "data": {
+    "analysis_type": "tran",
+    "executor": "spice",
+    "file_name": "01_rc_step_response.cir",
+    "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\transient_analysis\\01_rc_step_response.cir",
+    "success": true,
+    "timestamp": "2026-04-22T10:27:19.752816",
+    "duration_seconds": 0.008515596389770508,
+    "analysis_command": ".tran 10u 10m",
+    "x_axis_kind": "time",
+    "x_axis_label": "Time (s)",
+    "x_axis_scale": "linear",
+    "requested_x_range": null,
+    "actual_x_range": [
+      0.0,
+      0.01
+    ],
+    "parameters": {
+      "step_time": "10u",
+      "stop_time": "10m",
+      "start_time": "",
+      "max_step": ""
+    }
+  }
+}

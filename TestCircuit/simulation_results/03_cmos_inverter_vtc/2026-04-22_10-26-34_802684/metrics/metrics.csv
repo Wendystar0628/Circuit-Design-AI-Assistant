@@ -1,0 +1,10 @@
+# artifact_type: metrics
+# circuit_file: 03_cmos_inverter_vtc.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\dc_analysis\03_cmos_inverter_vtc.cir
+# analysis_type: dc
+# executor: spice
+# timestamp: 2026-04-22T10:26:34.802684
+
+display_name,name,value,unit,raw_value,target
+VTH,v_th,2.03 V,V,2.03464,
+VOH,v_oh,5.00 V,V,5.0,

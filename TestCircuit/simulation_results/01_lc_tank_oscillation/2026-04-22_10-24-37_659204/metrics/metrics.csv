@@ -1,0 +1,10 @@
+# artifact_type: metrics
+# circuit_file: 01_lc_tank_oscillation.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\by_device\inductor\01_lc_tank_oscillation.cir
+# analysis_type: tran
+# executor: spice
+# timestamp: 2026-04-22T10:24:37.659204
+
+display_name,name,value,unit,raw_value,target
+V Peak,v_peak,1000.00m V,V,0.9999975,
+V Late,v_late,73.61m V,V,0.07360891,

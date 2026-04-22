@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "artifact_type": "analysis_info",
+  "metadata": {
+    "artifact_type": "analysis_info",
+    "file_name": "02_pnp_ce_bias_point.cir",
+    "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\op_analysis\\02_pnp_ce_bias_point.cir",
+    "analysis_type": "op",
+    "timestamp": "2026-04-22T10:26:50.612296",
+    "success": true,
+    "executor": "spice",
+    "duration_seconds": 0.005503654479980469,
+    "analysis_command": ".op",
+    "x_axis_kind": "none",
+    "x_axis_label": "X",
+    "x_axis_scale": "none",
+    "requested_x_range": null,
+    "actual_x_range": null
+  },
+  "summary": {
+    "parameter_count": 0
+  },
+  "files": {
+    "text": "analysis_info.txt"
+  },
+  "data": {
+    "analysis_type": "op",
+    "executor": "spice",
+    "file_name": "02_pnp_ce_bias_point.cir",
+    "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\op_analysis\\02_pnp_ce_bias_point.cir",
+    "success": true,
+    "timestamp": "2026-04-22T10:26:50.612296",
+    "duration_seconds": 0.005503654479980469,
+    "analysis_command": ".op",
+    "x_axis_kind": "none",
+    "x_axis_label": "X",
+    "x_axis_scale": "none",
+    "requested_x_range": null,
+    "actual_x_range": null,
+    "parameters": {}
+  }
+}

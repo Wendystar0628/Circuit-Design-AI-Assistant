@@ -1,0 +1,17 @@
+# artifact_type: output_log
+# circuit_file: 03_cmos_ring_oscillator.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\comprehensive_circuits\03_cmos_ring_oscillator.cir
+# analysis_type: tran
+# executor: spice
+# timestamp: 2026-04-22T10:26:23.875617
+
+stdout Note: No compatibility mode selected!
+stdout Circuit: 3-Stage CMOS Ring Oscillator
+stdout Doing analysis at TEMP = 27.000000 and TNOM = 27.000000
+stderr Using SPARSE 1.3 as Direct Linear Solver
+stdout Using transient initial conditions
+ Reference value :  2.00000e-12
+stdout No. of Data Rows : 2519
+stdout Measurements for Transient Analysis
+stdout v_peak              =  4.777306e+00 at=  8.652755e-08
+stdout v_valley            =  -9.130884e-02 at=  4.043275e-07

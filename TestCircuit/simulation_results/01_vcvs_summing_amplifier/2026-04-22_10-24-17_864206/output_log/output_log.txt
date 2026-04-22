@@ -1,0 +1,31 @@
+# artifact_type: output_log
+# circuit_file: 01_vcvs_summing_amplifier.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\by_device\controlled_source\01_vcvs_summing_amplifier.cir
+# analysis_type: tran
+# executor: spice
+# timestamp: 2026-04-22T10:24:17.864206
+
+stdout Note: No compatibility mode selected!
+stdout Circuit: VCVS Summing Amplifier
+stdout Doing analysis at TEMP = 27.000000 and TNOM = 27.000000
+stderr Using SPARSE 1.3 as Direct Linear Solver
+stdout Initial Transient Solution
+stdout --------------------------
+stdout Node                                   Voltage
+stdout ----                                   -------
+stdout in1                                          0
+stdout in2                                          0
+stdout w1                                           0
+stdout w2                                           0
+stdout sum                                          0
+stdout out                                          0
+stdout ebuf#branch                                  0
+stdout e2#branch                                    0
+stdout e1#branch                                    0
+stdout vin2#branch                                  0
+stdout vin1#branch                                  0
+ Reference value :  0.00000e+00
+stdout No. of Data Rows : 508
+stdout Measurements for Transient Analysis
+stdout v_out_max           =  4.599843e-01 at=  4.372800e-03
+stdout v_out_min           =  -4.599843e-01 at=  4.872800e-03

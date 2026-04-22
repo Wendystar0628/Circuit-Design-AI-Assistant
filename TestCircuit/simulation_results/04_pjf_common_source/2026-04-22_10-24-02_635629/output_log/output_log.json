@@ -1,0 +1,103 @@
+{
+  "schema_version": 1,
+  "artifact_type": "output_log",
+  "metadata": {
+    "artifact_type": "output_log",
+    "file_name": "04_pjf_common_source.cir",
+    "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\ac_analysis\\04_pjf_common_source.cir",
+    "analysis_type": "ac",
+    "timestamp": "2026-04-22T10:24:02.635629",
+    "success": true,
+    "executor": "spice",
+    "duration_seconds": 0.005514621734619141,
+    "analysis_command": ".ac dec 20 1 100Meg",
+    "x_axis_kind": "frequency",
+    "x_axis_label": "Frequency (Hz)",
+    "x_axis_scale": "log",
+    "requested_x_range": null,
+    "actual_x_range": [
+      1.0,
+      99999999.99999873
+    ]
+  },
+  "summary": {
+    "total_lines": 13,
+    "error_count": 0,
+    "warning_count": 1,
+    "info_count": 12,
+    "first_error": null
+  },
+  "files": {
+    "text": "output_log.txt"
+  },
+  "data": {
+    "raw_output": "stdout Note: No compatibility mode selected!\nstdout Circuit: PJF Common-Source AC Response\nstderr Warning: Model issue on line 7 :\nstderr .model 2n5460 pjf(is=1.5p alpha=1e-4 vk=300 vto=-3.4 vtotc=-3m beta=1.0m ...\nstderr unrecognized parameter (alpha) - ignored\nstderr unrecognized parameter (vk) - ignored\nstdout Doing analysis at TEMP = 27.000000 and TNOM = 27.000000\nstderr Using SPARSE 1.3 as Direct Linear Solver\nstderr Note: vin: has no value, DC 0 assumed\n Reference value :  1.00000e+00\r\nstdout No. of Data Rows : 161\nstdout Measurements for AC Analysis\nstdout av_midband          =  -1.197092e+00",
+    "lines": [
+      {
+        "line_number": 1,
+        "content": "stdout Note: No compatibility mode selected!",
+        "level": "info"
+      },
+      {
+        "line_number": 2,
+        "content": "stdout Circuit: PJF Common-Source AC Response",
+        "level": "info"
+      },
+      {
+        "line_number": 3,
+        "content": "stderr Warning: Model issue on line 7 :",
+        "level": "warning"
+      },
+      {
+        "line_number": 4,
+        "content": "stderr .model 2n5460 pjf(is=1.5p alpha=1e-4 vk=300 vto=-3.4 vtotc=-3m beta=1.0m ...",
+        "level": "info"
+      },
+      {
+        "line_number": 5,
+        "content": "stderr unrecognized parameter (alpha) - ignored",
+        "level": "info"
+      },
+      {
+        "line_number": 6,
+        "content": "stderr unrecognized parameter (vk) - ignored",
+        "level": "info"
+      },
+      {
+        "line_number": 7,
+        "content": "stdout Doing analysis at TEMP = 27.000000 and TNOM = 27.000000",
+        "level": "info"
+      },
+      {
+        "line_number": 8,
+        "content": "stderr Using SPARSE 1.3 as Direct Linear Solver",
+        "level": "info"
+      },
+      {
+        "line_number": 9,
+        "content": "stderr Note: vin: has no value, DC 0 assumed",
+        "level": "info"
+      },
+      {
+        "line_number": 10,
+        "content": " Reference value :  1.00000e+00",
+        "level": "info"
+      },
+      {
+        "line_number": 11,
+        "content": "stdout No. of Data Rows : 161",
+        "level": "info"
+      },
+      {
+        "line_number": 12,
+        "content": "stdout Measurements for AC Analysis",
+        "level": "info"
+      },
+      {
+        "line_number": 13,
+        "content": "stdout av_midband          =  -1.197092e+00",
+        "level": "info"
+      }
+    ]
+  }
+}

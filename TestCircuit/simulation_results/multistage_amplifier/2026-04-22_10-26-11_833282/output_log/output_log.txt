@@ -1,0 +1,28 @@
+# artifact_type: output_log
+# circuit_file: multistage_amplifier.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\cir\multistage_amplifier.cir
+# analysis_type: tran
+# executor: spice
+# timestamp: 2026-04-22T10:26:11.833282
+
+stdout Note: No compatibility mode selected!
+stdout Circuit: multistage_amplifier
+stdout Doing analysis at TEMP = 27.000000 and TNOM = 27.000000
+stderr Using SPARSE 1.3 as Direct Linear Solver
+stdout Initial Transient Solution
+stdout --------------------------
+stdout Node                                   Voltage
+stdout ----                                   -------
+stdout n006                                         0
+stdout n001                                        12
+stdout n004                                   2.80316
+stdout n008                                   3.95531
+stdout n009                                   2.26771
+stdout n002                                   2.43494
+stdout n005                                    1.1253
+stdout n007                                         0
+stdout n003                                         0
+stdout v2#branch                          -0.00241866
+stdout v1#branch                                    0
+ Reference value :  0.00000e+00
+stdout No. of Data Rows : 1011

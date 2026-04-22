@@ -1,0 +1,10 @@
+# artifact_type: metrics
+# circuit_file: 03_diode_halfwave_rectifier.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\transient_analysis\03_diode_halfwave_rectifier.cir
+# analysis_type: tran
+# executor: spice
+# timestamp: 2026-04-22T10:27:23.765357
+
+display_name,name,value,unit,raw_value,target
+V Peak,v_peak,4.33 V,V,4.334792,
+V Avg,v_avg,4.30 V,V,4.295822,

@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "artifact_type": "metrics",
+  "metadata": {
+    "artifact_type": "metrics",
+    "file_name": "02_rlc_underdamped.cir",
+    "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\transient_analysis\\02_rlc_underdamped.cir",
+    "analysis_type": "tran",
+    "timestamp": "2026-04-22T10:27:21.728481",
+    "success": true,
+    "executor": "spice",
+    "duration_seconds": 0.05325746536254883,
+    "analysis_command": ".tran 2u 3m",
+    "x_axis_kind": "time",
+    "x_axis_label": "Time (s)",
+    "x_axis_scale": "linear",
+    "requested_x_range": null,
+    "actual_x_range": [
+      0.0,
+      0.003
+    ]
+  },
+  "summary": {
+    "metric_count": 2,
+    "metrics_with_target": 0
+  },
+  "files": {
+    "csv": "metrics.csv"
+  },
+  "data": {
+    "columns": [
+      "display_name",
+      "name",
+      "value",
+      "unit",
+      "raw_value",
+      "target"
+    ],
+    "rows": [
+      {
+        "display_name": "V Peak",
+        "name": "v_peak",
+        "value": "8.02 V",
+        "unit": "V",
+        "raw_value": 8.024243,
+        "target": ""
+      },
+      {
+        "display_name": "V Final",
+        "name": "v_final",
+        "value": "5.00 V",
+        "unit": "V",
+        "raw_value": 4.999997,
+        "target": ""
+      }
+    ]
+  }
+}

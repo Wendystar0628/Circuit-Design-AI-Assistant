@@ -1,0 +1,11 @@
+# artifact_type: metrics
+# circuit_file: 04_class_ab_power_amplifier.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\comprehensive_circuits\04_class_ab_power_amplifier.cir
+# analysis_type: tran
+# executor: spice
+# timestamp: 2026-04-22T10:26:26.120133
+
+display_name,name,value,unit,raw_value,target
+V Out PP,v_out_pp,5.67 V,V,5.674899,
+V Out Max,v_out_max,3.50 V,V,3.503884,
+V Out Min,v_out_min,-2.17 V,V,-2.171014,

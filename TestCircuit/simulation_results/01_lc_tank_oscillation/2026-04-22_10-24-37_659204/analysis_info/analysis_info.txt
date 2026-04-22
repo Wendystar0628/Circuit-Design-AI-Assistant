@@ -1,0 +1,20 @@
+# artifact_type: analysis_info
+# circuit_file: 01_lc_tank_oscillation.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\by_device\inductor\01_lc_tank_oscillation.cir
+# analysis_type: tran
+# executor: spice
+# timestamp: 2026-04-22T10:24:37.659204
+
+analysis_command: .tran 5u 5m uic
+x_axis_kind: time
+x_axis_label: Time (s)
+x_axis_scale: linear
+requested_x_range: None
+actual_x_range: [5e-08, 0.005]
+
+parameters:
+  step_time: 5u
+  stop_time: 5m
+  start_time: 
+  max_step: 
+  use_initial_conditions: uic

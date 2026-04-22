@@ -1,0 +1,10 @@
+# artifact_type: metrics
+# circuit_file: 05_cmos_inverter_switch.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\transient_analysis\05_cmos_inverter_switch.cir
+# analysis_type: tran
+# executor: spice
+# timestamp: 2026-04-22T10:27:27.468302
+
+display_name,name,value,unit,raw_value,target
+T Pdhl,t_pdhl,-3.34n,,-3.338531e-09,
+T Pdlh,t_pdlh,13.22n,,1.322149e-08,

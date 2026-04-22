@@ -1,0 +1,124 @@
+{
+  "schema_version": 1,
+  "artifact_type": "raw_data",
+  "metadata": {
+    "artifact_type": "raw_data",
+    "file_name": "03_nmos_self_biased_cs.cir",
+    "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\op_analysis\\03_nmos_self_biased_cs.cir",
+    "analysis_type": "op",
+    "timestamp": "2026-04-22T10:26:52.354909",
+    "success": true,
+    "executor": "spice",
+    "duration_seconds": 0.0055179595947265625,
+    "analysis_command": ".op",
+    "x_axis_kind": "none",
+    "x_axis_label": "X",
+    "x_axis_scale": "none",
+    "requested_x_range": null,
+    "actual_x_range": null
+  },
+  "summary": {
+    "row_count": 1,
+    "signal_count": 7,
+    "x_axis_label": "Index"
+  },
+  "files": {
+    "csv": "raw_data.csv"
+  },
+  "data": {
+    "columns": [
+      "Index",
+      "V(drain)",
+      "V(gate)",
+      "V(m1#body diode)",
+      "V(m1#gate)",
+      "V(src)",
+      "V(vdd)",
+      "I(VDD)"
+    ],
+    "rows": [
+      {
+        "Index": 0.0,
+        "V(drain)": 4.205161160029143,
+        "V(gate)": 1.5625000000306264,
+        "V(m1#body diode)": 0.07948388401790213,
+        "V(m1#gate)": 1.5625000000306264,
+        "V(src)": 0.07948388399712512,
+        "V(vdd)": 5.0,
+        "I(VDD)": -0.0003628528818049213
+      }
+    ],
+    "series": [
+      {
+        "name": "V(drain)",
+        "x": [
+          0.0
+        ],
+        "y": [
+          4.205161160029143
+        ],
+        "point_count": 1
+      },
+      {
+        "name": "V(gate)",
+        "x": [
+          0.0
+        ],
+        "y": [
+          1.5625000000306264
+        ],
+        "point_count": 1
+      },
+      {
+        "name": "V(m1#body diode)",
+        "x": [
+          0.0
+        ],
+        "y": [
+          0.07948388401790213
+        ],
+        "point_count": 1
+      },
+      {
+        "name": "V(m1#gate)",
+        "x": [
+          0.0
+        ],
+        "y": [
+          1.5625000000306264
+        ],
+        "point_count": 1
+      },
+      {
+        "name": "V(src)",
+        "x": [
+          0.0
+        ],
+        "y": [
+          0.07948388399712512
+        ],
+        "point_count": 1
+      },
+      {
+        "name": "V(vdd)",
+        "x": [
+          0.0
+        ],
+        "y": [
+          5.0
+        ],
+        "point_count": 1
+      },
+      {
+        "name": "I(VDD)",
+        "x": [
+          0.0
+        ],
+        "y": [
+          -0.0003628528818049213
+        ],
+        "point_count": 1
+      }
+    ]
+  }
+}

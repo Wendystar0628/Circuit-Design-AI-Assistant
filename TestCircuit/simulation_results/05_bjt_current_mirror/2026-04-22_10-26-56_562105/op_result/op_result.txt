@@ -1,0 +1,18 @@
+# artifact_type: op_result
+# circuit_file: 05_bjt_current_mirror.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\op_analysis\05_bjt_current_mirror.cir
+# analysis_type: op
+# executor: spice
+# timestamp: 2026-04-22T10:26:56.562105
+
+## nodes
+| name | voltage | formatted |
+| --- | --- | --- |
+| vdd | 10 | 10 V |
+| mirror | 4.82682 | 4.82682 V |
+| ref | 0.655176 | 0.655176 V |
+
+## branches
+| device | current | formatted |
+| --- | --- | --- |
+| VDD | -0.00203464 | -0.00203464 A |

@@ -1,0 +1,10 @@
+# artifact_type: metrics
+# circuit_file: 02_rlc_underdamped.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\transient_analysis\02_rlc_underdamped.cir
+# analysis_type: tran
+# executor: spice
+# timestamp: 2026-04-22T10:27:21.728481
+
+display_name,name,value,unit,raw_value,target
+V Peak,v_peak,8.02 V,V,8.024243,
+V Final,v_final,5.00 V,V,4.999997,

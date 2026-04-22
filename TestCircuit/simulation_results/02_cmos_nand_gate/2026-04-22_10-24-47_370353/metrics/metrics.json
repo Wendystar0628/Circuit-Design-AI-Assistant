@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "artifact_type": "metrics",
+  "metadata": {
+    "artifact_type": "metrics",
+    "file_name": "02_cmos_nand_gate.cir",
+    "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\by_device\\mosfet\\02_cmos_nand_gate.cir",
+    "analysis_type": "tran",
+    "timestamp": "2026-04-22T10:24:47.370353",
+    "success": true,
+    "executor": "spice",
+    "duration_seconds": 0.01524496078491211,
+    "analysis_command": ".tran 10n 8u",
+    "x_axis_kind": "time",
+    "x_axis_label": "Time (s)",
+    "x_axis_scale": "linear",
+    "requested_x_range": null,
+    "actual_x_range": [
+      0.0,
+      8e-06
+    ]
+  },
+  "summary": {
+    "metric_count": 2,
+    "metrics_with_target": 0
+  },
+  "files": {
+    "csv": "metrics.csv"
+  },
+  "data": {
+    "columns": [
+      "display_name",
+      "name",
+      "value",
+      "unit",
+      "raw_value",
+      "target"
+    ],
+    "rows": [
+      {
+        "display_name": "V Out High",
+        "name": "v_out_high",
+        "value": "5.08 V",
+        "unit": "V",
+        "raw_value": 5.081779,
+        "target": ""
+      },
+      {
+        "display_name": "V Out Low",
+        "name": "v_out_low",
+        "value": "-135.00m V",
+        "unit": "V",
+        "raw_value": -0.1350042,
+        "target": ""
+      }
+    ]
+  }
+}

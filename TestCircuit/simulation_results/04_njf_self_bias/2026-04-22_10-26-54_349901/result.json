@@ -1,0 +1,93 @@
+{
+  "executor": "spice",
+  "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\op_analysis\\04_njf_self_bias.cir",
+  "analysis_type": "op",
+  "success": true,
+  "data": {
+    "frequency": null,
+    "time": null,
+    "sweep": null,
+    "sweep_name": null,
+    "signals": {
+      "I(VDD)": [
+        -0.0009728934530022733
+      ],
+      "V(src)": [
+        2.1403655754074067
+      ],
+      "V(drain)": [
+        7.427400770889315
+      ],
+      "V(gate)": [
+        9.634886995079592e-06
+      ],
+      "V(vdd)": [
+        12.0
+      ]
+    },
+    "signal_types": {
+      "I(VDD)": "current",
+      "V(src)": "voltage",
+      "V(drain)": "voltage",
+      "V(gate)": "voltage",
+      "V(vdd)": "voltage"
+    },
+    "op_result": {
+      "nodes": [
+        {
+          "name": "vdd",
+          "voltage": 12.0,
+          "formatted": "12 V"
+        },
+        {
+          "name": "drain",
+          "voltage": 7.427400770889315,
+          "formatted": "7.4274 V"
+        },
+        {
+          "name": "gate",
+          "voltage": 9.634886995079592e-06,
+          "formatted": "9.63489e-06 V"
+        },
+        {
+          "name": "src",
+          "voltage": 2.1403655754074067,
+          "formatted": "2.14037 V"
+        }
+      ],
+      "branches": [
+        {
+          "device": "VDD",
+          "current": -0.0009728934530022733,
+          "formatted": "-0.000972893 A"
+        }
+      ],
+      "devices": [],
+      "row_count": 5,
+      "section_count": 2
+    }
+  },
+  "measurements": [],
+  "error": null,
+  "raw_output": "stdout Note: No compatibility mode selected!\nstdout Circuit: NJF Self-Bias\nstderr Warning: Model issue on line 8 :\nstderr .model 2n3819 njf(beta=1.304m betatce=-.5 rd=1 rs=1 lambda=2.25m vto=-3  ...\nstderr unrecognized parameter (isr) - ignored\nstderr unrecognized parameter (n) - ignored\nstderr unrecognized parameter (nr) - ignored\nstderr unrecognized parameter (alpha) - ignored\nstderr unrecognized parameter (vk) - ignored\nstdout Doing analysis at TEMP = 27.000000 and TNOM = 27.000000\nstderr Using SPARSE 1.3 as Direct Linear Solver\n Reference value :  0.00000e+00\r\nstdout No. of Data Rows : 1",
+  "timestamp": "2026-04-22T10:26:54.349901",
+  "duration_seconds": 0.007215738296508789,
+  "version": 1,
+  "session_id": "",
+  "x_axis_kind": "none",
+  "x_axis_label": "X",
+  "x_axis_scale": "none",
+  "requested_x_range": null,
+  "actual_x_range": null,
+  "analysis_command": ".op",
+  "analysis_info": {
+    "analysis_type": "op",
+    "analysis_command": ".op",
+    "x_axis_kind": "none",
+    "x_axis_label": "X",
+    "x_axis_scale": "none",
+    "requested_x_range": null,
+    "actual_x_range": null,
+    "parameters": {}
+  }
+}

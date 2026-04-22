@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "artifact_type": "metrics",
+  "metadata": {
+    "artifact_type": "metrics",
+    "file_name": "01_lt1001_voltage_follower.cir",
+    "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\opamp_circuits\\01_lt1001_voltage_follower.cir",
+    "analysis_type": "tran",
+    "timestamp": "2026-04-22T10:27:01.659510",
+    "success": true,
+    "executor": "spice",
+    "duration_seconds": 0.008037805557250977,
+    "analysis_command": ".tran 0.02m 4m",
+    "x_axis_kind": "time",
+    "x_axis_label": "Time (s)",
+    "x_axis_scale": "linear",
+    "requested_x_range": null,
+    "actual_x_range": [
+      0.0,
+      0.004
+    ]
+  },
+  "summary": {
+    "metric_count": 0,
+    "metrics_with_target": 0
+  },
+  "files": {
+    "csv": "metrics.csv"
+  },
+  "data": {
+    "columns": [
+      "display_name",
+      "name",
+      "value",
+      "unit",
+      "raw_value",
+      "target"
+    ],
+    "rows": []
+  }
+}

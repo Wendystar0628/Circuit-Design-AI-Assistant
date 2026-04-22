@@ -1,0 +1,8 @@
+# artifact_type: metrics
+# circuit_file: common_emitter_amplifier.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\cir\common_emitter_amplifier.cir
+# analysis_type: ac
+# executor: spice
+# timestamp: 2026-04-22T10:26:06.140900
+
+display_name,name,value,unit,raw_value,target

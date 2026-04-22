@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "artifact_type": "metrics",
+  "metadata": {
+    "artifact_type": "metrics",
+    "file_name": "05_cmos_schmitt_trigger.cir",
+    "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\comprehensive_circuits\\05_cmos_schmitt_trigger.cir",
+    "analysis_type": "tran",
+    "timestamp": "2026-04-22T10:26:28.441887",
+    "success": true,
+    "executor": "spice",
+    "duration_seconds": 0.022087574005126953,
+    "analysis_command": ".tran 2u 4m",
+    "x_axis_kind": "time",
+    "x_axis_label": "Time (s)",
+    "x_axis_scale": "linear",
+    "requested_x_range": null,
+    "actual_x_range": [
+      0.0,
+      0.004
+    ]
+  },
+  "summary": {
+    "metric_count": 2,
+    "metrics_with_target": 0
+  },
+  "files": {
+    "csv": "metrics.csv"
+  },
+  "data": {
+    "columns": [
+      "display_name",
+      "name",
+      "value",
+      "unit",
+      "raw_value",
+      "target"
+    ],
+    "rows": [
+      {
+        "display_name": "V Out High",
+        "name": "v_out_high",
+        "value": "2.93 V",
+        "unit": "V",
+        "raw_value": 2.934641,
+        "target": ""
+      },
+      {
+        "display_name": "V Out Low",
+        "name": "v_out_low",
+        "value": "1.01 V",
+        "unit": "V",
+        "raw_value": 1.00878,
+        "target": ""
+      }
+    ]
+  }
+}

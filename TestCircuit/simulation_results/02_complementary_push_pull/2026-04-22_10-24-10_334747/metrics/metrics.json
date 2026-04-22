@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "artifact_type": "metrics",
+  "metadata": {
+    "artifact_type": "metrics",
+    "file_name": "02_complementary_push_pull.cir",
+    "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\by_device\\bjt\\02_complementary_push_pull.cir",
+    "analysis_type": "tran",
+    "timestamp": "2026-04-22T10:24:10.334747",
+    "success": true,
+    "executor": "spice",
+    "duration_seconds": 0.0065228939056396484,
+    "analysis_command": ".tran 10u 5m",
+    "x_axis_kind": "time",
+    "x_axis_label": "Time (s)",
+    "x_axis_scale": "linear",
+    "requested_x_range": null,
+    "actual_x_range": [
+      0.0,
+      0.005
+    ]
+  },
+  "summary": {
+    "metric_count": 1,
+    "metrics_with_target": 0
+  },
+  "files": {
+    "csv": "metrics.csv"
+  },
+  "data": {
+    "columns": [
+      "display_name",
+      "name",
+      "value",
+      "unit",
+      "raw_value",
+      "target"
+    ],
+    "rows": [
+      {
+        "display_name": "V Out PP",
+        "name": "v_out_pp",
+        "value": "4.52 V",
+        "unit": "V",
+        "raw_value": 4.521445,
+        "target": ""
+      }
+    ]
+  }
+}

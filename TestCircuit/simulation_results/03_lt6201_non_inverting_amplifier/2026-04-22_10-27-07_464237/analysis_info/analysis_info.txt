@@ -1,0 +1,19 @@
+# artifact_type: analysis_info
+# circuit_file: 03_lt6201_non_inverting_amplifier.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\opamp_circuits\03_lt6201_non_inverting_amplifier.cir
+# analysis_type: ac
+# executor: spice
+# timestamp: 2026-04-22T10:27:07.464237
+
+analysis_command: .ac dec 30 1k 100Meg
+x_axis_kind: frequency
+x_axis_label: Frequency (Hz)
+x_axis_scale: log
+requested_x_range: None
+actual_x_range: [1000.0, 100000000.0]
+
+parameters:
+  sweep_type: dec
+  points_per_decade: 30
+  start_frequency: 1k
+  stop_frequency: 100Meg

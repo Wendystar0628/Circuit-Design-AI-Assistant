@@ -1,0 +1,8 @@
+# artifact_type: metrics
+# circuit_file: 01_njf_cascode.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\by_device\jfet\01_njf_cascode.cir
+# analysis_type: op
+# executor: spice
+# timestamp: 2026-04-22T10:24:40.582038
+
+display_name,name,value,unit,raw_value,target

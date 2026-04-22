@@ -1,9 +1,0 @@
-.title amplifier circuit (new)
-VCC vcc 0 DC 12
-Vin in 0 SIN(0 1 1k)
-VEE vee 0 DC -12
-XU1 0 inv vcc vee out LT1001
-Rin inv in 1k
-Rf out inv 10k
-.tran 0.02m 20m
-.end

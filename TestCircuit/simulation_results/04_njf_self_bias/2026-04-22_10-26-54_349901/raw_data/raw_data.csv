@@ -1,0 +1,9 @@
+# artifact_type: raw_data
+# circuit_file: 04_njf_self_bias.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\op_analysis\04_njf_self_bias.cir
+# analysis_type: op
+# executor: spice
+# timestamp: 2026-04-22T10:26:54.349901
+
+Index,V(drain),V(gate),V(src),V(vdd),I(VDD)
+0.0,7.427400770889315,9.634886995079592e-06,2.1403655754074067,12.0,-0.0009728934530022733

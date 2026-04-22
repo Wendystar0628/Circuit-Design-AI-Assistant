@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "artifact_type": "metrics",
+  "metadata": {
+    "artifact_type": "metrics",
+    "file_name": "04_class_ab_power_amplifier.cir",
+    "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\comprehensive_circuits\\04_class_ab_power_amplifier.cir",
+    "analysis_type": "tran",
+    "timestamp": "2026-04-22T10:26:26.120133",
+    "success": true,
+    "executor": "spice",
+    "duration_seconds": 0.017530441284179688,
+    "analysis_command": ".tran 10u 5m",
+    "x_axis_kind": "time",
+    "x_axis_label": "Time (s)",
+    "x_axis_scale": "linear",
+    "requested_x_range": null,
+    "actual_x_range": [
+      0.0,
+      0.005
+    ]
+  },
+  "summary": {
+    "metric_count": 3,
+    "metrics_with_target": 0
+  },
+  "files": {
+    "csv": "metrics.csv"
+  },
+  "data": {
+    "columns": [
+      "display_name",
+      "name",
+      "value",
+      "unit",
+      "raw_value",
+      "target"
+    ],
+    "rows": [
+      {
+        "display_name": "V Out PP",
+        "name": "v_out_pp",
+        "value": "5.67 V",
+        "unit": "V",
+        "raw_value": 5.674899,
+        "target": ""
+      },
+      {
+        "display_name": "V Out Max",
+        "name": "v_out_max",
+        "value": "3.50 V",
+        "unit": "V",
+        "raw_value": 3.503884,
+        "target": ""
+      },
+      {
+        "display_name": "V Out Min",
+        "name": "v_out_min",
+        "value": "-2.17 V",
+        "unit": "V",
+        "raw_value": -2.171014,
+        "target": ""
+      }
+    ]
+  }
+}

@@ -1,0 +1,10 @@
+# artifact_type: metrics
+# circuit_file: 01_rc_step_response.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\transient_analysis\01_rc_step_response.cir
+# analysis_type: tran
+# executor: spice
+# timestamp: 2026-04-22T10:27:19.752816
+
+display_name,name,value,unit,raw_value,target
+V Final,v_final,5.00 V,V,4.999318,
+T Rise 90,t_rise_90,2.40m s,s,0.00240306,

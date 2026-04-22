@@ -1,0 +1,8 @@
+# artifact_type: metrics
+# circuit_file: 05_njf_transfer_curve.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\dc_analysis\05_njf_transfer_curve.cir
+# analysis_type: dc
+# executor: spice
+# timestamp: 2026-04-22T10:26:38.878292
+
+display_name,name,value,unit,raw_value,target

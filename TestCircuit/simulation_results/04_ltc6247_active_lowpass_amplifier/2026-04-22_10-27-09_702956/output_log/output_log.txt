@@ -1,0 +1,14 @@
+# artifact_type: output_log
+# circuit_file: 04_ltc6247_active_lowpass_amplifier.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\opamp_circuits\04_ltc6247_active_lowpass_amplifier.cir
+# analysis_type: ac
+# executor: spice
+# timestamp: 2026-04-22T10:27:09.702956
+
+stdout Note: No compatibility mode selected!
+stdout Circuit: LTC6247 Active Low-Pass Amplifier
+stdout Doing analysis at TEMP = 27.000000 and TNOM = 27.000000
+stderr Using SPARSE 1.3 as Direct Linear Solver
+stderr Note: vin: has no value, DC 0 assumed
+ Reference value :  1.00000e+00
+stdout No. of Data Rows : 121

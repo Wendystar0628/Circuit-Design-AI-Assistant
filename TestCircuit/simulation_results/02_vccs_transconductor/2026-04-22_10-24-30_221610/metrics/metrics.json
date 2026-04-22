@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "artifact_type": "metrics",
+  "metadata": {
+    "artifact_type": "metrics",
+    "file_name": "02_vccs_transconductor.cir",
+    "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\by_device\\controlled_source\\02_vccs_transconductor.cir",
+    "analysis_type": "ac",
+    "timestamp": "2026-04-22T10:24:30.221610",
+    "success": true,
+    "executor": "spice",
+    "duration_seconds": 0.006661653518676758,
+    "analysis_command": ".ac dec 20 10 10Meg",
+    "x_axis_kind": "frequency",
+    "x_axis_label": "Frequency (Hz)",
+    "x_axis_scale": "log",
+    "requested_x_range": null,
+    "actual_x_range": [
+      10.0,
+      9999999.9999999
+    ]
+  },
+  "summary": {
+    "metric_count": 1,
+    "metrics_with_target": 0
+  },
+  "files": {
+    "csv": "metrics.csv"
+  },
+  "data": {
+    "columns": [
+      "display_name",
+      "name",
+      "value",
+      "unit",
+      "raw_value",
+      "target"
+    ],
+    "rows": [
+      {
+        "display_name": "G Mid",
+        "name": "g_mid",
+        "value": "19.98 dB",
+        "unit": "dB",
+        "raw_value": 19.98289,
+        "target": ""
+      }
+    ]
+  }
+}

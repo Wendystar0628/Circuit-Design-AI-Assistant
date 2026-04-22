@@ -1,0 +1,96 @@
+{
+  "schema_version": 1,
+  "artifact_type": "output_log",
+  "metadata": {
+    "artifact_type": "output_log",
+    "file_name": "03_cmos_inverter_vtc.cir",
+    "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\dc_analysis\\03_cmos_inverter_vtc.cir",
+    "analysis_type": "dc",
+    "timestamp": "2026-04-22T10:26:34.802684",
+    "success": true,
+    "executor": "spice",
+    "duration_seconds": 0.009522199630737305,
+    "analysis_command": ".dc Vin 0 5 0.01",
+    "x_axis_kind": "sweep",
+    "x_axis_label": "Vin",
+    "x_axis_scale": "linear",
+    "requested_x_range": [
+      0.0,
+      5.0
+    ],
+    "actual_x_range": [
+      0.0,
+      4.999999999999938
+    ]
+  },
+  "summary": {
+    "total_lines": 11,
+    "error_count": 1,
+    "warning_count": 0,
+    "info_count": 10,
+    "first_error": "stderr .measure dc v_ol find v(out) at=5 failed!"
+  },
+  "files": {
+    "text": "output_log.txt"
+  },
+  "data": {
+    "raw_output": "stdout Note: No compatibility mode selected!\nstdout Circuit: CMOS Inverter Voltage Transfer Characteristic\nstdout Doing analysis at TEMP = 27.000000 and TNOM = 27.000000\nstderr Using SPARSE 1.3 as Direct Linear Solver\n Reference value :  0.00000e+00\r\nstdout No. of Data Rows : 501\nstdout Measurements for DC Analysis\nstderr out of interval\nstderr .measure dc v_ol find v(out) at=5 failed!\nstdout v_th                =   2.03464e+00\nstdout v_oh                =  5.000000e+00",
+    "lines": [
+      {
+        "line_number": 1,
+        "content": "stdout Note: No compatibility mode selected!",
+        "level": "info"
+      },
+      {
+        "line_number": 2,
+        "content": "stdout Circuit: CMOS Inverter Voltage Transfer Characteristic",
+        "level": "info"
+      },
+      {
+        "line_number": 3,
+        "content": "stdout Doing analysis at TEMP = 27.000000 and TNOM = 27.000000",
+        "level": "info"
+      },
+      {
+        "line_number": 4,
+        "content": "stderr Using SPARSE 1.3 as Direct Linear Solver",
+        "level": "info"
+      },
+      {
+        "line_number": 5,
+        "content": " Reference value :  0.00000e+00",
+        "level": "info"
+      },
+      {
+        "line_number": 6,
+        "content": "stdout No. of Data Rows : 501",
+        "level": "info"
+      },
+      {
+        "line_number": 7,
+        "content": "stdout Measurements for DC Analysis",
+        "level": "info"
+      },
+      {
+        "line_number": 8,
+        "content": "stderr out of interval",
+        "level": "info"
+      },
+      {
+        "line_number": 9,
+        "content": "stderr .measure dc v_ol find v(out) at=5 failed!",
+        "level": "error"
+      },
+      {
+        "line_number": 10,
+        "content": "stdout v_th                =   2.03464e+00",
+        "level": "info"
+      },
+      {
+        "line_number": 11,
+        "content": "stdout v_oh                =  5.000000e+00",
+        "level": "info"
+      }
+    ]
+  }
+}

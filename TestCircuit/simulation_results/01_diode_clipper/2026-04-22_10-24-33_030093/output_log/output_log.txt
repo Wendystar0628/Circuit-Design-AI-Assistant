@@ -1,0 +1,27 @@
+# artifact_type: output_log
+# circuit_file: 01_diode_clipper.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\by_device\diode\01_diode_clipper.cir
+# analysis_type: tran
+# executor: spice
+# timestamp: 2026-04-22T10:24:33.030093
+
+stdout Note: No compatibility mode selected!
+stdout Circuit: Symmetric Diode Clipper
+stdout Doing analysis at TEMP = 27.000000 and TNOM = 27.000000
+stderr Using SPARSE 1.3 as Direct Linear Solver
+stdout Initial Transient Solution
+stdout --------------------------
+stdout Node                                   Voltage
+stdout ----                                   -------
+stdout in                                           0
+stdout vpos                                       0.7
+stdout vneg                                      -0.7
+stdout out                               -4.03251e-22
+stdout vneg#branch                        2.51978e-09
+stdout vpos#branch                       -2.51978e-09
+stdout vin#branch                        -4.03251e-25
+ Reference value :  0.00000e+00
+stdout No. of Data Rows : 509
+stdout Measurements for Transient Analysis
+stdout v_clip_pos          =  1.308586e+00 at=  1.248464e-03
+stdout v_clip_neg          =  -1.308589e+00 at=  7.494485e-04

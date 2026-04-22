@@ -1,0 +1,19 @@
+# artifact_type: analysis_info
+# circuit_file: 05_njf_transfer_curve.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\dc_analysis\05_njf_transfer_curve.cir
+# analysis_type: dc
+# executor: spice
+# timestamp: 2026-04-22T10:26:38.878292
+
+analysis_command: .dc Vgs -3 0 0.02
+x_axis_kind: sweep
+x_axis_label: Vgs
+x_axis_scale: linear
+requested_x_range: [-3.0, 0.0]
+actual_x_range: [-3.0, 2.3939183968479938e-15]
+
+parameters:
+  source_name: Vgs
+  start_value: -3
+  stop_value: 0
+  step: 0.02

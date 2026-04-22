@@ -1,0 +1,9 @@
+# artifact_type: metrics
+# circuit_file: 02_pnp_common_emitter.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\ac_analysis\02_pnp_common_emitter.cir
+# analysis_type: ac
+# executor: spice
+# timestamp: 2026-04-22T10:23:57.803956
+
+display_name,name,value,unit,raw_value,target
+Av Midband,av_midband,44.61 dB,dB,44.61,

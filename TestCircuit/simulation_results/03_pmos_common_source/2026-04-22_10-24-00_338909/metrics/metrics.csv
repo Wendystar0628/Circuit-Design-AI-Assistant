@@ -1,0 +1,9 @@
+# artifact_type: metrics
+# circuit_file: 03_pmos_common_source.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\ac_analysis\03_pmos_common_source.cir
+# analysis_type: ac
+# executor: spice
+# timestamp: 2026-04-22T10:24:00.338909
+
+display_name,name,value,unit,raw_value,target
+Av Midband,av_midband,-36.15 dB,dB,-36.14907,

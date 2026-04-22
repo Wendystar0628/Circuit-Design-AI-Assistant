@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "artifact_type": "metrics",
+  "metadata": {
+    "artifact_type": "metrics",
+    "file_name": "01_vcvs_summing_amplifier.cir",
+    "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\by_device\\controlled_source\\01_vcvs_summing_amplifier.cir",
+    "analysis_type": "tran",
+    "timestamp": "2026-04-22T10:24:17.864206",
+    "success": true,
+    "executor": "spice",
+    "duration_seconds": 0.006878852844238281,
+    "analysis_command": ".tran 10u 5m",
+    "x_axis_kind": "time",
+    "x_axis_label": "Time (s)",
+    "x_axis_scale": "linear",
+    "requested_x_range": null,
+    "actual_x_range": [
+      0.0,
+      0.005
+    ]
+  },
+  "summary": {
+    "metric_count": 2,
+    "metrics_with_target": 0
+  },
+  "files": {
+    "csv": "metrics.csv"
+  },
+  "data": {
+    "columns": [
+      "display_name",
+      "name",
+      "value",
+      "unit",
+      "raw_value",
+      "target"
+    ],
+    "rows": [
+      {
+        "display_name": "V Out Max",
+        "name": "v_out_max",
+        "value": "459.98m V",
+        "unit": "V",
+        "raw_value": 0.4599843,
+        "target": ""
+      },
+      {
+        "display_name": "V Out Min",
+        "name": "v_out_min",
+        "value": "-459.98m V",
+        "unit": "V",
+        "raw_value": -0.4599843,
+        "target": ""
+      }
+    ]
+  }
+}

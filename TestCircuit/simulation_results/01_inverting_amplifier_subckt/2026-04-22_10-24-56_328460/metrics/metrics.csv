@@ -1,0 +1,9 @@
+# artifact_type: metrics
+# circuit_file: 01_inverting_amplifier_subckt.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\by_device\subcircuit\01_inverting_amplifier_subckt.cir
+# analysis_type: ac
+# executor: spice
+# timestamp: 2026-04-22T10:24:56.328460
+
+display_name,name,value,unit,raw_value,target
+A Midband,a_midband,20.00 dB,dB,19.9999,

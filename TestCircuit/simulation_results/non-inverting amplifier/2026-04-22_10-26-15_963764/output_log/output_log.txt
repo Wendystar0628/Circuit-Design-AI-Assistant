@@ -1,0 +1,28 @@
+# artifact_type: output_log
+# circuit_file: non-inverting amplifier.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\cir\non-inverting amplifier.cir
+# analysis_type: tran
+# executor: spice
+# timestamp: 2026-04-22T10:26:15.963764
+
+stdout Note: No compatibility mode selected!
+stdout Circuit: non-inverting amplifier
+stdout Doing analysis at TEMP = 27.000000 and TNOM = 27.000000
+stderr Using SPARSE 1.3 as Direct Linear Solver
+stdout Initial Transient Solution
+stdout --------------------------
+stdout Node                                   Voltage
+stdout ----                                   -------
+stdout xu1.ndrv                                     0
+stdout n005                                         0
+stdout n002                                         0
+stdout n003                                         0
+stdout n001                                        12
+stdout n006                                       -12
+stdout n004                                         0
+stdout e.xu1.e1#branch                              0
+stdout v3#branch                             -1.2e-11
+stdout v2#branch                             -1.2e-11
+stdout v1#branch                                    0
+ Reference value :  0.00000e+00
+stdout No. of Data Rows : 1008

@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "artifact_type": "op_result",
+  "metadata": {
+    "artifact_type": "op_result",
+    "file_name": "01_npn_ce_bias_point.cir",
+    "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\op_analysis\\01_npn_ce_bias_point.cir",
+    "analysis_type": "op",
+    "timestamp": "2026-04-22T10:26:48.496639",
+    "success": true,
+    "executor": "spice",
+    "duration_seconds": 0.006211042404174805,
+    "analysis_command": ".op",
+    "x_axis_kind": "none",
+    "x_axis_label": "X",
+    "x_axis_scale": "none",
+    "requested_x_range": null,
+    "actual_x_range": null
+  },
+  "summary": {
+    "row_count": 5,
+    "section_count": 2
+  },
+  "files": {
+    "text": "op_result.txt"
+  },
+  "data": {
+    "nodes": [
+      {
+        "name": "vdd",
+        "voltage": 12.0,
+        "formatted": "12 V"
+      },
+      {
+        "name": "base",
+        "voltage": 1.7641741716362835,
+        "formatted": "1.76417 V"
+      },
+      {
+        "name": "col",
+        "voltage": 6.811266307648722,
+        "formatted": "6.81127 V"
+      },
+      {
+        "name": "emit",
+        "voltage": 1.1074982212864406,
+        "formatted": "1.1075 V"
+      }
+    ],
+    "branches": [
+      {
+        "device": "VDD",
+        "current": -0.0012545127424067471,
+        "formatted": "-0.00125451 A"
+      }
+    ],
+    "devices": [],
+    "row_count": 5,
+    "section_count": 2
+  }
+}

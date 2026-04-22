@@ -1,0 +1,18 @@
+# artifact_type: output_log
+# circuit_file: 03_cmos_inverter_vtc.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\dc_analysis\03_cmos_inverter_vtc.cir
+# analysis_type: dc
+# executor: spice
+# timestamp: 2026-04-22T10:26:34.802684
+
+stdout Note: No compatibility mode selected!
+stdout Circuit: CMOS Inverter Voltage Transfer Characteristic
+stdout Doing analysis at TEMP = 27.000000 and TNOM = 27.000000
+stderr Using SPARSE 1.3 as Direct Linear Solver
+ Reference value :  0.00000e+00
+stdout No. of Data Rows : 501
+stdout Measurements for DC Analysis
+stderr out of interval
+stderr .measure dc v_ol find v(out) at=5 failed!
+stdout v_th                =   2.03464e+00
+stdout v_oh                =  5.000000e+00

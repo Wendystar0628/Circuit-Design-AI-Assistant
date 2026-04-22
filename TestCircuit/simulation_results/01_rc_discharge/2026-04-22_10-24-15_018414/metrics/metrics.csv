@@ -1,0 +1,10 @@
+# artifact_type: metrics
+# circuit_file: 01_rc_discharge.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\by_device\capacitor\01_rc_discharge.cir
+# analysis_type: tran
+# executor: spice
+# timestamp: 2026-04-22T10:24:15.018414
+
+display_name,name,value,unit,raw_value,target
+V Final,v_final,55.54m V,V,0.05554303,
+T Tau,t_tau,10.00m s,s,0.0100021,

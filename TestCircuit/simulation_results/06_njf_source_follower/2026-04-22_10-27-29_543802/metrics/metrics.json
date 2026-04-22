@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "artifact_type": "metrics",
+  "metadata": {
+    "artifact_type": "metrics",
+    "file_name": "06_njf_source_follower.cir",
+    "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\transient_analysis\\06_njf_source_follower.cir",
+    "analysis_type": "tran",
+    "timestamp": "2026-04-22T10:27:29.543802",
+    "success": true,
+    "executor": "spice",
+    "duration_seconds": 0.009099960327148438,
+    "analysis_command": ".tran 10u 5m",
+    "x_axis_kind": "time",
+    "x_axis_label": "Time (s)",
+    "x_axis_scale": "linear",
+    "requested_x_range": null,
+    "actual_x_range": [
+      0.0,
+      0.005
+    ]
+  },
+  "summary": {
+    "metric_count": 1,
+    "metrics_with_target": 0
+  },
+  "files": {
+    "csv": "metrics.csv"
+  },
+  "data": {
+    "columns": [
+      "display_name",
+      "name",
+      "value",
+      "unit",
+      "raw_value",
+      "target"
+    ],
+    "rows": [
+      {
+        "display_name": "V Out PP",
+        "name": "v_out_pp",
+        "value": "177.55m V",
+        "unit": "V",
+        "raw_value": 0.1775503,
+        "target": ""
+      }
+    ]
+  }
+}

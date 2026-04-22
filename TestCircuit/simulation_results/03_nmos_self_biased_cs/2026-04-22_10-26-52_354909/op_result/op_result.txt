@@ -1,0 +1,21 @@
+# artifact_type: op_result
+# circuit_file: 03_nmos_self_biased_cs.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\op_analysis\03_nmos_self_biased_cs.cir
+# analysis_type: op
+# executor: spice
+# timestamp: 2026-04-22T10:26:52.354909
+
+## nodes
+| name | voltage | formatted |
+| --- | --- | --- |
+| vdd | 5 | 5 V |
+| drain | 4.20516 | 4.20516 V |
+| gate | 1.5625 | 1.5625 V |
+| m1#body diode | 0.0794839 | 0.0794839 V |
+| m1#gate | 1.5625 | 1.5625 V |
+| src | 0.0794839 | 0.0794839 V |
+
+## branches
+| device | current | formatted |
+| --- | --- | --- |
+| VDD | -0.000362853 | -0.000362853 A |

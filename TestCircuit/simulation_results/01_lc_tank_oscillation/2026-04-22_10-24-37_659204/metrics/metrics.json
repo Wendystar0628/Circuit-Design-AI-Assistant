@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "artifact_type": "metrics",
+  "metadata": {
+    "artifact_type": "metrics",
+    "file_name": "01_lc_tank_oscillation.cir",
+    "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\by_device\\inductor\\01_lc_tank_oscillation.cir",
+    "analysis_type": "tran",
+    "timestamp": "2026-04-22T10:24:37.659204",
+    "success": true,
+    "executor": "spice",
+    "duration_seconds": 0.0070188045501708984,
+    "analysis_command": ".tran 5u 5m uic",
+    "x_axis_kind": "time",
+    "x_axis_label": "Time (s)",
+    "x_axis_scale": "linear",
+    "requested_x_range": null,
+    "actual_x_range": [
+      5e-08,
+      0.005
+    ]
+  },
+  "summary": {
+    "metric_count": 2,
+    "metrics_with_target": 0
+  },
+  "files": {
+    "csv": "metrics.csv"
+  },
+  "data": {
+    "columns": [
+      "display_name",
+      "name",
+      "value",
+      "unit",
+      "raw_value",
+      "target"
+    ],
+    "rows": [
+      {
+        "display_name": "V Peak",
+        "name": "v_peak",
+        "value": "1000.00m V",
+        "unit": "V",
+        "raw_value": 0.9999975,
+        "target": ""
+      },
+      {
+        "display_name": "V Late",
+        "name": "v_late",
+        "value": "73.61m V",
+        "unit": "V",
+        "raw_value": 0.07360891,
+        "target": ""
+      }
+    ]
+  }
+}

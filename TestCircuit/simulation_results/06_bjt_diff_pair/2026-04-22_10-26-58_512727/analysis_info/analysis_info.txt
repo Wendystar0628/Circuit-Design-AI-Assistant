@@ -1,0 +1,15 @@
+# artifact_type: analysis_info
+# circuit_file: 06_bjt_diff_pair.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\op_analysis\06_bjt_diff_pair.cir
+# analysis_type: op
+# executor: spice
+# timestamp: 2026-04-22T10:26:58.512727
+
+analysis_command: .op
+x_axis_kind: none
+x_axis_label: X
+x_axis_scale: none
+requested_x_range: None
+actual_x_range: None
+
+parameters:

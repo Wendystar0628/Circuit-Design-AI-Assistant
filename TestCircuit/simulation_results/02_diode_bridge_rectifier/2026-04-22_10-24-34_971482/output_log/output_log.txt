@@ -1,0 +1,25 @@
+# artifact_type: output_log
+# circuit_file: 02_diode_bridge_rectifier.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\by_device\diode\02_diode_bridge_rectifier.cir
+# analysis_type: tran
+# executor: spice
+# timestamp: 2026-04-22T10:24:34.971482
+
+stdout Note: No compatibility mode selected!
+stdout Circuit: Full-Wave Bridge Rectifier
+stdout Doing analysis at TEMP = 27.000000 and TNOM = 27.000000
+stderr Using SPARSE 1.3 as Direct Linear Solver
+stdout Initial Transient Solution
+stdout --------------------------
+stdout Node                                   Voltage
+stdout ----                                   -------
+stdout ac_hi                             -1.36432e-18
+stdout ac_lo                             -1.36432e-18
+stdout pos                                3.38427e-22
+stdout neg                               -3.38427e-25
+stdout vac#branch                                   0
+ Reference value :  0.00000e+00
+stdout No. of Data Rows : 518
+stdout Measurements for Transient Analysis
+stdout v_peak              =  8.488140e+00 at=  1.551591e-02
+stdout v_avg               =  8.171155e+00 from=  6.000000e-02 to=  1.000000e-01

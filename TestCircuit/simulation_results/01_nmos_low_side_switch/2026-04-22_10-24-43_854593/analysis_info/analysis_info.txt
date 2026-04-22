@@ -1,0 +1,19 @@
+# artifact_type: analysis_info
+# circuit_file: 01_nmos_low_side_switch.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\by_device\mosfet\01_nmos_low_side_switch.cir
+# analysis_type: tran
+# executor: spice
+# timestamp: 2026-04-22T10:24:43.854593
+
+analysis_command: .tran 100n 30u
+x_axis_kind: time
+x_axis_label: Time (s)
+x_axis_scale: linear
+requested_x_range: None
+actual_x_range: [0.0, 2.9999999999999997e-05]
+
+parameters:
+  step_time: 100n
+  stop_time: 30u
+  start_time: 
+  max_step:

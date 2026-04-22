@@ -1,0 +1,15 @@
+# artifact_type: analysis_info
+# circuit_file: 01_npn_emitter_follower.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\by_device\bjt\01_npn_emitter_follower.cir
+# analysis_type: op
+# executor: spice
+# timestamp: 2026-04-22T10:24:06.468067
+
+analysis_command: .op
+x_axis_kind: none
+x_axis_label: X
+x_axis_scale: none
+requested_x_range: None
+actual_x_range: None
+
+parameters:

@@ -1,0 +1,10 @@
+# artifact_type: metrics
+# circuit_file: 05_cmos_schmitt_trigger.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\comprehensive_circuits\05_cmos_schmitt_trigger.cir
+# analysis_type: tran
+# executor: spice
+# timestamp: 2026-04-22T10:26:28.441887
+
+display_name,name,value,unit,raw_value,target
+V Out High,v_out_high,2.93 V,V,2.934641,
+V Out Low,v_out_low,1.01 V,V,1.00878,

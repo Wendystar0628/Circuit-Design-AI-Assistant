@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "artifact_type": "metrics",
+  "metadata": {
+    "artifact_type": "metrics",
+    "file_name": "05_cmos_inverter_switch.cir",
+    "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\transient_analysis\\05_cmos_inverter_switch.cir",
+    "analysis_type": "tran",
+    "timestamp": "2026-04-22T10:27:27.468302",
+    "success": true,
+    "executor": "spice",
+    "duration_seconds": 0.01253056526184082,
+    "analysis_command": ".tran 10n 5u",
+    "x_axis_kind": "time",
+    "x_axis_label": "Time (s)",
+    "x_axis_scale": "linear",
+    "requested_x_range": null,
+    "actual_x_range": [
+      0.0,
+      4.9999999999999996e-06
+    ]
+  },
+  "summary": {
+    "metric_count": 2,
+    "metrics_with_target": 0
+  },
+  "files": {
+    "csv": "metrics.csv"
+  },
+  "data": {
+    "columns": [
+      "display_name",
+      "name",
+      "value",
+      "unit",
+      "raw_value",
+      "target"
+    ],
+    "rows": [
+      {
+        "display_name": "T Pdhl",
+        "name": "t_pdhl",
+        "value": "-3.34n",
+        "unit": "",
+        "raw_value": -3.338531e-09,
+        "target": ""
+      },
+      {
+        "display_name": "T Pdlh",
+        "name": "t_pdlh",
+        "value": "13.22n",
+        "unit": "",
+        "raw_value": 1.322149e-08,
+        "target": ""
+      }
+    ]
+  }
+}

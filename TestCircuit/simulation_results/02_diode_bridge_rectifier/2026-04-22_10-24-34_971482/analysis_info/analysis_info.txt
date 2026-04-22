@@ -1,0 +1,19 @@
+# artifact_type: analysis_info
+# circuit_file: 02_diode_bridge_rectifier.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\by_device\diode\02_diode_bridge_rectifier.cir
+# analysis_type: tran
+# executor: spice
+# timestamp: 2026-04-22T10:24:34.971482
+
+analysis_command: .tran 200u 100m
+x_axis_kind: time
+x_axis_label: Time (s)
+x_axis_scale: linear
+requested_x_range: None
+actual_x_range: [0.0, 0.1]
+
+parameters:
+  step_time: 200u
+  stop_time: 100m
+  start_time: 
+  max_step:

@@ -1,0 +1,10 @@
+# artifact_type: metrics
+# circuit_file: 02_diode_bridge_rectifier.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\by_device\diode\02_diode_bridge_rectifier.cir
+# analysis_type: tran
+# executor: spice
+# timestamp: 2026-04-22T10:24:34.971482
+
+display_name,name,value,unit,raw_value,target
+V Peak,v_peak,8.49 V,V,8.48814,
+V Avg,v_avg,8.17 V,V,8.171155,

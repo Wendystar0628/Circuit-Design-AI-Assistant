@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "artifact_type": "metrics",
+  "metadata": {
+    "artifact_type": "metrics",
+    "file_name": "01_inverting_amplifier_subckt.cir",
+    "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\by_device\\subcircuit\\01_inverting_amplifier_subckt.cir",
+    "analysis_type": "ac",
+    "timestamp": "2026-04-22T10:24:56.328460",
+    "success": true,
+    "executor": "spice",
+    "duration_seconds": 0.008006095886230469,
+    "analysis_command": ".ac dec 20 1 10Meg",
+    "x_axis_kind": "frequency",
+    "x_axis_label": "Frequency (Hz)",
+    "x_axis_scale": "log",
+    "requested_x_range": null,
+    "actual_x_range": [
+      1.0,
+      9999999.99999989
+    ]
+  },
+  "summary": {
+    "metric_count": 1,
+    "metrics_with_target": 0
+  },
+  "files": {
+    "csv": "metrics.csv"
+  },
+  "data": {
+    "columns": [
+      "display_name",
+      "name",
+      "value",
+      "unit",
+      "raw_value",
+      "target"
+    ],
+    "rows": [
+      {
+        "display_name": "A Midband",
+        "name": "a_midband",
+        "value": "20.00 dB",
+        "unit": "dB",
+        "raw_value": 19.9999,
+        "target": ""
+      }
+    ]
+  }
+}

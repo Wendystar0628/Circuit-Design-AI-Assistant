@@ -1,0 +1,10 @@
+# artifact_type: metrics
+# circuit_file: 04_npn_pulse_switch.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\transient_analysis\04_npn_pulse_switch.cir
+# analysis_type: tran
+# executor: spice
+# timestamp: 2026-04-22T10:27:25.647033
+
+display_name,name,value,unit,raw_value,target
+V Col Low,v_col_low,38.64m V,V,0.03863915,
+V Col High,v_col_high,5.03 V,V,5.027623,

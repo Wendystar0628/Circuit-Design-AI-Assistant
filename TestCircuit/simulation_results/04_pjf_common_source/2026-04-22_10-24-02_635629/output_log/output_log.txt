@@ -1,0 +1,20 @@
+# artifact_type: output_log
+# circuit_file: 04_pjf_common_source.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\ac_analysis\04_pjf_common_source.cir
+# analysis_type: ac
+# executor: spice
+# timestamp: 2026-04-22T10:24:02.635629
+
+stdout Note: No compatibility mode selected!
+stdout Circuit: PJF Common-Source AC Response
+stderr Warning: Model issue on line 7 :
+stderr .model 2n5460 pjf(is=1.5p alpha=1e-4 vk=300 vto=-3.4 vtotc=-3m beta=1.0m ...
+stderr unrecognized parameter (alpha) - ignored
+stderr unrecognized parameter (vk) - ignored
+stdout Doing analysis at TEMP = 27.000000 and TNOM = 27.000000
+stderr Using SPARSE 1.3 as Direct Linear Solver
+stderr Note: vin: has no value, DC 0 assumed
+ Reference value :  1.00000e+00
+stdout No. of Data Rows : 161
+stdout Measurements for AC Analysis
+stdout av_midband          =  -1.197092e+00

@@ -1,0 +1,16 @@
+# artifact_type: output_log
+# circuit_file: 02_pnp_common_emitter.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\ac_analysis\02_pnp_common_emitter.cir
+# analysis_type: ac
+# executor: spice
+# timestamp: 2026-04-22T10:23:57.803956
+
+stdout Note: No compatibility mode selected!
+stdout Circuit: PNP Common-Emitter AC Response
+stdout Doing analysis at TEMP = 27.000000 and TNOM = 27.000000
+stderr Using SPARSE 1.3 as Direct Linear Solver
+stderr Note: vin: has no value, DC 0 assumed
+ Reference value :  1.00000e+00
+stdout No. of Data Rows : 161
+stdout Measurements for AC Analysis
+stdout av_midband          =  4.461000e+01

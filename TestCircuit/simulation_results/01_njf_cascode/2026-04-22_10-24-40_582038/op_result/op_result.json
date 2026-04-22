@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "artifact_type": "op_result",
+  "metadata": {
+    "artifact_type": "op_result",
+    "file_name": "01_njf_cascode.cir",
+    "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\by_device\\jfet\\01_njf_cascode.cir",
+    "analysis_type": "op",
+    "timestamp": "2026-04-22T10:24:40.582038",
+    "success": true,
+    "executor": "spice",
+    "duration_seconds": 0.004012107849121094,
+    "analysis_command": ".op",
+    "x_axis_kind": "none",
+    "x_axis_label": "X",
+    "x_axis_scale": "none",
+    "requested_x_range": null,
+    "actual_x_range": null
+  },
+  "summary": {
+    "row_count": 7,
+    "section_count": 2
+  },
+  "files": {
+    "text": "op_result.txt"
+  },
+  "data": {
+    "nodes": [
+      {
+        "name": "vdd",
+        "voltage": 15.0,
+        "formatted": "15 V"
+      },
+      {
+        "name": "drain_mid",
+        "voltage": 4.897722871171926,
+        "formatted": "4.89772 V"
+      },
+      {
+        "name": "drain_top",
+        "voltage": 5.133535863735834,
+        "formatted": "5.13354 V"
+      },
+      {
+        "name": "g1",
+        "voltage": 6.606669094080155e-06,
+        "formatted": "6.60667e-06 V"
+      },
+      {
+        "name": "g2",
+        "voltage": 5.494065314030666,
+        "formatted": "5.49407 V"
+      },
+      {
+        "name": "src",
+        "voltage": 1.6418196185717997,
+        "formatted": "1.64182 V"
+      }
+    ],
+    "branches": [
+      {
+        "device": "VDD",
+        "current": -0.002531335628838177,
+        "formatted": "-0.00253134 A"
+      }
+    ],
+    "devices": [],
+    "row_count": 7,
+    "section_count": 2
+  }
+}

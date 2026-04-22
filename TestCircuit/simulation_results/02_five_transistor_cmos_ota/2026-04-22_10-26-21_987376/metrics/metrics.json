@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "artifact_type": "metrics",
+  "metadata": {
+    "artifact_type": "metrics",
+    "file_name": "02_five_transistor_cmos_ota.cir",
+    "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\comprehensive_circuits\\02_five_transistor_cmos_ota.cir",
+    "analysis_type": "ac",
+    "timestamp": "2026-04-22T10:26:21.987376",
+    "success": true,
+    "executor": "spice",
+    "duration_seconds": 0.008525609970092773,
+    "analysis_command": ".ac dec 20 1 1G",
+    "x_axis_kind": "frequency",
+    "x_axis_label": "Frequency (Hz)",
+    "x_axis_scale": "log",
+    "requested_x_range": null,
+    "actual_x_range": [
+      1.0,
+      999999999.9999859
+    ]
+  },
+  "summary": {
+    "metric_count": 3,
+    "metrics_with_target": 0
+  },
+  "files": {
+    "csv": "metrics.csv"
+  },
+  "data": {
+    "columns": [
+      "display_name",
+      "name",
+      "value",
+      "unit",
+      "raw_value",
+      "target"
+    ],
+    "rows": [
+      {
+        "display_name": "A DC",
+        "name": "a_dc",
+        "value": "59.55 dB",
+        "unit": "dB",
+        "raw_value": 59.5545,
+        "target": ""
+      },
+      {
+        "display_name": "A 1Khz",
+        "name": "a_1khz",
+        "value": "58.12 dB",
+        "unit": "dB",
+        "raw_value": 58.11513,
+        "target": ""
+      },
+      {
+        "display_name": "A 1Meg",
+        "name": "a_1meg",
+        "value": "3.83 dB",
+        "unit": "dB",
+        "raw_value": 3.832328,
+        "target": ""
+      }
+    ]
+  }
+}

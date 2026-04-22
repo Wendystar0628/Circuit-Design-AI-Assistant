@@ -1,0 +1,9 @@
+# artifact_type: metrics
+# circuit_file: 01_rlc_bandpass.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\ac_analysis\01_rlc_bandpass.cir
+# analysis_type: ac
+# executor: spice
+# timestamp: 2026-04-22T10:23:55.037150
+
+display_name,name,value,unit,raw_value,target
+V At Resonance,v_at_resonance,-30.57 V,V,-30.57231,

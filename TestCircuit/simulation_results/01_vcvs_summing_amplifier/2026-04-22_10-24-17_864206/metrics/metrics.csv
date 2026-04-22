@@ -1,0 +1,10 @@
+# artifact_type: metrics
+# circuit_file: 01_vcvs_summing_amplifier.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\by_device\controlled_source\01_vcvs_summing_amplifier.cir
+# analysis_type: tran
+# executor: spice
+# timestamp: 2026-04-22T10:24:17.864206
+
+display_name,name,value,unit,raw_value,target
+V Out Max,v_out_max,459.98m V,V,0.4599843,
+V Out Min,v_out_min,-459.98m V,V,-0.4599843,

@@ -1,0 +1,10 @@
+# artifact_type: metrics
+# circuit_file: 07_vcvs_subckt_buffer.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\transient_analysis\07_vcvs_subckt_buffer.cir
+# analysis_type: tran
+# executor: spice
+# timestamp: 2026-04-22T10:27:31.928131
+
+display_name,name,value,unit,raw_value,target
+V Amp PP,v_amp_pp,999.85m V,V,0.9998452,
+V Buf Out PP,v_buf_out_pp,999.85m Hz,Hz,0.9998452,

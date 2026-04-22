@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "artifact_type": "export_manifest",
+  "metadata": {
+    "artifact_type": "export_manifest",
+    "file_name": "05_cmos_inverter_switch.cir",
+    "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\transient_analysis\\05_cmos_inverter_switch.cir",
+    "analysis_type": "tran",
+    "timestamp": "2026-04-22T10:27:27.468302",
+    "success": true,
+    "executor": "spice",
+    "duration_seconds": 0.01253056526184082,
+    "analysis_command": ".tran 10n 5u",
+    "x_axis_kind": "time",
+    "x_axis_label": "Time (s)",
+    "x_axis_scale": "linear",
+    "requested_x_range": null,
+    "actual_x_range": [
+      0.0,
+      4.9999999999999996e-06
+    ]
+  },
+  "summary": {
+    "category_count": 5,
+    "exported_file_count": 10,
+    "error_count": 0
+  },
+  "files": {
+    "categories": {
+      "result.json": [
+        "result.json"
+      ],
+      "metrics": [
+        "metrics/metrics.csv",
+        "metrics/metrics.json"
+      ],
+      "analysis_info": [
+        "analysis_info/analysis_info.json",
+        "analysis_info/analysis_info.txt"
+      ],
+      "raw_data": [
+        "raw_data/raw_data.csv",
+        "raw_data/raw_data.json"
+      ],
+      "output_log": [
+        "output_log/output_log.txt",
+        "output_log/output_log.json"
+      ]
+    },
+    "manifest": "export_manifest.json"
+  },
+  "data": {
+    "persisted_categories": [
+      "result.json",
+      "metrics",
+      "analysis_info",
+      "raw_data",
+      "output_log"
+    ],
+    "exported_files": [
+      "result.json",
+      "metrics/metrics.csv",
+      "metrics/metrics.json",
+      "analysis_info/analysis_info.json",
+      "analysis_info/analysis_info.txt",
+      "raw_data/raw_data.csv",
+      "raw_data/raw_data.json",
+      "output_log/output_log.txt",
+      "output_log/output_log.json",
+      "export_manifest.json"
+    ],
+    "errors": []
+  }
+}

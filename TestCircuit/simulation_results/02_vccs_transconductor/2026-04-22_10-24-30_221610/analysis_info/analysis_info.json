@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "artifact_type": "analysis_info",
+  "metadata": {
+    "artifact_type": "analysis_info",
+    "file_name": "02_vccs_transconductor.cir",
+    "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\by_device\\controlled_source\\02_vccs_transconductor.cir",
+    "analysis_type": "ac",
+    "timestamp": "2026-04-22T10:24:30.221610",
+    "success": true,
+    "executor": "spice",
+    "duration_seconds": 0.006661653518676758,
+    "analysis_command": ".ac dec 20 10 10Meg",
+    "x_axis_kind": "frequency",
+    "x_axis_label": "Frequency (Hz)",
+    "x_axis_scale": "log",
+    "requested_x_range": null,
+    "actual_x_range": [
+      10.0,
+      9999999.9999999
+    ]
+  },
+  "summary": {
+    "parameter_count": 4
+  },
+  "files": {
+    "text": "analysis_info.txt"
+  },
+  "data": {
+    "analysis_type": "ac",
+    "executor": "spice",
+    "file_name": "02_vccs_transconductor.cir",
+    "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\by_device\\controlled_source\\02_vccs_transconductor.cir",
+    "success": true,
+    "timestamp": "2026-04-22T10:24:30.221610",
+    "duration_seconds": 0.006661653518676758,
+    "analysis_command": ".ac dec 20 10 10Meg",
+    "x_axis_kind": "frequency",
+    "x_axis_label": "Frequency (Hz)",
+    "x_axis_scale": "log",
+    "requested_x_range": null,
+    "actual_x_range": [
+      10.0,
+      9999999.9999999
+    ],
+    "parameters": {
+      "sweep_type": "dec",
+      "points_per_decade": "20",
+      "start_frequency": "10",
+      "stop_frequency": "10Meg"
+    }
+  }
+}

@@ -1,0 +1,19 @@
+# artifact_type: op_result
+# circuit_file: 02_pnp_ce_bias_point.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\op_analysis\02_pnp_ce_bias_point.cir
+# analysis_type: op
+# executor: spice
+# timestamp: 2026-04-22T10:26:50.612296
+
+## nodes
+| name | voltage | formatted |
+| --- | --- | --- |
+| vss | -12 | -12 V |
+| base | -1.7472 | -1.7472 V |
+| col | -6.89687 | -6.89687 V |
+| emit | -1.09095 | -1.09095 V |
+
+## branches
+| device | current | formatted |
+| --- | --- | --- |
+| VSS | 0.00123655 | 0.00123655 A |

@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "artifact_type": "metrics",
+  "metadata": {
+    "artifact_type": "metrics",
+    "file_name": "03_cmos_ring_oscillator.cir",
+    "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\comprehensive_circuits\\03_cmos_ring_oscillator.cir",
+    "analysis_type": "tran",
+    "timestamp": "2026-04-22T10:26:23.875617",
+    "success": true,
+    "executor": "spice",
+    "duration_seconds": 0.03105449676513672,
+    "analysis_command": ".tran 200p 500n uic",
+    "x_axis_kind": "time",
+    "x_axis_label": "Time (s)",
+    "x_axis_scale": "linear",
+    "requested_x_range": null,
+    "actual_x_range": [
+      2.0000000000000004e-12,
+      5.000000000000001e-07
+    ]
+  },
+  "summary": {
+    "metric_count": 2,
+    "metrics_with_target": 0
+  },
+  "files": {
+    "csv": "metrics.csv"
+  },
+  "data": {
+    "columns": [
+      "display_name",
+      "name",
+      "value",
+      "unit",
+      "raw_value",
+      "target"
+    ],
+    "rows": [
+      {
+        "display_name": "V Peak",
+        "name": "v_peak",
+        "value": "4.78 V",
+        "unit": "V",
+        "raw_value": 4.777306,
+        "target": ""
+      },
+      {
+        "display_name": "V Valley",
+        "name": "v_valley",
+        "value": "-91.31m V",
+        "unit": "V",
+        "raw_value": -0.09130884,
+        "target": ""
+      }
+    ]
+  }
+}

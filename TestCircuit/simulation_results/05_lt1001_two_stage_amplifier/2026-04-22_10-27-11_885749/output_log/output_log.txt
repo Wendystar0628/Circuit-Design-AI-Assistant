@@ -1,0 +1,31 @@
+# artifact_type: output_log
+# circuit_file: 05_lt1001_two_stage_amplifier.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\opamp_circuits\05_lt1001_two_stage_amplifier.cir
+# analysis_type: tran
+# executor: spice
+# timestamp: 2026-04-22T10:27:11.885749
+
+stdout Note: No compatibility mode selected!
+stdout Circuit: LT1001 Two-Stage Amplifier
+stdout Doing analysis at TEMP = 27.000000 and TNOM = 27.000000
+stderr Using SPARSE 1.3 as Direct Linear Solver
+stdout Initial Transient Solution
+stdout --------------------------
+stdout Node                                   Voltage
+stdout ----                                   -------
+stdout vcc                                         15
+stdout vee                                        -15
+stdout in                                           0
+stdout fb1                                          0
+stdout stage1                                       0
+stdout xu1.ndrv                                     0
+stdout inv2                                         0
+stdout out                                          0
+stdout xu2.ndrv                                     0
+stdout e.xu2.e1#branch                              0
+stdout e.xu1.e1#branch                              0
+stdout vin#branch                                   0
+stdout vee#branch                               3e-11
+stdout vcc#branch                              -3e-11
+ Reference value :  0.00000e+00
+stdout No. of Data Rows : 308

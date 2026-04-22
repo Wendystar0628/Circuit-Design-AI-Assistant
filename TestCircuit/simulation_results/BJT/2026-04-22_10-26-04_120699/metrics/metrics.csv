@@ -1,0 +1,8 @@
+# artifact_type: metrics
+# circuit_file: BJT.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\cir\BJT.cir
+# analysis_type: dc
+# executor: spice
+# timestamp: 2026-04-22T10:26:04.120699
+
+display_name,name,value,unit,raw_value,target

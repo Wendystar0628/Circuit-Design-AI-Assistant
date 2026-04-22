@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "artifact_type": "op_result",
+  "metadata": {
+    "artifact_type": "op_result",
+    "file_name": "04_njf_self_bias.cir",
+    "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\op_analysis\\04_njf_self_bias.cir",
+    "analysis_type": "op",
+    "timestamp": "2026-04-22T10:26:54.349901",
+    "success": true,
+    "executor": "spice",
+    "duration_seconds": 0.007215738296508789,
+    "analysis_command": ".op",
+    "x_axis_kind": "none",
+    "x_axis_label": "X",
+    "x_axis_scale": "none",
+    "requested_x_range": null,
+    "actual_x_range": null
+  },
+  "summary": {
+    "row_count": 5,
+    "section_count": 2
+  },
+  "files": {
+    "text": "op_result.txt"
+  },
+  "data": {
+    "nodes": [
+      {
+        "name": "vdd",
+        "voltage": 12.0,
+        "formatted": "12 V"
+      },
+      {
+        "name": "drain",
+        "voltage": 7.427400770889315,
+        "formatted": "7.4274 V"
+      },
+      {
+        "name": "gate",
+        "voltage": 9.634886995079592e-06,
+        "formatted": "9.63489e-06 V"
+      },
+      {
+        "name": "src",
+        "voltage": 2.1403655754074067,
+        "formatted": "2.14037 V"
+      }
+    ],
+    "branches": [
+      {
+        "device": "VDD",
+        "current": -0.0009728934530022733,
+        "formatted": "-0.000972893 A"
+      }
+    ],
+    "devices": [],
+    "row_count": 5,
+    "section_count": 2
+  }
+}

@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "artifact_type": "analysis_info",
+  "metadata": {
+    "artifact_type": "analysis_info",
+    "file_name": "BJT.cir",
+    "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\cir\\BJT.cir",
+    "analysis_type": "dc",
+    "timestamp": "2026-04-22T10:26:04.120699",
+    "success": true,
+    "executor": "spice",
+    "duration_seconds": 0.03983664512634277,
+    "analysis_command": ".dc V1 0 15V 10mV I1 0 100u 10u",
+    "x_axis_kind": "sweep",
+    "x_axis_label": "V1",
+    "x_axis_scale": "linear",
+    "requested_x_range": null,
+    "actual_x_range": [
+      0.0,
+      14.999999999999725
+    ]
+  },
+  "summary": {
+    "parameter_count": 4
+  },
+  "files": {
+    "text": "analysis_info.txt"
+  },
+  "data": {
+    "analysis_type": "dc",
+    "executor": "spice",
+    "file_name": "BJT.cir",
+    "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\cir\\BJT.cir",
+    "success": true,
+    "timestamp": "2026-04-22T10:26:04.120699",
+    "duration_seconds": 0.03983664512634277,
+    "analysis_command": ".dc V1 0 15V 10mV I1 0 100u 10u",
+    "x_axis_kind": "sweep",
+    "x_axis_label": "V1",
+    "x_axis_scale": "linear",
+    "requested_x_range": null,
+    "actual_x_range": [
+      0.0,
+      14.999999999999725
+    ],
+    "parameters": {
+      "source_name": "V1",
+      "start_value": "0",
+      "stop_value": "15V",
+      "step": "10mV"
+    }
+  }
+}

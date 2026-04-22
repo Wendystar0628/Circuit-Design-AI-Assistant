@@ -1,0 +1,9 @@
+# artifact_type: raw_data
+# circuit_file: 06_bjt_diff_pair.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\op_analysis\06_bjt_diff_pair.cir
+# analysis_type: op
+# executor: spice
+# timestamp: 2026-04-22T10:26:58.512727
+
+Index,V(cm),V(col1),V(col2),V(tail),V(vdd),V(vss),I(VCM),I(VDD),I(VSS)
+0.0,0.0,5.015839026421417,5.015839026421459,-0.6359541364661109,10.0,-10.0,-3.167815326537635e-06,-0.0009968321947157123,0.001

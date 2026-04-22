@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "artifact_type": "metrics",
+  "metadata": {
+    "artifact_type": "metrics",
+    "file_name": "02_pnp_common_emitter.cir",
+    "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\ac_analysis\\02_pnp_common_emitter.cir",
+    "analysis_type": "ac",
+    "timestamp": "2026-04-22T10:23:57.803956",
+    "success": true,
+    "executor": "spice",
+    "duration_seconds": 0.007014751434326172,
+    "analysis_command": ".ac dec 20 1 100Meg",
+    "x_axis_kind": "frequency",
+    "x_axis_label": "Frequency (Hz)",
+    "x_axis_scale": "log",
+    "requested_x_range": null,
+    "actual_x_range": [
+      1.0,
+      99999999.99999873
+    ]
+  },
+  "summary": {
+    "metric_count": 1,
+    "metrics_with_target": 0
+  },
+  "files": {
+    "csv": "metrics.csv"
+  },
+  "data": {
+    "columns": [
+      "display_name",
+      "name",
+      "value",
+      "unit",
+      "raw_value",
+      "target"
+    ],
+    "rows": [
+      {
+        "display_name": "Av Midband",
+        "name": "av_midband",
+        "value": "44.61 dB",
+        "unit": "dB",
+        "raw_value": 44.61,
+        "target": ""
+      }
+    ]
+  }
+}

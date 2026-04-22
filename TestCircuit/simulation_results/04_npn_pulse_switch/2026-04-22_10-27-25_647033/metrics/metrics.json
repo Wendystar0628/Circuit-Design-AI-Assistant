@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "artifact_type": "metrics",
+  "metadata": {
+    "artifact_type": "metrics",
+    "file_name": "04_npn_pulse_switch.cir",
+    "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\transient_analysis\\04_npn_pulse_switch.cir",
+    "analysis_type": "tran",
+    "timestamp": "2026-04-22T10:27:25.647033",
+    "success": true,
+    "executor": "spice",
+    "duration_seconds": 0.010046243667602539,
+    "analysis_command": ".tran 50n 50u",
+    "x_axis_kind": "time",
+    "x_axis_label": "Time (s)",
+    "x_axis_scale": "linear",
+    "requested_x_range": null,
+    "actual_x_range": [
+      0.0,
+      4.9999999999999996e-05
+    ]
+  },
+  "summary": {
+    "metric_count": 2,
+    "metrics_with_target": 0
+  },
+  "files": {
+    "csv": "metrics.csv"
+  },
+  "data": {
+    "columns": [
+      "display_name",
+      "name",
+      "value",
+      "unit",
+      "raw_value",
+      "target"
+    ],
+    "rows": [
+      {
+        "display_name": "V Col Low",
+        "name": "v_col_low",
+        "value": "38.64m V",
+        "unit": "V",
+        "raw_value": 0.03863915,
+        "target": ""
+      },
+      {
+        "display_name": "V Col High",
+        "name": "v_col_high",
+        "value": "5.03 V",
+        "unit": "V",
+        "raw_value": 5.027623,
+        "target": ""
+      }
+    ]
+  }
+}

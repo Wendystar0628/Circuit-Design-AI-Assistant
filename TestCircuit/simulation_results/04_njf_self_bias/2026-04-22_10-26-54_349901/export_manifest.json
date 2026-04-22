@@ -1,0 +1,78 @@
+{
+  "schema_version": 1,
+  "artifact_type": "export_manifest",
+  "metadata": {
+    "artifact_type": "export_manifest",
+    "file_name": "04_njf_self_bias.cir",
+    "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\op_analysis\\04_njf_self_bias.cir",
+    "analysis_type": "op",
+    "timestamp": "2026-04-22T10:26:54.349901",
+    "success": true,
+    "executor": "spice",
+    "duration_seconds": 0.007215738296508789,
+    "analysis_command": ".op",
+    "x_axis_kind": "none",
+    "x_axis_label": "X",
+    "x_axis_scale": "none",
+    "requested_x_range": null,
+    "actual_x_range": null
+  },
+  "summary": {
+    "category_count": 6,
+    "exported_file_count": 12,
+    "error_count": 0
+  },
+  "files": {
+    "categories": {
+      "result.json": [
+        "result.json"
+      ],
+      "metrics": [
+        "metrics/metrics.csv",
+        "metrics/metrics.json"
+      ],
+      "analysis_info": [
+        "analysis_info/analysis_info.json",
+        "analysis_info/analysis_info.txt"
+      ],
+      "raw_data": [
+        "raw_data/raw_data.csv",
+        "raw_data/raw_data.json"
+      ],
+      "output_log": [
+        "output_log/output_log.txt",
+        "output_log/output_log.json"
+      ],
+      "op_result": [
+        "op_result/op_result.txt",
+        "op_result/op_result.json"
+      ]
+    },
+    "manifest": "export_manifest.json"
+  },
+  "data": {
+    "persisted_categories": [
+      "result.json",
+      "metrics",
+      "analysis_info",
+      "raw_data",
+      "output_log",
+      "op_result"
+    ],
+    "exported_files": [
+      "result.json",
+      "metrics/metrics.csv",
+      "metrics/metrics.json",
+      "analysis_info/analysis_info.json",
+      "analysis_info/analysis_info.txt",
+      "raw_data/raw_data.csv",
+      "raw_data/raw_data.json",
+      "output_log/output_log.txt",
+      "output_log/output_log.json",
+      "op_result/op_result.txt",
+      "op_result/op_result.json",
+      "export_manifest.json"
+    ],
+    "errors": []
+  }
+}

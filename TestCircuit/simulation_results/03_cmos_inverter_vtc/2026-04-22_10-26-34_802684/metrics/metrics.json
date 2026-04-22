@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "artifact_type": "metrics",
+  "metadata": {
+    "artifact_type": "metrics",
+    "file_name": "03_cmos_inverter_vtc.cir",
+    "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\dc_analysis\\03_cmos_inverter_vtc.cir",
+    "analysis_type": "dc",
+    "timestamp": "2026-04-22T10:26:34.802684",
+    "success": true,
+    "executor": "spice",
+    "duration_seconds": 0.009522199630737305,
+    "analysis_command": ".dc Vin 0 5 0.01",
+    "x_axis_kind": "sweep",
+    "x_axis_label": "Vin",
+    "x_axis_scale": "linear",
+    "requested_x_range": [
+      0.0,
+      5.0
+    ],
+    "actual_x_range": [
+      0.0,
+      4.999999999999938
+    ]
+  },
+  "summary": {
+    "metric_count": 2,
+    "metrics_with_target": 0
+  },
+  "files": {
+    "csv": "metrics.csv"
+  },
+  "data": {
+    "columns": [
+      "display_name",
+      "name",
+      "value",
+      "unit",
+      "raw_value",
+      "target"
+    ],
+    "rows": [
+      {
+        "display_name": "VTH",
+        "name": "v_th",
+        "value": "2.03 V",
+        "unit": "V",
+        "raw_value": 2.03464,
+        "target": ""
+      },
+      {
+        "display_name": "VOH",
+        "name": "v_oh",
+        "value": "5.00 V",
+        "unit": "V",
+        "raw_value": 5.0,
+        "target": ""
+      }
+    ]
+  }
+}

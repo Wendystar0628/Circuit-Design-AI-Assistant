@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "artifact_type": "analysis_info",
+  "metadata": {
+    "artifact_type": "analysis_info",
+    "file_name": "02_rlc_underdamped.cir",
+    "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\transient_analysis\\02_rlc_underdamped.cir",
+    "analysis_type": "tran",
+    "timestamp": "2026-04-22T10:27:21.728481",
+    "success": true,
+    "executor": "spice",
+    "duration_seconds": 0.05325746536254883,
+    "analysis_command": ".tran 2u 3m",
+    "x_axis_kind": "time",
+    "x_axis_label": "Time (s)",
+    "x_axis_scale": "linear",
+    "requested_x_range": null,
+    "actual_x_range": [
+      0.0,
+      0.003
+    ]
+  },
+  "summary": {
+    "parameter_count": 4
+  },
+  "files": {
+    "text": "analysis_info.txt"
+  },
+  "data": {
+    "analysis_type": "tran",
+    "executor": "spice",
+    "file_name": "02_rlc_underdamped.cir",
+    "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\transient_analysis\\02_rlc_underdamped.cir",
+    "success": true,
+    "timestamp": "2026-04-22T10:27:21.728481",
+    "duration_seconds": 0.05325746536254883,
+    "analysis_command": ".tran 2u 3m",
+    "x_axis_kind": "time",
+    "x_axis_label": "Time (s)",
+    "x_axis_scale": "linear",
+    "requested_x_range": null,
+    "actual_x_range": [
+      0.0,
+      0.003
+    ],
+    "parameters": {
+      "step_time": "2u",
+      "stop_time": "3m",
+      "start_time": "",
+      "max_step": ""
+    }
+  }
+}

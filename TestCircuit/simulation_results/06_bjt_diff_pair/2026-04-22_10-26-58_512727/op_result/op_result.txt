@@ -1,0 +1,23 @@
+# artifact_type: op_result
+# circuit_file: 06_bjt_diff_pair.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\op_analysis\06_bjt_diff_pair.cir
+# analysis_type: op
+# executor: spice
+# timestamp: 2026-04-22T10:26:58.512727
+
+## nodes
+| name | voltage | formatted |
+| --- | --- | --- |
+| vdd | 10 | 10 V |
+| vss | -10 | -10 V |
+| tail | -0.635954 | -0.635954 V |
+| cm | 0 | 0 V |
+| col1 | 5.01584 | 5.01584 V |
+| col2 | 5.01584 | 5.01584 V |
+
+## branches
+| device | current | formatted |
+| --- | --- | --- |
+| VCM | -3.16782e-06 | -3.16782e-06 A |
+| VDD | -0.000996832 | -0.000996832 A |
+| VSS | 0.001 | 0.001 A |

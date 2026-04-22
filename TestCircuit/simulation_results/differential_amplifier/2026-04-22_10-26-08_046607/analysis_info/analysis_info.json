@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "artifact_type": "analysis_info",
+  "metadata": {
+    "artifact_type": "analysis_info",
+    "file_name": "differential_amplifier.cir",
+    "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\cir\\differential_amplifier.cir",
+    "analysis_type": "tran",
+    "timestamp": "2026-04-22T10:26:08.046607",
+    "success": true,
+    "executor": "spice",
+    "duration_seconds": 0.010815620422363281,
+    "analysis_command": ".tran 20u 20m",
+    "x_axis_kind": "time",
+    "x_axis_label": "Time (s)",
+    "x_axis_scale": "linear",
+    "requested_x_range": null,
+    "actual_x_range": [
+      0.0,
+      0.02
+    ]
+  },
+  "summary": {
+    "parameter_count": 4
+  },
+  "files": {
+    "text": "analysis_info.txt"
+  },
+  "data": {
+    "analysis_type": "tran",
+    "executor": "spice",
+    "file_name": "differential_amplifier.cir",
+    "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\cir\\differential_amplifier.cir",
+    "success": true,
+    "timestamp": "2026-04-22T10:26:08.046607",
+    "duration_seconds": 0.010815620422363281,
+    "analysis_command": ".tran 20u 20m",
+    "x_axis_kind": "time",
+    "x_axis_label": "Time (s)",
+    "x_axis_scale": "linear",
+    "requested_x_range": null,
+    "actual_x_range": [
+      0.0,
+      0.02
+    ],
+    "parameters": {
+      "step_time": "20u",
+      "stop_time": "20m",
+      "start_time": "",
+      "max_step": ""
+    }
+  }
+}

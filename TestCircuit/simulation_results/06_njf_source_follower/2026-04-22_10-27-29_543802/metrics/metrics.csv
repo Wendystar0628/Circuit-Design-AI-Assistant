@@ -1,0 +1,9 @@
+# artifact_type: metrics
+# circuit_file: 06_njf_source_follower.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\transient_analysis\06_njf_source_follower.cir
+# analysis_type: tran
+# executor: spice
+# timestamp: 2026-04-22T10:27:29.543802
+
+display_name,name,value,unit,raw_value,target
+V Out PP,v_out_pp,177.55m V,V,0.1775503,

@@ -1,0 +1,21 @@
+# artifact_type: op_result
+# circuit_file: 01_njf_cascode.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\by_device\jfet\01_njf_cascode.cir
+# analysis_type: op
+# executor: spice
+# timestamp: 2026-04-22T10:24:40.582038
+
+## nodes
+| name | voltage | formatted |
+| --- | --- | --- |
+| vdd | 15 | 15 V |
+| drain_mid | 4.89772 | 4.89772 V |
+| drain_top | 5.13354 | 5.13354 V |
+| g1 | 6.60667e-06 | 6.60667e-06 V |
+| g2 | 5.49407 | 5.49407 V |
+| src | 1.64182 | 1.64182 V |
+
+## branches
+| device | current | formatted |
+| --- | --- | --- |
+| VDD | -0.00253134 | -0.00253134 A |

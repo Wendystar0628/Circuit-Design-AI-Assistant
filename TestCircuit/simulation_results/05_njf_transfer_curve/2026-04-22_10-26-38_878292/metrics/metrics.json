@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "artifact_type": "metrics",
+  "metadata": {
+    "artifact_type": "metrics",
+    "file_name": "05_njf_transfer_curve.cir",
+    "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\dc_analysis\\05_njf_transfer_curve.cir",
+    "analysis_type": "dc",
+    "timestamp": "2026-04-22T10:26:38.878292",
+    "success": true,
+    "executor": "spice",
+    "duration_seconds": 0.005013465881347656,
+    "analysis_command": ".dc Vgs -3 0 0.02",
+    "x_axis_kind": "sweep",
+    "x_axis_label": "Vgs",
+    "x_axis_scale": "linear",
+    "requested_x_range": [
+      -3.0,
+      0.0
+    ],
+    "actual_x_range": [
+      -3.0,
+      2.3939183968479938e-15
+    ]
+  },
+  "summary": {
+    "metric_count": 0,
+    "metrics_with_target": 0
+  },
+  "files": {
+    "csv": "metrics.csv"
+  },
+  "data": {
+    "columns": [
+      "display_name",
+      "name",
+      "value",
+      "unit",
+      "raw_value",
+      "target"
+    ],
+    "rows": []
+  }
+}

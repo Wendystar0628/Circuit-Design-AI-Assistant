@@ -1,0 +1,19 @@
+# artifact_type: analysis_info
+# circuit_file: BJT.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\cir\BJT.cir
+# analysis_type: dc
+# executor: spice
+# timestamp: 2026-04-22T10:26:04.120699
+
+analysis_command: .dc V1 0 15V 10mV I1 0 100u 10u
+x_axis_kind: sweep
+x_axis_label: V1
+x_axis_scale: linear
+requested_x_range: None
+actual_x_range: [0.0, 14.999999999999725]
+
+parameters:
+  source_name: V1
+  start_value: 0
+  stop_value: 15V
+  step: 10mV

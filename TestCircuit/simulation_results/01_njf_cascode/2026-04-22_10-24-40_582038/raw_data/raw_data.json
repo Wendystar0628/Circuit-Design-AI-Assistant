@@ -1,0 +1,124 @@
+{
+  "schema_version": 1,
+  "artifact_type": "raw_data",
+  "metadata": {
+    "artifact_type": "raw_data",
+    "file_name": "01_njf_cascode.cir",
+    "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\by_device\\jfet\\01_njf_cascode.cir",
+    "analysis_type": "op",
+    "timestamp": "2026-04-22T10:24:40.582038",
+    "success": true,
+    "executor": "spice",
+    "duration_seconds": 0.004012107849121094,
+    "analysis_command": ".op",
+    "x_axis_kind": "none",
+    "x_axis_label": "X",
+    "x_axis_scale": "none",
+    "requested_x_range": null,
+    "actual_x_range": null
+  },
+  "summary": {
+    "row_count": 1,
+    "signal_count": 7,
+    "x_axis_label": "Index"
+  },
+  "files": {
+    "csv": "raw_data.csv"
+  },
+  "data": {
+    "columns": [
+      "Index",
+      "V(drain_mid)",
+      "V(drain_top)",
+      "V(g1)",
+      "V(g2)",
+      "V(src)",
+      "V(vdd)",
+      "I(VDD)"
+    ],
+    "rows": [
+      {
+        "Index": 0.0,
+        "V(drain_mid)": 4.897722871171926,
+        "V(drain_top)": 5.133535863735834,
+        "V(g1)": 6.606669094080155e-06,
+        "V(g2)": 5.494065314030666,
+        "V(src)": 1.6418196185717997,
+        "V(vdd)": 15.0,
+        "I(VDD)": -0.002531335628838177
+      }
+    ],
+    "series": [
+      {
+        "name": "V(drain_mid)",
+        "x": [
+          0.0
+        ],
+        "y": [
+          4.897722871171926
+        ],
+        "point_count": 1
+      },
+      {
+        "name": "V(drain_top)",
+        "x": [
+          0.0
+        ],
+        "y": [
+          5.133535863735834
+        ],
+        "point_count": 1
+      },
+      {
+        "name": "V(g1)",
+        "x": [
+          0.0
+        ],
+        "y": [
+          6.606669094080155e-06
+        ],
+        "point_count": 1
+      },
+      {
+        "name": "V(g2)",
+        "x": [
+          0.0
+        ],
+        "y": [
+          5.494065314030666
+        ],
+        "point_count": 1
+      },
+      {
+        "name": "V(src)",
+        "x": [
+          0.0
+        ],
+        "y": [
+          1.6418196185717997
+        ],
+        "point_count": 1
+      },
+      {
+        "name": "V(vdd)",
+        "x": [
+          0.0
+        ],
+        "y": [
+          15.0
+        ],
+        "point_count": 1
+      },
+      {
+        "name": "I(VDD)",
+        "x": [
+          0.0
+        ],
+        "y": [
+          -0.002531335628838177
+        ],
+        "point_count": 1
+      }
+    ]
+  }
+}

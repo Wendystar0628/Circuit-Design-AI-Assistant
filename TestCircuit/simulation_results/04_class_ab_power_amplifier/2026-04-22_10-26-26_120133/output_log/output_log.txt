@@ -1,0 +1,36 @@
+# artifact_type: output_log
+# circuit_file: 04_class_ab_power_amplifier.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\comprehensive_circuits\04_class_ab_power_amplifier.cir
+# analysis_type: tran
+# executor: spice
+# timestamp: 2026-04-22T10:26:26.120133
+
+stdout Note: No compatibility mode selected!
+stdout Circuit: Class-AB Audio Power Amplifier
+stdout Doing analysis at TEMP = 27.000000 and TNOM = 27.000000
+stderr Using SPARSE 1.3 as Direct Linear Solver
+stdout Initial Transient Solution
+stdout --------------------------
+stdout Node                                   Voltage
+stdout ----                                   -------
+stdout vdd                                         12
+stdout vss                                        -12
+stdout in                                           0
+stdout tail                                 -0.638249
+stdout b1                                 -0.00160994
+stdout out                                 -0.0299562
+stdout b2                                 -0.00552057
+stdout c2                                     7.65841
+stdout e3                                     8.34606
+stdout c3                                    0.532273
+stdout np                                  -0.0926121
+stdout pp                                   -0.717497
+stdout vin#branch                        -1.60994e-06
+stdout vss#branch                          0.00841317
+stdout vdd#branch                         -0.00466451
+ Reference value :  0.00000e+00
+stdout No. of Data Rows : 714
+stdout Measurements for Transient Analysis
+stdout v_out_pp            =  5.674899e+00 from=  1.000000e-03 to=  5.000000e-03
+stdout v_out_max           =  3.503884e+00 at=  4.585009e-03
+stdout v_out_min           =  -2.171014e+00 at=  3.168093e-03

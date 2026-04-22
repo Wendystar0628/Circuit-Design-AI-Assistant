@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "artifact_type": "export_manifest",
+  "metadata": {
+    "artifact_type": "export_manifest",
+    "file_name": "common_emitter_amplifier.cir",
+    "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\cir\\common_emitter_amplifier.cir",
+    "analysis_type": "ac",
+    "timestamp": "2026-04-22T10:26:06.140900",
+    "success": true,
+    "executor": "spice",
+    "duration_seconds": 0.010850667953491211,
+    "analysis_command": ".ac dec 101 1 200Meg",
+    "x_axis_kind": "frequency",
+    "x_axis_label": "Frequency (Hz)",
+    "x_axis_scale": "log",
+    "requested_x_range": null,
+    "actual_x_range": [
+      1.0,
+      199999999.99999768
+    ]
+  },
+  "summary": {
+    "category_count": 5,
+    "exported_file_count": 10,
+    "error_count": 0
+  },
+  "files": {
+    "categories": {
+      "result.json": [
+        "result.json"
+      ],
+      "metrics": [
+        "metrics/metrics.csv",
+        "metrics/metrics.json"
+      ],
+      "analysis_info": [
+        "analysis_info/analysis_info.json",
+        "analysis_info/analysis_info.txt"
+      ],
+      "raw_data": [
+        "raw_data/raw_data.csv",
+        "raw_data/raw_data.json"
+      ],
+      "output_log": [
+        "output_log/output_log.txt",
+        "output_log/output_log.json"
+      ]
+    },
+    "manifest": "export_manifest.json"
+  },
+  "data": {
+    "persisted_categories": [
+      "result.json",
+      "metrics",
+      "analysis_info",
+      "raw_data",
+      "output_log"
+    ],
+    "exported_files": [
+      "result.json",
+      "metrics/metrics.csv",
+      "metrics/metrics.json",
+      "analysis_info/analysis_info.json",
+      "analysis_info/analysis_info.txt",
+      "raw_data/raw_data.csv",
+      "raw_data/raw_data.json",
+      "output_log/output_log.txt",
+      "output_log/output_log.json",
+      "export_manifest.json"
+    ],
+    "errors": []
+  }
+}

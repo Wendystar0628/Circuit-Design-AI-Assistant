@@ -1,0 +1,20 @@
+# artifact_type: analysis_info
+# circuit_file: 03_cmos_ring_oscillator.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\comprehensive_circuits\03_cmos_ring_oscillator.cir
+# analysis_type: tran
+# executor: spice
+# timestamp: 2026-04-22T10:26:23.875617
+
+analysis_command: .tran 200p 500n uic
+x_axis_kind: time
+x_axis_label: Time (s)
+x_axis_scale: linear
+requested_x_range: None
+actual_x_range: [2.0000000000000004e-12, 5.000000000000001e-07]
+
+parameters:
+  step_time: 200p
+  stop_time: 500n
+  start_time: 
+  max_step: 
+  use_initial_conditions: uic

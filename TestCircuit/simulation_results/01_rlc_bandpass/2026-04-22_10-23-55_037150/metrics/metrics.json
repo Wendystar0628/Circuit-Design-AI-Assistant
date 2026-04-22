@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "artifact_type": "metrics",
+  "metadata": {
+    "artifact_type": "metrics",
+    "file_name": "01_rlc_bandpass.cir",
+    "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\ac_analysis\\01_rlc_bandpass.cir",
+    "analysis_type": "ac",
+    "timestamp": "2026-04-22T10:23:55.037150",
+    "success": true,
+    "executor": "spice",
+    "duration_seconds": 0.057643890380859375,
+    "analysis_command": ".ac dec 40 100 1Meg",
+    "x_axis_kind": "frequency",
+    "x_axis_label": "Frequency (Hz)",
+    "x_axis_scale": "log",
+    "requested_x_range": null,
+    "actual_x_range": [
+      100.0,
+      1000000.0000000014
+    ]
+  },
+  "summary": {
+    "metric_count": 1,
+    "metrics_with_target": 0
+  },
+  "files": {
+    "csv": "metrics.csv"
+  },
+  "data": {
+    "columns": [
+      "display_name",
+      "name",
+      "value",
+      "unit",
+      "raw_value",
+      "target"
+    ],
+    "rows": [
+      {
+        "display_name": "V At Resonance",
+        "name": "v_at_resonance",
+        "value": "-30.57 V",
+        "unit": "V",
+        "raw_value": -30.57231,
+        "target": ""
+      }
+    ]
+  }
+}

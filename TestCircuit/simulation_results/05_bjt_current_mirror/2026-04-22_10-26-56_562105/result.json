@@ -1,0 +1,84 @@
+{
+  "executor": "spice",
+  "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\op_analysis\\05_bjt_current_mirror.cir",
+  "analysis_type": "op",
+  "success": true,
+  "data": {
+    "frequency": null,
+    "time": null,
+    "sweep": null,
+    "sweep_name": null,
+    "signals": {
+      "I(VDD)": [
+        -0.002034636841106192
+      ],
+      "V(mirror)": [
+        4.82681579446904
+      ],
+      "V(ref)": [
+        0.6551759207754995
+      ],
+      "V(vdd)": [
+        10.0
+      ]
+    },
+    "signal_types": {
+      "I(VDD)": "current",
+      "V(mirror)": "voltage",
+      "V(ref)": "voltage",
+      "V(vdd)": "voltage"
+    },
+    "op_result": {
+      "nodes": [
+        {
+          "name": "vdd",
+          "voltage": 10.0,
+          "formatted": "10 V"
+        },
+        {
+          "name": "mirror",
+          "voltage": 4.82681579446904,
+          "formatted": "4.82682 V"
+        },
+        {
+          "name": "ref",
+          "voltage": 0.6551759207754995,
+          "formatted": "0.655176 V"
+        }
+      ],
+      "branches": [
+        {
+          "device": "VDD",
+          "current": -0.002034636841106192,
+          "formatted": "-0.00203464 A"
+        }
+      ],
+      "devices": [],
+      "row_count": 4,
+      "section_count": 2
+    }
+  },
+  "measurements": [],
+  "error": null,
+  "raw_output": "stdout Note: No compatibility mode selected!\nstdout Circuit: BJT Current Mirror\nstdout Doing analysis at TEMP = 27.000000 and TNOM = 27.000000\nstderr Using SPARSE 1.3 as Direct Linear Solver\n Reference value :  0.00000e+00\r\nstdout No. of Data Rows : 1",
+  "timestamp": "2026-04-22T10:26:56.562105",
+  "duration_seconds": 0.006521940231323242,
+  "version": 1,
+  "session_id": "",
+  "x_axis_kind": "none",
+  "x_axis_label": "X",
+  "x_axis_scale": "none",
+  "requested_x_range": null,
+  "actual_x_range": null,
+  "analysis_command": ".op",
+  "analysis_info": {
+    "analysis_type": "op",
+    "analysis_command": ".op",
+    "x_axis_kind": "none",
+    "x_axis_label": "X",
+    "x_axis_scale": "none",
+    "requested_x_range": null,
+    "actual_x_range": null,
+    "parameters": {}
+  }
+}

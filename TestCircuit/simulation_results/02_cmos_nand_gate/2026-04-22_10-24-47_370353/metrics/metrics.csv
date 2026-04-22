@@ -1,0 +1,10 @@
+# artifact_type: metrics
+# circuit_file: 02_cmos_nand_gate.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\by_device\mosfet\02_cmos_nand_gate.cir
+# analysis_type: tran
+# executor: spice
+# timestamp: 2026-04-22T10:24:47.370353
+
+display_name,name,value,unit,raw_value,target
+V Out High,v_out_high,5.08 V,V,5.081779,
+V Out Low,v_out_low,-135.00m V,V,-0.1350042,

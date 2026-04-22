@@ -1,0 +1,138 @@
+{
+  "schema_version": 1,
+  "artifact_type": "output_log",
+  "metadata": {
+    "artifact_type": "output_log",
+    "file_name": "01_nmos_low_side_switch.cir",
+    "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\by_device\\mosfet\\01_nmos_low_side_switch.cir",
+    "analysis_type": "tran",
+    "timestamp": "2026-04-22T10:24:43.854593",
+    "success": true,
+    "executor": "spice",
+    "duration_seconds": 0.008516311645507812,
+    "analysis_command": ".tran 100n 30u",
+    "x_axis_kind": "time",
+    "x_axis_label": "Time (s)",
+    "x_axis_scale": "linear",
+    "requested_x_range": null,
+    "actual_x_range": [
+      0.0,
+      2.9999999999999997e-05
+    ]
+  },
+  "summary": {
+    "total_lines": 20,
+    "error_count": 0,
+    "warning_count": 0,
+    "info_count": 20,
+    "first_error": null
+  },
+  "files": {
+    "text": "output_log.txt"
+  },
+  "data": {
+    "raw_output": "stdout Note: No compatibility mode selected!\nstdout Circuit: NMOS Low-Side Switch\nstdout Doing analysis at TEMP = 27.000000 and TNOM = 27.000000\nstderr Using SPARSE 1.3 as Direct Linear Solver\nstdout Initial Transient Solution\nstdout --------------------------\nstdout Node                                   Voltage\nstdout ----                                   -------\nstdout vdd                                         10\nstdout gate                                         0\nstdout n1                                          10\nstdout drain                                       10\nstdout lload#branch                       1.28099e-11\nstdout vin#branch                                   0\nstdout vdd#branch                        -1.28099e-11\n Reference value :  0.00000e+00\r\nstdout No. of Data Rows : 496\nstdout Measurements for Transient Analysis\nstdout v_ds_on             =  8.661669e-02\nstdout v_ds_max            =  3.723018e+02 at=  1.534709e-05",
+    "lines": [
+      {
+        "line_number": 1,
+        "content": "stdout Note: No compatibility mode selected!",
+        "level": "info"
+      },
+      {
+        "line_number": 2,
+        "content": "stdout Circuit: NMOS Low-Side Switch",
+        "level": "info"
+      },
+      {
+        "line_number": 3,
+        "content": "stdout Doing analysis at TEMP = 27.000000 and TNOM = 27.000000",
+        "level": "info"
+      },
+      {
+        "line_number": 4,
+        "content": "stderr Using SPARSE 1.3 as Direct Linear Solver",
+        "level": "info"
+      },
+      {
+        "line_number": 5,
+        "content": "stdout Initial Transient Solution",
+        "level": "info"
+      },
+      {
+        "line_number": 6,
+        "content": "stdout --------------------------",
+        "level": "info"
+      },
+      {
+        "line_number": 7,
+        "content": "stdout Node                                   Voltage",
+        "level": "info"
+      },
+      {
+        "line_number": 8,
+        "content": "stdout ----                                   -------",
+        "level": "info"
+      },
+      {
+        "line_number": 9,
+        "content": "stdout vdd                                         10",
+        "level": "info"
+      },
+      {
+        "line_number": 10,
+        "content": "stdout gate                                         0",
+        "level": "info"
+      },
+      {
+        "line_number": 11,
+        "content": "stdout n1                                          10",
+        "level": "info"
+      },
+      {
+        "line_number": 12,
+        "content": "stdout drain                                       10",
+        "level": "info"
+      },
+      {
+        "line_number": 13,
+        "content": "stdout lload#branch                       1.28099e-11",
+        "level": "info"
+      },
+      {
+        "line_number": 14,
+        "content": "stdout vin#branch                                   0",
+        "level": "info"
+      },
+      {
+        "line_number": 15,
+        "content": "stdout vdd#branch                        -1.28099e-11",
+        "level": "info"
+      },
+      {
+        "line_number": 16,
+        "content": " Reference value :  0.00000e+00",
+        "level": "info"
+      },
+      {
+        "line_number": 17,
+        "content": "stdout No. of Data Rows : 496",
+        "level": "info"
+      },
+      {
+        "line_number": 18,
+        "content": "stdout Measurements for Transient Analysis",
+        "level": "info"
+      },
+      {
+        "line_number": 19,
+        "content": "stdout v_ds_on             =  8.661669e-02",
+        "level": "info"
+      },
+      {
+        "line_number": 20,
+        "content": "stdout v_ds_max            =  3.723018e+02 at=  1.534709e-05",
+        "level": "info"
+      }
+    ]
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "artifact_type": "metrics",
+  "metadata": {
+    "artifact_type": "metrics",
+    "file_name": "common_emitter_amplifier.cir",
+    "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\cir\\common_emitter_amplifier.cir",
+    "analysis_type": "ac",
+    "timestamp": "2026-04-22T10:26:06.140900",
+    "success": true,
+    "executor": "spice",
+    "duration_seconds": 0.010850667953491211,
+    "analysis_command": ".ac dec 101 1 200Meg",
+    "x_axis_kind": "frequency",
+    "x_axis_label": "Frequency (Hz)",
+    "x_axis_scale": "log",
+    "requested_x_range": null,
+    "actual_x_range": [
+      1.0,
+      199999999.99999768
+    ]
+  },
+  "summary": {
+    "metric_count": 0,
+    "metrics_with_target": 0
+  },
+  "files": {
+    "csv": "metrics.csv"
+  },
+  "data": {
+    "columns": [
+      "display_name",
+      "name",
+      "value",
+      "unit",
+      "raw_value",
+      "target"
+    ],
+    "rows": []
+  }
+}

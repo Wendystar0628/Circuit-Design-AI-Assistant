@@ -1,0 +1,19 @@
+# artifact_type: analysis_info
+# circuit_file: 01_rlc_bandpass.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\ac_analysis\01_rlc_bandpass.cir
+# analysis_type: ac
+# executor: spice
+# timestamp: 2026-04-22T10:23:55.037150
+
+analysis_command: .ac dec 40 100 1Meg
+x_axis_kind: frequency
+x_axis_label: Frequency (Hz)
+x_axis_scale: log
+requested_x_range: None
+actual_x_range: [100.0, 1000000.0000000014]
+
+parameters:
+  sweep_type: dec
+  points_per_decade: 40
+  start_frequency: 100
+  stop_frequency: 1Meg

@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "artifact_type": "metrics",
+  "metadata": {
+    "artifact_type": "metrics",
+    "file_name": "01_diode_clipper.cir",
+    "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\by_device\\diode\\01_diode_clipper.cir",
+    "analysis_type": "tran",
+    "timestamp": "2026-04-22T10:24:33.030093",
+    "success": true,
+    "executor": "spice",
+    "duration_seconds": 0.008511781692504883,
+    "analysis_command": ".tran 10u 5m",
+    "x_axis_kind": "time",
+    "x_axis_label": "Time (s)",
+    "x_axis_scale": "linear",
+    "requested_x_range": null,
+    "actual_x_range": [
+      0.0,
+      0.005
+    ]
+  },
+  "summary": {
+    "metric_count": 2,
+    "metrics_with_target": 0
+  },
+  "files": {
+    "csv": "metrics.csv"
+  },
+  "data": {
+    "columns": [
+      "display_name",
+      "name",
+      "value",
+      "unit",
+      "raw_value",
+      "target"
+    ],
+    "rows": [
+      {
+        "display_name": "V Clip Pos",
+        "name": "v_clip_pos",
+        "value": "1.31 V",
+        "unit": "V",
+        "raw_value": 1.308586,
+        "target": ""
+      },
+      {
+        "display_name": "V Clip Neg",
+        "name": "v_clip_neg",
+        "value": "-1.31 V",
+        "unit": "V",
+        "raw_value": -1.308589,
+        "target": ""
+      }
+    ]
+  }
+}

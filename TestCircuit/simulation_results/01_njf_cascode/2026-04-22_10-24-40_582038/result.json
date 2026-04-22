@@ -1,0 +1,111 @@
+{
+  "executor": "spice",
+  "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\by_device\\jfet\\01_njf_cascode.cir",
+  "analysis_type": "op",
+  "success": true,
+  "data": {
+    "frequency": null,
+    "time": null,
+    "sweep": null,
+    "sweep_name": null,
+    "signals": {
+      "I(VDD)": [
+        -0.002531335628838177
+      ],
+      "V(drain_mid)": [
+        4.897722871171926
+      ],
+      "V(src)": [
+        1.6418196185717997
+      ],
+      "V(drain_top)": [
+        5.133535863735834
+      ],
+      "V(g2)": [
+        5.494065314030666
+      ],
+      "V(g1)": [
+        6.606669094080155e-06
+      ],
+      "V(vdd)": [
+        15.0
+      ]
+    },
+    "signal_types": {
+      "I(VDD)": "current",
+      "V(drain_mid)": "voltage",
+      "V(src)": "voltage",
+      "V(drain_top)": "voltage",
+      "V(g2)": "voltage",
+      "V(g1)": "voltage",
+      "V(vdd)": "voltage"
+    },
+    "op_result": {
+      "nodes": [
+        {
+          "name": "vdd",
+          "voltage": 15.0,
+          "formatted": "15 V"
+        },
+        {
+          "name": "drain_mid",
+          "voltage": 4.897722871171926,
+          "formatted": "4.89772 V"
+        },
+        {
+          "name": "drain_top",
+          "voltage": 5.133535863735834,
+          "formatted": "5.13354 V"
+        },
+        {
+          "name": "g1",
+          "voltage": 6.606669094080155e-06,
+          "formatted": "6.60667e-06 V"
+        },
+        {
+          "name": "g2",
+          "voltage": 5.494065314030666,
+          "formatted": "5.49407 V"
+        },
+        {
+          "name": "src",
+          "voltage": 1.6418196185717997,
+          "formatted": "1.64182 V"
+        }
+      ],
+      "branches": [
+        {
+          "device": "VDD",
+          "current": -0.002531335628838177,
+          "formatted": "-0.00253134 A"
+        }
+      ],
+      "devices": [],
+      "row_count": 7,
+      "section_count": 2
+    }
+  },
+  "measurements": [],
+  "error": null,
+  "raw_output": "stdout Note: No compatibility mode selected!\nstdout Circuit: NJF Cascode Operating Point\nstderr Warning: Model issue on line 8 :\nstderr .model 2n3819 njf(beta=1.304m betatce=-.5 rd=1 rs=1 lambda=2.25m vto=-3  ...\nstderr unrecognized parameter (isr) - ignored\nstderr unrecognized parameter (n) - ignored\nstderr unrecognized parameter (nr) - ignored\nstderr unrecognized parameter (alpha) - ignored\nstderr unrecognized parameter (vk) - ignored\nstdout Doing analysis at TEMP = 27.000000 and TNOM = 27.000000\nstderr Using SPARSE 1.3 as Direct Linear Solver\n Reference value :  0.00000e+00\r\nstdout No. of Data Rows : 1",
+  "timestamp": "2026-04-22T10:24:40.582038",
+  "duration_seconds": 0.004012107849121094,
+  "version": 1,
+  "session_id": "",
+  "x_axis_kind": "none",
+  "x_axis_label": "X",
+  "x_axis_scale": "none",
+  "requested_x_range": null,
+  "actual_x_range": null,
+  "analysis_command": ".op",
+  "analysis_info": {
+    "analysis_type": "op",
+    "analysis_command": ".op",
+    "x_axis_kind": "none",
+    "x_axis_label": "X",
+    "x_axis_scale": "none",
+    "requested_x_range": null,
+    "actual_x_range": null,
+    "parameters": {}
+  }
+}

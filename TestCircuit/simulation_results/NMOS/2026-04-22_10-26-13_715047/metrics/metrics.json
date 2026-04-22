@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "artifact_type": "metrics",
+  "metadata": {
+    "artifact_type": "metrics",
+    "file_name": "NMOS.cir",
+    "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\cir\\NMOS.cir",
+    "analysis_type": "dc",
+    "timestamp": "2026-04-22T10:26:13.715047",
+    "success": true,
+    "executor": "spice",
+    "duration_seconds": 0.007018566131591797,
+    "analysis_command": ".dc V1 0V 300V 10V V2 0V 30V 5V",
+    "x_axis_kind": "sweep",
+    "x_axis_label": "V1",
+    "x_axis_scale": "linear",
+    "requested_x_range": null,
+    "actual_x_range": [
+      0.0,
+      300.0
+    ]
+  },
+  "summary": {
+    "metric_count": 0,
+    "metrics_with_target": 0
+  },
+  "files": {
+    "csv": "metrics.csv"
+  },
+  "data": {
+    "columns": [
+      "display_name",
+      "name",
+      "value",
+      "unit",
+      "raw_value",
+      "target"
+    ],
+    "rows": []
+  }
+}

@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "artifact_type": "metrics",
+  "metadata": {
+    "artifact_type": "metrics",
+    "file_name": "01_rc_step_response.cir",
+    "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\transient_analysis\\01_rc_step_response.cir",
+    "analysis_type": "tran",
+    "timestamp": "2026-04-22T10:27:19.752816",
+    "success": true,
+    "executor": "spice",
+    "duration_seconds": 0.008515596389770508,
+    "analysis_command": ".tran 10u 10m",
+    "x_axis_kind": "time",
+    "x_axis_label": "Time (s)",
+    "x_axis_scale": "linear",
+    "requested_x_range": null,
+    "actual_x_range": [
+      0.0,
+      0.01
+    ]
+  },
+  "summary": {
+    "metric_count": 2,
+    "metrics_with_target": 0
+  },
+  "files": {
+    "csv": "metrics.csv"
+  },
+  "data": {
+    "columns": [
+      "display_name",
+      "name",
+      "value",
+      "unit",
+      "raw_value",
+      "target"
+    ],
+    "rows": [
+      {
+        "display_name": "V Final",
+        "name": "v_final",
+        "value": "5.00 V",
+        "unit": "V",
+        "raw_value": 4.999318,
+        "target": ""
+      },
+      {
+        "display_name": "T Rise 90",
+        "name": "t_rise_90",
+        "value": "2.40m s",
+        "unit": "s",
+        "raw_value": 0.00240306,
+        "target": ""
+      }
+    ]
+  }
+}

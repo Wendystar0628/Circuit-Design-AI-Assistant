@@ -1,0 +1,10 @@
+# artifact_type: metrics
+# circuit_file: 01_nmos_low_side_switch.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\by_device\mosfet\01_nmos_low_side_switch.cir
+# analysis_type: tran
+# executor: spice
+# timestamp: 2026-04-22T10:24:43.854593
+
+display_name,name,value,unit,raw_value,target
+V Ds On,v_ds_on,86.62m V,V,0.08661669,
+V Ds Max,v_ds_max,372.30 V,V,372.3018,

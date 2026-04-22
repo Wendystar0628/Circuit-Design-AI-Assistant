@@ -1,0 +1,18 @@
+# artifact_type: output_log
+# circuit_file: 01_two_stage_bjt_ce_amplifier.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\comprehensive_circuits\01_two_stage_bjt_ce_amplifier.cir
+# analysis_type: ac
+# executor: spice
+# timestamp: 2026-04-22T10:26:20.025230
+
+stdout Note: No compatibility mode selected!
+stdout Circuit: Two-Stage NPN CE Cascade Amplifier
+stdout Doing analysis at TEMP = 27.000000 and TNOM = 27.000000
+stderr Using SPARSE 1.3 as Direct Linear Solver
+stderr Note: vin: has no value, DC 0 assumed
+ Reference value :  1.00000e+00
+stdout No. of Data Rows : 161
+stdout Measurements for AC Analysis
+stdout av_midband          =  8.409135e+01
+stdout av_low_end          =  6.559671e+01
+stdout av_high_end         =  6.933975e+01

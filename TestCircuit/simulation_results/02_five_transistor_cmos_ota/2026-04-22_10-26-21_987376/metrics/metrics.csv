@@ -1,0 +1,11 @@
+# artifact_type: metrics
+# circuit_file: 02_five_transistor_cmos_ota.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\comprehensive_circuits\02_five_transistor_cmos_ota.cir
+# analysis_type: ac
+# executor: spice
+# timestamp: 2026-04-22T10:26:21.987376
+
+display_name,name,value,unit,raw_value,target
+A DC,a_dc,59.55 dB,dB,59.5545,
+A 1Khz,a_1khz,58.12 dB,dB,58.11513,
+A 1Meg,a_1meg,3.83 dB,dB,3.832328,

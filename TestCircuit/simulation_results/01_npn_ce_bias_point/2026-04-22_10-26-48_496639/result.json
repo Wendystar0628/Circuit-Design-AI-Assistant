@@ -1,0 +1,93 @@
+{
+  "executor": "spice",
+  "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\op_analysis\\01_npn_ce_bias_point.cir",
+  "analysis_type": "op",
+  "success": true,
+  "data": {
+    "frequency": null,
+    "time": null,
+    "sweep": null,
+    "sweep_name": null,
+    "signals": {
+      "I(VDD)": [
+        -0.0012545127424067471
+      ],
+      "V(emit)": [
+        1.1074982212864406
+      ],
+      "V(col)": [
+        6.811266307648722
+      ],
+      "V(base)": [
+        1.7641741716362835
+      ],
+      "V(vdd)": [
+        12.0
+      ]
+    },
+    "signal_types": {
+      "I(VDD)": "current",
+      "V(emit)": "voltage",
+      "V(col)": "voltage",
+      "V(base)": "voltage",
+      "V(vdd)": "voltage"
+    },
+    "op_result": {
+      "nodes": [
+        {
+          "name": "vdd",
+          "voltage": 12.0,
+          "formatted": "12 V"
+        },
+        {
+          "name": "base",
+          "voltage": 1.7641741716362835,
+          "formatted": "1.76417 V"
+        },
+        {
+          "name": "col",
+          "voltage": 6.811266307648722,
+          "formatted": "6.81127 V"
+        },
+        {
+          "name": "emit",
+          "voltage": 1.1074982212864406,
+          "formatted": "1.1075 V"
+        }
+      ],
+      "branches": [
+        {
+          "device": "VDD",
+          "current": -0.0012545127424067471,
+          "formatted": "-0.00125451 A"
+        }
+      ],
+      "devices": [],
+      "row_count": 5,
+      "section_count": 2
+    }
+  },
+  "measurements": [],
+  "error": null,
+  "raw_output": "stdout Note: No compatibility mode selected!\nstdout Circuit: NPN Common-Emitter Bias Point\nstdout Doing analysis at TEMP = 27.000000 and TNOM = 27.000000\nstderr Using SPARSE 1.3 as Direct Linear Solver\n Reference value :  0.00000e+00\r\nstdout No. of Data Rows : 1",
+  "timestamp": "2026-04-22T10:26:48.496639",
+  "duration_seconds": 0.006211042404174805,
+  "version": 1,
+  "session_id": "",
+  "x_axis_kind": "none",
+  "x_axis_label": "X",
+  "x_axis_scale": "none",
+  "requested_x_range": null,
+  "actual_x_range": null,
+  "analysis_command": ".op",
+  "analysis_info": {
+    "analysis_type": "op",
+    "analysis_command": ".op",
+    "x_axis_kind": "none",
+    "x_axis_label": "X",
+    "x_axis_scale": "none",
+    "requested_x_range": null,
+    "actual_x_range": null,
+    "parameters": {}
+  }
+}

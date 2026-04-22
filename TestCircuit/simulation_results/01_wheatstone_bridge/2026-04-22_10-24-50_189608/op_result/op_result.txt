@@ -1,0 +1,18 @@
+# artifact_type: op_result
+# circuit_file: 01_wheatstone_bridge.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\by_device\resistor\01_wheatstone_bridge.cir
+# analysis_type: op
+# executor: spice
+# timestamp: 2026-04-22T10:24:50.189608
+
+## nodes
+| name | voltage | formatted |
+| --- | --- | --- |
+| a | 2.5 | 2.5 V |
+| b | 2.48744 | 2.48744 V |
+| exc | 5 | 5 V |
+
+## branches
+| device | current | formatted |
+| --- | --- | --- |
+| VEXC | -0.00501256 | -0.00501256 A |

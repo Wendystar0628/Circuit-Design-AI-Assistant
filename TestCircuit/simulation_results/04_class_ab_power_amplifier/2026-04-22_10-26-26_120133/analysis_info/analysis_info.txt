@@ -1,0 +1,19 @@
+# artifact_type: analysis_info
+# circuit_file: 04_class_ab_power_amplifier.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\comprehensive_circuits\04_class_ab_power_amplifier.cir
+# analysis_type: tran
+# executor: spice
+# timestamp: 2026-04-22T10:26:26.120133
+
+analysis_command: .tran 10u 5m
+x_axis_kind: time
+x_axis_label: Time (s)
+x_axis_scale: linear
+requested_x_range: None
+actual_x_range: [0.0, 0.005]
+
+parameters:
+  step_time: 10u
+  stop_time: 5m
+  start_time: 
+  max_step:

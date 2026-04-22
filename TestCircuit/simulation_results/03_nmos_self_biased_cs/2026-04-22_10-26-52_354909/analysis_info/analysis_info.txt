@@ -1,0 +1,15 @@
+# artifact_type: analysis_info
+# circuit_file: 03_nmos_self_biased_cs.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\op_analysis\03_nmos_self_biased_cs.cir
+# analysis_type: op
+# executor: spice
+# timestamp: 2026-04-22T10:26:52.354909
+
+analysis_command: .op
+x_axis_kind: none
+x_axis_label: X
+x_axis_scale: none
+requested_x_range: None
+actual_x_range: None
+
+parameters:

@@ -1,0 +1,8 @@
+# artifact_type: metrics
+# circuit_file: 02_lm741_inverting_amplifier.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\opamp_circuits\02_lm741_inverting_amplifier.cir
+# analysis_type: ac
+# executor: spice
+# timestamp: 2026-04-22T10:27:04.275848
+
+display_name,name,value,unit,raw_value,target

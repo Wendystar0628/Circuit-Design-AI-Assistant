@@ -1,0 +1,19 @@
+# artifact_type: op_result
+# circuit_file: 01_npn_ce_bias_point.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\op_analysis\01_npn_ce_bias_point.cir
+# analysis_type: op
+# executor: spice
+# timestamp: 2026-04-22T10:26:48.496639
+
+## nodes
+| name | voltage | formatted |
+| --- | --- | --- |
+| vdd | 12 | 12 V |
+| base | 1.76417 | 1.76417 V |
+| col | 6.81127 | 6.81127 V |
+| emit | 1.1075 | 1.1075 V |
+
+## branches
+| device | current | formatted |
+| --- | --- | --- |
+| VDD | -0.00125451 | -0.00125451 A |

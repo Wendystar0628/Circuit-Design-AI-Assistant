@@ -1,0 +1,128 @@
+{
+  "schema_version": 1,
+  "artifact_type": "output_log",
+  "metadata": {
+    "artifact_type": "output_log",
+    "file_name": "05_cmos_inverter_switch.cir",
+    "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\transient_analysis\\05_cmos_inverter_switch.cir",
+    "analysis_type": "tran",
+    "timestamp": "2026-04-22T10:27:27.468302",
+    "success": true,
+    "executor": "spice",
+    "duration_seconds": 0.01253056526184082,
+    "analysis_command": ".tran 10n 5u",
+    "x_axis_kind": "time",
+    "x_axis_label": "Time (s)",
+    "x_axis_scale": "linear",
+    "requested_x_range": null,
+    "actual_x_range": [
+      0.0,
+      4.9999999999999996e-06
+    ]
+  },
+  "summary": {
+    "total_lines": 18,
+    "error_count": 0,
+    "warning_count": 0,
+    "info_count": 18,
+    "first_error": null
+  },
+  "files": {
+    "text": "output_log.txt"
+  },
+  "data": {
+    "raw_output": "stdout Note: No compatibility mode selected!\nstdout Circuit: CMOS Inverter Switching\nstdout Doing analysis at TEMP = 27.000000 and TNOM = 27.000000\nstderr Using SPARSE 1.3 as Direct Linear Solver\nstdout Initial Transient Solution\nstdout --------------------------\nstdout Node                                   Voltage\nstdout ----                                   -------\nstdout vdd                                          5\nstdout in                                           0\nstdout out                                          5\nstdout vin#branch                                   0\nstdout vdd#branch                        -7.80664e-12\n Reference value :  0.00000e+00\r\nstdout No. of Data Rows : 897\nstdout Measurements for Transient Analysis\nstdout t_pdhl              =  -3.338531e-09 targ=  4.666147e-08 trig=  5.000000e-08\nstdout t_pdlh              =  1.322149e-08 targ=  6.632215e-07 trig=  6.500000e-07",
+    "lines": [
+      {
+        "line_number": 1,
+        "content": "stdout Note: No compatibility mode selected!",
+        "level": "info"
+      },
+      {
+        "line_number": 2,
+        "content": "stdout Circuit: CMOS Inverter Switching",
+        "level": "info"
+      },
+      {
+        "line_number": 3,
+        "content": "stdout Doing analysis at TEMP = 27.000000 and TNOM = 27.000000",
+        "level": "info"
+      },
+      {
+        "line_number": 4,
+        "content": "stderr Using SPARSE 1.3 as Direct Linear Solver",
+        "level": "info"
+      },
+      {
+        "line_number": 5,
+        "content": "stdout Initial Transient Solution",
+        "level": "info"
+      },
+      {
+        "line_number": 6,
+        "content": "stdout --------------------------",
+        "level": "info"
+      },
+      {
+        "line_number": 7,
+        "content": "stdout Node                                   Voltage",
+        "level": "info"
+      },
+      {
+        "line_number": 8,
+        "content": "stdout ----                                   -------",
+        "level": "info"
+      },
+      {
+        "line_number": 9,
+        "content": "stdout vdd                                          5",
+        "level": "info"
+      },
+      {
+        "line_number": 10,
+        "content": "stdout in                                           0",
+        "level": "info"
+      },
+      {
+        "line_number": 11,
+        "content": "stdout out                                          5",
+        "level": "info"
+      },
+      {
+        "line_number": 12,
+        "content": "stdout vin#branch                                   0",
+        "level": "info"
+      },
+      {
+        "line_number": 13,
+        "content": "stdout vdd#branch                        -7.80664e-12",
+        "level": "info"
+      },
+      {
+        "line_number": 14,
+        "content": " Reference value :  0.00000e+00",
+        "level": "info"
+      },
+      {
+        "line_number": 15,
+        "content": "stdout No. of Data Rows : 897",
+        "level": "info"
+      },
+      {
+        "line_number": 16,
+        "content": "stdout Measurements for Transient Analysis",
+        "level": "info"
+      },
+      {
+        "line_number": 17,
+        "content": "stdout t_pdhl              =  -3.338531e-09 targ=  4.666147e-08 trig=  5.000000e-08",
+        "level": "info"
+      },
+      {
+        "line_number": 18,
+        "content": "stdout t_pdlh              =  1.322149e-08 targ=  6.632215e-07 trig=  6.500000e-07",
+        "level": "info"
+      }
+    ]
+  }
+}

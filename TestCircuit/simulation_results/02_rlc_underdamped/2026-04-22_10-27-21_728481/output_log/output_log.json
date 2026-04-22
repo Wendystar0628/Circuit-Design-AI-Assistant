@@ -1,0 +1,128 @@
+{
+  "schema_version": 1,
+  "artifact_type": "output_log",
+  "metadata": {
+    "artifact_type": "output_log",
+    "file_name": "02_rlc_underdamped.cir",
+    "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\transient_analysis\\02_rlc_underdamped.cir",
+    "analysis_type": "tran",
+    "timestamp": "2026-04-22T10:27:21.728481",
+    "success": true,
+    "executor": "spice",
+    "duration_seconds": 0.05325746536254883,
+    "analysis_command": ".tran 2u 3m",
+    "x_axis_kind": "time",
+    "x_axis_label": "Time (s)",
+    "x_axis_scale": "linear",
+    "requested_x_range": null,
+    "actual_x_range": [
+      0.0,
+      0.003
+    ]
+  },
+  "summary": {
+    "total_lines": 18,
+    "error_count": 0,
+    "warning_count": 0,
+    "info_count": 18,
+    "first_error": null
+  },
+  "files": {
+    "text": "output_log.txt"
+  },
+  "data": {
+    "raw_output": "stdout Note: No compatibility mode selected!\nstdout Circuit: Underdamped RLC Step Response\nstdout Doing analysis at TEMP = 27.000000 and TNOM = 27.000000\nstderr Using SPARSE 1.3 as Direct Linear Solver\nstdout Initial Transient Solution\nstdout --------------------------\nstdout Node                                   Voltage\nstdout ----                                   -------\nstdout in                                           0\nstdout n1                                           0\nstdout n2                                           0\nstdout l1#branch                                    0\nstdout vin#branch                                   0\n Reference value :  0.00000e+00\r\nstdout No. of Data Rows : 1521\nstdout Measurements for Transient Analysis\nstdout v_peak              =  8.024243e+00 at=  2.011860e-04\nstdout v_final             =  4.999997e+00",
+    "lines": [
+      {
+        "line_number": 1,
+        "content": "stdout Note: No compatibility mode selected!",
+        "level": "info"
+      },
+      {
+        "line_number": 2,
+        "content": "stdout Circuit: Underdamped RLC Step Response",
+        "level": "info"
+      },
+      {
+        "line_number": 3,
+        "content": "stdout Doing analysis at TEMP = 27.000000 and TNOM = 27.000000",
+        "level": "info"
+      },
+      {
+        "line_number": 4,
+        "content": "stderr Using SPARSE 1.3 as Direct Linear Solver",
+        "level": "info"
+      },
+      {
+        "line_number": 5,
+        "content": "stdout Initial Transient Solution",
+        "level": "info"
+      },
+      {
+        "line_number": 6,
+        "content": "stdout --------------------------",
+        "level": "info"
+      },
+      {
+        "line_number": 7,
+        "content": "stdout Node                                   Voltage",
+        "level": "info"
+      },
+      {
+        "line_number": 8,
+        "content": "stdout ----                                   -------",
+        "level": "info"
+      },
+      {
+        "line_number": 9,
+        "content": "stdout in                                           0",
+        "level": "info"
+      },
+      {
+        "line_number": 10,
+        "content": "stdout n1                                           0",
+        "level": "info"
+      },
+      {
+        "line_number": 11,
+        "content": "stdout n2                                           0",
+        "level": "info"
+      },
+      {
+        "line_number": 12,
+        "content": "stdout l1#branch                                    0",
+        "level": "info"
+      },
+      {
+        "line_number": 13,
+        "content": "stdout vin#branch                                   0",
+        "level": "info"
+      },
+      {
+        "line_number": 14,
+        "content": " Reference value :  0.00000e+00",
+        "level": "info"
+      },
+      {
+        "line_number": 15,
+        "content": "stdout No. of Data Rows : 1521",
+        "level": "info"
+      },
+      {
+        "line_number": 16,
+        "content": "stdout Measurements for Transient Analysis",
+        "level": "info"
+      },
+      {
+        "line_number": 17,
+        "content": "stdout v_peak              =  8.024243e+00 at=  2.011860e-04",
+        "level": "info"
+      },
+      {
+        "line_number": 18,
+        "content": "stdout v_final             =  4.999997e+00",
+        "level": "info"
+      }
+    ]
+  }
+}

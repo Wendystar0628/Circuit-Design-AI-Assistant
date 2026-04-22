@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "artifact_type": "analysis_info",
+  "metadata": {
+    "artifact_type": "analysis_info",
+    "file_name": "06_njf_source_follower.cir",
+    "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\transient_analysis\\06_njf_source_follower.cir",
+    "analysis_type": "tran",
+    "timestamp": "2026-04-22T10:27:29.543802",
+    "success": true,
+    "executor": "spice",
+    "duration_seconds": 0.009099960327148438,
+    "analysis_command": ".tran 10u 5m",
+    "x_axis_kind": "time",
+    "x_axis_label": "Time (s)",
+    "x_axis_scale": "linear",
+    "requested_x_range": null,
+    "actual_x_range": [
+      0.0,
+      0.005
+    ]
+  },
+  "summary": {
+    "parameter_count": 4
+  },
+  "files": {
+    "text": "analysis_info.txt"
+  },
+  "data": {
+    "analysis_type": "tran",
+    "executor": "spice",
+    "file_name": "06_njf_source_follower.cir",
+    "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\transient_analysis\\06_njf_source_follower.cir",
+    "success": true,
+    "timestamp": "2026-04-22T10:27:29.543802",
+    "duration_seconds": 0.009099960327148438,
+    "analysis_command": ".tran 10u 5m",
+    "x_axis_kind": "time",
+    "x_axis_label": "Time (s)",
+    "x_axis_scale": "linear",
+    "requested_x_range": null,
+    "actual_x_range": [
+      0.0,
+      0.005
+    ],
+    "parameters": {
+      "step_time": "10u",
+      "stop_time": "5m",
+      "start_time": "",
+      "max_step": ""
+    }
+  }
+}

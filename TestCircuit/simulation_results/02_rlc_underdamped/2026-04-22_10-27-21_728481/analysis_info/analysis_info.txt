@@ -1,0 +1,19 @@
+# artifact_type: analysis_info
+# circuit_file: 02_rlc_underdamped.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\transient_analysis\02_rlc_underdamped.cir
+# analysis_type: tran
+# executor: spice
+# timestamp: 2026-04-22T10:27:21.728481
+
+analysis_command: .tran 2u 3m
+x_axis_kind: time
+x_axis_label: Time (s)
+x_axis_scale: linear
+requested_x_range: None
+actual_x_range: [0.0, 0.003]
+
+parameters:
+  step_time: 2u
+  stop_time: 3m
+  start_time: 
+  max_step:

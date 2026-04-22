@@ -1,0 +1,158 @@
+{
+  "schema_version": 1,
+  "artifact_type": "output_log",
+  "metadata": {
+    "artifact_type": "output_log",
+    "file_name": "05_lt1001_two_stage_amplifier.cir",
+    "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\opamp_circuits\\05_lt1001_two_stage_amplifier.cir",
+    "analysis_type": "tran",
+    "timestamp": "2026-04-22T10:27:11.885749",
+    "success": true,
+    "executor": "spice",
+    "duration_seconds": 0.007521390914916992,
+    "analysis_command": ".tran 0.02m 6m",
+    "x_axis_kind": "time",
+    "x_axis_label": "Time (s)",
+    "x_axis_scale": "linear",
+    "requested_x_range": null,
+    "actual_x_range": [
+      0.0,
+      0.006
+    ]
+  },
+  "summary": {
+    "total_lines": 24,
+    "error_count": 0,
+    "warning_count": 0,
+    "info_count": 24,
+    "first_error": null
+  },
+  "files": {
+    "text": "output_log.txt"
+  },
+  "data": {
+    "raw_output": "stdout Note: No compatibility mode selected!\nstdout Circuit: LT1001 Two-Stage Amplifier\nstdout Doing analysis at TEMP = 27.000000 and TNOM = 27.000000\nstderr Using SPARSE 1.3 as Direct Linear Solver\nstdout Initial Transient Solution\nstdout --------------------------\nstdout Node                                   Voltage\nstdout ----                                   -------\nstdout vcc                                         15\nstdout vee                                        -15\nstdout in                                           0\nstdout fb1                                          0\nstdout stage1                                       0\nstdout xu1.ndrv                                     0\nstdout inv2                                         0\nstdout out                                          0\nstdout xu2.ndrv                                     0\nstdout e.xu2.e1#branch                              0\nstdout e.xu1.e1#branch                              0\nstdout vin#branch                                   0\nstdout vee#branch                               3e-11\nstdout vcc#branch                              -3e-11\n Reference value :  0.00000e+00\r\nstdout No. of Data Rows : 308",
+    "lines": [
+      {
+        "line_number": 1,
+        "content": "stdout Note: No compatibility mode selected!",
+        "level": "info"
+      },
+      {
+        "line_number": 2,
+        "content": "stdout Circuit: LT1001 Two-Stage Amplifier",
+        "level": "info"
+      },
+      {
+        "line_number": 3,
+        "content": "stdout Doing analysis at TEMP = 27.000000 and TNOM = 27.000000",
+        "level": "info"
+      },
+      {
+        "line_number": 4,
+        "content": "stderr Using SPARSE 1.3 as Direct Linear Solver",
+        "level": "info"
+      },
+      {
+        "line_number": 5,
+        "content": "stdout Initial Transient Solution",
+        "level": "info"
+      },
+      {
+        "line_number": 6,
+        "content": "stdout --------------------------",
+        "level": "info"
+      },
+      {
+        "line_number": 7,
+        "content": "stdout Node                                   Voltage",
+        "level": "info"
+      },
+      {
+        "line_number": 8,
+        "content": "stdout ----                                   -------",
+        "level": "info"
+      },
+      {
+        "line_number": 9,
+        "content": "stdout vcc                                         15",
+        "level": "info"
+      },
+      {
+        "line_number": 10,
+        "content": "stdout vee                                        -15",
+        "level": "info"
+      },
+      {
+        "line_number": 11,
+        "content": "stdout in                                           0",
+        "level": "info"
+      },
+      {
+        "line_number": 12,
+        "content": "stdout fb1                                          0",
+        "level": "info"
+      },
+      {
+        "line_number": 13,
+        "content": "stdout stage1                                       0",
+        "level": "info"
+      },
+      {
+        "line_number": 14,
+        "content": "stdout xu1.ndrv                                     0",
+        "level": "info"
+      },
+      {
+        "line_number": 15,
+        "content": "stdout inv2                                         0",
+        "level": "info"
+      },
+      {
+        "line_number": 16,
+        "content": "stdout out                                          0",
+        "level": "info"
+      },
+      {
+        "line_number": 17,
+        "content": "stdout xu2.ndrv                                     0",
+        "level": "info"
+      },
+      {
+        "line_number": 18,
+        "content": "stdout e.xu2.e1#branch                              0",
+        "level": "info"
+      },
+      {
+        "line_number": 19,
+        "content": "stdout e.xu1.e1#branch                              0",
+        "level": "info"
+      },
+      {
+        "line_number": 20,
+        "content": "stdout vin#branch                                   0",
+        "level": "info"
+      },
+      {
+        "line_number": 21,
+        "content": "stdout vee#branch                               3e-11",
+        "level": "info"
+      },
+      {
+        "line_number": 22,
+        "content": "stdout vcc#branch                              -3e-11",
+        "level": "info"
+      },
+      {
+        "line_number": 23,
+        "content": " Reference value :  0.00000e+00",
+        "level": "info"
+      },
+      {
+        "line_number": 24,
+        "content": "stdout No. of Data Rows : 308",
+        "level": "info"
+      }
+    ]
+  }
+}

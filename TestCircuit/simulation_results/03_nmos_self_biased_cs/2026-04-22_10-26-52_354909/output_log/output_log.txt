@@ -1,0 +1,13 @@
+# artifact_type: output_log
+# circuit_file: 03_nmos_self_biased_cs.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\op_analysis\03_nmos_self_biased_cs.cir
+# analysis_type: op
+# executor: spice
+# timestamp: 2026-04-22T10:26:52.354909
+
+stdout Note: No compatibility mode selected!
+stdout Circuit: NMOS Self-Biased Common Source
+stdout Doing analysis at TEMP = 27.000000 and TNOM = 27.000000
+stderr Using SPARSE 1.3 as Direct Linear Solver
+ Reference value :  0.00000e+00
+stdout No. of Data Rows : 1

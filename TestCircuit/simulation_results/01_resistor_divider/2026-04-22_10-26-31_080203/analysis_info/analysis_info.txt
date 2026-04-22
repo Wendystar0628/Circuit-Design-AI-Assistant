@@ -1,0 +1,19 @@
+# artifact_type: analysis_info
+# circuit_file: 01_resistor_divider.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\dc_analysis\01_resistor_divider.cir
+# analysis_type: dc
+# executor: spice
+# timestamp: 2026-04-22T10:26:31.080203
+
+analysis_command: .dc Vin 0 10 0.1
+x_axis_kind: sweep
+x_axis_label: Vin
+x_axis_scale: linear
+requested_x_range: [0.0, 10.0]
+actual_x_range: [0.0, 9.99999999999998]
+
+parameters:
+  source_name: Vin
+  start_value: 0
+  stop_value: 10
+  step: 0.1

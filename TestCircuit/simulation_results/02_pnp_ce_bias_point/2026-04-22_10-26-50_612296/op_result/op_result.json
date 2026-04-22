@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "artifact_type": "op_result",
+  "metadata": {
+    "artifact_type": "op_result",
+    "file_name": "02_pnp_ce_bias_point.cir",
+    "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\op_analysis\\02_pnp_ce_bias_point.cir",
+    "analysis_type": "op",
+    "timestamp": "2026-04-22T10:26:50.612296",
+    "success": true,
+    "executor": "spice",
+    "duration_seconds": 0.005503654479980469,
+    "analysis_command": ".op",
+    "x_axis_kind": "none",
+    "x_axis_label": "X",
+    "x_axis_scale": "none",
+    "requested_x_range": null,
+    "actual_x_range": null
+  },
+  "summary": {
+    "row_count": 5,
+    "section_count": 2
+  },
+  "files": {
+    "text": "op_result.txt"
+  },
+  "data": {
+    "nodes": [
+      {
+        "name": "vss",
+        "voltage": -12.0,
+        "formatted": "-12 V"
+      },
+      {
+        "name": "base",
+        "voltage": -1.7472018306262773,
+        "formatted": "-1.7472 V"
+      },
+      {
+        "name": "col",
+        "voltage": -6.896871897950792,
+        "formatted": "-6.89687 V"
+      },
+      {
+        "name": "emit",
+        "voltage": -1.0909482259750614,
+        "formatted": "-1.09095 V"
+      }
+    ],
+    "branches": [
+      {
+        "device": "VSS",
+        "current": 0.0012365483802734753,
+        "formatted": "0.00123655 A"
+      }
+    ],
+    "devices": [],
+    "row_count": 5,
+    "section_count": 2
+  }
+}

@@ -1,0 +1,10 @@
+# artifact_type: metrics
+# circuit_file: 03_cmos_ring_oscillator.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\comprehensive_circuits\03_cmos_ring_oscillator.cir
+# analysis_type: tran
+# executor: spice
+# timestamp: 2026-04-22T10:26:23.875617
+
+display_name,name,value,unit,raw_value,target
+V Peak,v_peak,4.78 V,V,4.777306,
+V Valley,v_valley,-91.31m V,V,-0.09130884,

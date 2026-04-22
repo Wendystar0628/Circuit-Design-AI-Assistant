@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "artifact_type": "export_manifest",
+  "metadata": {
+    "artifact_type": "export_manifest",
+    "file_name": "02_complementary_push_pull.cir",
+    "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\by_device\\bjt\\02_complementary_push_pull.cir",
+    "analysis_type": "tran",
+    "timestamp": "2026-04-22T10:24:10.334747",
+    "success": true,
+    "executor": "spice",
+    "duration_seconds": 0.0065228939056396484,
+    "analysis_command": ".tran 10u 5m",
+    "x_axis_kind": "time",
+    "x_axis_label": "Time (s)",
+    "x_axis_scale": "linear",
+    "requested_x_range": null,
+    "actual_x_range": [
+      0.0,
+      0.005
+    ]
+  },
+  "summary": {
+    "category_count": 5,
+    "exported_file_count": 10,
+    "error_count": 0
+  },
+  "files": {
+    "categories": {
+      "result.json": [
+        "result.json"
+      ],
+      "metrics": [
+        "metrics/metrics.csv",
+        "metrics/metrics.json"
+      ],
+      "analysis_info": [
+        "analysis_info/analysis_info.json",
+        "analysis_info/analysis_info.txt"
+      ],
+      "raw_data": [
+        "raw_data/raw_data.csv",
+        "raw_data/raw_data.json"
+      ],
+      "output_log": [
+        "output_log/output_log.txt",
+        "output_log/output_log.json"
+      ]
+    },
+    "manifest": "export_manifest.json"
+  },
+  "data": {
+    "persisted_categories": [
+      "result.json",
+      "metrics",
+      "analysis_info",
+      "raw_data",
+      "output_log"
+    ],
+    "exported_files": [
+      "result.json",
+      "metrics/metrics.csv",
+      "metrics/metrics.json",
+      "analysis_info/analysis_info.json",
+      "analysis_info/analysis_info.txt",
+      "raw_data/raw_data.csv",
+      "raw_data/raw_data.json",
+      "output_log/output_log.txt",
+      "output_log/output_log.json",
+      "export_manifest.json"
+    ],
+    "errors": []
+  }
+}

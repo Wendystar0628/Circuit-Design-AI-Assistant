@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "artifact_type": "metrics",
+  "metadata": {
+    "artifact_type": "metrics",
+    "file_name": "01_resistor_thermal_noise.cir",
+    "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\noise_analysis\\01_resistor_thermal_noise.cir",
+    "analysis_type": "noise",
+    "timestamp": "2026-04-22T10:26:42.738430",
+    "success": true,
+    "executor": "spice",
+    "duration_seconds": 0.007129669189453125,
+    "analysis_command": ".noise V(out) Vin dec 20 1 10Meg",
+    "x_axis_kind": "frequency",
+    "x_axis_label": "Frequency (Hz)",
+    "x_axis_scale": "log",
+    "requested_x_range": null,
+    "actual_x_range": [
+      1.0,
+      9999999.99999989
+    ]
+  },
+  "summary": {
+    "metric_count": 0,
+    "metrics_with_target": 0
+  },
+  "files": {
+    "csv": "metrics.csv"
+  },
+  "data": {
+    "columns": [
+      "display_name",
+      "name",
+      "value",
+      "unit",
+      "raw_value",
+      "target"
+    ],
+    "rows": []
+  }
+}

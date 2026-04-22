@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "artifact_type": "analysis_info",
+  "metadata": {
+    "artifact_type": "analysis_info",
+    "file_name": "02_cmos_nand_gate.cir",
+    "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\by_device\\mosfet\\02_cmos_nand_gate.cir",
+    "analysis_type": "tran",
+    "timestamp": "2026-04-22T10:24:47.370353",
+    "success": true,
+    "executor": "spice",
+    "duration_seconds": 0.01524496078491211,
+    "analysis_command": ".tran 10n 8u",
+    "x_axis_kind": "time",
+    "x_axis_label": "Time (s)",
+    "x_axis_scale": "linear",
+    "requested_x_range": null,
+    "actual_x_range": [
+      0.0,
+      8e-06
+    ]
+  },
+  "summary": {
+    "parameter_count": 4
+  },
+  "files": {
+    "text": "analysis_info.txt"
+  },
+  "data": {
+    "analysis_type": "tran",
+    "executor": "spice",
+    "file_name": "02_cmos_nand_gate.cir",
+    "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\by_device\\mosfet\\02_cmos_nand_gate.cir",
+    "success": true,
+    "timestamp": "2026-04-22T10:24:47.370353",
+    "duration_seconds": 0.01524496078491211,
+    "analysis_command": ".tran 10n 8u",
+    "x_axis_kind": "time",
+    "x_axis_label": "Time (s)",
+    "x_axis_scale": "linear",
+    "requested_x_range": null,
+    "actual_x_range": [
+      0.0,
+      8e-06
+    ],
+    "parameters": {
+      "step_time": "10n",
+      "stop_time": "8u",
+      "start_time": "",
+      "max_step": ""
+    }
+  }
+}

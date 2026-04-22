@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "artifact_type": "metrics",
+  "metadata": {
+    "artifact_type": "metrics",
+    "file_name": "01_resistor_divider.cir",
+    "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\dc_analysis\\01_resistor_divider.cir",
+    "analysis_type": "dc",
+    "timestamp": "2026-04-22T10:26:31.080203",
+    "success": true,
+    "executor": "spice",
+    "duration_seconds": 0.006023883819580078,
+    "analysis_command": ".dc Vin 0 10 0.1",
+    "x_axis_kind": "sweep",
+    "x_axis_label": "Vin",
+    "x_axis_scale": "linear",
+    "requested_x_range": [
+      0.0,
+      10.0
+    ],
+    "actual_x_range": [
+      0.0,
+      9.99999999999998
+    ]
+  },
+  "summary": {
+    "metric_count": 0,
+    "metrics_with_target": 0
+  },
+  "files": {
+    "csv": "metrics.csv"
+  },
+  "data": {
+    "columns": [
+      "display_name",
+      "name",
+      "value",
+      "unit",
+      "raw_value",
+      "target"
+    ],
+    "rows": []
+  }
+}

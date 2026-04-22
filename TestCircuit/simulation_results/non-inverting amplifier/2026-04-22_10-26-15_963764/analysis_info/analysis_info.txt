@@ -1,0 +1,19 @@
+# artifact_type: analysis_info
+# circuit_file: non-inverting amplifier.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\cir\non-inverting amplifier.cir
+# analysis_type: tran
+# executor: spice
+# timestamp: 2026-04-22T10:26:15.963764
+
+analysis_command: .tran 20u 20ms
+x_axis_kind: time
+x_axis_label: Time (s)
+x_axis_scale: linear
+requested_x_range: None
+actual_x_range: [0.0, 0.02]
+
+parameters:
+  step_time: 20u
+  stop_time: 20ms
+  start_time: 
+  max_step:

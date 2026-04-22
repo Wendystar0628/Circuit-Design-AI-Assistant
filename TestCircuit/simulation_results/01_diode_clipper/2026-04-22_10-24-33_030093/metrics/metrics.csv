@@ -1,0 +1,10 @@
+# artifact_type: metrics
+# circuit_file: 01_diode_clipper.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\by_device\diode\01_diode_clipper.cir
+# analysis_type: tran
+# executor: spice
+# timestamp: 2026-04-22T10:24:33.030093
+
+display_name,name,value,unit,raw_value,target
+V Clip Pos,v_clip_pos,1.31 V,V,1.308586,
+V Clip Neg,v_clip_neg,-1.31 V,V,-1.308589,

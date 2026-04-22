@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "artifact_type": "metrics",
+  "metadata": {
+    "artifact_type": "metrics",
+    "file_name": "04_bjt_output_characteristics.cir",
+    "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\dc_analysis\\04_bjt_output_characteristics.cir",
+    "analysis_type": "dc",
+    "timestamp": "2026-04-22T10:26:36.773049",
+    "success": true,
+    "executor": "spice",
+    "duration_seconds": 0.008633136749267578,
+    "analysis_command": ".dc Vce 0 10 0.05 Ib 10u 50u 10u",
+    "x_axis_kind": "sweep",
+    "x_axis_label": "Vce",
+    "x_axis_scale": "linear",
+    "requested_x_range": [
+      0.0,
+      10.0
+    ],
+    "actual_x_range": [
+      0.0,
+      10.000000000000007
+    ]
+  },
+  "summary": {
+    "metric_count": 0,
+    "metrics_with_target": 0
+  },
+  "files": {
+    "csv": "metrics.csv"
+  },
+  "data": {
+    "columns": [
+      "display_name",
+      "name",
+      "value",
+      "unit",
+      "raw_value",
+      "target"
+    ],
+    "rows": []
+  }
+}

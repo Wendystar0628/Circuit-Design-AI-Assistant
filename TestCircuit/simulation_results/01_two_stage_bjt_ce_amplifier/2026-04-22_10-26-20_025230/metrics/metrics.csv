@@ -1,0 +1,11 @@
+# artifact_type: metrics
+# circuit_file: 01_two_stage_bjt_ce_amplifier.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestWork\comprehensive_circuits\01_two_stage_bjt_ce_amplifier.cir
+# analysis_type: ac
+# executor: spice
+# timestamp: 2026-04-22T10:26:20.025230
+
+display_name,name,value,unit,raw_value,target
+Av Midband,av_midband,84.09 dB,dB,84.09135,
+Av Low End,av_low_end,65.60 dB,dB,65.59671,
+Av High End,av_high_end,69.34 dB,dB,69.33975,

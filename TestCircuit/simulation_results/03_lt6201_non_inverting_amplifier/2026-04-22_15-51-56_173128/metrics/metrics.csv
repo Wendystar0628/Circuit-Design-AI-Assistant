@@ -1,0 +1,8 @@
+# artifact_type: metrics
+# circuit_file: 03_lt6201_non_inverting_amplifier.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestCircuit\opamp_circuits\03_lt6201_non_inverting_amplifier.cir
+# analysis_type: ac
+# executor: spice
+# timestamp: 2026-04-22T15:51:56.173128
+
+display_name,name,value,unit,raw_value,target

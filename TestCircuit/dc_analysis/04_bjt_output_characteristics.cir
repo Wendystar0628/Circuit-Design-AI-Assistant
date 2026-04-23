@@ -20,4 +20,7 @@ Q1 col base 0 2N3904
 * --- Analysis: primary sweep Vce, nested step Ib ---
 .dc Vce 0 10 0.05 Ib 10u 50u 10u
 
+.MEASURE DC ic_at_vce5  FIND I(Vce) AT=5
+.MEASURE DC ic_at_vce10 FIND I(Vce) AT=10
+
 .end

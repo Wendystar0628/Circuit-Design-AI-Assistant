@@ -10,4 +10,9 @@ XU1 in fb out vcc vee LT6201
 Rload out 0 1k
 
 .ac dec 30 1k 100Meg
+
+.MEASURE AC av_low_end  FIND vdb(out) AT=10k
+.MEASURE AC av_midband  FIND vdb(out) AT=1Meg
+.MEASURE AC av_high_end FIND vdb(out) AT=50Meg
+
 .end

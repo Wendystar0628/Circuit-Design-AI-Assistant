@@ -1,0 +1,8 @@
+# artifact_type: metrics
+# circuit_file: 01_lt1001_voltage_follower.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestCircuit\opamp_circuits\01_lt1001_voltage_follower.cir
+# analysis_type: tran
+# executor: spice
+# timestamp: 2026-04-22T15:51:56.060622
+
+display_name,name,value,unit,raw_value,target

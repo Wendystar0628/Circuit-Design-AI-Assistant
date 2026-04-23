@@ -8,4 +8,9 @@ XU1 in out vcc vee out LT1001
 Rload out 0 10k
 
 .tran 0.02m 4m
+
+.MEASURE TRAN vout_pp  PP  V(out) FROM=2m TO=4m
+.MEASURE TRAN vout_max MAX V(out) FROM=2m TO=4m
+.MEASURE TRAN vout_avg AVG V(out) FROM=2m TO=4m
+
 .end

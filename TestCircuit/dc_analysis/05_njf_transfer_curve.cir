@@ -21,4 +21,7 @@ J1 drain gate 0 2N3819
 * --- Analysis: sweep Vgs across the device's active region ---
 .dc Vgs -3 0 0.02
 
+.MEASURE DC id_at_vgs0    FIND I(Vdd) AT=0
+.MEASURE DC id_at_vgs_neg2 FIND I(Vdd) AT=-2
+
 .end

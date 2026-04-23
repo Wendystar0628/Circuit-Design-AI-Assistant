@@ -12,4 +12,9 @@ XU1 out vee filt fb vcc LTC6247
 Rload out 0 100k
 
 .ac dec 20 1 1Meg
+
+.MEASURE AC av_passband  FIND vdb(out) AT=10
+.MEASURE AC av_at_corner FIND vdb(out) AT=1.6k
+.MEASURE AC av_stopband  FIND vdb(out) AT=100k
+
 .end

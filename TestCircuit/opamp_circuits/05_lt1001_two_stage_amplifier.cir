@@ -14,4 +14,9 @@ XU2 0 inv2 vcc vee out LT1001
 Rload out 0 10k
 
 .tran 0.02m 6m
+
+.MEASURE TRAN vout_pp  PP  V(out) FROM=3m TO=6m
+.MEASURE TRAN vout_max MAX V(out) FROM=3m TO=6m
+.MEASURE TRAN vout_avg AVG V(out) FROM=3m TO=6m
+
 .end

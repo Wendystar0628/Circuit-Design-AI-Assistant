@@ -16,4 +16,7 @@ D1   anode 0     1N4148
 * --- Analysis: sweep Vin from 0 V to 2 V ---
 .dc Vin 0 2 0.01
 
+.MEASURE DC vf_at_1v  FIND V(anode) AT=1
+.MEASURE DC vf_at_2v  FIND V(anode) AT=2
+
 .end

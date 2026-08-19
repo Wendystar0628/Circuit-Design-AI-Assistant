@@ -9,14 +9,14 @@
 
 初始化顺序：
 - 阶段二启动时初始化
-- 依赖 FileManager、SessionState、GraphStateProjector、EventBus
+- 依赖 FileManager、SessionStateProjector、EventBus
 - 注册到 ServiceLocator
 
-三层状态分离架构：
-- 项目状态（project_root）存储在 GraphState 中
-- 通过 GraphStateProjector 自动投影到 SessionState
-- UI 组件从 SessionState 读取项目状态
-- 本服务通过发布事件通知状态变更，由 GraphStateProjector 处理投影
+当前状态边界：
+- 本服务是打开/关闭项目路径与状态转换的权威入口
+- FileManager/FileWatchTask 跟随项目路径
+- SessionStateProjector 把项目状态写入 SessionState 供 UI 读取
+- RAG、搜索和各 UI 面板通过项目生命周期事件维护各自状态
 
 使用示例：
     from shared.service_locator import ServiceLocator
@@ -67,7 +67,7 @@ MIN_DISK_SPACE_MB = 100
 # 这里不再为 ``sim_results`` 预建空目录。
 HIDDEN_DIR_STRUCTURE = [
     "snapshots",      # 全量快照目录
-    "conversations",  # 会话数据目录（消息和信息卡片）
+    "conversations",  # 会话数据目录
     "bom_reports",    # BOM 报告目录
     "diffs",          # Diff 文件目录
     "datasheets",     # 元器件数据手册目录
@@ -100,12 +100,9 @@ class ProjectInfo:
     path: str
     name: str
     status: ProjectStatus
-    has_checkpoints: bool
     disk_space_mb: float
     is_degraded: bool
     degraded_reason: Optional[str]
-    is_existing: bool = False  # 是否为已有项目（存在 checkpoints.sqlite3）
-    has_history: bool = False  # 是否有历史对话（从 checkpoints.sqlite3 判断）
 
 
 # ============================================================
@@ -132,11 +129,10 @@ class ProjectService:
         
         # 延迟获取的服务
         self._file_manager = None
-        self._session_state = None
-        self._graph_state_projector = None
+        self._session_state_projector = None
         self._event_bus = None
-        self._worker_manager = None
         self._file_watcher = None
+        self._session_state_manager = None
         self._logger = None
     
     # ============================================================
@@ -156,28 +152,18 @@ class ProjectService:
         return self._file_manager
     
     @property
-    def session_state(self):
-        """延迟获取会话状态（只读）"""
-        if self._session_state is None:
+    def session_state_projector(self):
+        """延迟获取项目/RAG 状态投影器"""
+        if self._session_state_projector is None:
             try:
                 from shared.service_locator import ServiceLocator
-                from shared.service_names import SVC_SESSION_STATE
-                self._session_state = ServiceLocator.get_optional(SVC_SESSION_STATE)
+                from shared.service_names import SVC_SESSION_STATE_PROJECTOR
+                self._session_state_projector = ServiceLocator.get_optional(
+                    SVC_SESSION_STATE_PROJECTOR
+                )
             except Exception:
                 pass
-        return self._session_state
-    
-    @property
-    def graph_state_projector(self):
-        """延迟获取 GraphState 投影器"""
-        if self._graph_state_projector is None:
-            try:
-                from shared.service_locator import ServiceLocator
-                from shared.service_names import SVC_GRAPH_STATE_PROJECTOR
-                self._graph_state_projector = ServiceLocator.get_optional(SVC_GRAPH_STATE_PROJECTOR)
-            except Exception:
-                pass
-        return self._graph_state_projector
+        return self._session_state_projector
     
     @property
     def event_bus(self):
@@ -202,18 +188,21 @@ class ProjectService:
             except Exception:
                 pass
         return self._file_watcher
-    
+
     @property
-    def worker_manager(self):
-        """延迟获取 Worker 管理器"""
-        if self._worker_manager is None:
+    def session_state_manager(self):
+        """Return the authoritative conversation-session coordinator."""
+        if self._session_state_manager is None:
             try:
                 from shared.service_locator import ServiceLocator
-                from shared.service_names import SVC_WORKER_MANAGER
-                self._worker_manager = ServiceLocator.get_optional(SVC_WORKER_MANAGER)
+                from shared.service_names import SVC_SESSION_STATE_MANAGER
+
+                self._session_state_manager = ServiceLocator.get_optional(
+                    SVC_SESSION_STATE_MANAGER
+                )
             except Exception:
                 pass
-        return self._worker_manager
+        return self._session_state_manager
     
     @property
     def logger(self):
@@ -238,20 +227,17 @@ class ProjectService:
         项目状态隔离原则：
         - 每个工作文件夹拥有独立的状态存储（.circuit_ai/ 目录）
         - 切换项目时，旧项目的所有状态不会带入新项目
-        - 新项目从其自身的 checkpoints.sqlite3 加载状态，若无则从空白状态开始
+        - 每个工作文件夹使用独立的 .circuit_ai 数据目录
         
         执行流程：
         1. 校验文件夹有效性与权限
         2. 检查磁盘空间
         3. 创建或验证 .circuit_ai/ 目录结构
-        4. 检查 checkpoints.sqlite3 是否存在（判断是否为已有项目）
-        5. 若存在 → 初始化 Checkpointer 并加载最新 GraphState（阶段五实现）
-        6. 若不存在 → 创建新的 Checkpointer，使用空白 GraphState（阶段五实现）
-        7. 从 GraphState 恢复各组件状态（阶段五实现）
-        8. 设置 FileManager 工作目录
-        9. 通过 GraphStateProjector 更新 SessionState
-        10. 发布 EVENT_STATE_PROJECT_OPENED 事件（携带是否为已有项目的标识）
-        11. 各 UI 面板订阅事件后刷新显示
+        4. 幂等初始化项目 JSON 文件
+        5. 设置 FileManager 工作目录并启动文件监听
+        6. 通过 SessionStateProjector 更新 SessionState
+        7. 发布 EVENT_STATE_PROJECT_OPENED 事件
+        8. 各项目级服务和 UI 面板订阅事件后刷新
         
         Args:
             folder_path: 工作文件夹路径
@@ -264,7 +250,6 @@ class ProjectService:
         
         try:
             path = Path(folder_path).resolve()
-            hidden_dir = path / WORK_FOLDER_HIDDEN_DIR
             
             # 1. 校验文件夹有效性
             valid, msg = self.validate_folder(str(path))
@@ -286,30 +271,11 @@ class ProjectService:
                 if self.logger:
                     self.logger.warning(f"项目初始化降级: {create_msg}")
             
-            # 4. 检查是否为已有项目（存在 checkpoints.sqlite3）
-            checkpoint_file = hidden_dir / "checkpoints.sqlite3"
-            is_existing = checkpoint_file.exists()
-            
-            # 检查是否有历史记录
-            has_history = self._check_has_history(checkpoint_file)
-            
             if self.logger:
-                if is_existing:
-                    self.logger.info(f"打开已有项目: {path}")
-                else:
-                    self.logger.info(f"创建新项目: {path}")
+                self.logger.info(f"打开项目: {path}")
             
-            # 5-6. TODO: Checkpointer 初始化和 GraphState 加载（阶段五实现）
-            # 若存在 → 初始化 Checkpointer 并加载最新 GraphState
-            # 若不存在 → 创建新的 Checkpointer，使用空白 GraphState
-            
-            # 7. TODO: 从 GraphState 恢复各组件状态（阶段五实现）
-            # - 对话面板：加载完整 messages 和 working_context_* 压缩状态
-            # - 仿真结果面板：加载 simulation_results
-            
-            # 初始化 JSON 文件（仅新项目）
-            if not is_existing:
-                self._init_json_files(path)
+            # 初始化缺失的 JSON 文件；已存在的文件不会被覆盖。
+            self._init_json_files(path)
             
             # 8. 设置 FileManager 工作目录
             if self.file_manager:
@@ -319,26 +285,9 @@ class ProjectService:
             if self.file_watcher:
                 self.file_watcher.start_watching(str(path))
             
-            # 9. 启动依赖健康检查（异步，不阻塞项目打开）
-            # 扫描任务通过 AsyncTaskRegistry 提交，主流程不等待其完成
-            # 扫描完成后发布 EVENT_DEPENDENCY_SCAN_COMPLETE 事件
-            self._start_dependency_health_check(path)
-            
-            # 10. 启动异步代码索引（阶段五实现）
-            # 不阻塞主流程，索引在后台执行
-            # 使用增量索引策略（比对文件哈希，仅索引变更文件）
-            # 发布 CODE_INDEX_STARTED 事件，状态栏显示索引进度
-            # 索引完成后发布 CODE_INDEX_COMPLETE 事件
-            self._start_code_index(path)
-            
-            # 11. 通过 GraphStateProjector 更新 SessionState
-            # 项目状态将通过 GraphState 变更自动投影到 SessionState
-            if self.graph_state_projector:
-                self.graph_state_projector.update_project_state(
-                    project_root=str(path),
-                    is_existing=is_existing,
-                    has_history=has_history,
-                )
+            # 9. 将项目状态投影到 SessionState
+            if self.session_state_projector:
+                self.session_state_projector.update_project_state(str(path))
             
             # 更新当前项目路径
             self._current_project_path = path
@@ -358,18 +307,14 @@ class ProjectService:
                 self.event_bus.publish(EVENT_STATE_PROJECT_OPENED, {
                     "path": str(path),
                     "name": path.name,
-                    "is_existing": is_existing,
-                    "has_history": has_history,
                     "status": self._status.value,
                     "degraded": self._degraded_reason is not None,
                 })
             
             if self.logger:
-                self.logger.info(f"项目初始化完成: {path} (已有项目: {is_existing}, 有历史: {has_history})")
+                self.logger.info(f"项目初始化完成: {path}")
             
             status_msg = "项目初始化成功"
-            if is_existing and has_history:
-                status_msg = "已加载项目历史状态"
             if self._degraded_reason:
                 status_msg += f"（降级模式: {self._degraded_reason}）"
             
@@ -382,92 +327,6 @@ class ProjectService:
                 self.logger.error(error_msg)
             return False, error_msg
     
-    def _check_has_history(
-        self,
-        checkpoint_file: Path
-    ) -> bool:
-        """
-        检查项目是否有历史记录
-        
-        Args:
-            checkpoint_file: 检查点数据库文件路径
-            
-        Returns:
-            bool: 是否有历史记录
-        """
-        try:
-            # 检查检查点数据库是否存在
-            if checkpoint_file.exists():
-                return True
-            
-            return False
-            
-        except Exception:
-            return False
-    
-    def _start_code_index(self, project_path: Path) -> None:
-        """
-        启动异步代码索引（阶段五实现）
-        
-        代码索引流程：
-        1. 调用 IndexTriggerService.trigger_project_index()
-        2. 不阻塞主流程，索引在后台执行
-        3. 使用增量索引策略（比对文件哈希，仅索引变更文件）
-        4. 发布 CODE_INDEX_STARTED 事件，状态栏显示索引进度
-        5. 索引完成后发布 CODE_INDEX_COMPLETE 事件，状态栏进度消失
-        6. 索引完成后语义搜索功能可用
-        
-        设计原则：
-        - 异步执行：不阻塞项目打开主流程
-        - 增量更新：仅索引变更文件，提高效率
-        - 可取消：支持用户取消正在进行的索引
-        
-        Args:
-            project_path: 项目根目录路径
-        """
-        try:
-            # TODO: 阶段五实现 - 调用 IndexTriggerService.trigger_project_index()
-            # 索引任务通过 AsyncTaskRegistry 提交
-            # 发布 CODE_INDEX_STARTED 事件
-            # 索引完成后发布 CODE_INDEX_COMPLETE 事件
-            if self.logger:
-                self.logger.debug(f"启动异步代码索引: {project_path}")
-        except Exception as e:
-            # 代码索引失败不阻塞项目打开
-            if self.logger:
-                self.logger.warning(f"启动代码索引失败: {e}")
-    
-    def _start_dependency_health_check(self, project_path: Path) -> None:
-        """
-        启动依赖健康检查（异步执行）
-        
-        依赖健康检查流程：
-        1. 通过 AsyncTaskRegistry 提交扫描任务到后台线程
-        2. 扫描项目内所有电路文件的 .include 和 .lib 引用
-        3. 检查每个引用的文件是否存在于本地
-        4. 生成依赖健康报告并缓存
-        5. 发布 EVENT_DEPENDENCY_SCAN_COMPLETE 事件
-        
-        设计原则：
-        - 异步执行：不阻塞项目打开主流程
-        - 保守策略：仅做本地扫描，外部源查询需用户主动触发
-        - 离线友好：不依赖网络连接
-        
-        Args:
-            project_path: 项目根目录路径
-        """
-        try:
-            # TODO: 阶段二实现 - 调用 DependencyHealthService.start_scan()
-            # 扫描任务通过 AsyncTaskRegistry 提交
-            # 扫描完成后发布 EVENT_DEPENDENCY_SCAN_COMPLETE 事件
-            # 若检测到缺失依赖，状态栏显示警告图标
-            if self.logger:
-                self.logger.debug(f"启动依赖健康检查: {project_path}")
-        except Exception as e:
-            # 依赖健康检查失败不阻塞项目打开
-            if self.logger:
-                self.logger.warning(f"启动依赖健康检查失败: {e}")
-    
     def close_project(self) -> Tuple[bool, str]:
         """
         关闭当前项目并清理状态
@@ -477,14 +336,12 @@ class ProjectService:
         - 确保下一个项目不会继承任何旧状态
         
         执行流程：
-        1. 停止所有正在运行的 Worker（通过 worker_manager.stop_all_workers()）
-        2. 保存当前 GraphState 到 Checkpointer（确保状态持久化）
-        3. 通过 GraphStateProjector 清空 SessionState 中的项目相关字段
-        4. 释放 Checkpointer 数据库连接
-        5. 清空各面板显示内容（文件浏览器、代码编辑器、对话面板、仿真结果面板）
+        1. 停止文件监听
+        2. 通过 SessionStateProjector 清空 SessionState 中的项目相关字段
+        3. 清空各面板显示内容（文件浏览器、代码编辑器、对话面板、仿真结果面板）
            - 通过发布 EVENT_STATE_PROJECT_CLOSED 事件，各面板订阅后自行清理
-        6. 发布 EVENT_STATE_PROJECT_CLOSED 事件
-        7. 更新状态栏显示"未打开项目"
+        4. 发布 EVENT_STATE_PROJECT_CLOSED 事件
+        5. 更新状态栏显示"未打开项目"
         
         Returns:
             Tuple[bool, str]: (是否成功, 消息)
@@ -494,34 +351,38 @@ class ProjectService:
         
         try:
             old_path = self._current_project_path
+
+            # Conversation persistence is the first, authoritative preflight.
+            # Nothing below this point is reversible as one unit (watcher stop,
+            # graph clear, work-dir reset and close-event publication), so a
+            # failed save must leave the whole project lifecycle untouched.
+            session_manager = self.session_state_manager
+            if session_manager is None:
+                return False, "关闭项目失败: 会话状态管理器不可用"
+            try:
+                persisted = session_manager.ensure_current_session_persisted(
+                    str(old_path) if old_path else None
+                )
+            except Exception as exc:
+                return False, f"关闭项目失败: 当前会话保存失败: {exc}"
+            if not persisted:
+                return False, "关闭项目失败: 当前会话未能保存"
             
-            # 1. 停止所有 Worker
-            if self.worker_manager:
-                self.worker_manager.stop_all_workers()
-                if self.logger:
-                    self.logger.debug("已停止所有 Worker")
-            
-            # 1.1 停止文件监听
+            # 1. 停止文件监听
             if self.file_watcher:
                 self.file_watcher.stop_watching()
                 if self.logger:
                     self.logger.debug("已停止文件监听")
             
-            # 2. TODO: 保存 GraphState 到 Checkpointer（阶段五实现）
-            # 确保当前状态持久化到 checkpoints.sqlite3
+            # 2. 清空投影状态
+            if self.session_state_projector:
+                self.session_state_projector.clear_project_state()
             
-            # 3. TODO: 释放 Checkpointer 数据库连接（阶段五实现）
-            # 确保数据库文件可以被其他进程访问
-            
-            # 4. 通过 GraphStateProjector 清空 SessionState 中的项目相关字段
-            if self.graph_state_projector:
-                self.graph_state_projector.clear_project_state()
-            
-            # 5. 重置 FileManager 工作目录
+            # 3. 重置 FileManager 工作目录
             if self.file_manager:
                 self.file_manager.set_work_dir(None)
             
-            # 6. 发布项目关闭事件
+            # 4. 发布项目关闭事件
             # 各 UI 面板订阅此事件后清空显示内容：
             # - 文件浏览器：清空文件树
             # - 代码编辑器：关闭所有打开的文件
@@ -533,7 +394,7 @@ class ProjectService:
                     "path": str(old_path) if old_path else None,
                 })
             
-            # 7. 重置内部状态
+            # 5. 重置内部状态
             self._current_project_path = None
             self._status = ProjectStatus.NOT_OPENED
             self._degraded_reason = None
@@ -568,7 +429,10 @@ class ProjectService:
         close_success, close_msg = self.close_project()
         if not close_success:
             if self.logger:
-                self.logger.warning(f"关闭当前项目时出现问题: {close_msg}")
+                self.logger.warning(f"关闭当前项目失败，取消切换: {close_msg}")
+            # Closing the old project is the commit boundary for a switch.
+            # Never initialise the new project over partially-cleared state.
+            return False, f"切换项目失败: {close_msg}"
         
         # 2. 初始化新项目
         init_success, init_msg = self.initialize_project(new_folder_path)
@@ -742,25 +606,12 @@ class ProjectService:
                 path="",
                 name="",
                 status=ProjectStatus.NOT_OPENED,
-                has_checkpoints=False,
                 disk_space_mb=0,
                 is_degraded=False,
                 degraded_reason=None,
-                is_existing=False,
-                has_history=False,
             )
         
         path = self._current_project_path
-        hidden_dir = path / WORK_FOLDER_HIDDEN_DIR
-        
-        # 检查文件存在性
-        checkpoint_file = hidden_dir / "checkpoints.sqlite3"
-        has_checkpoints = checkpoint_file.exists()
-        
-        # 检查是否为已有项目和是否有历史
-        is_existing = has_checkpoints
-        has_history = self._check_has_history(checkpoint_file)
-        
         # 获取磁盘空间
         try:
             usage = shutil.disk_usage(path)
@@ -772,12 +623,9 @@ class ProjectService:
             path=str(path),
             name=path.name,
             status=self._status,
-            has_checkpoints=has_checkpoints,
             disk_space_mb=disk_space_mb,
             is_degraded=self._degraded_reason is not None,
             degraded_reason=self._degraded_reason,
-            is_existing=is_existing,
-            has_history=has_history,
         )
     
     def get_current_project_path(self) -> Optional[str]:

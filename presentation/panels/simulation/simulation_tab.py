@@ -63,9 +63,9 @@ from shared.event_types import (
     EVENT_LANGUAGE_CHANGED,
     EVENT_ITERATION_AWAITING_CONFIRMATION,
     EVENT_ITERATION_USER_CONFIRMED,
-    EVENT_SIM_RESULT_FILE_CREATED,
 )
 from shared.sim_event_payload import extract_sim_payload
+from shared.path_utils import normalize_identity_path
 
 
 class SimulationTab(QWidget):
@@ -665,7 +665,6 @@ class SimulationTab(QWidget):
             (EVENT_LANGUAGE_CHANGED, self._on_language_changed),
             (EVENT_ITERATION_AWAITING_CONFIRMATION, self._on_awaiting_confirmation),
             (EVENT_ITERATION_USER_CONFIRMED, self._on_user_confirmed),
-            (EVENT_SIM_RESULT_FILE_CREATED, self._on_sim_result_file_created),
         ]
 
         for event_type, handler in subscriptions:
@@ -754,10 +753,21 @@ class SimulationTab(QWidget):
         payload = extract_sim_payload(EVENT_SIM_STARTED, event_data)
         if payload["origin"] != "ui_editor":
             return
+        if not self._project_root or (
+            normalize_identity_path(payload["project_root"])
+            != normalize_identity_path(self._project_root)
+        ):
+            self._logger.info(
+                "Ignoring UI simulation from inactive project: job_id=%s project=%s",
+                payload["job_id"],
+                payload["project_root"],
+            )
+            return
         job_id = payload["job_id"]
         self._displayed_job_id = job_id
         self._displayed_circuit_file = payload["circuit_file"]
         self._displayed_result_path = None
+        self._view_model.mark_running()
         self._logger.info(
             f"Simulation started (UI): job_id={job_id} "
             f"circuit_file={payload['circuit_file']}"
@@ -853,6 +863,7 @@ class SimulationTab(QWidget):
         )
         self._awaiting_confirmation = False
         self._runtime_status_message = error_message
+        self._view_model.mark_error(error_message)
         self._update_frontend_payloads()
 
     def _on_add_metrics_to_conversation_clicked(self):
@@ -921,30 +932,6 @@ class SimulationTab(QWidget):
         except Exception as exc:
             self._show_add_to_conversation_error(exc)
     
-    def _on_sim_result_file_created(self, event_data: dict):
-        """File-watcher callback — refreshes the result index, nothing
-        else.
-
-        Before Step 7 this handler doubled as a "new result detected,
-        swap displayed bundle" trigger. That behaviour is now
-        architecturally forbidden: the displayed triple can only be
-        rewritten by (a) a UI-editor-origin SIM_COMPLETE that matches
-        ``displayed_job_id`` or (b) an explicit ``load_result_by_path``
-        call. A stray file write — e.g. an agent-origin job finishing
-        in the background — must appear in circuit selection but must
-        **not** hijack the user's current view.
-        """
-        data = event_data.get("data", event_data)
-        event_project_root = data.get("project_root", "")
-        if self._project_root and event_project_root:
-            if self._project_root != event_project_root:
-                return
-        self._logger.info(
-            f"Sim result file created: {data.get('file_path', '')} (refreshing circuit result index only)"
-        )
-        self._refresh_circuit_result_index()
-        self._update_frontend_payloads()
-
     def bind_web_bridge(self, bridge: Optional[SimulationWebBridge]):
         if bridge is None or bridge is self._bound_web_bridge:
             return

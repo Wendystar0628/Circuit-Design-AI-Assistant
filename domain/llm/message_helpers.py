@@ -3,7 +3,7 @@
 消息辅助函数 - 提供 LangChain 消息扩展字段的读写辅助函数
 
 架构决策：
-- 项目全面使用 LangGraph，GraphState.messages 直接存储 LangChain 消息类型
+- 会话状态的 ``messages`` 字段直接存储 LangChain 消息类型
 - 不引入"内部消息格式"，避免不必要的转换层
 - 扩展字段（reasoning_content、operations 等）存储在 additional_kwargs 中
 - 本模块提供扩展字段的类型安全读写函数

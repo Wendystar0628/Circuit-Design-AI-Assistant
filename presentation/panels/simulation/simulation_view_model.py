@@ -5,7 +5,7 @@
 \u804c\u8d23:
 - \u4f5c\u4e3a UI \u4e0e\u4eff\u771f\u670d\u52a1\u4e4b\u95f4\u7684\u4e2d\u95f4\u5c42
 - \u9694\u79bb simulation_tab \u4e0e SimulationService \u7684\u76f4\u63a5\u4f9d\u8d56
-- \u8ba2\u9605\u4eff\u771f\u4e8b\u4ef6\u5e76\u8f6c\u6362\u4e3a UI \u53cb\u597d\u683c\u5f0f
+- \u63a5\u6536 SimulationTab \u5df2\u6309 job_id/origin \u9a8c\u8bc1\u7684\u751f\u547d\u5468\u671f\u66f4\u65b0
 - \u7ba1\u7406\u4eff\u771f\u72b6\u6001\u4e0e\u7ed3\u679c\u5c55\u793a\u3002\u5c06 .MEASURE \u7ed3\u679c\u7ffb\u8bd1\u4e3a
   DisplayMetric\uff0c\u5e76\u5728\u52a0\u8f7d\u65f6\u8bfb\u53d6 MetricTargetService \u5c06\u7528\u6237
   \u8bbe\u5b9a\u7684\u76ee\u6807\u503c\u7eb3\u5165\u3002
@@ -21,18 +21,12 @@
 
 import logging
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
 from domain.simulation.models.display_metric import DisplayMetric
 from domain.simulation.models.simulation_result import SimulationResult
 from domain.simulation.service.display_metric_builder import display_metric_builder
 from presentation.core.base_view_model import BaseViewModel
-from shared.event_types import (
-    EVENT_SIM_STARTED,
-    EVENT_SIM_COMPLETE,
-    EVENT_SIM_ERROR,
-)
-from shared.sim_event_payload import extract_sim_payload
 
 
 class SimulationStatus(Enum):
@@ -101,46 +95,30 @@ class SimulationViewModel(BaseViewModel):
 
     def initialize(self):
         super().initialize()
-        self.subscribe(EVENT_SIM_STARTED, self._on_simulation_started)
-        self.subscribe(EVENT_SIM_COMPLETE, self._on_simulation_complete)
-        self.subscribe(EVENT_SIM_ERROR, self._on_simulation_error)
         self._logger.info("SimulationViewModel initialized")
 
     # ------------------------------------------------------------------
-    # \u4e8b\u4ef6\u5904\u7406
+    # SimulationTab-validated lifecycle updates
     # ------------------------------------------------------------------
 
-    def _on_simulation_started(self, event_data: Dict[str, Any]):
-        payload = extract_sim_payload(EVENT_SIM_STARTED, event_data)
+    def mark_running(self) -> None:
+        """Mark the UI-owned job as running.
+
+        This ViewModel deliberately does not subscribe to global ``SIM_*``
+        events.  ``SimulationTab`` owns identity routing and calls this only
+        after validating ``origin`` and ``job_id``.
+        """
         self._set_status(SimulationStatus.RUNNING)
         self._error_message = ""
         self.notify_property_changed("simulation_status", self._simulation_status)
         self.notify_property_changed("error_message", self._error_message)
-        self._logger.info(
-            f"Simulation started: job_id={payload['job_id']} "
-            f"origin={payload['origin']} circuit_file={payload['circuit_file']}"
-        )
 
-    def _on_simulation_complete(self, event_data: Dict[str, Any]):
-        payload = extract_sim_payload(EVENT_SIM_COMPLETE, event_data)
-        self._set_status(SimulationStatus.COMPLETE)
-        self.notify_property_changed("simulation_status", self._simulation_status)
-        self._logger.info(
-            f"Simulation complete: job_id={payload['job_id']} "
-            f"origin={payload['origin']} result_path={payload['result_path']}"
-        )
-
-    def _on_simulation_error(self, event_data: Dict[str, Any]):
-        payload = extract_sim_payload(EVENT_SIM_ERROR, event_data)
+    def mark_error(self, error_message: str) -> None:
+        """Expose a validated UI job failure without observing other jobs."""
         self._set_status(SimulationStatus.ERROR)
-        self._error_message = payload["error_message"]
+        self._error_message = str(error_message or "Simulation failed")
         self.notify_property_changed("simulation_status", self._simulation_status)
         self.notify_property_changed("error_message", self._error_message)
-        self._logger.error(
-            f"Simulation error: job_id={payload['job_id']} "
-            f"origin={payload['origin']} cancelled={payload['cancelled']} "
-            f"message={self._error_message}"
-        )
 
     def _set_status(self, status: SimulationStatus):
         self._simulation_status = status

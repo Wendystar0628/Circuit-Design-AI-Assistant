@@ -199,10 +199,6 @@ _SIMULATION_SUBSCRIBERS: List[tuple] = [
         ("_on_simulation_started", "_on_simulation_complete", "_on_simulation_error"),
     ),
     (
-        "presentation.panels.simulation.simulation_view_model",
-        ("_on_simulation_started", "_on_simulation_complete", "_on_simulation_error"),
-    ),
-    (
         "presentation.panels.bottom_panel",
         ("_on_simulation_complete",),
     ),

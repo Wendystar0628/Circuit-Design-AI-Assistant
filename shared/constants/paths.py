@@ -52,13 +52,6 @@ CONVERSATIONS_DIR = f"{SYSTEM_DIR}/conversations"
 TEMP_DIR = f"{SYSTEM_DIR}/temp"
 
 # ============================================================
-# 检查点路径
-# ============================================================
-
-# LangGraph 检查点数据库（相对于项目根目录）
-CHECKPOINTS_DB = f"{SYSTEM_DIR}/checkpoints.sqlite3"
-
-# ============================================================
 # 模块导出
 # ============================================================
 
@@ -68,5 +61,4 @@ __all__ = [
     "SNAPSHOTS_DIR",
     "CONVERSATIONS_DIR",
     "TEMP_DIR",
-    "CHECKPOINTS_DB",
 ]

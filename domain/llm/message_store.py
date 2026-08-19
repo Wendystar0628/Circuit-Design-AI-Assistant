@@ -76,7 +76,7 @@ class MessageStore:
     - 不引入内部消息格式，避免转换开销
     
     职责边界：
-    - 专注 GraphState.messages 的内存操作
+    - 专注会话状态中 ``messages`` 列表的内存操作
     - 禁止任何文件 I/O 操作（由 context_service 负责）
     """
     
@@ -505,7 +505,7 @@ class MessageStore:
         """
         从数据加载消息到状态
         
-        用于从文件恢复会话时，将消息数据加载到 GraphState。
+        用于从文件恢复会话时，将消息数据加载到会话状态。
         
         Args:
             state: 当前状态

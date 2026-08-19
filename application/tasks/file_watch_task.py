@@ -15,9 +15,9 @@
 - 主线程通过 EventBus.publish() 发布 EVENT_FILE_CHANGED 事件
 
 生命周期管理：
-- 不通过 AsyncTaskRegistry 管理（watchdog 自带线程管理）
+- watchdog 自带 Observer 线程并提供显式 stop 生命周期
 - 通过 ServiceLocator 注册为单例服务
-- 应用关闭时由 ResourceCleanup 调用 stop_watching()
+- 应用关闭时由 bootstrap 调用 stop_watching()
 
 使用示例：
     from shared.service_locator import ServiceLocator
@@ -153,13 +153,15 @@ class FileWatchReceiver(QObject):
                 pass
         return self._file_manager
     
-    @pyqtSlot(str, str, bool, str)
+    @pyqtSlot(str, str, bool, str, str, int)
     def on_file_event(
         self,
         path: str,
         event_type: str,
         is_directory: bool,
-        dest_path: str
+        dest_path: str,
+        project_root: str,
+        generation: int,
     ) -> None:
         """
         接收文件事件（在主线程中调用）
@@ -170,14 +172,23 @@ class FileWatchReceiver(QObject):
             is_directory: 是否为目录
             dest_path: 移动目标路径（仅 moved 事件）
         """
-        # 构建事件数据
+        operation = {
+            "created": "create",
+            "modified": "update",
+            "deleted": "delete",
+            "moved": "move",
+        }.get(event_type, event_type)
+
+        # Capture project identity with the watchdog notification.  Do not
+        # resolve it later from mutable FileManager state after a project switch.
         event_data = {
             "path": path,
-            "event_type": event_type,
+            "operation": operation,
             "is_directory": is_directory,
+            "dest_path": dest_path or "",
+            "project_root": project_root,
+            "generation": generation,
         }
-        if dest_path:
-            event_data["dest_path"] = dest_path
         
         # 加入防抖缓冲区（同一文件的多次事件会被覆盖）
         self._debounce_buffer[path] = event_data
@@ -208,21 +219,48 @@ class FileWatchReceiver(QObject):
         # 发布事件
         if self.event_bus:
             from shared.event_types import EVENT_FILE_CHANGED
+            from shared.file_change import FileChange
             
             for path, event_data in events_to_publish.items():
                 try:
                     file_manager = self.file_manager
-                    if file_manager is not None and file_manager.consume_recent_internal_change(path):
+                    operation = event_data["operation"]
+                    dest_path = event_data.get("dest_path", "")
+                    if (
+                        file_manager is not None
+                        and file_manager.consume_recent_internal_change(
+                            path,
+                            operation=operation,
+                            dest_path=dest_path,
+                        )
+                    ):
                         continue
+
+                    revision_path = dest_path if operation == "move" else path
+                    revision = (
+                        file_manager.get_path_revision(revision_path)
+                        if file_manager is not None
+                        else ""
+                    )
+                    change = FileChange(
+                        operation=operation,
+                        path=path,
+                        dest_path=dest_path,
+                        is_directory=bool(event_data.get("is_directory", False)),
+                        origin="file_watcher",
+                        project_root=str(event_data.get("project_root") or ""),
+                        generation=int(event_data.get("generation") or 0),
+                        revision=revision,
+                    )
                     self.event_bus.publish(
                         EVENT_FILE_CHANGED,
-                        event_data,
+                        change.to_payload(),
                         source="file_watcher"
                     )
                     
                     if self.logger:
                         self.logger.debug(
-                            f"File {event_data['event_type']}: {path}"
+                            f"File {change.operation}: {path}"
                         )
                 except Exception as e:
                     if self.logger:
@@ -246,7 +284,12 @@ class CircuitFileEventHandler(FileSystemEventHandler):
     在 watchdog 线程中运行，过滤事件后转发到主线程。
     """
     
-    def __init__(self, receiver: FileWatchReceiver, watch_root: Path):
+    def __init__(
+        self,
+        receiver: FileWatchReceiver,
+        watch_root: Path,
+        generation: int,
+    ):
         """
         初始化事件处理器
         
@@ -257,6 +300,7 @@ class CircuitFileEventHandler(FileSystemEventHandler):
         super().__init__()
         self._receiver = receiver
         self._watch_root = watch_root
+        self._generation = generation
         self._logger = None
     
     @property
@@ -337,7 +381,9 @@ class CircuitFileEventHandler(FileSystemEventHandler):
             Q_ARG(str, path),
             Q_ARG(str, event_type),
             Q_ARG(bool, is_directory),
-            Q_ARG(str, dest_path)
+            Q_ARG(str, dest_path),
+            Q_ARG(str, str(self._watch_root)),
+            Q_ARG(int, self._generation),
         )
     
     def on_created(self, event: FileSystemEvent) -> None:
@@ -469,7 +515,16 @@ class FileWatchTask(QObject):
                 return False
             
             # 创建事件处理器
-            event_handler = CircuitFileEventHandler(self._receiver, path)
+            file_manager = self._receiver.file_manager
+            generation = (
+                int(getattr(file_manager, "project_generation", 0))
+                if file_manager is not None else 0
+            )
+            event_handler = CircuitFileEventHandler(
+                self._receiver,
+                path,
+                generation=generation,
+            )
             
             # 创建并启动 Observer
             self._observer = Observer()

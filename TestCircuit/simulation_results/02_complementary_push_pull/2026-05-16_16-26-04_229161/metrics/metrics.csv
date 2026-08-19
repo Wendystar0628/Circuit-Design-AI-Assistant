@@ -1,0 +1,9 @@
+# artifact_type: metrics
+# circuit_file: 02_complementary_push_pull.cir
+# file_path: E:\Individual Project\circuit_design_ai\TestCircuit\by_device\bjt\02_complementary_push_pull.cir
+# analysis_type: tran
+# executor: spice
+# timestamp: 2026-05-16T16:26:04.229161
+
+display_name,name,value,unit,raw_value,target
+V Out PP,v_out_pp,4.52 V,V,4.521445,

@@ -462,7 +462,7 @@ class SimulationResult:
         raw_output: 原始输出（调试用）
         timestamp: ISO 格式时间戳
         duration_seconds: 执行耗时（秒）
-        version: 版本号，对应 GraphState.iteration_count + 1
+        version: 由仿真提交方分配的版本号
         session_id: 所属会话 ID（用于追踪）
     """
     
@@ -509,7 +509,7 @@ class SimulationResult:
     
     version: int = 1
     """
-    版本号，对应 GraphState.iteration_count + 1
+    由仿真提交方分配的版本号
     
     作用域：单个会话（session）内的同一电路文件
     递增规则：每次仿真后自动递增
@@ -519,7 +519,7 @@ class SimulationResult:
     - 支持历史对比（对比不同版本的性能）
     - 文件命名（如 run_001.json, run_002.json）
     
-    注意：version 由 SimulationService 根据 GraphState.iteration_count 自动计算
+    注意：SimulationService 透传调用方提供的 version
     """
     
     session_id: str = ""
@@ -754,8 +754,8 @@ def create_success_result(
         measurements: 规范化测量结果列表（可选）
         raw_output: 原始输出（可选）
         duration_seconds: 执行耗时
-        version: 版本号（应从 GraphState.iteration_count + 1 计算）
-        session_id: 会话 ID（应从 GraphState.session_id 获取）
+        version: 调用方分配的版本号
+        session_id: 调用方提供的会话 ID
         
     Returns:
         SimulationResult: 成功的仿真结果
@@ -813,8 +813,8 @@ def create_error_result(
         error: 错误信息（SimulationError 或字符串）
         raw_output: 原始输出（可选）
         duration_seconds: 执行耗时
-        version: 版本号（应从 GraphState.iteration_count + 1 计算）
-        session_id: 会话 ID（应从 GraphState.session_id 获取）
+        version: 调用方分配的版本号
+        session_id: 调用方提供的会话 ID
         
     Returns:
         SimulationResult: 失败的仿真结果

@@ -9,10 +9,6 @@ PyQt6>=6.5.0
 # Using ctypes to directly call ngspice shared library instead
 # ngspice 42 DLL is bundled in vendor/ngspice/
 
-# Workflow Orchestration (LangGraph)
-# NOTE: Refer to local LangGraph/ project for latest API
-langgraph>=0.2.0
-langgraph-checkpoint-sqlite>=1.0.0
 langchain-core>=0.2.0
 
 # Vector Database & Embeddings
@@ -48,9 +44,6 @@ markdown>=3.5.0
 
 # WebEngine for LaTeX rendering (KaTeX)
 PyQt6-WebEngine>=6.5.0
-
-# Async SQLite (Tracing System)
-aiosqlite>=0.19.0
 
 # Utilities
 numpy>=1.24.0

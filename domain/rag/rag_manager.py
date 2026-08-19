@@ -24,6 +24,7 @@ RAG 业务逻辑管理器
 """
 
 import asyncio
+import copy
 import json
 import logging
 import os
@@ -32,7 +33,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Callable, Dict, List, Optional, Set
 
 from domain.rag.chunker import chunk_file
 from domain.rag.embedder import Embedder
@@ -57,8 +58,10 @@ from shared.event_types import (
     EVENT_RAG_INDEX_COMPLETE,
     EVENT_RAG_INDEX_ERROR,
     EVENT_RAG_QUERY_COMPLETE,
+    EVENT_LLM_CONFIG_CHANGED,
     EVENT_STATE_PROJECT_OPENED,
     EVENT_STATE_PROJECT_CLOSED,
+    EVENT_WORKSPACE_SYNC_REQUIRED,
 )
 
 
@@ -76,6 +79,9 @@ EXCLUDED_DIRS: Set[str] = {
 }
 
 INDEX_META_FILE = "index_meta.json"
+INDEX_META_VERSION = 2
+EXTRACTOR_VERSION = "1"
+CHUNKER_VERSION = "1"
 
 
 # ============================================================
@@ -148,6 +154,68 @@ class IndexStatus:
     files: List[FileIndexInfo] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class IndexSignature:
+    """Identity of vectors that may safely coexist in one collection."""
+
+    provider: str
+    model: str
+    dimensions: int
+    backend: str
+    metric: str
+    extractor: str
+    chunker: str
+    project: str
+    collection: str
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "provider": self.provider,
+            "model": self.model,
+            "dimensions": self.dimensions,
+            "backend": self.backend,
+            "metric": self.metric,
+            "extractor": self.extractor,
+            "chunker": self.chunker,
+            "project": self.project,
+            "collection": self.collection,
+        }
+
+
+@dataclass
+class _RuntimeState:
+    index_meta: Dict[str, Any] = field(default_factory=dict)
+    lock: threading.RLock = field(default_factory=threading.RLock)
+    meta_loaded_from_disk: bool = False
+    indexing: bool = False
+    current_track_id: Optional[str] = None
+    cached_status: IndexStatus = field(default_factory=IndexStatus)
+    status_revision: int = 0
+    scan_failures: List[Dict[str, str]] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class _ProjectRuntime:
+    """Immutable project identity captured by every background job.
+
+    The contained state is private to this runtime.  Switching projects swaps
+    the complete runtime object rather than retargeting fields used by queued
+    jobs.
+    """
+
+    generation: int
+    project_root: str
+    embedder: Embedder
+    vector_store: VectorStore
+    signature: IndexSignature
+    state: _RuntimeState
+    cancelled: threading.Event
+
+
+class _RAGOperationCancelled(RuntimeError):
+    pass
+
+
 # ============================================================
 # RAG Manager
 # ============================================================
@@ -167,42 +235,77 @@ class RAGManager:
     → 每个项目有独立的存储，项目隔离
     """
 
-    def __init__(self, event_bus=None):
+    def __init__(
+        self,
+        event_bus=None,
+        *,
+        embedder_factory: Callable[[], Embedder] = Embedder,
+        vector_store_factory: Callable[..., VectorStore] = VectorStore,
+        worker: Optional[RAGWorkerThread] = None,
+    ):
         self._event_bus = event_bus
-        self._embedder: Optional[Embedder] = None
-        self._vector_store: Optional[VectorStore] = None
-        self._indexing = False
-        self._current_track_id: Optional[str] = None
-        self._project_root: Optional[str] = None
-        self._index_meta: Dict[str, Any] = {}
-        self._meta_lock = threading.RLock()  # 保护 _index_meta 跨线程读写
+        self._embedder_factory = embedder_factory
+        self._vector_store_factory = vector_store_factory
+        self._runtime: Optional[_ProjectRuntime] = None
+        self._runtime_lock = threading.RLock()
+        self._generation = 0
+        self._project_root_hint: Optional[str] = None
         self._init_error: Optional[str] = None  # 初始化失败的错误信息
+        self._index_error: Optional[str] = None
         self._subscribed = False
+        self._stopped = False
+        self._document_watcher = None
         # 后台工作线程：索引和查询在此线程运行，避免阻塞 Qt UI
-        self._worker = RAGWorkerThread()
+        self._worker = worker or RAGWorkerThread()
 
     @property
     def is_available(self) -> bool:
         """星 RAG 是否可用（项目已打开且 VectorStore 已初始化）"""
+        runtime = self._get_runtime()
         return bool(
-            self._project_root
-            and self._vector_store is not None
-            and self._vector_store.is_initialized
+            runtime
+            and not runtime.cancelled.is_set()
+            and runtime.vector_store.is_initialized
         )
 
     @property
     def is_indexing(self) -> bool:
-        return self._indexing
+        runtime = self._get_runtime()
+        return bool(runtime and runtime.state.indexing)
 
     @property
     def project_root(self) -> Optional[str]:
         """当前项目根目录"""
-        return self._project_root
+        runtime = self._get_runtime()
+        return runtime.project_root if runtime else self._project_root_hint
+
+    @property
+    def generation(self) -> int:
+        runtime = self._get_runtime()
+        return runtime.generation if runtime else self._generation
+
+    @property
+    def status_revision(self) -> int:
+        """Monotonic revision of the in-memory UI status snapshot."""
+        runtime = self._get_runtime()
+        if runtime is None:
+            return 0
+        with runtime.state.lock:
+            return runtime.state.status_revision
 
     @property
     def init_error(self) -> Optional[str]:
         """最近一次初始化错误（None 表示无错误）"""
         return self._init_error
+
+    @property
+    def index_error(self) -> Optional[str]:
+        """Latest indexing failure; distinct from VectorStore initialization."""
+        return self._index_error
+
+    def attach_document_watcher(self, watcher) -> None:
+        """Attach the explicitly constructed watcher for coordinated stop."""
+        self._document_watcher = watcher
 
     # ============================================================
     # 生命周期事件订阅
@@ -219,6 +322,7 @@ class RAGManager:
             return
 
         # 启动后台工作线程
+        self._stopped = False
         self._worker.start_and_wait()
 
         if self._event_bus is None:
@@ -232,6 +336,14 @@ class RAGManager:
             self._event_bus.subscribe(
                 EVENT_STATE_PROJECT_CLOSED,
                 self._on_project_closed,
+            )
+            self._event_bus.subscribe(
+                EVENT_LLM_CONFIG_CHANGED,
+                self._on_model_config_changed,
+            )
+            self._event_bus.subscribe(
+                EVENT_WORKSPACE_SYNC_REQUIRED,
+                self._on_workspace_sync_required,
             )
             self._subscribed = True
             logger.info("RAGManager subscribed to project lifecycle events")
@@ -259,52 +371,95 @@ class RAGManager:
         if not project_root:
             return
 
-        # ── 同步：立即设置 project_root ──
-        old_root = self._project_root
-        self._project_root = project_root
+        project_root = os.path.abspath(os.fspath(project_root))
+        self._project_root_hint = project_root
         self._init_error = None
-        self._index_meta = {}
-        self._load_index_meta()
-        logger.info(f"Project opened, RAG project root set: {project_root}")
+        self._index_error = None
 
-        # ── 提交到后台工作线程：finalize 旧服务 → 初始化新服务 → 自动索引 ──
-        self._worker.submit(self._init_for_project, old_root)
+        try:
+            runtime = self._create_runtime(project_root)
+        except Exception as exc:
+            self._init_error = str(exc)
+            logger.error(f"Failed to prepare RAG runtime: {exc}")
+            self._publish_event(EVENT_RAG_INIT_COMPLETE, {
+                "project_root": project_root,
+                "generation": self._generation,
+                "status": "error",
+                "error": f"RAG 自动初始化失败: {exc}",
+            })
+            return
 
-    def _init_for_project(self, old_root: Optional[str]) -> None:
+        logger.info(
+            "Project opened, RAG runtime prepared: %s (generation=%s)",
+            project_root,
+            runtime.generation,
+        )
+
+        if not self._worker.is_running:
+            self._worker.start_and_wait()
+        self._worker.submit(self._init_for_project, runtime)
+
+    def _create_runtime(self, project_root: str) -> _ProjectRuntime:
+        """Freeze configuration and atomically replace the active runtime."""
+        embedder = self._embedder_factory()
+        vector_store = self._vector_store_factory(
+            project_root=project_root,
+            storage_subdir=DEFAULT_VECTOR_STORE_DIR,
+        )
+
+        with self._runtime_lock:
+            previous = self._runtime
+            if previous is not None:
+                previous.cancelled.set()
+            self._worker.cancel_pending()
+            self._generation += 1
+            signature = self._build_signature(project_root, embedder, vector_store)
+            runtime = _ProjectRuntime(
+                generation=self._generation,
+                project_root=project_root,
+                embedder=embedder,
+                vector_store=vector_store,
+                signature=signature,
+                state=_RuntimeState(),
+                cancelled=threading.Event(),
+            )
+            self._runtime = runtime
+            self._project_root_hint = project_root
+        return runtime
+
+    def _init_for_project(self, runtime: _ProjectRuntime) -> None:
         """初始化 VectorStore + Embedder → 自动索引（在工作线程中运行）"""
         try:
-            if not self._project_root:
-                return
-
-            if self._embedder is None:
-                self._embedder = Embedder()
-
-            # 初始化 VectorStore（ChromaDB，同步，~100ms）
-            self._vector_store = VectorStore(
-                project_root=self._project_root,
-                storage_subdir=DEFAULT_VECTOR_STORE_DIR,
-            )
-            self._vector_store.initialize()
+            self._ensure_current(runtime)
+            runtime.vector_store.initialize()
+            self._ensure_current(runtime)
+            self._load_index_meta(runtime)
+            self._ensure_index_signature(runtime)
+            self._ensure_current(runtime)
+            self._refresh_status_cache(runtime)
             self._init_error = None
 
             logger.info("RAG VectorStore initialized, starting auto-index")
 
             self._publish_event(EVENT_RAG_INIT_COMPLETE, {
-                "project_root": self._project_root,
+                "project_root": runtime.project_root,
                 "status": "ready",
-            })
+            }, runtime=runtime)
 
-            self._load_index_meta()
-            self._safe_index_project()
+            self._safe_index_project(runtime)
 
+        except _RAGOperationCancelled:
+            logger.debug("Discarded initialization for stale RAG runtime")
         except Exception as e:
+            if not self._is_current(runtime):
+                return
             self._init_error = str(e)
             logger.error(f"Failed to auto-init RAG for project: {e}")
             self._publish_event(EVENT_RAG_INIT_COMPLETE, {
-                "project_root": self._project_root or "",
+                "project_root": runtime.project_root,
                 "status": "error",
                 "error": f"RAG 自动初始化失败: {e}",
-            })
+            }, runtime=runtime)
 
     def _on_project_closed(self, event_data) -> None:
         """
@@ -313,94 +468,155 @@ class RAGManager:
         清除项目状态；ChromaDB 数据已自动持久化，无需显式刷盘。
         """
         logger.info("Project closing, clearing RAG state")
-        self._project_root = None
-        self._vector_store = None
-        self._index_meta = {}
+        with self._runtime_lock:
+            runtime = self._runtime
+            if runtime is not None:
+                runtime.cancelled.set()
+            self._runtime = None
+            self._generation += 1
+            self._project_root_hint = None
+        self._worker.cancel_pending()
         self._init_error = None
+        self._index_error = None
+
+    def _on_model_config_changed(self, event_data) -> None:
+        """Re-evaluate the frozen embedding signature after settings save."""
+        del event_data
+        if self.is_available:
+            self.trigger_index()
+
+    def _on_workspace_sync_required(self, event_data) -> None:
+        """Rescan after a direct on-disk restore bypassed file events."""
+        data = (
+            event_data.get("data", event_data)
+            if isinstance(event_data, dict)
+            else {}
+        )
+        incoming_root = str(data.get("project_root", "") or "")
+        runtime = self._get_runtime()
+        if runtime is None or not incoming_root:
+            return
+        current_root = os.path.normcase(
+            os.path.realpath(os.path.abspath(runtime.project_root))
+        )
+        incoming_root = os.path.normcase(
+            os.path.realpath(os.path.abspath(incoming_root))
+        )
+        if incoming_root != current_root or not self._is_current(runtime):
+            return
+        # trigger_index captures the current immutable runtime and schedules a
+        # full incremental scan, including deleted-file cleanup.  A later
+        # project/config transition invalidates that captured runtime normally.
+        self.trigger_index()
 
     # ============================================================
     # 索引操作
     # ============================================================
 
-    def index_project_files(self) -> None:
+    def index_project_files(self, runtime: Optional[_ProjectRuntime] = None) -> None:
         """
         扫描项目目录，全量/增量索引
 
         对比 index_meta.json 中的 mtime 与磁盘 mtime，
         仅索引新增或变更的文件。
         """
-        if not self._project_root or not self.is_available:
+        runtime = runtime or self._get_runtime()
+        if runtime is None or not runtime.vector_store.is_initialized:
             logger.debug("Index library is unavailable, skipping index")
             return
+        self._ensure_current(runtime)
 
-        if self._indexing:
+        if runtime.state.indexing:
             logger.warning("Indexing already in progress")
             return
 
-        if not self._project_root:
-            logger.error("No project root set")
-            return
-
-        self._indexing = True
+        runtime.state.indexing = True
         start_time = time.time()
 
         try:
-            # 确保使用最新的磁盘状态（与 _async_init_for_project 路径保持一致）
-            self._load_index_meta()
+            self._ensure_current(runtime)
+            with runtime.state.lock:
+                runtime.state.scan_failures = []
 
             # 扫描文件
-            files_to_index = self._scan_project_files()
+            files_to_index = self._scan_project_files(runtime)
+            with runtime.state.lock:
+                scan_failures = list(runtime.state.scan_failures)
             if not files_to_index:
+                self._save_index_meta(runtime)
+                self._refresh_status_cache(runtime)
+                if scan_failures:
+                    duration = time.time() - start_time
+                    logger.error(
+                        "RAG scan completed with %s metadata failures",
+                        len(scan_failures),
+                    )
+                    self._publish_event(EVENT_RAG_INDEX_COMPLETE, {
+                        "total_indexed": 0,
+                        "failed": len(scan_failures),
+                        "duration_s": round(duration, 2),
+                        "scan_failed": True,
+                    }, runtime=runtime)
+                    return
+
+                self._index_error = None
                 logger.info("No files to index (all up to date)")
-                self._save_index_meta()
-                self._indexing = False
                 self._publish_event(EVENT_RAG_INDEX_COMPLETE, {
                     "total_indexed": 0,
                     "failed": 0,
                     "duration_s": 0,
                     "already_up_to_date": True,
-                })
+                }, runtime=runtime)
                 return
 
             total = len(files_to_index)
-            self._current_track_id = f"idx-{int(time.time())}"
+            runtime.state.current_track_id = (
+                f"idx-{runtime.generation}-{int(time.time())}"
+            )
 
             self._publish_event(EVENT_RAG_INDEX_STARTED, {
                 "total_files": total,
-                "track_id": self._current_track_id,
-            })
+                "track_id": runtime.state.current_track_id,
+            }, runtime=runtime)
 
             processed = 0
-            failed = 0
+            failed = len(scan_failures)
 
             for i, (rel_path, abs_path) in enumerate(files_to_index):
                 try:
+                    self._ensure_current(runtime)
                     self._publish_event(EVENT_RAG_INDEX_PROGRESS, {
                         "processed": i,
                         "total": total,
                         "current_file": rel_path,
-                        "track_id": self._current_track_id,
-                    })
+                        "track_id": runtime.state.current_track_id,
+                    }, runtime=runtime)
 
-                    self._index_single_file_internal(rel_path, abs_path)
+                    self._index_single_file_internal(runtime, rel_path, abs_path)
                     processed += 1
 
+                except _RAGOperationCancelled:
+                    raise
                 except Exception as e:
                     failed += 1
                     logger.error(f"Failed to index {rel_path}: {e}")
-                    self._publish_event(EVENT_RAG_INDEX_ERROR, {
-                        "file_path": rel_path,
-                        "error": str(e),
-                        "track_id": self._current_track_id,
-                    })
                     # 记录失败状态
-                    self._update_file_meta(rel_path, {
-                        "status": "failed",
-                        "error": str(e),
-                    })
+                    self._mark_file_failed(runtime, rel_path, str(e))
+                    self._record_index_error(
+                        runtime,
+                        e,
+                        file_path=rel_path,
+                        phase="file_index",
+                        persist=False,
+                    )
 
+            self._ensure_current(runtime)
             duration = time.time() - start_time
-            self._save_index_meta()
+            self._save_index_meta(runtime)
+            self._refresh_status_cache(runtime)
+
+            if failed == 0:
+                self._index_error = None
 
             self._publish_event(EVENT_RAG_INDEX_COMPLETE, {
                 "total_indexed": processed,
@@ -409,28 +625,46 @@ class RAGManager:
                 "entities_count": 0,
                 "relations_count": 0,
                 "chunks_found": 0,
-            })
+            }, runtime=runtime)
 
             logger.info(
                 f"Indexing complete: {processed}/{total} files, "
                 f"{failed} failed, {duration:.1f}s"
             )
 
+        except _RAGOperationCancelled:
+            logger.debug(
+                "Cancelled index for stale runtime generation=%s",
+                runtime.generation,
+            )
+        except Exception as exc:
+            self._record_index_error(
+                runtime,
+                exc,
+                phase="project_index",
+                persist=True,
+            )
         finally:
-            self._indexing = False
-            self._current_track_id = None
+            runtime.state.indexing = False
+            runtime.state.current_track_id = None
 
-    def index_single_file(self, file_path: str) -> None:
+    def index_single_file(
+        self,
+        file_path: str,
+        runtime: Optional[_ProjectRuntime] = None,
+    ) -> None:
         """
         单文件增量索引（先删后插）
 
         Args:
             file_path: 文件路径（绝对或相对于项目根）
         """
-        if not self.is_available:
+        runtime = runtime or self._get_runtime()
+        if runtime is None or not runtime.vector_store.is_initialized:
             return
+        self._ensure_current(runtime)
 
-        abs_path, rel_path = self._resolve_path(file_path)
+        abs_path, rel_path = self._resolve_path(runtime, file_path)
         if not abs_path:
             return
 
@@ -441,46 +675,129 @@ class RAGManager:
         if not rule.should_index:
             try:
                 stat = os.stat(abs_path)
-                old_meta = self._index_meta.get("files", {}).get(rel_path, {})
-                self._mark_file_excluded(rel_path, stat, old_meta, rule)
-                self._save_index_meta()
-            except OSError:
-                pass
+                with runtime.state.lock:
+                    old_meta = runtime.state.index_meta.get("files", {}).get(rel_path, {})
+                self._mark_file_excluded(runtime, rel_path, stat, old_meta, rule)
+                self._save_index_meta(runtime)
+                self._refresh_status_cache(
+                    runtime,
+                    measure_vector_store=False,
+                    measure_storage=False,
+                )
+            except OSError as exc:
+                self._mark_file_failed(runtime, rel_path, str(exc))
+                self._record_index_error(
+                    runtime,
+                    exc,
+                    file_path=rel_path,
+                    phase="file_metadata",
+                    persist=True,
+                )
             return
 
         try:
-            self._index_single_file_internal(rel_path, abs_path)
-            self._save_index_meta()
+            self._index_single_file_internal(runtime, rel_path, abs_path)
+            self._save_index_meta(runtime)
+            self._refresh_status_cache(
+                runtime,
+                measure_vector_store=False,
+                measure_storage=False,
+            )
 
+        except _RAGOperationCancelled:
+            return
         except Exception as e:
             logger.error(f"Failed to index single file {rel_path}: {e}")
+            self._mark_file_failed(runtime, rel_path, str(e))
+            self._record_index_error(
+                runtime,
+                e,
+                file_path=rel_path,
+                phase="file_index",
+                persist=True,
+            )
 
     def _index_single_file_internal(
-        self, rel_path: str, abs_path: str
+        self,
+        runtime: _ProjectRuntime,
+        rel_path: str,
+        abs_path: str,
     ) -> None:
-        """内部索引单文件
-
-        流程：读取内容 → 分块 → Embedding → upsert 到 VectorStore
-        """
-        content = extract_indexable_content(abs_path)
-        if not content.strip():
-            return
-
+        """Read, chunk, embed and commit one file to its captured runtime."""
+        self._ensure_current(runtime)
         stat = os.stat(abs_path)
+        content = extract_indexable_content(abs_path)
+        self._ensure_current(runtime)
+
+        # Extractors intentionally expose plain text only.  A truly empty
+        # file is a valid zero-chunk document, while a non-empty file yielding
+        # no bytes indicates an extraction/read failure and must not silently
+        # erase the last-known-good metadata as "processed".
+        if content == "" and stat.st_size > 0:
+            raise RuntimeError(
+                f"Content extraction returned no data for non-empty file: {rel_path}"
+            )
+
+        # Empty/whitespace text is a successful zero-chunk state.  Deleting
+        # old vectors first prevents stale search results for cleared files.
+        if not content.strip():
+            runtime.vector_store.delete_file(rel_path)
+            self._ensure_current(runtime)
+            self._update_file_meta(runtime, rel_path, {
+                "chunks_count": 0,
+                "mtime": stat.st_mtime,
+                "size": stat.st_size,
+                "status": "processed",
+                "indexed_at": datetime.now(timezone.utc).isoformat(),
+                "error": None,
+                "stale": False,
+                "empty": True,
+            })
+            return
 
         chunks = chunk_file(content, rel_path)
         if not chunks:
+            runtime.vector_store.delete_file(rel_path)
+            self._ensure_current(runtime)
+            self._update_file_meta(runtime, rel_path, {
+                "chunks_count": 0,
+                "mtime": stat.st_mtime,
+                "size": stat.st_size,
+                "status": "processed",
+                "indexed_at": datetime.now(timezone.utc).isoformat(),
+                "error": None,
+                "stale": False,
+                "empty": True,
+            })
             return
 
-        vectors = self._embedder.embed_texts([c.content for c in chunks])
-        self._vector_store.upsert_file(rel_path, chunks, vectors)
+        vectors = runtime.embedder.embed_texts([c.content for c in chunks])
+        self._ensure_current(runtime)
+        if len(vectors) != len(chunks):
+            raise RuntimeError(
+                f"Embedding returned {len(vectors)} vectors for {len(chunks)} chunks"
+            )
+        expected_dimensions = runtime.signature.dimensions
+        if expected_dimensions and any(
+            len(vector) != expected_dimensions for vector in vectors
+        ):
+            actual = len(vectors[0]) if vectors else 0
+            raise RuntimeError(
+                f"Embedding dimension mismatch: expected {expected_dimensions}, got {actual}"
+            )
 
-        self._update_file_meta(rel_path, {
+        runtime.vector_store.upsert_file(rel_path, chunks, vectors)
+        self._ensure_current(runtime)
+
+        self._update_file_meta(runtime, rel_path, {
             "chunks_count": len(chunks),
             "mtime": stat.st_mtime,
             "size": stat.st_size,
             "status": "processed",
             "indexed_at": datetime.now(timezone.utc).isoformat(),
+            "error": None,
+            "stale": False,
+            "empty": False,
         })
 
     # ============================================================
@@ -491,6 +808,7 @@ class RAGManager:
         self,
         query_text: str,
         top_k: int = DEFAULT_RAG_TOP_K,
+        runtime: Optional[_ProjectRuntime] = None,
     ) -> RAGQueryResult:
         """
         查询知识库（向量相似度检索）
@@ -502,18 +820,26 @@ class RAGManager:
         Returns:
             RAGQueryResult
         """
-        if not self.is_available:
-            return RAGQueryResult(error="Index library is unavailable")
+        runtime = runtime or self._get_runtime()
+        if runtime is None or not runtime.vector_store.is_initialized:
+            raise RuntimeError("RAG index library is unavailable")
+        self._ensure_current(runtime)
 
-        vector = self._embedder.embed_single(query_text)
-        hits = self._vector_store.query(vector, top_k=top_k)
+        vector = runtime.embedder.embed_single(query_text)
+        self._ensure_current(runtime)
+        if runtime.signature.dimensions and len(vector) != runtime.signature.dimensions:
+            raise RuntimeError(
+                "Query embedding dimension no longer matches the active index"
+            )
+        hits = runtime.vector_store.query(vector, top_k=top_k)
+        self._ensure_current(runtime)
         result = RAGQueryResult(hits=hits)
 
         self._publish_event(EVENT_RAG_QUERY_COMPLETE, {
             "query": query_text[:100],
             "results_count": len(hits),
             "chunks_found": len(hits),
-        })
+        }, runtime=runtime)
 
         return result
 
@@ -527,10 +853,35 @@ class RAGManager:
 
         索引在 RAGWorkerThread 中异步执行。
         """
-        if not self.is_available:
+        runtime = self._get_runtime()
+        if runtime is None or not runtime.vector_store.is_initialized:
             logger.debug("Index library is unavailable, cannot trigger index")
             return
-        self._worker.submit(self.index_project_files)
+
+        # Settings may have changed since the project opened.  Freeze a new
+        # config now and start a new generation when its signature differs.
+        try:
+            candidate_embedder = self._embedder_factory()
+            candidate_store = self._vector_store_factory(
+                project_root=runtime.project_root,
+                storage_subdir=DEFAULT_VECTOR_STORE_DIR,
+            )
+            candidate_signature = self._build_signature(
+                runtime.project_root, candidate_embedder, candidate_store
+            )
+            if candidate_signature != runtime.signature:
+                runtime = self._create_runtime(runtime.project_root)
+                self._worker.submit(self._init_for_project, runtime)
+                return
+        except Exception as exc:
+            self._init_error = str(exc)
+            self._publish_event(EVENT_RAG_INDEX_ERROR, {
+                "file_path": "",
+                "error": f"无法冻结新的索引配置: {exc}",
+            }, runtime=runtime)
+            return
+
+        self._worker.submit(self.index_project_files, runtime)
 
     def trigger_index_single_file(self, file_path: str) -> None:
         """
@@ -539,9 +890,58 @@ class RAGManager:
         Args:
             file_path: 文件路径（绝对或相对于项目根）
         """
-        if not self.is_available:
+        runtime = self._get_runtime()
+        if runtime is None or not runtime.vector_store.is_initialized:
             return
-        self._worker.submit(self.index_single_file, file_path)
+        self._worker.submit(self.index_single_file, file_path, runtime)
+
+    def trigger_delete_file(
+        self,
+        file_path: str,
+        is_directory: bool = False,
+    ) -> None:
+        """Queue a project-scoped vector/meta deletion."""
+        runtime = self._get_runtime()
+        if runtime is None or not runtime.vector_store.is_initialized:
+            return
+        self._worker.submit(
+            self._delete_file_runtime,
+            runtime,
+            file_path,
+            is_directory,
+        )
+
+    def trigger_move_file(
+        self,
+        old_path: str,
+        new_path: str,
+        is_directory: bool = False,
+    ) -> None:
+        """Queue delete-old then index-new against one captured runtime."""
+        runtime = self._get_runtime()
+        if runtime is None or not runtime.vector_store.is_initialized:
+            return
+        self._worker.submit(
+            self._move_file_runtime,
+            runtime,
+            old_path,
+            new_path,
+            is_directory,
+        )
+
+    def _move_file_runtime(
+        self,
+        runtime: _ProjectRuntime,
+        old_path: str,
+        new_path: str,
+        is_directory: bool = False,
+    ) -> None:
+        self._delete_file_runtime(runtime, old_path, is_directory)
+        self._ensure_current(runtime)
+        if is_directory:
+            self.index_project_files(runtime)
+        else:
+            self.index_single_file(new_path, runtime)
 
     async def query_async(
         self,
@@ -561,19 +961,64 @@ class RAGManager:
         Returns:
             RAGQueryResult
         """
-        if not self.is_available:
-            return RAGQueryResult(error="Index library is unavailable")
+        runtime = self._get_runtime()
+        if runtime is None or not runtime.vector_store.is_initialized:
+            raise RuntimeError("RAG index library is unavailable")
 
         future = self._worker.submit(
-            self.query, query_text, top_k
+            self.query, query_text, top_k, runtime
         )
         if future is None:
-            return RAGQueryResult(error="Index library worker is not running")
+            raise RuntimeError("RAG index library worker is not running")
 
-        return await asyncio.wrap_future(future)
+        try:
+            result = await asyncio.wrap_future(future)
+        except asyncio.CancelledError:
+            future.cancel()
+            raise
+
+        if not self._is_current(runtime):
+            raise _RAGOperationCancelled("RAG project changed during query")
+        return result
 
     def stop(self) -> None:
-        """停止工作线程（应用退出时调用）"""
+        """Synchronously and idempotently stop watcher and background work."""
+        with self._runtime_lock:
+            if self._stopped:
+                return
+            self._stopped = True
+            runtime = self._runtime
+            if runtime is not None:
+                runtime.cancelled.set()
+            self._runtime = None
+            self._generation += 1
+            self._project_root_hint = None
+
+        watcher = self._document_watcher
+        if watcher is not None:
+            try:
+                watcher.stop()
+            except Exception as exc:
+                logger.warning(f"Failed to stop DocumentWatcher: {exc}")
+
+        if self._subscribed and self._event_bus is not None:
+            try:
+                self._event_bus.unsubscribe(
+                    EVENT_STATE_PROJECT_OPENED, self._on_project_opened
+                )
+                self._event_bus.unsubscribe(
+                    EVENT_STATE_PROJECT_CLOSED, self._on_project_closed
+                )
+                self._event_bus.unsubscribe(
+                    EVENT_LLM_CONFIG_CHANGED, self._on_model_config_changed
+                )
+                self._event_bus.unsubscribe(
+                    EVENT_WORKSPACE_SYNC_REQUIRED,
+                    self._on_workspace_sync_required,
+                )
+            except Exception as exc:
+                logger.debug(f"Failed to unsubscribe RAG lifecycle events: {exc}")
+        self._subscribed = False
         self._worker.stop()
 
     # ============================================================
@@ -581,80 +1026,126 @@ class RAGManager:
     # ============================================================
 
     def get_index_status(self) -> IndexStatus:
-        """返回当前索引状态（线程安全）"""
-        with self._meta_lock:
-            files_meta = dict(self._index_meta.get("files", {}))
+        """Return the cached, pure-memory UI status snapshot.
 
-        total_chunks = sum(f.get("chunks_count", 0) for f in files_meta.values())
-        # 优先使用 VectorStore 的实际 chunk 计数
-        if self._vector_store:
-            vc = self._vector_store.count()
-            if vc > 0:
-                total_chunks = vc
+        This method is called while the conversation WebView is rebuilt for
+        streaming tokens.  It must never touch ChromaDB or walk the vector
+        store directory.  Expensive measurements are refreshed by the RAG
+        worker only at initialization/index/clear boundaries.
+        """
+        runtime = self._get_runtime()
+        if runtime is None:
+            return IndexStatus(available=False)
 
-        stats = IndexStats(
-            total_files=len(files_meta),
-            processed=sum(1 for f in files_meta.values() if f.get("status") == "processed"),
-            failed=sum(1 for f in files_meta.values() if f.get("status") == "failed"),
-            excluded=sum(1 for f in files_meta.values() if f.get("status") == "excluded"),
-            total_chunks=total_chunks,
-        )
-
-        if self._project_root:
-            vs_dir = os.path.join(self._project_root, DEFAULT_VECTOR_STORE_DIR)
-            stats.storage_size_mb = self._calc_dir_size_mb(vs_dir)
-
-        files = [
-            FileIndexInfo.from_dict(path, data)
-            for path, data in files_meta.items()
-        ]
-
-        return IndexStatus(
-            available=self.is_available,
-            indexing=self._indexing,
-            current_track_id=self._current_track_id,
-            stats=stats,
-            files=files,
-        )
+        with runtime.state.lock:
+            cached = runtime.state.cached_status
+            return IndexStatus(
+                available=(
+                    not runtime.cancelled.is_set()
+                    and runtime.vector_store.is_initialized
+                ),
+                indexing=runtime.state.indexing,
+                current_track_id=runtime.state.current_track_id,
+                # These objects are replaced, never mutated, when the worker
+                # refreshes the snapshot.  UI consumers treat them as read-only.
+                stats=cached.stats,
+                files=cached.files,
+            )
 
     def delete_file(self, rel_path: str) -> None:
         """删除指定文件的所有 chunk"""
-        if self._vector_store:
-            self._vector_store.delete_file(rel_path)
-        with self._meta_lock:
-            self._index_meta.get("files", {}).pop(rel_path, None)
-        self._save_index_meta()
-
-    def clear_index(self) -> None:
-        """清空知识库（在工作线程执行）"""
-        if not self._project_root:
+        runtime = self._get_runtime()
+        if runtime is None or not runtime.vector_store.is_initialized:
             return
+        self._delete_file_runtime(runtime, rel_path)
 
-        if self._vector_store:
-            self._vector_store.clear()
+    def _delete_file_runtime(
+        self,
+        runtime: _ProjectRuntime,
+        file_path: str,
+        is_directory: bool = False,
+    ) -> None:
+        normalized = self._normalize_rel_path(runtime, file_path)
+        if normalized is None:
+            return
+        self._ensure_current(runtime)
+        if is_directory:
+            runtime.vector_store.delete_prefix(normalized)
+        else:
+            runtime.vector_store.delete_file(normalized)
+        self._ensure_current(runtime)
+        with runtime.state.lock:
+            files = runtime.state.index_meta.get("files", {})
+            if is_directory:
+                prefix = normalized.rstrip("/") + "/"
+                for rel_path in list(files):
+                    if rel_path == normalized or rel_path.startswith(prefix):
+                        files.pop(rel_path, None)
+            else:
+                files.pop(normalized, None)
+        self._save_index_meta(runtime)
+        self._refresh_status_cache(
+            runtime,
+            measure_vector_store=False,
+            measure_storage=False,
+        )
 
-        with self._meta_lock:
-            self._index_meta = {
-                "version": 1,
-                "project_root": self._project_root,
-                "files": {},
-                "stats": {},
-            }
-        self._save_index_meta()
-        logger.info("RAG index cleared")
+    async def clear_index_async(
+        self,
+        *,
+        expected_generation: int,
+        expected_project_root: str,
+    ) -> None:
+        """Clear only the project/index identity approved by the caller.
 
-    async def clear_index_async(self) -> None:
-        """从 Qt 主线程异步清空知识库"""
-        future = self._worker.submit(self.clear_index)
+        Validation and worker submission share ``_runtime_lock`` so a project
+        transition cannot slip between the identity check and runtime capture.
+        The worker performs its own current-runtime check before mutation.
+        """
+        with self._runtime_lock:
+            runtime = self._runtime
+            if runtime is None:
+                raise RuntimeError("RAG project is not open")
+            if runtime.generation != int(expected_generation):
+                raise _RAGOperationCancelled(
+                    "RAG project or index generation changed before clear"
+                )
+            if not str(expected_project_root).strip():
+                raise ValueError("expected_project_root is required")
+            expected_root = os.path.normcase(
+                os.path.realpath(os.path.abspath(expected_project_root))
+            )
+            runtime_root = os.path.normcase(
+                os.path.realpath(os.path.abspath(runtime.project_root))
+            )
+            if runtime_root != expected_root:
+                raise _RAGOperationCancelled(
+                    "RAG project changed before clear"
+                )
+            future = self._worker.submit(self._clear_index_runtime, runtime)
         if future is None:
             raise RuntimeError("RAG worker not running")
-        await asyncio.wrap_future(future)
+        try:
+            await asyncio.wrap_future(future)
+        except asyncio.CancelledError:
+            future.cancel()
+            raise
+        self._ensure_current(runtime)
+
+    def _clear_index_runtime(self, runtime: _ProjectRuntime) -> None:
+        self._ensure_current(runtime)
+        runtime.vector_store.clear()
+        self._ensure_current(runtime)
+        with runtime.state.lock:
+            runtime.state.index_meta = self._new_index_meta(runtime)
+        self._save_index_meta(runtime)
+        self._refresh_status_cache(runtime)
 
     # ============================================================
     # 文件扫描
     # ============================================================
 
-    def _scan_project_files(self) -> List[tuple]:
+    def _scan_project_files(self, runtime: _ProjectRuntime) -> List[tuple]:
         """
         扫描项目目录，返回需要索引的 (rel_path, abs_path) 列表
 
@@ -662,15 +1153,24 @@ class RAGManager:
         1. 对比 mtime，仅返回新增或变更文件
         2. 检测已删除文件并从 index_meta 和 VectorStore 中清理
         """
-        if not self._project_root:
-            return []
+        self._ensure_current(runtime)
 
         result = []
-        files_meta = self._index_meta.get("files", {})
-        root = Path(self._project_root)
+        with runtime.state.lock:
+            files_meta = copy.deepcopy(
+                runtime.state.index_meta.get("files", {})
+            )
+        root = Path(runtime.project_root)
         disk_files: Set[str] = set()  # 当前磁盘上存在的可索引文件
 
-        for dirpath, dirnames, filenames in os.walk(root):
+        def _raise_walk_error(error: OSError) -> None:
+            raise error
+
+        for dirpath, dirnames, filenames in os.walk(
+            root,
+            onerror=_raise_walk_error,
+        ):
+            self._ensure_current(runtime)
             # 排除目录
             dirnames[:] = [
                 d for d in dirnames
@@ -679,21 +1179,23 @@ class RAGManager:
 
             for filename in filenames:
                 abs_path = os.path.join(dirpath, filename)
-                rule = self._get_file_index_rule(abs_path)
-                if rule is None:
-                    continue
-
-                rel_path = os.path.relpath(abs_path, root).replace("\\", "/")
-                disk_files.add(rel_path)
-
-                # 增量检查
                 try:
+                    rule = self._get_file_index_rule(abs_path)
+                    if rule is None:
+                        continue
+
+                    rel_path = os.path.relpath(abs_path, root).replace("\\", "/")
+                    disk_files.add(rel_path)
+
+                    # 增量检查
                     stat = os.stat(abs_path)
                     old_meta = files_meta.get(rel_path, {})
                     old_mtime = old_meta.get("mtime", 0.0)
 
                     if not rule.should_index:
-                        self._mark_file_excluded(rel_path, stat, old_meta, rule)
+                        self._mark_file_excluded(
+                            runtime, rel_path, stat, old_meta, rule
+                        )
                         continue
 
                     if (old_meta.get("status") == "processed"
@@ -702,7 +1204,27 @@ class RAGManager:
 
                     result.append((rel_path, abs_path))
 
-                except OSError:
+                except OSError as exc:
+                    rel_path = os.path.relpath(
+                        abs_path, root
+                    ).replace("\\", "/")
+                    # The directory entry exists; a stat failure must not make
+                    # deleted-file cleanup erase its last-known-good vectors.
+                    disk_files.add(rel_path)
+                    self._mark_file_failed(runtime, rel_path, str(exc))
+                    failure = {
+                        "file_path": rel_path,
+                        "error": str(exc),
+                    }
+                    with runtime.state.lock:
+                        runtime.state.scan_failures.append(failure)
+                    self._record_index_error(
+                        runtime,
+                        exc,
+                        file_path=rel_path,
+                        phase="file_metadata",
+                        persist=False,
+                    )
                     continue
 
         # 检测已删除文件：meta 中存在但磁盘上不存在
@@ -711,42 +1233,29 @@ class RAGManager:
             if rel_path not in disk_files
         ]
         if deleted_files:
-            self._schedule_cleanup_deleted(deleted_files)
+            self._cleanup_deleted_files(runtime, deleted_files)
 
         return result
 
-    def _schedule_cleanup_deleted(self, deleted_files: List[str]) -> None:
-        """
-        调度清理已删除文件的索引数据
-
-        从 index_meta 和 VectorStore 中移除。
-        """
-        if self._worker.is_running:
-            self._worker.submit(self._cleanup_deleted_files, deleted_files)
-        else:
-            # 工作线程未就绪时仅清理 meta
-            with self._meta_lock:
-                files_meta = self._index_meta.get("files", {})
-                for rel_path in deleted_files:
-                    files_meta.pop(rel_path, None)
-            logger.info(f"Cleaned {len(deleted_files)} deleted files from index meta (meta only)")
-
-    def _cleanup_deleted_files(self, deleted_files: List[str]) -> None:
+    def _cleanup_deleted_files(
+        self,
+        runtime: _ProjectRuntime,
+        deleted_files: List[str],
+    ) -> None:
         """异步清理已删除文件"""
-        files_meta = self._index_meta.get("files", {})
         cleaned = 0
 
         for rel_path in deleted_files:
-            if self._vector_store:
-                try:
-                    self._vector_store.delete_file(rel_path)
-                except Exception as e:
-                    logger.warning(f"Failed to delete {rel_path} from VectorStore: {e}")
-            files_meta.pop(rel_path, None)
+            self._ensure_current(runtime)
+            # Only commit metadata removal after the vector deletion succeeds.
+            runtime.vector_store.delete_file(rel_path)
+            self._ensure_current(runtime)
+            with runtime.state.lock:
+                runtime.state.index_meta.get("files", {}).pop(rel_path, None)
             cleaned += 1
 
         if cleaned:
-            self._save_index_meta()
+            self._save_index_meta(runtime)
             logger.info(f"Cleaned {cleaned} deleted files from index")
 
     def _get_file_index_rule(self, abs_path: str) -> Optional[FileIndexRule]:
@@ -754,6 +1263,7 @@ class RAGManager:
 
     def _mark_file_excluded(
         self,
+        runtime: _ProjectRuntime,
         rel_path: str,
         stat: os.stat_result,
         old_meta: Dict[str, Any],
@@ -766,13 +1276,11 @@ class RAGManager:
         ):
             return
 
-        if self._vector_store and old_meta.get("status") == "processed":
-            try:
-                self._vector_store.delete_file(rel_path)
-            except Exception as e:
-                logger.warning(f"Failed to delete excluded file vectors for {rel_path}: {e}")
+        if old_meta.get("status") == "processed":
+            self._ensure_current(runtime)
+            runtime.vector_store.delete_file(rel_path)
 
-        self._update_file_meta(rel_path, {
+        self._update_file_meta(runtime, rel_path, {
             "doc_id": "",
             "mtime": stat.st_mtime,
             "size": stat.st_size,
@@ -783,20 +1291,20 @@ class RAGManager:
             "exclude_reason": rule.exclude_reason,
         })
 
-    def _resolve_path(self, file_path: str) -> tuple:
+    def _resolve_path(
+        self,
+        runtime: _ProjectRuntime,
+        file_path: str,
+    ) -> tuple:
         """解析路径为 (abs_path, rel_path)"""
-        if not self._project_root:
-            return None, None
-
         if os.path.isabs(file_path):
-            abs_path = file_path
-            try:
-                rel_path = os.path.relpath(abs_path, self._project_root).replace("\\", "/")
-            except ValueError:
-                return None, None
+            abs_path = os.path.abspath(file_path)
         else:
-            rel_path = file_path.replace("\\", "/")
-            abs_path = os.path.join(self._project_root, rel_path)
+            abs_path = os.path.abspath(os.path.join(runtime.project_root, file_path))
+
+        rel_path = self._normalize_rel_path(runtime, abs_path)
+        if rel_path is None:
+            return None, None
 
         if not os.path.isfile(abs_path):
             return None, None
@@ -807,71 +1315,284 @@ class RAGManager:
     # index_meta.json 管理
     # ============================================================
 
-    def _load_index_meta(self) -> None:
+    def _load_index_meta(self, runtime: _ProjectRuntime) -> None:
         """加载 index_meta.json（线程安全）"""
-        if not self._project_root:
-            return
-
         meta_path = os.path.join(
-            self._project_root, DEFAULT_RAG_STORAGE_DIR, INDEX_META_FILE
+            runtime.project_root, DEFAULT_RAG_STORAGE_DIR, INDEX_META_FILE
         )
         try:
             if os.path.isfile(meta_path):
                 with open(meta_path, "r", encoding="utf-8") as f:
                     data = json.load(f)
+                loaded_from_disk = True
             else:
-                data = {
-                    "version": 1,
-                    "project_root": self._project_root,
-                    "files": {},
-                    "stats": {},
-                }
-            with self._meta_lock:
-                self._index_meta = data
+                data = self._new_index_meta(runtime)
+                loaded_from_disk = False
+            if not isinstance(data, dict):
+                raise ValueError("index_meta.json root must be an object")
+            with runtime.state.lock:
+                runtime.state.index_meta = data
+                runtime.state.meta_loaded_from_disk = loaded_from_disk
         except Exception as e:
             logger.warning(f"Failed to load index meta: {e}")
-            with self._meta_lock:
-                self._index_meta = {"version": 1, "files": {}, "stats": {}}
+            with runtime.state.lock:
+                runtime.state.index_meta = self._new_index_meta(runtime)
+                runtime.state.meta_loaded_from_disk = False
 
-    def _save_index_meta(self) -> None:
+    def _save_index_meta(self, runtime: _ProjectRuntime) -> None:
         """保存 index_meta.json（线程安全）"""
-        if not self._project_root:
-            return
+        self._ensure_current(runtime)
 
-        storage_dir = os.path.join(self._project_root, DEFAULT_RAG_STORAGE_DIR)
+        storage_dir = os.path.join(runtime.project_root, DEFAULT_RAG_STORAGE_DIR)
         os.makedirs(storage_dir, exist_ok=True)
         meta_path = os.path.join(storage_dir, INDEX_META_FILE)
 
-        with self._meta_lock:
-            self._index_meta["last_full_index"] = datetime.now(timezone.utc).isoformat()
-            files_meta = self._index_meta.get("files", {})
-            self._index_meta["stats"] = {
+        with runtime.state.lock:
+            runtime.state.index_meta["version"] = INDEX_META_VERSION
+            runtime.state.index_meta["project_root"] = runtime.project_root
+            runtime.state.index_meta["signature"] = runtime.signature.to_dict()
+            runtime.state.index_meta["last_full_index"] = datetime.now(timezone.utc).isoformat()
+            files_meta = runtime.state.index_meta.get("files", {})
+            runtime.state.index_meta["stats"] = {
                 "total_files": len(files_meta),
                 "processed": sum(1 for f in files_meta.values() if f.get("status") == "processed"),
                 "failed": sum(1 for f in files_meta.values() if f.get("status") == "failed"),
                 "excluded": sum(1 for f in files_meta.values() if f.get("status") == "excluded"),
                 "total_chunks": sum(f.get("chunks_count", 0) for f in files_meta.values()),
             }
-            snapshot = dict(self._index_meta)
+            snapshot = copy.deepcopy(runtime.state.index_meta)
 
+        temp_path = f"{meta_path}.tmp-{runtime.generation}-{threading.get_ident()}"
         try:
-            with open(meta_path, "w", encoding="utf-8") as f:
+            with open(temp_path, "w", encoding="utf-8") as f:
                 json.dump(snapshot, f, indent=2, ensure_ascii=False)
+                f.flush()
+                os.fsync(f.fileno())
+            self._ensure_current(runtime)
+            os.replace(temp_path, meta_path)
+            with runtime.state.lock:
+                runtime.state.meta_loaded_from_disk = True
         except Exception as e:
             logger.error(f"Failed to save index meta: {e}")
+            try:
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+            except OSError:
+                pass
+            raise
 
-    def _update_file_meta(self, rel_path: str, data: Dict[str, Any]) -> None:
+    def _update_file_meta(
+        self,
+        runtime: _ProjectRuntime,
+        rel_path: str,
+        data: Dict[str, Any],
+    ) -> None:
         """更新单文件的 meta 信息（线程安全）"""
-        with self._meta_lock:
-            if "files" not in self._index_meta:
-                self._index_meta["files"] = {}
-            existing = self._index_meta["files"].get(rel_path, {})
+        self._ensure_current(runtime)
+        with runtime.state.lock:
+            if "files" not in runtime.state.index_meta:
+                runtime.state.index_meta["files"] = {}
+            existing = runtime.state.index_meta["files"].get(rel_path, {})
             existing.update(data)
-            self._index_meta["files"][rel_path] = existing
+            runtime.state.index_meta["files"][rel_path] = existing
+
+    def _mark_file_failed(
+        self,
+        runtime: _ProjectRuntime,
+        rel_path: str,
+        error: str,
+    ) -> None:
+        self._ensure_current(runtime)
+        with runtime.state.lock:
+            old = runtime.state.index_meta.get("files", {}).get(rel_path, {})
+            stale = bool(
+                old.get("status") == "processed"
+                or old.get("chunks_count", 0)
+            )
+        self._update_file_meta(runtime, rel_path, {
+            "status": "failed",
+            "error": error,
+            "stale": stale,
+            "failed_at": datetime.now(timezone.utc).isoformat(),
+        })
+
+    def _new_index_meta(self, runtime: _ProjectRuntime) -> Dict[str, Any]:
+        return {
+            "version": INDEX_META_VERSION,
+            "project_root": runtime.project_root,
+            "signature": runtime.signature.to_dict(),
+            "files": {},
+            "stats": {},
+        }
+
+    def _ensure_index_signature(self, runtime: _ProjectRuntime) -> None:
+        """Rebuild explicitly when vectors/configuration are incompatible."""
+        with runtime.state.lock:
+            actual = runtime.state.index_meta.get("signature")
+            trusted_meta = runtime.state.meta_loaded_from_disk
+            expected_chunks = sum(
+                int(entry.get("chunks_count", 0) or 0)
+                for entry in runtime.state.index_meta.get("files", {}).values()
+            )
+        expected = runtime.signature.to_dict()
+        actual_chunks = runtime.vector_store.count()
+        if (
+            trusted_meta
+            and actual == expected
+            and actual_chunks == expected_chunks
+        ):
+            return
+
+        logger.info(
+            "RAG index identity is untrusted/inconsistent; rebuilding "
+            "collection: trusted=%s old=%s new=%s chunks=%s/%s",
+            trusted_meta,
+            actual,
+            expected,
+            actual_chunks,
+            expected_chunks,
+        )
+        self._ensure_current(runtime)
+        runtime.vector_store.clear()
+        self._ensure_current(runtime)
+        with runtime.state.lock:
+            runtime.state.index_meta = self._new_index_meta(runtime)
+            runtime.state.meta_loaded_from_disk = True
+        self._save_index_meta(runtime)
 
     # ============================================================
     # 辅助方法
     # ============================================================
+
+    def _get_runtime(self) -> Optional[_ProjectRuntime]:
+        with self._runtime_lock:
+            return self._runtime
+
+    def _is_current(self, runtime: _ProjectRuntime) -> bool:
+        with self._runtime_lock:
+            return (
+                not self._stopped
+                and self._runtime is runtime
+                and not runtime.cancelled.is_set()
+            )
+
+    def _ensure_current(self, runtime: _ProjectRuntime) -> None:
+        if not self._is_current(runtime):
+            raise _RAGOperationCancelled(
+                f"Stale RAG runtime generation={runtime.generation}"
+            )
+
+    @staticmethod
+    def _build_signature(
+        project_root: str,
+        embedder: Embedder,
+        vector_store: VectorStore,
+    ) -> IndexSignature:
+        normalized_project = os.path.normcase(
+            os.path.realpath(os.path.abspath(project_root))
+        ).replace("\\", "/")
+        return IndexSignature(
+            provider=str(getattr(embedder, "provider_id", "unknown") or "unknown"),
+            model=str(getattr(embedder, "model_name", "unknown") or "unknown"),
+            dimensions=int(getattr(embedder, "dimensions", 0) or 0),
+            backend=str(getattr(vector_store, "backend_name", "chromadb") or "chromadb"),
+            metric=str(getattr(vector_store, "metric", "cosine") or "cosine"),
+            extractor=EXTRACTOR_VERSION,
+            chunker=CHUNKER_VERSION,
+            project=normalized_project,
+            collection=str(
+                getattr(vector_store, "collection_name", "") or ""
+            ),
+        )
+
+    @staticmethod
+    def _normalize_rel_path(
+        runtime: _ProjectRuntime,
+        file_path: str,
+    ) -> Optional[str]:
+        if not file_path:
+            return None
+        root = os.path.abspath(runtime.project_root)
+        candidate = (
+            os.path.abspath(file_path)
+            if os.path.isabs(file_path)
+            else os.path.abspath(os.path.join(root, file_path))
+        )
+        try:
+            if os.path.commonpath([root, candidate]) != root:
+                return None
+        except ValueError:
+            return None
+        return os.path.relpath(candidate, root).replace("\\", "/")
+
+    def _refresh_status_cache(
+        self,
+        runtime: _ProjectRuntime,
+        *,
+        measure_vector_store: bool = True,
+        measure_storage: bool = True,
+    ) -> None:
+        """Refresh the UI snapshot from the RAG worker at a low-frequency boundary."""
+        self._ensure_current(runtime)
+        with runtime.state.lock:
+            files_meta = copy.deepcopy(
+                runtime.state.index_meta.get("files", {})
+            )
+            previous_storage_size = (
+                runtime.state.cached_status.stats.storage_size_mb
+            )
+
+        total_chunks = sum(
+            int(entry.get("chunks_count", 0) or 0)
+            for entry in files_meta.values()
+        )
+        if measure_vector_store and runtime.vector_store.is_initialized:
+            try:
+                total_chunks = int(runtime.vector_store.count())
+            except Exception as exc:
+                logger.warning(f"Failed to refresh RAG vector count: {exc}")
+
+        storage_size_mb = previous_storage_size
+        if measure_storage:
+            try:
+                storage_size_mb = self._calc_dir_size_mb(
+                    os.path.join(runtime.project_root, DEFAULT_VECTOR_STORE_DIR)
+                )
+            except Exception as exc:
+                logger.warning(f"Failed to refresh RAG storage size: {exc}")
+
+        stats = IndexStats(
+            total_files=len(files_meta),
+            processed=sum(
+                1 for entry in files_meta.values()
+                if entry.get("status") == "processed"
+            ),
+            failed=sum(
+                1 for entry in files_meta.values()
+                if entry.get("status") == "failed"
+            ),
+            excluded=sum(
+                1 for entry in files_meta.values()
+                if entry.get("status") == "excluded"
+            ),
+            total_chunks=total_chunks,
+            storage_size_mb=storage_size_mb,
+        )
+        files = [
+            FileIndexInfo.from_dict(path, data)
+            for path, data in files_meta.items()
+        ]
+
+        self._ensure_current(runtime)
+        with runtime.state.lock:
+            runtime.state.cached_status = IndexStatus(
+                available=True,
+                indexing=runtime.state.indexing,
+                current_track_id=runtime.state.current_track_id,
+                stats=stats,
+                files=files,
+            )
+            runtime.state.status_revision += 1
 
     @staticmethod
     def _calc_dir_size_mb(dir_path: str) -> float:
@@ -889,22 +1610,98 @@ class RAGManager:
             pass
         return round(total / (1024 * 1024), 2)
 
-    def _publish_event(self, event_type: str, data: Dict[str, Any]) -> None:
+    def _publish_event(
+        self,
+        event_type: str,
+        data: Dict[str, Any],
+        *,
+        runtime: Optional[_ProjectRuntime] = None,
+    ) -> None:
         """通过 EventBus 发布事件"""
         if self._event_bus is None:
             return
+        if runtime is not None and not self._is_current(runtime):
+            return
+
+        payload = dict(data)
+        if runtime is not None:
+            payload.setdefault("generation", runtime.generation)
+            payload.setdefault("project_root", runtime.project_root)
 
         try:
-            self._event_bus.publish(event_type, data)
+            self._event_bus.publish(event_type, payload)
         except Exception as e:
             logger.warning(f"Failed to publish event '{event_type}': {e}")
 
-    def _safe_index_project(self) -> None:
+    def _record_index_error(
+        self,
+        runtime: _ProjectRuntime,
+        error: Exception,
+        *,
+        file_path: str = "",
+        phase: str = "index",
+        persist: bool,
+    ) -> None:
+        """Expose an indexing failure without misclassifying initialization."""
+        if not self._is_current(runtime):
+            return
+
+        message = str(error) or error.__class__.__name__
+        self._index_error = message
+        logger.error(
+            "RAG indexing failed (phase=%s, file=%s): %s",
+            phase,
+            file_path,
+            message,
+        )
+
+        if persist:
+            try:
+                self._save_index_meta(runtime)
+            except Exception as save_exc:
+                logger.error(
+                    "Failed to persist RAG metadata after index error: %s",
+                    save_exc,
+                )
+            try:
+                self._refresh_status_cache(
+                    runtime,
+                    measure_vector_store=False,
+                    measure_storage=False,
+                )
+            except Exception as refresh_exc:
+                logger.error(
+                    "Failed to refresh RAG status after index error: %s",
+                    refresh_exc,
+                )
+
+        payload = {
+            "file_path": file_path,
+            "error": message,
+            "phase": phase,
+            "fatal": phase in {"project_index", "auto_index", "scan"},
+        }
+        if runtime.state.current_track_id:
+            payload["track_id"] = runtime.state.current_track_id
+        self._publish_event(
+            EVENT_RAG_INDEX_ERROR,
+            payload,
+            runtime=runtime,
+        )
+
+    def _safe_index_project(self, runtime: _ProjectRuntime) -> None:
         """安全的自动索引（异常不冒泡）"""
         try:
-            self.index_project_files()
+            self.index_project_files(runtime)
+        except _RAGOperationCancelled:
+            return
         except Exception as e:
-            logger.error(f"Auto-index failed: {e}")
+            self._record_index_error(
+                runtime,
+                e,
+                phase="auto_index",
+                persist=True,
+            )
 
 
 # ============================================================
@@ -916,4 +1713,5 @@ __all__ = [
     "IndexStatus",
     "IndexStats",
     "FileIndexInfo",
+    "IndexSignature",
 ]

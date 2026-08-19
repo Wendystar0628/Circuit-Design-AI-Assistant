@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from domain.dependency.scanner.include_parser import IncludeParser
+from domain.simulation.spice.include_parser import IncludeParser
 from domain.simulation.spice.models import (
     SourceSpan,
     SpiceComponent,

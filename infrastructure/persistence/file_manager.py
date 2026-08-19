@@ -3,32 +3,28 @@
 统一文件操作管理器（同步底层接口）
 
 职责：
-- 提供统一、安全的文件系统操作接口
-- 所有文件操作必须通过此模块进行
+- 提供工作区用户文件的统一、安全操作接口
 - 实现原子性写入、文件锁定、安全校验
 
-⚠️ 接口层级说明：
-- 本模块是同步底层接口，所有方法都是阻塞的
-- 禁止 UI 线程直接调用本模块的任何方法
-- 应用层（UI、LangGraph 节点）必须通过 AsyncFileOps 访问文件
-- 仅供 AsyncFileOps 内部调用，或在已确认非 UI 线程的场景使用
+接口边界：
+- 本模块是工作区用户文件的同步权威入口，方法会阻塞当前线程
+- 短小、有界的操作可由调用者直接执行
+- UI/异步路径中的长时间或批量操作，由实际拥有该任务的调用者
+  使用 ``asyncio.to_thread()`` 或现有 executor 卸载
 
 初始化顺序：
 - Phase 3.2（延迟初始化），依赖 Logger、EventBus
 
 设计原则：
-- 所有模块（包括LLM工具调用）必须通过 file_manager 进行文件操作
-- 禁止直接使用 open()、os.path 等底层API
-- 文件变更自动触发 EVENT_FILE_CHANGED 事件
+- 需要工作区路径校验、锁定和变更事件的路径通过 FileManager
+- 配置、缓存和专用仓储仍由各自的真实 owner 直接管理
+- 通过本类完成的文件变更会触发 EVENT_FILE_CHANGED 事件
 
 使用示例：
-    # ❌ 错误：UI 线程直接调用同步方法
-    content = file_manager.read_file("main.cir")  # 会阻塞 UI
-    
-    # ✅ 正确：通过 AsyncFileOps 异步调用
-    from infrastructure.persistence.async_file_ops import AsyncFileOps
-    async_ops = AsyncFileOps()
-    content = await async_ops.read_file_async("main.cir")  # 不阻塞 UI
+    content = file_manager.read_file("main.cir")
+
+    # 异步路径需要卸载长时间操作时：
+    content = await asyncio.to_thread(file_manager.read_file, "main.cir")
 """
 
 import hashlib
@@ -69,9 +65,8 @@ class FileManager:
     用户可选择电脑上任意目录作为工作目录（类似 VSCode）
     
     设计说明：
-    - 所有文件操作必须通过此模块进行
-    - 禁止直接使用 open()、os.path 等底层 API
-    - 文件变更自动触发 EVENT_FILE_CHANGED 事件
+    - 管理工作区用户文件，不接管配置、缓存或专用仓储
+    - 通过本类完成的文件变更会触发 EVENT_FILE_CHANGED 事件
     - 使用 FileLock 的全局锁注册表，确保同一文件路径共享同一个锁
     """
     
@@ -95,8 +90,12 @@ class FileManager:
         # 延迟获取的服务
         self._logger = None
         self._event_bus = None
-        self._recent_internal_changes: Dict[str, float] = {}
+        # {normalized_path: {timestamp, operation, dest_path, revision}}。
+        # watchdog 回声必须同时匹配
+        # 路径、操作和内容 revision；仅时间窗口相同不能证明是内部回声。
+        self._recent_internal_changes: Dict[str, Dict[str, Any]] = {}
         self._recent_internal_changes_lock = threading.Lock()
+        self._project_generation = 0
     
     # ============================================================
     # 延迟获取服务（避免循环依赖）
@@ -136,6 +135,7 @@ class FileManager:
         Args:
             path: 工作目录路径，传入 None 时清空工作目录
         """
+        old_work_dir = self._work_dir
         if path is None:
             self._work_dir = None
             if self.logger:
@@ -144,6 +144,9 @@ class FileManager:
             self._work_dir = Path(path).resolve()
             if self.logger:
                 self.logger.info(f"工作目录设置为: {self._work_dir}")
+
+        if old_work_dir != self._work_dir:
+            self._project_generation += 1
     
     def get_work_dir(self) -> Optional[Path]:
         """
@@ -153,6 +156,12 @@ class FileManager:
             Path: 工作目录路径，未设置时返回 None
         """
         return self._work_dir
+
+    @property
+    def project_generation(self) -> int:
+        """Return the monotonically increasing project-root generation."""
+
+        return self._project_generation
     
     def resolve_path(self, relative_path: Union[str, Path]) -> Path:
         """
@@ -320,7 +329,10 @@ class FileManager:
         self,
         path: Path,
         operation: str,
-        char_count: Optional[int] = None
+        char_count: Optional[int] = None,
+        *,
+        dest_path: Optional[Path] = None,
+        is_directory: bool = False,
     ) -> None:
         """
         发布文件变更事件
@@ -335,61 +347,151 @@ class FileManager:
 
         try:
             from shared.event_types import EVENT_FILE_CHANGED
-            self._mark_recent_internal_change(path)
+            from shared.file_change import FileChange
+
+            revision_path = dest_path if operation == "move" and dest_path else path
+            revision = self._compute_path_revision(revision_path)
+            self._mark_recent_internal_change(
+                path,
+                operation=operation,
+                dest_path=dest_path,
+                revision=revision,
+            )
+            change = FileChange(
+                operation=operation,
+                path=str(path),
+                dest_path=str(dest_path or ""),
+                is_directory=is_directory,
+                origin="file_manager",
+                project_root=str(self._work_dir or ""),
+                generation=self._project_generation,
+                revision=revision,
+            )
             self.event_bus.publish(
                 EVENT_FILE_CHANGED,
-                {
-                    "path": str(path),
-                    "operation": operation,
-                    "char_count": char_count,
-                    "timestamp": time.time()
-                },
+                change.to_payload(),
                 source="file_manager"
             )
         except Exception as e:
             if self.logger:
                 self.logger.warning(f"发布文件变更事件失败: {e}")
     
-    def _mark_recent_internal_change(self, path: Union[str, Path]) -> None:
+    def _mark_recent_internal_change(
+        self,
+        path: Union[str, Path],
+        *,
+        operation: str = "update",
+        dest_path: Optional[Union[str, Path]] = None,
+        revision: Optional[str] = None,
+    ) -> None:
         normalized_path = os.path.normcase(os.path.abspath(str(path)))
         now = time.time()
         cutoff = now - self.INTERNAL_CHANGE_ECHO_WINDOW_S
+        normalized_dest = (
+            os.path.normcase(os.path.abspath(str(dest_path))) if dest_path else ""
+        )
         with self._recent_internal_changes_lock:
             stale_paths = [
                 candidate
-                for candidate, timestamp in self._recent_internal_changes.items()
-                if timestamp < cutoff
+                for candidate, record in self._recent_internal_changes.items()
+                if float(record.get("timestamp", 0.0)) < cutoff
             ]
             for candidate in stale_paths:
                 self._recent_internal_changes.pop(candidate, None)
-            self._recent_internal_changes[normalized_path] = now
+            self._recent_internal_changes[normalized_path] = {
+                "timestamp": now,
+                "operation": operation,
+                "dest_path": normalized_dest,
+                "revision": revision or self._compute_path_revision(path),
+            }
 
     def is_recent_internal_change(self, path: Union[str, Path]) -> bool:
         normalized_path = os.path.normcase(os.path.abspath(str(path)))
         now = time.time()
         cutoff = now - self.INTERNAL_CHANGE_ECHO_WINDOW_S
         with self._recent_internal_changes_lock:
-            timestamp = self._recent_internal_changes.get(normalized_path)
-            if timestamp is None:
+            record = self._recent_internal_changes.get(normalized_path)
+            if record is None:
                 return False
-            if timestamp < cutoff:
+            if float(record.get("timestamp", 0.0)) < cutoff:
                 self._recent_internal_changes.pop(normalized_path, None)
                 return False
             return True
 
-    def consume_recent_internal_change(self, path: Union[str, Path]) -> bool:
+    def consume_recent_internal_change(
+        self,
+        path: Union[str, Path],
+        operation: Optional[str] = None,
+        dest_path: Optional[Union[str, Path]] = None,
+    ) -> bool:
+        """Return whether a watchdog notification matches an internal write.
+
+        The record remains until the short debounce window expires because one
+        atomic write commonly produces both ``created`` and ``modified`` OS
+        notifications.  A different external content revision is never hidden.
+        """
+
         normalized_path = os.path.normcase(os.path.abspath(str(path)))
         now = time.time()
         cutoff = now - self.INTERNAL_CHANGE_ECHO_WINDOW_S
         with self._recent_internal_changes_lock:
-            timestamp = self._recent_internal_changes.get(normalized_path)
-            if timestamp is None:
+            record = self._recent_internal_changes.get(normalized_path)
+            if record is None:
                 return False
-            if timestamp < cutoff:
+            if float(record.get("timestamp", 0.0)) < cutoff:
                 self._recent_internal_changes.pop(normalized_path, None)
                 return False
-            self._recent_internal_changes.pop(normalized_path, None)
-            return True
+            expected_operation = str(record.get("operation") or "update")
+            observed_operation = str(operation or expected_operation).lower()
+            aliases = {
+                "created": "create",
+                "modified": "update",
+                "deleted": "delete",
+                "moved": "move",
+            }
+            observed_operation = aliases.get(observed_operation, observed_operation)
+
+            # Atomic create/write may be reported as either create or update.
+            if {expected_operation, observed_operation} <= {"create", "update"}:
+                pass
+            elif expected_operation != observed_operation:
+                return False
+
+            if expected_operation == "move":
+                observed_dest = (
+                    os.path.normcase(os.path.abspath(str(dest_path)))
+                    if dest_path else ""
+                )
+                if observed_dest != str(record.get("dest_path") or ""):
+                    return False
+                current_revision = self._compute_path_revision(dest_path or path)
+            else:
+                current_revision = self._compute_path_revision(path)
+
+            return current_revision == str(record.get("revision") or "")
+
+    def _compute_path_revision(self, path: Union[str, Path]) -> str:
+        """Compute the observed filesystem revision for echo matching."""
+
+        candidate = Path(path)
+        if not candidate.exists():
+            return "missing"
+        if candidate.is_dir():
+            return "directory"
+        try:
+            digest = hashlib.sha256()
+            with candidate.open("rb") as handle:
+                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                    digest.update(chunk)
+            return digest.hexdigest()
+        except OSError:
+            # Do not suppress an event if its current revision cannot be proven.
+            return "unreadable"
+
+    def get_path_revision(self, path: Union[str, Path]) -> str:
+        """Return the current content revision used by file-change producers."""
+
+        return self._compute_path_revision(path)
     
     # ============================================================
     # 哈希计算
@@ -1479,8 +1581,12 @@ class FileManager:
             shutil.move(str(src_resolved), str(dst_resolved))
             
             # 发布事件
-            self._publish_file_changed(src_resolved, "delete")
-            self._publish_file_changed(dst_resolved, "create")
+            self._publish_file_changed(
+                src_resolved,
+                "move",
+                dest_path=dst_resolved,
+                is_directory=dst_resolved.is_dir(),
+            )
             
             return True
             

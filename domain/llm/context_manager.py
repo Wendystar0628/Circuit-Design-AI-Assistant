@@ -20,7 +20,7 @@
 - 运行时内部状态（_internal_state）：由本类维护，提供无状态和有状态两种调用模式
 
 双模式设计：
-- 无状态模式：方法接受 state 参数并返回新状态副本，适用于 LangGraph 集成场景
+- 显式状态模式：方法接受 state 参数并返回新状态副本，适用于纯函数式调用
 - 有状态模式：方法直接操作内部 _internal_state，适用于 UI 层和协调器的便捷调用
   供调用方：UI 层对话面板、SessionStateManager 等需要便捷访问当前状态的场景
 
@@ -69,7 +69,7 @@ class ContextManager:
     提供统一的对外接口。
 
     提供两种调用模式（均可用，各自适合不同场景）：
-    - 无状态模式：add_message(state, ...) 接受并返回 state，适用于 LangGraph 节点
+    - 显式状态模式：add_message(state, ...) 接受并返回 state
     - 有状态模式：add_user_message() / add_assistant_message() 等直接操作内部
       _internal_state，适用于 UI 层和 SessionStateManager 等协调器
 
@@ -319,7 +319,7 @@ class ContextManager:
         return self._cache_stats_tracker.generate_efficiency_report(time_window_seconds)
 
     # ============================================================
-    # 有状态便捷方法（无 LangGraph 集成场景）
+    # 有状态便捷方法
     # ============================================================
     # 以下方法内部维护 _internal_state，供 UI 层和协调器（如 SessionStateManager）使用。
     # 这些方法是对无状态 state 参数方法的封装，调用方无需自行持有和传递 state。

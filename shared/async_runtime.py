@@ -212,58 +212,6 @@ def shutdown() -> None:
         _is_initialized = False
 
 
-def run_coroutine_threadsafe(
-    coro,
-    callback=None,
-    error_callback=None
-) -> asyncio.Future:
-    """
-    从非主线程安全地提交协程到事件循环
-    
-    此函数用于从 QThreadPool 中的 QRunnable 或其他线程
-    向主线程的事件循环提交异步任务。
-    
-    Args:
-        coro: 要执行的协程
-        callback: 成功回调函数，接收协程返回值
-        error_callback: 错误回调函数，接收异常对象
-        
-    Returns:
-        asyncio.Future: 可用于等待结果或取消任务
-        
-    Example:
-        # 在 QRunnable 中
-        async def fetch_data():
-            return await some_async_operation()
-        
-        future = run_coroutine_threadsafe(
-            fetch_data(),
-            callback=lambda result: print(f"Got: {result}"),
-            error_callback=lambda e: print(f"Error: {e}")
-        )
-    """
-    loop = get_event_loop()
-    
-    if loop is None or loop.is_closed():
-        raise RuntimeError("事件循环未初始化或已关闭")
-    
-    future = asyncio.run_coroutine_threadsafe(coro, loop)
-    
-    if callback or error_callback:
-        def done_callback(fut):
-            try:
-                result = fut.result()
-                if callback:
-                    callback(result)
-            except Exception as e:
-                if error_callback:
-                    error_callback(e)
-        
-        future.add_done_callback(done_callback)
-    
-    return future
-
-
 # ============================================================
 # 模块导出
 # ============================================================
@@ -273,5 +221,4 @@ __all__ = [
     "get_event_loop",
     "is_initialized",
     "shutdown",
-    "run_coroutine_threadsafe",
 ]

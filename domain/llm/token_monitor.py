@@ -50,7 +50,7 @@ class TokenMonitor:
         计算当前 Token 占用
         
         Args:
-            state: GraphState 状态，包含完整历史 messages 与工作上下文压缩状态
+            state: 会话状态字典，包含完整历史 messages 与工作上下文压缩状态
             model: 模型名称
             
         Returns:
@@ -158,7 +158,7 @@ class TokenMonitor:
         获取占用比例
         
         Args:
-            state: GraphState 状态
+            state: 会话状态字典
             model: 模型名称
             
         Returns:

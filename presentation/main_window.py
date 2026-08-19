@@ -671,6 +671,16 @@ class MainWindow(QMainWindow):
         return None
 
     def closeEvent(self, event) -> None:
+        # Resolve dirty editors before persisting session state or tearing down
+        # any service.  A Cancel response is a real veto: the window remains
+        # open and no global project state has changed.
+        if (
+            self._action_handlers is not None
+            and not self._action_handlers.prepare_workspace_transition()
+        ):
+            event.ignore()
+            return
+
         if self._window_state_manager is not None:
             self._window_state_manager.save_window_state(self._splitters, self._panels)
         if self._session_manager is not None:

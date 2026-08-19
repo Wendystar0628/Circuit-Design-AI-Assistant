@@ -70,8 +70,6 @@ EVENT_TAB_CHANGED = "tab_changed"
 # 携带数据：
 #   - path: str - 项目路径
 #   - name: str - 项目名称
-#   - is_existing: bool - 是否为已有项目（存在 checkpoints.sqlite3）
-#   - has_history: bool - 是否有历史对话和优化记录
 #   - status: str - 项目状态（ready/degraded）
 #   - degraded: bool - 是否为降级模式
 EVENT_STATE_PROJECT_OPENED = "state_project_opened"
@@ -83,56 +81,6 @@ EVENT_STATE_PROJECT_CLOSED = "state_project_closed"
 
 # 配置变更
 EVENT_STATE_CONFIG_CHANGED = "state_config_changed"
-
-# 迭代状态更新
-EVENT_STATE_ITERATION_UPDATED = "state_iteration_updated"
-
-
-# ============================================================
-# Worker 事件
-# ============================================================
-
-# Worker 启动
-EVENT_WORKER_STARTED = "worker_started"
-
-# Worker 进度更新
-EVENT_WORKER_PROGRESS = "worker_progress"
-
-# Worker 完成
-EVENT_WORKER_COMPLETE = "worker_complete"
-
-# Worker 错误
-EVENT_WORKER_ERROR = "worker_error"
-
-# ============================================================
-# 异步任务事件
-# ============================================================
-
-# 任务启动
-# 携带数据：
-#   - task_id: str - 任务 ID
-#   - task_type: str - 任务类型
-EVENT_TASK_STARTED = "task_started"
-
-# 任务完成
-# 携带数据：
-#   - task_id: str - 任务 ID
-#   - task_type: str - 任务类型
-#   - result: Any - 任务结果
-EVENT_TASK_COMPLETED = "task_completed"
-
-# 任务失败
-# 携带数据：
-#   - task_id: str - 任务 ID
-#   - task_type: str - 任务类型
-#   - error: str - 错误信息
-EVENT_TASK_FAILED = "task_failed"
-
-# 任务取消
-# 携带数据：
-#   - task_id: str - 任务 ID
-#   - task_type: str - 任务类型
-EVENT_TASK_CANCELLED = "task_cancelled"
 
 # ============================================================
 # LLM 事件
@@ -288,12 +236,6 @@ EVENT_CIRCUIT_ANALYSIS_COMPLETE = "circuit_analysis_complete"
 #   - file: str - 错误文件（可选）
 #   - line: int - 错误行号（可选）
 EVENT_SIMULATION_ERROR_COLLECTED = "simulation_error_collected"
-
-# 仿真结果文件创建（文件监控触发）
-# 携带数据：
-#   - file_path: str - 结果文件相对路径
-#   - project_root: str - 项目根目录
-EVENT_SIM_RESULT_FILE_CREATED = "sim_result_file_created"
 
 # 仿真执行器注册
 # 携带数据：
@@ -469,19 +411,22 @@ EVENT_ERROR_OCCURRED = "error_occurred"
 # 错误恢复
 EVENT_ERROR_RECOVERED = "error_recovered"
 
-# 异步槽函数错误（qasync @asyncSlot 异常）
-# 携带数据：
-#   - function: str - 函数名
-#   - error: str - 错误信息
-#   - error_type: str - 错误类型名
-#   - traceback: str - 完整堆栈跟踪
-EVENT_ASYNC_SLOT_ERROR = "async_slot_error"
-
 # ============================================================
 # 文件操作事件
 # ============================================================
 
-# 文件变更
+# 磁盘文件变更（唯一 schema 见 shared.file_change.FileChange）
+# 携带数据（所有字段均存在）：
+#   - operation: str - create/update/delete/move
+#   - path: str - 源文件绝对路径
+#   - dest_path: str - move 的目标绝对路径，否则为空字符串
+#   - is_directory: bool - 是否为目录
+#   - origin: str - file_manager/file_watcher/其他磁盘 producer
+#   - project_root: str - producer 所属项目根目录
+#   - generation: int - FileManager 项目代际，切换项目时递增
+#   - revision: str - 内容 SHA-256，删除为 "missing"
+# 订阅者使用 shared.file_change.normalize_file_change/extract_file_change，
+# 不得再根据 producer 分支解析 event_type/action 等旧字段。
 EVENT_FILE_CHANGED = "file_changed"
 
 # 文件锁定
@@ -495,45 +440,6 @@ EVENT_FILE_UNLOCKED = "file_unlocked"
 #   - file_path: str - 冲突的文件路径
 #   - action: str - 后续动作（"retry" 表示 LLM 将重新读取）
 EVENT_FILE_CONFLICT_DETECTED = "file_conflict_detected"
-
-# ============================================================
-# 依赖健康检查事件
-# ============================================================
-
-# 依赖扫描开始
-# 携带数据：
-#   - project_path: str - 项目路径
-EVENT_DEPENDENCY_SCAN_STARTED = "dependency.scan_started"
-
-# 依赖扫描完成
-# 携带数据：
-#   - project_path: str - 项目路径
-#   - total_dependencies: int - 总依赖数
-#   - missing_count: int - 缺失依赖数
-#   - resolved_count: int - 已解析依赖数
-#   - has_issues: bool - 是否存在问题
-EVENT_DEPENDENCY_SCAN_COMPLETE = "dependency.scan_complete"
-
-# 依赖健康报告更新
-# 携带数据：
-#   - report_path: str - 报告文件路径
-#   - missing_dependencies: list - 缺失依赖列表
-#   - resolution_suggestions: list - 解析建议列表
-EVENT_DEPENDENCY_REPORT_UPDATED = "dependency.report_updated"
-
-# 依赖解析请求（用户请求尝试解析缺失依赖）
-# 携带数据：
-#   - dependency_id: str - 依赖项 ID
-#   - source: str - 解析来源（"local", "global_lib", "marketplace"）
-EVENT_DEPENDENCY_RESOLUTION_REQUESTED = "dependency.resolution_requested"
-
-# 依赖解析完成
-# 携带数据：
-#   - dependency_id: str - 依赖项 ID
-#   - success: bool - 是否成功
-#   - resolved_path: str - 解析后的路径（若成功）
-#   - error_message: str - 错误信息（若失败）
-EVENT_DEPENDENCY_RESOLUTION_COMPLETE = "dependency.resolution_complete"
 
 # ============================================================
 # 智能文件操作事件（File Intelligence）
@@ -561,16 +467,6 @@ EVENT_SYMBOL_LOCATED = "file_intelligence.symbol_located"
 EVENT_REFERENCES_FOUND = "file_intelligence.references_found"
 
 # ============================================================
-# 外部服务事件
-# ============================================================
-
-# 熔断器打开
-EVENT_SERVICE_CIRCUIT_OPEN = "service_circuit_open"
-
-# 熔断器关闭
-EVENT_SERVICE_CIRCUIT_CLOSE = "service_circuit_close"
-
-# ============================================================
 # 国际化事件
 # ============================================================
 
@@ -595,76 +491,6 @@ EVENT_ITERATION_USER_STOPPED = "iteration_user_stopped"
 #   - old_path: str - 旧文件路径
 #   - new_path: str - 新文件路径
 EVENT_ACTIVE_FILE_CHANGED = "active_file_changed"
-
-# 设计完成
-# 携带数据：
-#   - termination_reason: str - 终止原因（"user_accepted", "goals_satisfied", "max_checkpoints", "stagnated", "user_stopped"）
-#   - final_score: float - 最终性能得分
-#   - checkpoint_count: int - 总检查点次数
-#   - report_path: str - 生成的报告路径（若有）
-EVENT_DESIGN_COMPLETED = "design_completed"
-
-# 设计被接受
-EVENT_DESIGN_ACCEPTED = "design_accepted"
-
-# 设计被停止
-EVENT_DESIGN_STOPPED = "design_stopped"
-
-# ============================================================
-# 信息卡片事件（阶段九）
-# ============================================================
-
-# 信息卡片添加
-# 携带数据：
-#   - card_id: str - 卡片 ID
-#   - category: str - 信息类别
-#   - card_type: str - 卡片类型
-#   - session_id: str - 所属会话 ID
-EVENT_INFO_CARD_ADDED = "info_panel.card_added"
-
-# 信息卡片更新
-# 携带数据：
-#   - card_id: str - 卡片 ID
-#   - updates: dict - 更新的字段
-EVENT_INFO_CARD_UPDATED = "info_panel.card_updated"
-
-# 信息卡片移除
-# 携带数据：
-#   - card_id: str - 卡片 ID
-EVENT_INFO_CARD_REMOVED = "info_panel.card_removed"
-
-# 信息卡片置顶
-# 携带数据：
-#   - card_id: str - 卡片 ID
-#   - is_pinned: bool - 是否置顶
-EVENT_INFO_CARD_PINNED = "info_panel.card_pinned"
-
-# 信息卡片批量加载完成（会话切换后）
-# 携带数据：
-#   - session_id: str - 会话 ID
-#   - card_count: int - 加载的卡片数量
-EVENT_INFO_CARDS_LOADED = "info_panel.cards_loaded"
-
-# 信息面板类别切换
-# 携带数据：
-#   - previous_category: str - 之前的类别
-#   - current_category: str - 当前类别
-EVENT_INFO_PANEL_CATEGORY_CHANGED = "info_panel.category_changed"
-
-# 信息面板清空
-# 携带数据：
-#   - category: str - 被清空的类别（若为 None 表示全部清空）
-EVENT_INFO_PANEL_CLEARED = "info_panel.cleared"
-
-# ============================================================
-# 文件引用校验事件
-# ============================================================
-
-# UI 请求重新仿真（文件缺失时触发）
-# 携带数据：
-#   - reason: str - 触发原因（"sim_result_file_missing"）
-#   - missing_path: str - 缺失的文件路径
-EVENT_REQUEST_RESIMULATION = "ui.request_resimulation"
 
 # ============================================================
 # 参数调整事件
@@ -751,17 +577,6 @@ __all__ = [
     "EVENT_STATE_PROJECT_OPENED",
     "EVENT_STATE_PROJECT_CLOSED",
     "EVENT_STATE_CONFIG_CHANGED",
-    "EVENT_STATE_ITERATION_UPDATED",
-    # Worker 事件
-    "EVENT_WORKER_STARTED",
-    "EVENT_WORKER_PROGRESS",
-    "EVENT_WORKER_COMPLETE",
-    "EVENT_WORKER_ERROR",
-    # 异步任务事件
-    "EVENT_TASK_STARTED",
-    "EVENT_TASK_COMPLETED",
-    "EVENT_TASK_FAILED",
-    "EVENT_TASK_CANCELLED",
     "EVENT_LLM_CONFIG_CHANGED",
     "EVENT_MODEL_CHANGED",
     # 嵌入模型事件
@@ -781,7 +596,6 @@ __all__ = [
     "EVENT_MAIN_CIRCUIT_CHANGED",
     "EVENT_CIRCUIT_ANALYSIS_COMPLETE",
     "EVENT_SIMULATION_ERROR_COLLECTED",
-    "EVENT_SIM_RESULT_FILE_CREATED",
     "EVENT_EXECUTOR_REGISTERED",
     "EVENT_EXECUTOR_UNREGISTERED",
     "EVENT_WAVEFORM_DATA_REQUESTED",
@@ -804,25 +618,15 @@ __all__ = [
     # 错误处理事件
     "EVENT_ERROR_OCCURRED",
     "EVENT_ERROR_RECOVERED",
-    "EVENT_ASYNC_SLOT_ERROR",
     # 文件操作事件
     "EVENT_FILE_CHANGED",
     "EVENT_FILE_LOCKED",
     "EVENT_FILE_UNLOCKED",
     "EVENT_FILE_CONFLICT_DETECTED",
-    # 依赖健康检查事件
-    "EVENT_DEPENDENCY_SCAN_STARTED",
-    "EVENT_DEPENDENCY_SCAN_COMPLETE",
-    "EVENT_DEPENDENCY_REPORT_UPDATED",
-    "EVENT_DEPENDENCY_RESOLUTION_REQUESTED",
-    "EVENT_DEPENDENCY_RESOLUTION_COMPLETE",
     # 智能文件操作事件
     "EVENT_FILE_SEARCH_INDEX_UPDATED",
     "EVENT_SYMBOL_LOCATED",
     "EVENT_REFERENCES_FOUND",
-    # 外部服务事件
-    "EVENT_SERVICE_CIRCUIT_OPEN",
-    "EVENT_SERVICE_CIRCUIT_CLOSE",
     # 国际化事件
     "EVENT_LANGUAGE_CHANGED",
     # 迭代确认事件
@@ -830,19 +634,6 @@ __all__ = [
     "EVENT_ITERATION_USER_CONFIRMED",
     "EVENT_ITERATION_USER_STOPPED",
     "EVENT_ACTIVE_FILE_CHANGED",
-    "EVENT_DESIGN_COMPLETED",
-    "EVENT_DESIGN_ACCEPTED",
-    "EVENT_DESIGN_STOPPED",
-    # 信息卡片事件
-    "EVENT_INFO_CARD_ADDED",
-    "EVENT_INFO_CARD_UPDATED",
-    "EVENT_INFO_CARD_REMOVED",
-    "EVENT_INFO_CARD_PINNED",
-    "EVENT_INFO_CARDS_LOADED",
-    "EVENT_INFO_PANEL_CATEGORY_CHANGED",
-    "EVENT_INFO_PANEL_CLEARED",
-    # 文件引用校验事件
-    "EVENT_REQUEST_RESIMULATION",
     # 参数调整事件
     "EVENT_PARAMETERS_EXTRACTED",
     "EVENT_PARAMETER_VALUE_CHANGED",

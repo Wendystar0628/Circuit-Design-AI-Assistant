@@ -16,7 +16,7 @@ RAG 后台工作线程
 import logging
 import threading
 from concurrent.futures import Future, ThreadPoolExecutor
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, Set
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +49,9 @@ class RAGWorkerThread:
     def __init__(self):
         self._executor: Optional[ThreadPoolExecutor] = None
         self._ready = threading.Event()
+        self._lock = threading.RLock()
+        self._futures: Set[Future] = set()
+        self._stopping = False
 
     # ============================================================
     # 生命周期
@@ -61,20 +64,48 @@ class RAGWorkerThread:
         Returns:
             True（始终成功）
         """
-        self._executor = ThreadPoolExecutor(
-            max_workers=1,
-            thread_name_prefix="RAGWorker",
-        )
-        self._ready.set()
+        with self._lock:
+            if self._executor is not None:
+                return True
+            self._stopping = False
+            self._executor = ThreadPoolExecutor(
+                max_workers=1,
+                thread_name_prefix="RAGWorker",
+            )
+            self._ready.set()
         logger.info("RAGWorkerThread (ThreadPoolExecutor) ready")
         return True
 
     def stop(self) -> None:
-        """安全关闭工作线程池（等待当前任务完成）"""
-        if self._executor:
-            self._executor.shutdown(wait=True)
+        """Idempotently cancel queued work and wait for the active job.
+
+        A running synchronous HTTP/database call cannot be force-killed safely;
+        its project runtime is cancelled by ``RAGManager`` and checks that
+        token before committing any subsequent write or UI event.
+        """
+        with self._lock:
+            executor = self._executor
+            if executor is None:
+                return
+            self._stopping = True
             self._executor = None
-            logger.info("RAGWorkerThread stopped")
+            self._ready.clear()
+            futures = list(self._futures)
+
+        for future in futures:
+            future.cancel()
+        executor.shutdown(wait=True, cancel_futures=True)
+
+        with self._lock:
+            self._futures.clear()
+        logger.info("RAGWorkerThread stopped")
+
+    def cancel_pending(self) -> None:
+        """Cancel tasks which have not started yet."""
+        with self._lock:
+            futures = list(self._futures)
+        for future in futures:
+            future.cancel()
 
     # ============================================================
     # 任务提交
@@ -83,7 +114,8 @@ class RAGWorkerThread:
     @property
     def is_running(self) -> bool:
         """工作线程池是否就绪"""
-        return self._executor is not None
+        with self._lock:
+            return self._executor is not None and not self._stopping
 
     def submit(self, fn: Callable, *args: Any, **kwargs: Any) -> Optional[Future]:
         """
@@ -97,10 +129,23 @@ class RAGWorkerThread:
         Returns:
             concurrent.futures.Future；工作线程未就绪时返回 None
         """
-        if not self.is_running:
-            logger.error("RAGWorkerThread not running, cannot submit task")
-            return None
-        return self._executor.submit(fn, *args, **kwargs)
+        with self._lock:
+            executor = self._executor
+            if executor is None or self._stopping:
+                logger.error("RAGWorkerThread not running, cannot submit task")
+                return None
+            try:
+                future = executor.submit(fn, *args, **kwargs)
+            except RuntimeError:
+                return None
+            self._futures.add(future)
+
+        def _discard(done: Future) -> None:
+            with self._lock:
+                self._futures.discard(done)
+
+        future.add_done_callback(_discard)
+        return future
 
 
 # ============================================================

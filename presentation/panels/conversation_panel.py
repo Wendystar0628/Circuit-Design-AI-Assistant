@@ -111,6 +111,7 @@ class ConversationPanel(QWidget):
             on_notice_requested=self._open_notice_dialog,
             on_confirm_requested=self._open_confirm_dialog,
             logger_getter=lambda: self.logger,
+            can_mutate_session=self._can_mutate_conversation_session,
         )
         self._rag_controller = ConversationRagController(
             rag_manager_getter=lambda: self.rag_manager,
@@ -618,6 +619,10 @@ class ConversationPanel(QWidget):
     def cleanup(self) -> None:
         """清理资源"""
         self._unsubscribe_events()
+        # A manual RAG query is an asyncio task owned by this panel. Cancel it
+        # before the WebEngine host and callbacks are disposed; the central
+        # runtime shutdown remains only the final safety net.
+        self._rag_controller.reset_runtime_state(clear_search=True)
         service = self._pending_workspace_edit_service
         if service is not None:
             try:
@@ -938,7 +943,19 @@ class ConversationPanel(QWidget):
     def _on_send_requested(self, text: str, composer_state: Dict[str, Any]) -> None:
         if self._send_in_progress or self._rollback_in_progress:
             return
-        asyncio.create_task(self._send_message(text, composer_state))
+        # Claim the submission synchronously.  WebChannel can deliver another
+        # command before the scheduled coroutine gets its first event-loop
+        # turn; without this guard a new-session command could overtake send.
+        self._send_in_progress = True
+        self._sync_input_action_state()
+        try:
+            asyncio.create_task(
+                self._send_message(text, composer_state, send_claimed=True)
+            )
+        except Exception:
+            self._send_in_progress = False
+            self._sync_input_action_state()
+            raise
 
     @pyqtSlot()
     def _on_stop_requested(self) -> None:
@@ -966,10 +983,32 @@ class ConversationPanel(QWidget):
             self._update_authoritative_frontend_state()
             return
 
+    def _can_mutate_conversation_session(self) -> tuple[bool, str]:
+        if self._send_in_progress or self._rollback_in_progress:
+            return False, self._get_text(
+                "dialog.history.operation_in_progress",
+                "当前对话操作尚未完成，请稍后再试",
+            )
+        view_model = self.view_model
+        if view_model is None:
+            return False, self._get_text(
+                "dialog.history.service_unavailable",
+                "对话服务尚未初始化",
+            )
+        return view_model.can_change_session()
+
     def _on_history_export_path_pick_requested(self) -> None:
         self._history_controller.pick_export_path(self)
 
     def request_history(self) -> None:
+        allowed, message = self._can_mutate_conversation_session()
+        if not allowed:
+            self._open_notice_dialog(
+                message,
+                title=self._get_text("dialog.warning.title", "警告"),
+                tone="error",
+            )
+            return
         if self._model_config_overlay_state.get("is_open", False):
             self._close_model_config_overlay()
         self._history_controller.refresh()
@@ -1012,7 +1051,7 @@ class ConversationPanel(QWidget):
             return
         if self._history_controller.handle_confirm_acceptance(kind, payload):
             return
-        if self._rag_controller.handle_confirm_acceptance(kind):
+        if self._rag_controller.handle_confirm_acceptance(kind, payload):
             return
 
     def _on_notice_dialog_close_requested(self) -> None:
@@ -1147,10 +1186,14 @@ class ConversationPanel(QWidget):
         target_message_id = str(
             self._rollback_overlay_state.get("target_message_id", "") or ""
         )
-        if not target_message_id:
+        preview = self._rollback_overlay_state.get("preview")
+        operation_token = str(getattr(preview, "operation_token", "") or "")
+        if not target_message_id or not operation_token:
             return
         self._close_rollback_overlay()
-        asyncio.create_task(self._perform_rollback(target_message_id))
+        asyncio.create_task(
+            self._perform_rollback(target_message_id, operation_token)
+        )
 
     def _open_image_preview(self, image_path: str) -> None:
         if not image_path or not os.path.isfile(image_path):
@@ -1182,36 +1225,43 @@ class ConversationPanel(QWidget):
 
     # ============================================================
 
-    async def _send_message(self, text: str, composer_state: Optional[Dict[str, Any]] = None) -> None:
+    async def _send_message(
+        self,
+        text: str,
+        composer_state: Optional[Dict[str, Any]] = None,
+        *,
+        send_claimed: bool = False,
+    ) -> None:
         """发送消息"""
-        if self._send_in_progress:
-            return
-
-        payload = composer_state if isinstance(composer_state, dict) else {}
-        attachments = []
-        for raw_attachment in payload.get("attachments", []) or []:
-            try:
-                attachments.append(
-                    ConversationAttachmentSupport.attachment_from_payload(raw_attachment)
-                )
-            except ConversationAttachmentError:
-                continue
-        if not text.strip() and not attachments:
-            return
-
-        if self.view_model and not self.view_model.can_send:
-            return
-
-        if self.view_model:
+        if not send_claimed:
+            if self._send_in_progress or self._rollback_in_progress:
+                return
             self._send_in_progress = True
             self._sync_input_action_state()
-            try:
+
+        try:
+            payload = composer_state if isinstance(composer_state, dict) else {}
+            attachments = []
+            for raw_attachment in payload.get("attachments", []) or []:
+                try:
+                    attachments.append(
+                        ConversationAttachmentSupport.attachment_from_payload(raw_attachment)
+                    )
+                except ConversationAttachmentError:
+                    continue
+            if not text.strip() and not attachments:
+                return
+
+            if self.view_model and not self.view_model.can_send:
+                return
+
+            if self.view_model:
                 success = await self.view_model.send_message(text, attachments)
                 if success:
                     self._draft_clear_nonce += 1
-            finally:
-                self._send_in_progress = False
-                self._sync_input_action_state()
+        finally:
+            self._send_in_progress = False
+            self._sync_input_action_state()
 
     async def _confirm_and_perform_rollback(self, message_id: str) -> None:
         if not message_id or self.view_model is None:
@@ -1237,8 +1287,12 @@ class ConversationPanel(QWidget):
         }
         self._update_authoritative_frontend_state()
 
-    async def _perform_rollback(self, message_id: str) -> None:
-        if not message_id or self.view_model is None:
+    async def _perform_rollback(
+        self,
+        message_id: str,
+        operation_token: str,
+    ) -> None:
+        if not message_id or not operation_token or self.view_model is None:
             return
         if self._rollback_in_progress or self._send_in_progress:
             return
@@ -1246,7 +1300,10 @@ class ConversationPanel(QWidget):
         self._rollback_in_progress = True
         self._sync_input_action_state()
         try:
-            success, error_message = await self.view_model.rollback_to_message(message_id)
+            success, error_message = await self.view_model.rollback_to_message(
+                message_id,
+                operation_token,
+            )
             if not success:
                 self._open_notice_dialog(
                     error_message or self._get_text("msg.rollback_failed", "撤回失败"),
@@ -1316,6 +1373,15 @@ class ConversationPanel(QWidget):
         4. 发布 EVENT_SESSION_CHANGED 事件
         5. UI 组件订阅事件后自动刷新
         """
+        allowed, message = self._can_mutate_conversation_session()
+        if not allowed:
+            self._open_notice_dialog(
+                message,
+                title=self._get_text("dialog.warning.title", "警告"),
+                tone="error",
+            )
+            return
+
         if self.view_model:
             success, new_session_name = self.view_model.request_new_session()
             

@@ -15,6 +15,8 @@ from domain.simulation.spice.schematic_builder import SpiceSchematicBuilder
 from domain.simulation.spice.source_patcher import SpiceSourcePatcher
 from presentation.panels.simulation.simulation_frontend_state_serializer import SimulationFrontendStateSerializer
 from shared.event_types import EVENT_FILE_CHANGED
+from shared.file_change import extract_file_change
+from shared.path_utils import normalize_identity_path
 
 
 _DEBOUNCE_INTERVAL_MS = 250
@@ -39,6 +41,7 @@ class SpiceSchematicDocument(QObject):
         self._watched_file_keys: Set[str] = set()
         self._subscribed_to_file_events = False
         self._event_bus = None
+        self._file_manager = None
 
         self._authoritative_schematic_document = self._state_serializer.serialize_schematic_document()
         self._authoritative_schematic_write_result = self._state_serializer.serialize_schematic_write_result()
@@ -272,18 +275,42 @@ class SpiceSchematicDocument(QObject):
                 pass
         return self._event_bus
 
+    def _get_file_manager(self):
+        if self._file_manager is None:
+            try:
+                from shared.service_locator import ServiceLocator
+                from shared.service_names import SVC_FILE_MANAGER
+
+                self._file_manager = ServiceLocator.get_optional(SVC_FILE_MANAGER)
+            except Exception:
+                pass
+        return self._file_manager
+
     def _on_file_changed(self, event_data: Dict[str, Any]) -> None:
         if not self._current_file_path or not self._watched_file_keys:
             return
-        data = event_data.get("data", event_data) if isinstance(event_data, dict) else event_data
-        if not isinstance(data, dict):
+        change = extract_file_change(event_data)
+        manager = self._get_file_manager()
+        if change is None or manager is None:
             return
-        if bool(data.get("is_directory")):
+        try:
+            manager_root = manager.get_work_dir()
+            manager_generation = int(manager.project_generation)
+        except (AttributeError, TypeError, ValueError):
+            return
+        if (
+            manager_root is None
+            or normalize_identity_path(change.project_root)
+            != normalize_identity_path(str(manager_root))
+            or change.generation != manager_generation
+        ):
+            return
+        if change.is_directory:
             return
 
         candidate_keys = set()
-        path = str(data.get("path") or "")
-        dest_path = str(data.get("dest_path") or "")
+        path = change.path
+        dest_path = change.dest_path
         if path:
             candidate_keys.add(self._normalize_watch_key(path))
         if dest_path:
@@ -292,7 +319,7 @@ class SpiceSchematicDocument(QObject):
         if not candidate_keys.intersection(self._watched_file_keys):
             return
 
-        self._pending_refresh_reason = str(data.get("event_type") or "file_changed")
+        self._pending_refresh_reason = change.operation
         self._refresh_timer.start(_DEBOUNCE_INTERVAL_MS)
 
     def _flush_debounced_refresh(self) -> None:

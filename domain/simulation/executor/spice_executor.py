@@ -40,6 +40,7 @@ SPICE 仿真执行器
 import logging
 import os
 import re
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -102,6 +103,14 @@ DEFAULT_TIMEOUT = 300
 
 # 泛型类型变量
 T = TypeVar('T')
+
+
+# ngspice and ``os.chdir`` both expose process-wide mutable state.  The
+# wrapper's per-call locks cannot make the multi-step
+# destroy -> load -> run -> setplot -> read-vectors transaction atomic, so
+# every SpiceExecutor instance shares one lock around the *entire* execute
+# call.  Non-SPICE executors remain free to run concurrently in the job pool.
+_SPICE_EXECUTION_LOCK = threading.RLock()
 
 
 # ============================================================
@@ -194,6 +203,21 @@ class SpiceExecutor(SimulationExecutor):
         return SUPPORTED_ANALYSES.copy()
     
     def execute(
+        self,
+        file_path: str,
+        analysis_config: Optional[Dict[str, Any]] = None
+    ) -> SimulationResult:
+        """Execute one complete SPICE session under the process-wide lock.
+
+        The critical section deliberately includes validation, working-
+        directory switching, ngspice reset/load/run and all plot/vector
+        reads.  Narrower locks still allow another job to replace ngspice's
+        active circuit between two individually protected API calls.
+        """
+        with _SPICE_EXECUTION_LOCK:
+            return self._execute_exclusive(file_path, analysis_config)
+
+    def _execute_exclusive(
         self,
         file_path: str,
         analysis_config: Optional[Dict[str, Any]] = None

@@ -18,9 +18,8 @@
 
 线程安全说明：
 - FileLock 基于 threading.Lock，锁的获取和释放必须在同一线程内闭环
-- 通过 asyncio.to_thread() 调用时，锁操作在工作线程内完成，不会跨线程
-- UI 线程禁止直接调用持有锁的同步方法，避免与工作线程竞争
-- 若 UI 线程需要访问文件，必须通过 AsyncFileOps 异步接口
+- 异步调用者若需卸载，必须把“获取—操作—释放”整段放在同一个
+  ``asyncio.to_thread()`` 可调用中，不能分开提交
 
 使用示例：
     from infrastructure.persistence.file_lock import FileLock
@@ -39,9 +38,8 @@
         finally:
             lock.release()
     
-    # 方式三：在异步上下文中使用（通过 AsyncFileOps）
-    # 锁操作在工作线程内闭环，主线程不阻塞
-    content = await async_file_ops.read_file_async("main.cir")
+    # 异步路径将整个临界区作为一个函数卸载：
+    content = await asyncio.to_thread(read_under_lock, path)
 """
 
 import threading

@@ -194,18 +194,27 @@ def _get_huggingface_cache_path(model_type: ModelType) -> Optional[Path]:
 def _setup_environment() -> None:
     """
     设置 HuggingFace 相关的环境变量
-    
-    配置离线模式和缓存路径，优先使用本地模型
+
+    配置离线模式和缓存路径，优先使用本地模型。
+
+    打包环境（PyInstaller）: 强制离线模式，不自动下载模型。
+    模型文件未内嵌到打包程序中以控制体积。
     """
     base_path = _get_base_path()
     vendor_models_path = base_path / VENDOR_MODELS_DIR
-    
-    # 如果本地模型目录存在，设置为优先缓存路径
-    if vendor_models_path.exists():
-        # 设置 TRANSFORMERS_OFFLINE=1 可以强制离线模式
-        # 但我们不强制，允许回退到在线下载
+
+    if _is_packaged():
+        # 打包环境：强制离线模式，阻止自动下载模型
+        # 模型文件未内嵌到打包程序中以减少体积
+        os.environ["TRANSFORMERS_OFFLINE"] = "1"
+        os.environ["HF_HUB_OFFLINE"] = "1"
+        # 同时清除可能触发自动下载的 token
+        os.environ.pop("HF_TOKEN", None)
+        os.environ.pop("HUGGINGFACE_HUB_TOKEN", None)
+    elif vendor_models_path.exists():
+        # 开发环境：本地模型目录存在，优先使用
         pass
-    
+
     # 禁用 symlinks（Windows 兼容性）
     os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 

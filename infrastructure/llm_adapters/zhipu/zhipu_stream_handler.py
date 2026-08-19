@@ -3,14 +3,12 @@
 
 职责边界：
 - 纯粹从一个 httpx 流式响应读取 SSE 行并增量解析为 ``StreamChunk``。
-- **不感知取消语义**。取消由 ``ZhipuClient.chat_stream`` 通过
-  watcher + ``response.aclose()`` 处理；当 response 被外部关闭时，
-  ``response.aiter_text()`` 下一次 await 会抛 ``httpx.HTTPError``，
-  由 ``chat_stream`` 的 try/except 吞掉作为正常结束。
-- 不使用 ``contextlib.aclosing``：整个设计刻意避免 async generator
-  的 aclose 路径（它在 qasync + anyio + httpcore 组合下会触发
-  ``async generator ignored GeneratorExit`` 与 ``RuntimeError: no
-  running event loop``）。
+- **不感知取消语义**。上层通过 ``asyncio.Task.cancel()`` 取消拥有
+  流消费过程的任务；``CancelledError`` 从当前 await 点沿调用栈传播，
+  本层不捕获、不转换，也不通过 watcher/``response.aclose()`` 建立
+  额外取消通道。
+- 只有服务端明确发送 ``[DONE]`` 或带 ``finish_reason`` 的终止块才
+  算协议正常完成；底层字节流提前 EOF 会抛解析异常。
 """
 
 from __future__ import annotations
@@ -19,7 +17,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Dict, List, Optional
 
-from infrastructure.llm_adapters.base_client import StreamChunk
+from infrastructure.llm_adapters.base_client import ResponseParseError, StreamChunk
 from infrastructure.llm_adapters.zhipu.zhipu_response_parser import ZhipuResponseParser
 
 
@@ -49,9 +47,8 @@ class ZhipuStreamHandler:
         """迭代 httpx 流式响应，累积 SSE 行并产出 ``StreamChunk``。
 
         异常不在本地吞：
-        - ``httpx.HTTPError`` / ``httpx.StreamError`` 表示 response 已
-          被外部关闭（cancel 路径），由调用者 ``chat_stream`` 处理。
-        - 其他异常向上冒泡。
+        - ``CancelledError`` 由拥有任务的调用者发起并继续向上传播。
+        - HTTP、SSE 解析错误和 premature EOF 全部向上冒泡。
         """
         state = StreamState()
         buffer = ""
@@ -69,11 +66,11 @@ class ZhipuStreamHandler:
             if stream_chunk:
                 yield stream_chunk
 
-        # 若服务端未显式发 finished 标记，补一个
+        # 字节流耗尽不等于 SSE 协议正常结束。若服务端既没有发送
+        # [DONE]，也没有给出 finish_reason，则这是 premature EOF。
         if not state.is_finished:
-            yield StreamChunk(
-                is_finished=True,
-                usage=state.usage,
+            raise ResponseParseError(
+                "Zhipu stream ended before a terminal frame"
             )
 
     def _process_line(

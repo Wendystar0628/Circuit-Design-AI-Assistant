@@ -19,6 +19,7 @@ export function ConversationHeader({
   const sessionName = state.session.name || untitledSessionLabel
   const [draftName, setDraftName] = useState(sessionName)
   const [isEditing, setIsEditing] = useState(false)
+  const sessionActionsDisabled = !bridgeConnected || state.view_flags.is_busy
 
   useEffect(() => {
     if (!isEditing) {
@@ -85,7 +86,7 @@ export function ConversationHeader({
           type="button"
           className="secondary-button conversation-header__button"
           onClick={() => bridge?.requestNewConversation?.()}
-          disabled={!bridgeConnected}
+          disabled={sessionActionsDisabled}
         >
           {getUiText(state.ui_text, 'btn.new_conversation', 'New Conversation')}
         </button>
@@ -93,7 +94,7 @@ export function ConversationHeader({
           type="button"
           className="secondary-button conversation-header__button"
           onClick={() => bridge?.requestHistory?.()}
-          disabled={!bridgeConnected}
+          disabled={sessionActionsDisabled}
         >
           {getUiText(state.ui_text, 'btn.history', 'History')}
         </button>

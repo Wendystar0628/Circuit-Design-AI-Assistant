@@ -3,8 +3,8 @@
 文件搜索服务 - 精确搜索引擎（基础设施层）
 
 架构定位：
-- 作为统一搜索架构的底层精确搜索引擎
-- 被 UnifiedSearchService 调用，不直接暴露给 LLM 工具层
+- 当前注册并可用的项目级精确搜索服务
+- Agent 工具仍直接使用 grep/find；尚未接入统一搜索门面
 - 专注于实时、精确的文件搜索能力
 
 职责边界：
@@ -15,12 +15,7 @@
 
 不负责：
 - 语义搜索（由 RAGManager 向量检索负责）
-- 搜索结果融合（由 UnifiedSearchService 负责）
-- Token 预算管理（由 UnifiedSearchService 负责）
-
-被调用方：
-- UnifiedSearchService: 统一搜索门面，协调精确搜索和语义搜索
-- IDE 功能: 文件定位、符号跳转等 IDE 原生功能
+- 跨引擎结果融合或 Token 预算管理（当前没有启用统一门面）
 
 初始化顺序：
 - Phase 3 延迟初始化，依赖 FileManager、Logger
@@ -83,6 +78,8 @@ class FileNameIndex:
         self._lock = threading.Lock()
         # 是否已构建
         self._built = False
+        # This index is valid for exactly one immutable project root.
+        self._project_root: Optional[Path] = None
     
     def build(
         self,
@@ -102,6 +99,7 @@ class FileNameIndex:
         if exclude_patterns is None:
             exclude_patterns = ["__pycache__", ".git", ".circuit_ai/temp"]
         
+        work_dir = Path(work_dir).resolve()
         with self._lock:
             self._files.clear()
             self._name_index.clear()
@@ -122,6 +120,7 @@ class FileNameIndex:
             
             self._build_time = time.time() - start_time
             self._built = True
+            self._project_root = work_dir
             
             return len(self._files)
     
@@ -134,6 +133,8 @@ class FileNameIndex:
     
     def _add_file(self, relative_path: str, absolute_path: str) -> None:
         """添加文件到索引"""
+        if relative_path in self._files:
+            self._remove_file(relative_path)
         self._files[relative_path] = absolute_path
         
         file_name = Path(relative_path).name.lower()
@@ -149,22 +150,67 @@ class FileNameIndex:
     def remove_file(self, relative_path: str) -> None:
         """增量删除文件"""
         with self._lock:
-            if relative_path in self._files:
-                del self._files[relative_path]
-                
-                file_name = Path(relative_path).name.lower()
-                if file_name in self._name_index:
-                    try:
-                        self._name_index[file_name].remove(relative_path)
-                        if not self._name_index[file_name]:
-                            del self._name_index[file_name]
-                    except ValueError:
-                        pass
+            self._remove_file(relative_path)
+
+    def _remove_file(self, relative_path: str) -> None:
+        if relative_path in self._files:
+            del self._files[relative_path]
+
+            file_name = Path(relative_path).name.lower()
+            if file_name in self._name_index:
+                try:
+                    self._name_index[file_name].remove(relative_path)
+                    if not self._name_index[file_name]:
+                        del self._name_index[file_name]
+                except ValueError:
+                    pass
     
     def update_file(self, relative_path: str, absolute_path: str) -> None:
         """更新文件（先删后加）"""
-        self.remove_file(relative_path)
-        self.add_file(relative_path, absolute_path)
+        with self._lock:
+            self._remove_file(relative_path)
+            self._add_file(relative_path, absolute_path)
+
+    def remove_tree(self, relative_path: str) -> None:
+        """Remove a file or all indexed files below a directory path."""
+
+        normalized = str(Path(relative_path))
+        prefix = normalized.rstrip("/\\") + "\\"
+        alternate_prefix = normalized.rstrip("/\\") + "/"
+        with self._lock:
+            matches = [
+                candidate for candidate in self._files
+                if candidate == normalized
+                or candidate.startswith(prefix)
+                or candidate.startswith(alternate_prefix)
+            ]
+            for candidate in matches:
+                self._remove_file(candidate)
+
+    def reset(self) -> None:
+        """Discard the index and its project identity."""
+
+        with self._lock:
+            self._files.clear()
+            self._name_index.clear()
+            self._build_time = 0.0
+            self._built = False
+            self._project_root = None
+
+    def is_for_root(self, work_dir: Union[str, Path, None]) -> bool:
+        if work_dir is None:
+            return False
+        try:
+            candidate = Path(work_dir).resolve()
+        except (OSError, RuntimeError, ValueError):
+            return False
+        with self._lock:
+            return self._built and self._project_root == candidate
+
+    @property
+    def project_root(self) -> Optional[Path]:
+        with self._lock:
+            return self._project_root
     
     def search_by_name(
         self,
@@ -282,6 +328,7 @@ class FileSearchService:
         
         # 事件订阅状态
         self._subscribed = False
+        self._project_generation = 0
     
     @property
     def content_searcher(self) -> ContentSearcher:
@@ -359,12 +406,16 @@ class FileSearchService:
                     self.logger.warning("无法构建索引：工作目录未设置")
                 return 0
         
-        work_dir = Path(work_dir)
+        work_dir = Path(work_dir).resolve()
         
         if self.logger:
             self.logger.info(f"开始构建文件索引: {work_dir}")
         
         count = self._file_index.build(work_dir, self.DEFAULT_EXCLUDE_PATTERNS)
+        if self.file_manager is not None:
+            self._project_generation = int(
+                getattr(self.file_manager, "project_generation", 0)
+            )
         
         if self.logger:
             self.logger.info(
@@ -383,8 +434,20 @@ class FileSearchService:
             return
         
         try:
-            from shared.event_types import EVENT_FILE_CHANGED
+            from shared.event_types import (
+                EVENT_FILE_CHANGED,
+                EVENT_STATE_PROJECT_CLOSED,
+                EVENT_STATE_PROJECT_OPENED,
+            )
             self.event_bus.subscribe(EVENT_FILE_CHANGED, self._on_file_changed)
+            self.event_bus.subscribe(
+                EVENT_STATE_PROJECT_OPENED,
+                self._on_project_opened,
+            )
+            self.event_bus.subscribe(
+                EVENT_STATE_PROJECT_CLOSED,
+                self._on_project_closed,
+            )
             self._subscribed = True
             
             if self.logger:
@@ -395,26 +458,114 @@ class FileSearchService:
     
     def _on_file_changed(self, event_data: Dict[str, Any]) -> None:
         """处理文件变更事件"""
-        data = event_data.get("data", {})
-        path = data.get("path", "")
-        operation = data.get("operation", "")
-        
-        if not path:
+        from shared.file_change import extract_file_change
+
+        change = extract_file_change(event_data)
+        if change is None:
             return
-        
-        # 获取相对路径
-        if self.file_manager is not None:
-            relative_path = self.file_manager.to_relative_path(path)
-        else:
-            relative_path = path
-        
-        # 更新索引
-        if operation == "create":
-            self._file_index.add_file(relative_path, path)
-        elif operation == "delete":
-            self._file_index.remove_file(relative_path)
-        elif operation == "update":
-            self._file_index.update_file(relative_path, path)
+
+        index_root = self._file_index.project_root
+        if index_root is None:
+            return
+        try:
+            if Path(change.project_root).resolve() != index_root:
+                return
+        except (OSError, RuntimeError, ValueError):
+            return
+        if change.generation != self._project_generation:
+            return
+
+        relative_path = self._relative_to_index(change.path, index_root)
+        if relative_path is None:
+            return
+
+        if change.operation == "delete":
+            self._file_index.remove_tree(relative_path)
+            return
+
+        if change.operation == "move":
+            self._file_index.remove_tree(relative_path)
+            dest_relative = self._relative_to_index(change.dest_path, index_root)
+            if dest_relative is not None:
+                self._add_path_to_index(Path(change.dest_path), dest_relative, index_root)
+            return
+
+        self._add_path_to_index(Path(change.path), relative_path, index_root)
+
+    def _on_project_opened(self, event_data: Dict[str, Any]) -> None:
+        data = event_data.get("data", event_data)
+        root = data.get("path") if isinstance(data, dict) else None
+        if not root:
+            return
+        self.ensure_for_root(root)
+
+    def _on_project_closed(self, event_data: Dict[str, Any]) -> None:
+        data = event_data.get("data", event_data)
+        root = data.get("path") if isinstance(data, dict) else None
+        current = self._file_index.project_root
+        if current is None:
+            return
+        if root:
+            try:
+                if Path(root).resolve() != current:
+                    return
+            except (OSError, RuntimeError, ValueError):
+                return
+        self._file_index.reset()
+        self._project_generation = 0
+
+    def ensure_for_root(self, work_dir: Union[str, Path, None] = None) -> int:
+        """Ensure the cached index belongs to the current project root."""
+
+        if work_dir is None and self.file_manager is not None:
+            work_dir = self.file_manager.get_work_dir()
+        if work_dir is None:
+            self._file_index.reset()
+            self._project_generation = 0
+            return 0
+        if self._file_index.is_for_root(work_dir):
+            if self.file_manager is not None:
+                self._project_generation = int(
+                    getattr(self.file_manager, "project_generation", 0)
+                )
+            return self._file_index.file_count
+        return self.build_index(work_dir)
+
+    def _relative_to_index(self, path: str, root: Path) -> Optional[str]:
+        try:
+            return str(Path(path).resolve().relative_to(root))
+        except (OSError, RuntimeError, ValueError):
+            return None
+
+    def _add_path_to_index(
+        self,
+        path: Path,
+        relative_path: str,
+        root: Path,
+    ) -> None:
+        if path.is_file():
+            if not self._file_index._should_exclude(
+                relative_path,
+                self.DEFAULT_EXCLUDE_PATTERNS,
+            ):
+                self._file_index.update_file(relative_path, str(path))
+            return
+        if path.is_dir():
+            for child in path.rglob("*"):
+                if not child.is_file():
+                    continue
+                child_relative = str(child.relative_to(root))
+                if self._file_index._should_exclude(
+                    child_relative,
+                    self.DEFAULT_EXCLUDE_PATTERNS,
+                ):
+                    continue
+                self._file_index.update_file(child_relative, str(child))
+
+    def _ensure_current_index(self) -> None:
+        root = self.file_manager.get_work_dir() if self.file_manager is not None else None
+        if not self._file_index.is_for_root(root):
+            self.ensure_for_root(root)
     
     # ============================================================
     # 主搜索入口
@@ -490,8 +641,7 @@ class FileSearchService:
             List[SearchResult]: 搜索结果列表
         """
         # 确保索引已构建
-        if not self._file_index.is_built:
-            self.build_index()
+        self._ensure_current_index()
         
         # 从索引搜索
         matches = self._file_index.search_by_name(
@@ -531,7 +681,7 @@ class FileSearchService:
         在单个文件内搜索
         
         委托给 ContentSearcher 执行，跳过索引构建，直接读取文件。
-        用于 UnifiedSearchService.search_in_file() 的精确搜索部分。
+        作为当前文件的精确内容搜索入口。
         
         Args:
             file_path: 文件路径（相对或绝对）
@@ -576,8 +726,7 @@ class FileSearchService:
             List[SearchResult]: 搜索结果列表
         """
         # 确保索引已构建
-        if not self._file_index.is_built:
-            self.build_index()
+        self._ensure_current_index()
         
         # 构建内容搜索选项
         search_options = ContentSearchOptions(
@@ -651,8 +800,7 @@ class FileSearchService:
             List[SearchResult]: 搜索结果列表
         """
         # 确保索引已构建
-        if not self._file_index.is_built:
-            self.build_index()
+        self._ensure_current_index()
         
         results = []
         files = self._file_index.get_all_files()
@@ -792,6 +940,8 @@ class FileSearchService:
             "file_count": self._file_index.file_count,
             "is_built": self._file_index.is_built,
             "build_time_ms": self._file_index.build_time_ms,
+            "project_root": str(self._file_index.project_root or ""),
+            "generation": self._project_generation,
         }
 
 

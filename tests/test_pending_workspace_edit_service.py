@@ -161,7 +161,14 @@ def test_file_watcher_skips_recent_file_manager_echo(tmp_path: Path, qapp):
     assert len(event_bus.published) == 1
 
     receiver = FileWatchReceiver()
-    receiver.on_file_event(str(file_path), "modified", False, "")
+    receiver.on_file_event(
+        str(file_path),
+        "modified",
+        False,
+        "",
+        str(tmp_path),
+        file_manager.project_generation,
+    )
     receiver._flush_debounce_buffer()
 
     assert len(event_bus.published) == 1

@@ -53,6 +53,8 @@ OUTCOME_COMPLETED = "completed"
 OUTCOME_STOPPED = "stopped"
 OUTCOME_ERROR = "error"
 
+ACTIVE_GENERATION_ERROR = "A generation is already running"
+
 
 class LLMExecutor(QObject):
     """LLM 调用执行器。
@@ -111,8 +113,76 @@ class LLMExecutor(QObject):
         task = self._active_task
         return task is not None and not task.done()
 
+    def start_agent(
+        self,
+        task_id: str,
+        messages: List[Dict[str, Any]],
+        model: str,
+        thinking: bool = False,
+    ) -> Optional[asyncio.Task]:
+        """Schedule and synchronously claim one Agent task.
+
+        ``@asyncSlot`` creates an ``asyncio.Task`` before ``execute_agent``
+        gets its first event-loop turn.  Claiming that returned task in this
+        same synchronous call closes the project/session transition window in
+        which ``request_stop`` previously had no task handle to cancel.
+        """
+        active_task = self._active_task
+        if active_task is not None and not active_task.done():
+            active_task_id = self._active_task_id or "unknown"
+            error_message = (
+                f"{ACTIVE_GENERATION_ERROR}: active_task_id={active_task_id}"
+            )
+            self.generation_finished.emit(
+                task_id,
+                {
+                    "outcome": OUTCOME_ERROR,
+                    "error_message": error_message,
+                    "rejected": True,
+                    "active_task_id": active_task_id,
+                },
+            )
+            return None
+
+        scheduled_task = self.execute_agent(
+            task_id=task_id,
+            messages=messages,
+            model=model,
+            thinking=thinking,
+        )
+        if not isinstance(scheduled_task, asyncio.Task):
+            self._emit_error(task_id, "Agent execution could not be scheduled")
+            return None
+
+        self._active_task = scheduled_task
+        self._active_task_id = task_id
+        scheduled_task.add_done_callback(self._on_claimed_task_done)
+        return scheduled_task
+
+    def _on_claimed_task_done(self, task: asyncio.Task) -> None:
+        """Settle a task cancelled before ``execute_agent`` could enter.
+
+        Once the coroutine body has entered, its ``except/finally`` emits the
+        terminal result and releases the slot before this callback runs.  The
+        slot still belonging to *task* here therefore identifies the narrow
+        pre-entry path.  Emit the same stopped terminal exactly once before
+        releasing ownership; an old callback must never clear or signal for a
+        newer owner.
+        """
+        if self._active_task is not task or not task.done():
+            return
+
+        task_id = self._active_task_id
+        if task.cancelled() and task_id:
+            self.generation_finished.emit(
+                task_id,
+                {"outcome": OUTCOME_STOPPED},
+            )
+        self._active_task = None
+        self._active_task_id = None
+
     @pyqtSlot()
-    def request_stop(self) -> bool:
+    def request_stop(self, expected_task_id: Optional[str] = None) -> bool:
         """取消当前活跃的生成 task。
 
         这是**唯一**的停止入口。通过 ``task.cancel()`` 让
@@ -128,10 +198,54 @@ class LLMExecutor(QObject):
             if self.logger:
                 self.logger.debug("request_stop called but no active task")
             return False
+        if expected_task_id and expected_task_id != self._active_task_id:
+            if self.logger:
+                self.logger.warning(
+                    "Ignored stop request for stale task: expected=%s, active=%s",
+                    expected_task_id,
+                    self._active_task_id,
+                )
+            return False
         task.cancel()
         if self.logger:
             self.logger.info(f"Stop requested for task: {self._active_task_id}")
         return True
+
+    async def shutdown(self) -> None:
+        """Cancel and await the active generation, if any.
+
+        This is the lifecycle boundary for application shutdown.  It is
+        intentionally idempotent and identity-safe so multiple shutdown
+        callers cannot clear a newer task by awaiting an older snapshot.
+        """
+        task = self._active_task
+        if task is None:
+            return
+
+        try:
+            current_task = asyncio.current_task()
+        except RuntimeError:
+            current_task = None
+        if task is current_task:
+            if self.logger:
+                self.logger.warning("LLMExecutor.shutdown cannot await its own task")
+            return
+
+        if not task.done():
+            task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            # A task cancelled before execute_agent entered cannot emit its
+            # normal stopped terminal event; shutdown still owns completion.
+            pass
+        except Exception as exc:
+            if self.logger:
+                self.logger.warning(f"LLM shutdown observed task failure: {exc}")
+        finally:
+            if self._active_task is task and task.done():
+                self._active_task = None
+                self._active_task_id = None
 
     @asyncSlot()
     async def execute_agent(
@@ -143,16 +257,48 @@ class LLMExecutor(QObject):
     ) -> None:
         """以 Agent 模式执行 LLM 调用（带工具自动调用循环）。
 
-        本方法由 qasync 包装为 asyncio.Task 运行。方法入口记录
-        ``current_task()`` 作为活跃 task 句柄，退出前在 ``finally``
-        里清空——这保证 ``request_stop`` 看到的 task 一定还活着。
+        UI callers use :meth:`start_agent`, which claims qasync's returned
+        task synchronously.  Direct callers remain supported; method entry
+        adopts ``current_task()`` when no earlier claim exists.
         """
+        owning_task = asyncio.current_task()
+        active_task = self._active_task
+        if (
+            active_task is not None
+            and active_task is not owning_task
+            and not active_task.done()
+        ):
+            active_task_id = self._active_task_id or "unknown"
+            error_message = (
+                f"{ACTIVE_GENERATION_ERROR}: active_task_id={active_task_id}"
+            )
+            if self.logger:
+                self.logger.warning(
+                    "Rejected concurrent Agent execution: requested=%s, active=%s",
+                    task_id,
+                    active_task_id,
+                )
+            self.generation_finished.emit(
+                task_id,
+                {
+                    "outcome": OUTCOME_ERROR,
+                    "error_message": error_message,
+                    "rejected": True,
+                    "active_task_id": active_task_id,
+                },
+            )
+            return
+
+        if owning_task is None:
+            self._emit_error(task_id, "Agent execution requires an asyncio task")
+            return
+
         if self.logger:
             self.logger.info(
                 f"Starting Agent execution: task_id={task_id}, model={model}"
             )
 
-        self._active_task = asyncio.current_task()
+        self._active_task = owning_task
         self._active_task_id = task_id
 
         try:
@@ -189,9 +335,18 @@ class LLMExecutor(QObject):
                 current_file=current_file,
             )
 
-            if messages and messages[0].get("role") == "system":
-                messages[0]["content"] = system_prompt
-            else:
+            # The working-context builder may already have inserted one or
+            # more system messages (notably the compressed-history summary).
+            # They are user/session context, not placeholders for the Agent
+            # instructions, so replacing messages[0] silently loses history.
+            # Copy the input before prepending to avoid mutating the caller's
+            # persisted working-context representation.
+            messages = [dict(message) for message in messages]
+            if not (
+                messages
+                and messages[0].get("role") == "system"
+                and messages[0].get("content") == system_prompt
+            ):
                 messages.insert(0, {
                     "role": "system",
                     "content": system_prompt,
@@ -257,8 +412,11 @@ class LLMExecutor(QObject):
                 )
             self._emit_error(task_id, error_msg)
         finally:
-            self._active_task = None
-            self._active_task_id = None
+            # Task ownership is identity based.  A stale task must never clear
+            # a newer task that has become active in the meantime.
+            if self._active_task is owning_task:
+                self._active_task = None
+                self._active_task_id = None
 
     # ============================================================
     # Agent 事件转发
@@ -407,20 +565,19 @@ class LLMExecutor(QObject):
             return None
 
     def _get_active_circuit_file(self) -> Optional[str]:
-        """从 SessionState 读当前活动电路文件绝对路径。
+        """从当前会话状态读取活动电路文件路径。
 
-        SessionState.active_circuit_file 是 GraphStateProjector 从
-        GraphState.circuit_file_path 投影过来的唯一只读视图，
-        作为 agent 未显式传 file_path 时的回落项。无活动文件返回 None。
+        ``circuit_file_path`` 随会话一起加载和持久化，是 agent 未显式传
+        ``file_path`` 时的单一回落来源。无活动文件时返回 ``None``。
         """
         try:
             from shared.service_locator import ServiceLocator
-            from shared.service_names import SVC_SESSION_STATE
+            from shared.service_names import SVC_CONTEXT_MANAGER
 
-            session_state = ServiceLocator.get_optional(SVC_SESSION_STATE)
-            if session_state is None:
+            context_manager = ServiceLocator.get_optional(SVC_CONTEXT_MANAGER)
+            if context_manager is None:
                 return None
-            active = session_state.active_circuit_file
+            active = context_manager.get_current_state().get("circuit_file_path", "")
             return active or None
         except Exception as e:
             if self.logger:
@@ -465,4 +622,5 @@ __all__ = [
     "OUTCOME_COMPLETED",
     "OUTCOME_STOPPED",
     "OUTCOME_ERROR",
+    "ACTIVE_GENERATION_ERROR",
 ]

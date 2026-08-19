@@ -16,18 +16,6 @@ DEFAULT_STAGNATION_THRESHOLD = 3     # 停滞判断阈值（连续N次无改进�
 DEFAULT_CONTEXT_LIMIT_RATIO = 0.8    # 上下文占用触发总结的阈值（80%）
 
 # ============================================================
-# 追踪相关常量（阶段 1.5）
-# ============================================================
-
-DEFAULT_TRACING_ENABLED = True                # 默认启用追踪
-DEFAULT_TRACING_FLUSH_INTERVAL_MS = 500       # 追踪缓冲区刷新间隔（毫秒）
-DEFAULT_TRACING_MAX_BUFFER_SIZE = 100         # 追踪缓冲区上限
-DEFAULT_TRACING_RETENTION_DAYS = 7            # 追踪数据保留天数
-DEFAULT_TRACING_LOG_INPUTS_OUTPUTS = True     # 是否记录输入输出
-DEFAULT_DEBUG_RERAISE_ASYNC_ERRORS = False    # 异步槽异常是否重新抛出
-TRACING_DB_FILE = "traces.sqlite3"            # 追踪数据库文件名
-
-# ============================================================
 # 上下文压缩相关默认值
 # ============================================================
 

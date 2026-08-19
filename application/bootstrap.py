@@ -7,15 +7,14 @@
 - 协调各组件的启动顺序
 - 处理初始化失败和降级策略
 
-三层状态分离架构：
-- Layer 1: UIState (Presentation) - 纯 UI 状态，Phase 2.2 在 MainWindow 中初始化
-- Layer 2: SessionState (Application) - GraphState 的只读投影，Phase 3.5.1 初始化
-- Layer 3: GraphState (Domain) - LangGraph 工作流的唯一真理来源
+当前状态主线：
+- MainWindow/PanelManager/WindowStateManager 管理界面状态
+- SessionStateManager/ContextManager 管理会话与消息
+- SessionState + SessionStateProjector 提供项目/RAG 状态的轻量 UI 读模型
 
 并发模型架构（qasync 融合事件循环）：
 - 使用 qasync 将 asyncio 事件循环挂载到 Qt 事件循环上
 - 所有 I/O 密集型任务在主线程协程中执行（通过 @asyncSlot 装饰器）
-- CPU 密集型任务通过 CpuTaskExecutor 提交到 QThreadPool
 - 外部进程使用 ProcessManager 管理
 - 消除"双循环同步"问题，避免死锁和竞态条件
 
@@ -32,35 +31,32 @@
   - 1.2 ErrorHandler 初始化
   - 1.3 I18nManager 初始化
   - 1.4 ModelRegistry 初始化
-  - 1.5 TracingStore 初始化（可观测性基础设施）
 - Phase 2: GUI 框架初始化（同步，阻塞式）
   - 2.0.1 预导入 WebEngine
   - 2.1 创建 QApplication 实例
   - 2.1.2 初始化 qasync 融合事件循环
-  - 2.2 创建 MainWindow 实例（内部初始化 UIState）
+  - 2.2 创建 MainWindow 实例
   - 2.3 显示主窗口
   - 2.4 触发延迟初始化
 - Phase 3: 延迟初始化（异步，在融合事件循环中执行）
-  - 3.1 WorkerManager 初始化
   - 3.2 FileManager 初始化
   - 3.2.1 FileSearchService 初始化（精确搜索引擎）
-  - 3.2.2 UnifiedSearchService 初始化（统一搜索门面）
   - 3.3 ProjectService 初始化
   - 3.4 ContextManager 初始化
   - 3.5 SessionStateManager 初始化
-  - 3.5.1 SessionState 初始化（GraphState 的只读投影）
-  - 3.5.2 GraphStateProjector 初始化（自动投影 GraphState 到 SessionState）
-  - 3.5.5 TracingLogger 初始化（可观测性基础设施）
+  - 3.5.1 SessionState 初始化（项目/RAG 状态投影容器）
+  - 3.5.2 SessionStateProjector 初始化
   - 3.6 LLM 客户端初始化
   - 3.6.1 订阅 EVENT_LLM_CONFIG_CHANGED（应用层响应配置变更，刷新 LLM 运行时）
   - 3.8 RAG 服务初始化（RAGManager + DocumentWatcher）
   - 3.7 发布 EVENT_INIT_COMPLETE 事件
 - 应用关闭时：
-  - 异步运行时关闭（取消待处理任务）
-  - TracingLogger 关闭（最后一次刷新）
-  - TracingStore 关闭
+  - 在 qasync 循环仍可用时停止 LLM、仿真、RAG 和文件监听
+  - 关闭项目及 LLM 网络客户端
+  - 最后取消遗留 asyncio task 并关闭事件循环
 
-注意：ngspice 路径配置必须在应用启动时最先执行
+注意：ngspice/模型路径配置只由 ``run()`` 显式执行；导入任意
+``application`` 子模块都不会隐式修改进程环境。
 """
 
 import sys
@@ -73,44 +69,47 @@ from typing import TYPE_CHECKING, Optional
 if TYPE_CHECKING:
     from PyQt6.QtWidgets import QMainWindow
 
-# ============================================================
-# Phase -1.1: ngspice 路径配置（必须在所有其他导入之前）
-# ============================================================
-from infrastructure.utils.ngspice_config import (
-    configure_ngspice,
-    is_ngspice_available,
-    get_configuration_error
-)
-
-_ngspice_init_success = configure_ngspice()
-if not _ngspice_init_success:
-    print(f"[WARNING] ngspice 配置失败: {get_configuration_error()}")
-    print("[WARNING] 仿真功能可能不可用")
-else:
-    print("[Phase -1.1] ngspice 配置成功")
+# Runtime path configuration belongs to the explicit GUI entry point.  Keeping
+# it out of module import makes application services safe to reuse from tests,
+# command-line helpers, and packaging discovery.
+_runtime_paths_configured = False
 
 
-# ============================================================
-# Phase -1.2: AI 模型路径配置
-# ============================================================
-from infrastructure.utils.model_config import (
-    configure_models,
-    is_embedding_available,
-    is_reranker_available,
-    get_configuration_errors
-)
+def _configure_runtime_paths() -> None:
+    """Configure native/runtime paths once, as the first action of ``run``."""
+    global _runtime_paths_configured
+    if _runtime_paths_configured:
+        return
 
-_models_init_success = configure_models()
-if not _models_init_success:
-    print("[WARNING] AI 模型配置失败，RAG 功能可能需要联网下载模型")
-    for model_type, error in get_configuration_errors().items():
-        print(f"  - {error}")
-else:
-    embedding_status = "[OK] 本地可用" if is_embedding_available() else "需联网下载"
-    reranker_status = "[OK] 本地可用" if is_reranker_available() else "需联网下载"
-    print("[Phase -1.2] AI 模型配置完成")
-    print(f"  - 嵌入模型: {embedding_status}")
-    print(f"  - 重排序模型: {reranker_status}")
+    from infrastructure.utils.ngspice_config import (
+        configure_ngspice,
+        get_configuration_error,
+    )
+    from infrastructure.utils.model_config import (
+        configure_models,
+        get_configuration_errors,
+        is_embedding_available,
+        is_reranker_available,
+    )
+
+    if not configure_ngspice():
+        print(f"[WARNING] ngspice 配置失败: {get_configuration_error()}")
+        print("[WARNING] 仿真功能可能不可用")
+    else:
+        print("[Phase -1.1] ngspice 配置成功")
+
+    if not configure_models():
+        print("[WARNING] AI 模型配置失败，RAG 功能可能需要联网下载模型")
+        for error in get_configuration_errors().values():
+            print(f"  - {error}")
+    else:
+        embedding_status = "[OK] 本地可用" if is_embedding_available() else "需联网下载"
+        reranker_status = "[OK] 本地可用" if is_reranker_available() else "需联网下载"
+        print("[Phase -1.2] AI 模型配置完成")
+        print(f"  - 嵌入模型: {embedding_status}")
+        print(f"  - 重排序模型: {reranker_status}")
+
+    _runtime_paths_configured = True
 
 
 # ============================================================
@@ -246,7 +245,6 @@ def _init_phase_1() -> bool:
     1.2 ErrorHandler 初始化（依赖 Logger、EventBus、ConfigManager）
     1.3 I18nManager 初始化（依赖 ConfigManager）
     1.4 ModelRegistry 初始化（依赖 Logger）
-    1.5 TracingStore 初始化（依赖 Logger）
     
     Returns:
         bool: 初始化是否成功
@@ -319,13 +317,6 @@ def _init_phase_1() -> bool:
         if _logger:
             _logger.info("Phase 1.4 ModelRegistry / EmbeddingModelRegistry / LLMRuntimeConfigManager 初始化完成")
 
-        # --------------------------------------------------------
-        # 1.5 TracingStore 初始化
-        # 依赖：Logger
-        # 职责：初始化追踪数据存储（SQLite）
-        # --------------------------------------------------------
-        _init_tracing_store()
-
         return True
 
     except Exception as e:
@@ -335,43 +326,6 @@ def _init_phase_1() -> bool:
             print(f"[Phase 1] 初始化失败: {e}")
         traceback.print_exc()
         return False
-
-
-def _init_tracing_store():
-    """
-    初始化追踪存储（Phase 1.5）
-    
-    同步初始化 TracingStore，因为需要在 Phase 3 之前准备好。
-    使用 asyncio.run() 执行异步初始化。
-    """
-    import asyncio
-    
-    try:
-        from shared.tracing import TracingStore
-        from shared.service_locator import ServiceLocator
-        from shared.service_names import SVC_TRACING_STORE
-        
-        # 创建存储实例
-        tracing_store = TracingStore()
-        
-        # 同步执行异步初始化
-        asyncio.run(tracing_store.initialize())
-        
-        # 清理过期数据（7天）
-        asyncio.run(tracing_store.cleanup_old_traces(days=7))
-        
-        # 注册到 ServiceLocator
-        ServiceLocator.register(SVC_TRACING_STORE, tracing_store)
-        
-        if _logger:
-            _logger.info(f"Phase 1.5 TracingStore 初始化完成: {tracing_store.db_path}")
-            
-    except Exception as e:
-        if _logger:
-            _logger.warning(f"Phase 1.5 TracingStore 初始化失败（非致命）: {e}")
-        else:
-            print(f"[Phase 1.5] TracingStore 初始化失败: {e}")
-
 
 
 def _init_phase_2(app) -> Optional['QMainWindow']:
@@ -441,34 +395,20 @@ def _delayed_init():
     """
     Phase 3: 延迟初始化（异步，在事件循环中执行）
     
-    3.1 WorkerManager 初始化（依赖 EventBus）
     3.2 FileManager 初始化（依赖 Logger、EventBus）
     3.3 ProjectService 初始化（依赖 FileManager、SessionState、EventBus）
     3.4 ContextManager 初始化（依赖 Logger、EventBus）
     3.5 SessionStateManager 初始化（依赖 Logger、EventBus、ContextManager）
-    3.5.1 SessionState 初始化（GraphState 的只读投影）
-    3.5.2 GraphStateProjector 初始化（自动投影 GraphState 到 SessionState）
-    3.5.5 TracingLogger 初始化（可观测性基础设施）
+    3.5.1 SessionState 初始化（项目/RAG 状态投影容器）
+    3.5.2 SessionStateProjector 初始化
     3.6 LLM 客户端初始化（可选）
     3.7 发布 EVENT_INIT_COMPLETE 事件
     
-    此阶段的耗时操作在事件循环中异步执行，不阻塞 UI 显示
+    此回调在 Qt 主线程执行；耗时工作必须由各专用 manager 提交到
+    asyncio/executor，不能在这里同步扫描或预热。
     """
     try:
-        # --------------------------------------------------------
-        # 3.1 WorkerManager 初始化
-        # 依赖：EventBus（Worker 状态事件）
-        # 职责：创建 Worker 注册表（此时不创建 Worker 实例）
-        # --------------------------------------------------------
-        from shared.worker_manager import WorkerManager
         from shared.service_locator import ServiceLocator
-        from shared.service_names import SVC_WORKER_MANAGER
-        worker_manager = WorkerManager()
-        ServiceLocator.register(SVC_WORKER_MANAGER, worker_manager)
-        # 启动健康检查
-        worker_manager.start_health_check()
-        if _logger:
-            _logger.info("Phase 3.1 WorkerManager 初始化完成")
 
         # --------------------------------------------------------
         # 3.2 FileManager 初始化
@@ -485,18 +425,6 @@ def _delayed_init():
             _logger.info("Phase 3.2 FileManager 初始化完成")
 
         # --------------------------------------------------------
-        # 3.2.0.1 AsyncFileOps 初始化
-        # 依赖：FileManager
-        # 职责：异步文件操作门面（应用层接口，供 UI 和 LangGraph 节点使用）
-        # --------------------------------------------------------
-        from infrastructure.persistence.async_file_ops import AsyncFileOps
-        from shared.service_names import SVC_ASYNC_FILE_OPS
-        async_file_ops = AsyncFileOps(file_manager)
-        ServiceLocator.register(SVC_ASYNC_FILE_OPS, async_file_ops)
-        if _logger:
-            _logger.info("Phase 3.2.0.1 AsyncFileOps 初始化完成")
-
-        # --------------------------------------------------------
         # 3.2.1 FileSearchService 初始化
         # 依赖：FileManager、EventBus
         # 职责：精确搜索引擎（文件名、内容、符号搜索）
@@ -508,22 +436,14 @@ def _delayed_init():
         if _logger:
             _logger.info("Phase 3.2.1 FileSearchService 初始化完成")
 
-        # --------------------------------------------------------
-        # 3.2.2 UnifiedSearchService 初始化
-        # 依赖：FileSearchService（延迟获取）
-        # 职责：统一搜索门面，协调精确搜索和语义搜索
-        # --------------------------------------------------------
-        from domain.search import UnifiedSearchService
-        from shared.service_names import SVC_UNIFIED_SEARCH_SERVICE
-        unified_search_service = UnifiedSearchService()
-        ServiceLocator.register(SVC_UNIFIED_SEARCH_SERVICE, unified_search_service)
-        if _logger:
-            _logger.info("Phase 3.2.2 UnifiedSearchService 初始化完成")
+        # UnifiedSearch/InFileSearch are not registered until their semantic
+        # and exact branches are real.  Agent search continues to use the
+        # working grep/find/RAG tools directly.
 
         # --------------------------------------------------------
         # 3.5.1 SessionState 初始化（先于 ProjectService）
         # 依赖：EventBus
-        # 职责：GraphState 的只读投影，供 UI 层读取业务状态
+        # 职责：保存 ProjectService/RAG 投影给 UI 的轻量状态
         # --------------------------------------------------------
         from application.session_state import SessionState
         from shared.service_names import SVC_SESSION_STATE
@@ -533,20 +453,26 @@ def _delayed_init():
             _logger.info("Phase 3.5.1 SessionState 初始化完成")
 
         # --------------------------------------------------------
-        # 3.5.2 GraphStateProjector 初始化
+        # 3.5.2 SessionStateProjector 初始化
         # 依赖：SessionState、EventBus
-        # 职责：监听 GraphState 变更，自动投影到 SessionState
+        # 职责：承接 ProjectService/RAG 到轻量 UI 读模型的投影
         # --------------------------------------------------------
-        from application.graph_state_projector import GraphStateProjector
-        from shared.service_names import SVC_GRAPH_STATE_PROJECTOR
-        graph_state_projector = GraphStateProjector(session_state)
-        ServiceLocator.register(SVC_GRAPH_STATE_PROJECTOR, graph_state_projector)
+        from application.session_state_projector import SessionStateProjector
+        from shared.service_names import SVC_EVENT_BUS, SVC_SESSION_STATE_PROJECTOR
+        session_state_projector = SessionStateProjector(
+            session_state,
+            event_bus=ServiceLocator.get_optional(SVC_EVENT_BUS),
+        )
+        ServiceLocator.register(
+            SVC_SESSION_STATE_PROJECTOR,
+            session_state_projector,
+        )
         if _logger:
-            _logger.info("Phase 3.5.2 GraphStateProjector 初始化完成")
+            _logger.info("Phase 3.5.2 SessionStateProjector 初始化完成")
 
         # --------------------------------------------------------
         # 3.3 ProjectService 初始化
-        # 依赖：FileManager、SessionState、GraphStateProjector、EventBus
+        # 依赖：FileManager、SessionStateProjector、EventBus
         # 职责：管理工作文件夹的初始化和状态
         # --------------------------------------------------------
         from application.project_service import ProjectService
@@ -561,7 +487,7 @@ def _delayed_init():
         # 依赖：EventBus
         # 职责：监测工作文件夹的文件变化，通知应用层
         # --------------------------------------------------------
-        from application.tasks import FileWatchTask
+        from application.tasks.file_watch_task import FileWatchTask
         from shared.service_names import SVC_FILE_WATCHER
         file_watcher = FileWatchTask()
         ServiceLocator.register(SVC_FILE_WATCHER, file_watcher)
@@ -644,13 +570,6 @@ def _delayed_init():
         #       查询、等待、取消及权威事件广播
         # --------------------------------------------------------
         _init_simulation_job_manager()
-
-        # --------------------------------------------------------
-        # 3.5.5 TracingLogger 初始化
-        # 依赖：EventBus、TracingStore
-        # 职责：内存缓冲 + 定时刷新追踪日志
-        # --------------------------------------------------------
-        _init_tracing_logger()
 
         # --------------------------------------------------------
         # 3.6 LLM 客户端初始化（可选，依赖配置）
@@ -738,12 +657,14 @@ def _delayed_init():
         # --------------------------------------------------------
         _init_rag_services()
 
-        # GraphStateProjector 订阅 RAG 事件（投影到 SessionState）
-        graph_state_projector = ServiceLocator.get_optional(SVC_GRAPH_STATE_PROJECTOR)
-        if graph_state_projector:
-            graph_state_projector.subscribe_rag_events()
+        # SessionStateProjector 订阅 RAG 事件（投影到 SessionState）
+        session_state_projector = ServiceLocator.get_optional(
+            SVC_SESSION_STATE_PROJECTOR
+        )
+        if session_state_projector:
+            session_state_projector.subscribe_rag_events()
             if _logger:
-                _logger.info("Phase 3.8.4 GraphStateProjector 已订阅 RAG 事件")
+                _logger.info("Phase 3.8.4 SessionStateProjector 已订阅 RAG 事件")
 
         # --------------------------------------------------------
         # 3.7 发布 EVENT_INIT_COMPLETE 事件
@@ -882,49 +803,6 @@ def _init_simulation_job_manager():
             print(f"[Phase 3.5.3.1] SimulationJobManager 初始化失败: {exc}")
 
 
-def _init_tracing_logger():
-    """
-    初始化追踪日志记录器（Phase 3.5.5）
-    
-    依赖 EventBus 和 TracingStore，在 Phase 3 延迟初始化中执行。
-    """
-    try:
-        from shared.tracing import TracingLogger
-        from shared.service_locator import ServiceLocator
-        from shared.service_names import SVC_TRACING_LOGGER, SVC_TRACING_STORE, SVC_EVENT_BUS
-        
-        # 获取 TracingStore
-        tracing_store = ServiceLocator.get_optional(SVC_TRACING_STORE)
-        if not tracing_store:
-            if _logger:
-                _logger.warning("Phase 3.5.5 TracingLogger 初始化跳过：TracingStore 不可用")
-            return
-        
-        # 创建 TracingLogger（通过 set_store 注入依赖，而非构造函数参数）
-        tracing_logger = TracingLogger()
-        tracing_logger.set_store(tracing_store)
-        
-        # 注入 EventBus（可选）
-        event_bus = ServiceLocator.get_optional(SVC_EVENT_BUS)
-        if event_bus:
-            tracing_logger.set_event_bus(event_bus)
-        
-        # 启动定时刷新（内部会注册 TracingContext 回调）
-        tracing_logger.start()
-        
-        # 注册到 ServiceLocator
-        ServiceLocator.register(SVC_TRACING_LOGGER, tracing_logger)
-        
-        if _logger:
-            _logger.info("Phase 3.5.5 TracingLogger 初始化完成")
-            
-    except Exception as e:
-        if _logger:
-            _logger.warning(f"Phase 3.5.5 TracingLogger 初始化失败（非致命）: {e}")
-        else:
-            print(f"[Phase 3.5.5] TracingLogger 初始化失败: {e}")
-
-
 def refresh_llm_runtime_services() -> bool:
     global _logger
 
@@ -938,16 +816,9 @@ def refresh_llm_runtime_services() -> bool:
             SVC_EVENT_BUS,
             SVC_LLM_CLIENT,
             SVC_LLM_RUNTIME_CONFIG_MANAGER,
-            SVC_EXTERNAL_SERVICE_MANAGER,
             SVC_LLM_EXECUTOR,
         )
         from infrastructure.llm_adapters import LLMClientFactory
-        from domain.llm.external_service_manager import (
-            ExternalServiceManager,
-            SERVICE_LLM_ZHIPU,
-            SERVICE_LLM_QWEN,
-            SERVICE_LLM_DEEPSEEK,
-        )
 
         config_manager = ServiceLocator.get_optional(SVC_CONFIG_MANAGER)
         credential_manager = ServiceLocator.get_optional(SVC_CREDENTIAL_MANAGER)
@@ -957,11 +828,6 @@ def refresh_llm_runtime_services() -> bool:
             if _logger:
                 _logger.warning("Phase 3.6 LLM 客户端初始化跳过：LLM 运行时配置依赖不可用")
             return False
-
-        external_service_manager = ServiceLocator.get_optional(SVC_EXTERNAL_SERVICE_MANAGER)
-        if external_service_manager is None:
-            external_service_manager = ExternalServiceManager()
-            ServiceLocator.register(SVC_EXTERNAL_SERVICE_MANAGER, external_service_manager)
 
         old_client = ServiceLocator.get_optional(SVC_LLM_CLIENT)
         if old_client is not None and hasattr(old_client, "close"):
@@ -980,13 +846,6 @@ def refresh_llm_runtime_services() -> bool:
                 if _logger:
                     _logger.debug(f"Failed to close previous LLM client cleanly: {close_exc}")
 
-        for service_type in [
-            SERVICE_LLM_ZHIPU,
-            SERVICE_LLM_QWEN,
-            SERVICE_LLM_DEEPSEEK,
-        ]:
-            external_service_manager.unregister_service(service_type)
-
         ServiceLocator.unregister(SVC_LLM_CLIENT)
 
         active_config = llm_runtime_config_manager.resolve_active_config()
@@ -996,13 +855,7 @@ def refresh_llm_runtime_services() -> bool:
                 _logger.info("Phase 3.6 LLM 客户端初始化跳过：未配置 LLM 厂商")
             return False
 
-        service_type_by_provider = {
-            "zhipu": SERVICE_LLM_ZHIPU,
-            "deepseek": SERVICE_LLM_DEEPSEEK,
-            "qwen": SERVICE_LLM_QWEN,
-        }
-        service_type = service_type_by_provider.get(provider)
-        if not service_type:
+        if provider not in {"zhipu", "deepseek", "qwen"}:
             if _logger:
                 _logger.warning(f"Phase 3.6 LLM 客户端初始化跳过：厂商 {provider} 暂未接入统一运行时")
             return False
@@ -1020,7 +873,6 @@ def refresh_llm_runtime_services() -> bool:
             timeout=active_config.timeout,
         )
         ServiceLocator.register(SVC_LLM_CLIENT, client)
-        external_service_manager.register_service(service_type, client)
 
         llm_executor = ServiceLocator.get_optional(SVC_LLM_EXECUTOR)
         if llm_executor is None:
@@ -1043,7 +895,7 @@ def _init_llm_client():
     """
     初始化 LLM 客户端（可选）
     
-    根据配置创建 LLM 客户端并注册到 ServiceLocator 和 ExternalServiceManager。
+    根据配置创建 LLM 客户端并注册到 ServiceLocator。
     如果配置不完整（如 API Key 未设置），则跳过初始化。
     """
     refresh_llm_runtime_services()
@@ -1061,7 +913,11 @@ def _init_rag_services():
         from domain.rag.rag_manager import RAGManager
         from domain.rag.document_watcher import DocumentWatcher
         from shared.service_locator import ServiceLocator
-        from shared.service_names import SVC_EVENT_BUS, SVC_RAG_MANAGER
+        from shared.service_names import (
+            SVC_EVENT_BUS,
+            SVC_FILE_MANAGER,
+            SVC_RAG_MANAGER,
+        )
 
         event_bus = ServiceLocator.get_optional(SVC_EVENT_BUS)
 
@@ -1073,7 +929,12 @@ def _init_rag_services():
             _logger.info("Phase 3.8.1 RAGManager 创建完成，已订阅项目生命周期事件")
 
         # 3.8.2 DocumentWatcher
-        doc_watcher = DocumentWatcher(event_bus=event_bus, rag_manager=rag_manager)
+        doc_watcher = DocumentWatcher(
+            event_bus=event_bus,
+            rag_manager=rag_manager,
+            file_manager=ServiceLocator.get_optional(SVC_FILE_MANAGER),
+        )
+        rag_manager.attach_document_watcher(doc_watcher)
         doc_watcher.start()
         if _logger:
             _logger.info("Phase 3.8.2 DocumentWatcher 启动完成")
@@ -1189,6 +1050,8 @@ def run() -> int:
     Returns:
         int: 退出码，0 表示正常退出
     """
+    _configure_runtime_paths()
+
     print("=" * 50)
     print("Circuit Design AI 启动中...")
     print(f"Python 版本: {sys.version}")
@@ -1371,7 +1234,26 @@ def run() -> int:
     exit_code = 0
     try:
         with loop:
-            loop.run_forever()
+            try:
+                loop.run_forever()
+            finally:
+                # qasync resources and network clients must be settled while
+                # their owning loop is still alive. Closing the loop first
+                # used to strand LLM tasks and leave the RAG/simulation pools
+                # running during interpreter shutdown.
+                if not loop.is_closed():
+                    try:
+                        loop.run_until_complete(_shutdown_services_async())
+                    except Exception as shutdown_exc:
+                        if _logger:
+                            _logger.warning(
+                                f"应用服务关闭时出错: {shutdown_exc}"
+                            )
+                        else:
+                            print(
+                                f"[WARNING] 应用服务关闭时出错: "
+                                f"{shutdown_exc}"
+                            )
     except Exception as e:
         if _logger:
             _logger.error(f"事件循环异常退出: {e}")
@@ -1379,10 +1261,10 @@ def run() -> int:
             print(f"[ERROR] 事件循环异常退出: {e}")
         exit_code = 1
     finally:
-        # 清理工作
-        _shutdown_services()
+        # The async shutdown above already settled task owners. This wrapper
+        # only resets shared.async_runtime's module state and is idempotent
+        # for an already-closed loop.
         shutdown_async_runtime()
-        _shutdown_tracing()
     
     if _logger:
         _logger.info(f"应用退出，退出码: {exit_code}")
@@ -1390,85 +1272,134 @@ def run() -> int:
     return exit_code
 
 
-def _shutdown_services():
+async def _shutdown_services_async() -> None:
+    """Settle all runtime owners before the qasync loop is closed.
+
+    Every step is best-effort and isolated: one optional service failing to
+    close must not prevent the remaining managers from releasing their
+    threads, watchers, network clients, or pending asyncio tasks.
     """
-    关闭应用服务
-    
-    在应用退出时调用，确保所有服务正确关闭。
-    """
+    import inspect
+
     from shared.service_locator import ServiceLocator
-    from shared.service_names import SVC_FILE_WATCHER, SVC_PROJECT_SERVICE
-    
-    # 停止文件监听
+    from shared.service_names import (
+        SVC_FILE_WATCHER,
+        SVC_LLM_CLIENT,
+        SVC_LLM_EXECUTOR,
+        SVC_PROJECT_SERVICE,
+        SVC_RAG_MANAGER,
+        SVC_SESSION_STATE_PROJECTOR,
+        SVC_SIMULATION_JOB_MANAGER,
+    )
+
+    async def _call_async_lifecycle(service, method_name: str, label: str) -> None:
+        if service is None:
+            return
+        method = getattr(service, method_name, None)
+        if not callable(method):
+            return
+        try:
+            result = method()
+            if inspect.isawaitable(result):
+                await result
+            if _logger:
+                _logger.info(f"{label} 已关闭")
+        except Exception as exc:
+            if _logger:
+                _logger.warning(f"{label} 关闭时出错: {exc}")
+
+    # Stop the task that can still invoke tools before tearing those tools
+    # down. LLMExecutor.shutdown() is identity-safe and awaits cancellation.
+    await _call_async_lifecycle(
+        ServiceLocator.get_optional(SVC_LLM_EXECUTOR),
+        "shutdown",
+        "LLMExecutor",
+    )
+
+    simulation_jobs = ServiceLocator.get_optional(SVC_SIMULATION_JOB_MANAGER)
+    if simulation_jobs:
+        try:
+            settled = simulation_jobs.close(timeout=2.0)
+            if _logger:
+                if settled:
+                    _logger.info("SimulationJobManager 已关闭")
+                else:
+                    _logger.warning(
+                        "SimulationJobManager 已拒绝新任务，但仍有不可中断的 "
+                        "executor 正在收尾"
+                    )
+        except Exception as exc:
+            if _logger:
+                _logger.warning(f"SimulationJobManager 关闭时出错: {exc}")
+
+    # ProjectService owns the authoritative session-persistence preflight.
+    # Run it before independently tearing down the watcher/RAG projection so
+    # a failed save leaves project state intact and is reported truthfully.
+    project_service = ServiceLocator.get_optional(SVC_PROJECT_SERVICE)
+    if project_service and project_service.is_project_open():
+        try:
+            closed, message = project_service.close_project()
+            if closed:
+                if _logger:
+                    _logger.info("ProjectService 项目已关闭")
+            elif _logger:
+                _logger.error(
+                    "ProjectService 拒绝关闭项目，未清空 dirty 会话状态: %s",
+                    message,
+                )
+        except Exception as exc:
+            if _logger:
+                _logger.warning(f"ProjectService 关闭项目时出错: {exc}")
+
+    # ProjectService normally stops the watcher itself after its persistence
+    # preflight. This fallback is still required when close was rejected or
+    # partially initialized; process exit must not leave a watchdog thread.
     file_watcher = ServiceLocator.get_optional(SVC_FILE_WATCHER)
     if file_watcher:
         try:
             file_watcher.stop_watching()
             if _logger:
                 _logger.info("FileWatcher 已停止")
-        except Exception as e:
+        except Exception as exc:
             if _logger:
-                _logger.warning(f"FileWatcher 停止时出错: {e}")
-    
-    # 关闭项目（会触发相关清理）
-    project_service = ServiceLocator.get_optional(SVC_PROJECT_SERVICE)
-    if project_service and project_service.is_project_open():
+                _logger.warning(f"FileWatcher 停止时出错: {exc}")
+
+    session_state_projector = ServiceLocator.get_optional(
+        SVC_SESSION_STATE_PROJECTOR
+    )
+    if session_state_projector:
         try:
-            project_service.close_project()
+            session_state_projector.shutdown()
             if _logger:
-                _logger.info("ProjectService 项目已关闭")
-        except Exception as e:
+                _logger.info("SessionStateProjector 已关闭")
+        except Exception as exc:
             if _logger:
-                _logger.warning(f"ProjectService 关闭项目时出错: {e}")
+                _logger.warning(f"SessionStateProjector 关闭时出错: {exc}")
 
+    rag_manager = ServiceLocator.get_optional(SVC_RAG_MANAGER)
+    if rag_manager:
+        try:
+            rag_manager.stop()
+            if _logger:
+                _logger.info("RAGManager 已关闭")
+        except Exception as exc:
+            if _logger:
+                _logger.warning(f"RAGManager 关闭时出错: {exc}")
 
-def _shutdown_tracing():
-    """
-    关闭追踪系统
-    
-    在应用退出时调用，确保所有追踪数据被刷新到存储。
-    
-    注意：此函数在 qasync 融合事件循环关闭后调用，
-    因此使用 asyncio.run() 创建临时事件循环执行异步清理。
-    """
-    import asyncio
-    
-    async def _async_shutdown():
-        """异步关闭追踪系统"""
-        from shared.service_locator import ServiceLocator
-        from shared.service_names import SVC_TRACING_LOGGER, SVC_TRACING_STORE
-        
-        # 停止 TracingLogger（最后一次刷新）
-        tracing_logger = ServiceLocator.get_optional(SVC_TRACING_LOGGER)
-        if tracing_logger:
-            try:
-                await tracing_logger.shutdown()
-                if _logger:
-                    _logger.info("TracingLogger 已关闭")
-            except Exception as e:
-                if _logger:
-                    _logger.warning(f"TracingLogger 关闭时出错: {e}")
-        
-        # 关闭 TracingStore
-        tracing_store = ServiceLocator.get_optional(SVC_TRACING_STORE)
-        if tracing_store:
-            try:
-                await tracing_store.close()
-                if _logger:
-                    _logger.info("TracingStore 已关闭")
-            except Exception as e:
-                if _logger:
-                    _logger.warning(f"TracingStore 关闭时出错: {e}")
-    
+    await _call_async_lifecycle(
+        ServiceLocator.get_optional(SVC_LLM_CLIENT),
+        "close",
+        "LLMClient",
+    )
+    # Last: cancel any task which was not owned by one of the explicit
+    # managers above. This still runs on the live qasync loop.
     try:
-        # 创建临时事件循环执行异步清理
-        # 因为 qasync 融合循环此时已关闭
-        asyncio.run(_async_shutdown())
-    except Exception as e:
+        from shared.async_runtime import shutdown_async
+
+        await shutdown_async()
+    except Exception as exc:
         if _logger:
-            _logger.warning(f"追踪系统关闭时出错: {e}")
-        else:
-            print(f"[WARNING] 追踪系统关闭时出错: {e}")
+            _logger.warning(f"异步运行时关闭时出错: {exc}")
 
 
 # ============================================================
@@ -1477,7 +1408,4 @@ def _shutdown_tracing():
 
 __all__ = [
     "run",
-    "is_ngspice_available",
-    "is_embedding_available",
-    "is_reranker_available",
 ]

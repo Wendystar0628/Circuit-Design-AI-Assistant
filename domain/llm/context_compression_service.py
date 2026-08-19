@@ -4,6 +4,8 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
+from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
 from domain.llm.context_compressor import ContextCompressor
@@ -32,6 +34,10 @@ class _CompressionLLMAdapter:
         max_tokens: int = 1000,
         temperature: float = 0.3,
     ) -> Dict[str, Any]:
+        # ContextCompressor exposes these tuning hints for generic summarizers,
+        # but BaseLLMClient intentionally accepts only its explicit portable
+        # chat contract.  Do not leak unsupported wire options into providers.
+        del max_tokens, temperature
         response = await asyncio.to_thread(
             self._client.chat,
             messages=[{"role": "user", "content": prompt}],
@@ -39,13 +45,32 @@ class _CompressionLLMAdapter:
             streaming=False,
             tools=None,
             thinking=False,
-            max_tokens=max_tokens,
-            temperature=temperature,
         )
+        finish_reason = getattr(response, "finish_reason", None)
+        raw_finish_reason = "" if finish_reason is None else str(finish_reason).strip()
+        normalized_reason = (
+            raw_finish_reason.casefold().replace("-", "_")
+        )
+        if normalized_reason not in {"", "stop", "end_turn"}:
+            raise ValueError(
+                "Compression summary response ended with an unusable "
+                f"finish_reason={finish_reason!r}"
+            )
         return {
             "content": getattr(response, "content", "") or "",
             "usage": getattr(response, "usage", None) or {},
+            "finish_reason": finish_reason,
         }
+
+
+@dataclass(frozen=True)
+class _CompressionOperationIdentity:
+    """Immutable owner identity captured before an asynchronous compression."""
+
+    project_root: str
+    session_id: str
+    state_signature: str
+    generation: int
 
 
 class ContextCompressionService:
@@ -57,6 +82,9 @@ class ContextCompressionService:
         self._event_bus = None
         self._compressor = ContextCompressor()
         self._lock = asyncio.Lock()
+        self._operation_generation = 0
+        self._compression_tasks: set[asyncio.Task] = set()
+        self._events_subscribed = False
 
     @property
     def logger(self):
@@ -179,6 +207,123 @@ class ContextCompressionService:
         raw = json.dumps(payload, ensure_ascii=False, sort_keys=True)
         return hashlib.sha1(raw.encode("utf-8")).hexdigest()
 
+    def _capture_operation_identity(
+        self,
+        state: Dict[str, Any],
+    ) -> _CompressionOperationIdentity:
+        """Capture authoritative session/project identity plus state revision."""
+
+        manager = self.session_state_manager
+        project_root = ""
+        session_id = ""
+        if manager is not None:
+            try:
+                project_root = manager.get_project_root() or ""
+                session_id = manager.get_current_session_id() or ""
+            except Exception:
+                pass
+        project_root = project_root or str(state.get("project_root", "") or "")
+        session_id = session_id or str(state.get("session_id", "") or "")
+        return _CompressionOperationIdentity(
+            project_root=self._normalize_project_root(project_root),
+            session_id=session_id,
+            state_signature=self._build_state_signature(state),
+            generation=self._operation_generation,
+        )
+
+    def _is_operation_current(
+        self,
+        identity: _CompressionOperationIdentity,
+        current_state: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        if identity.generation != self._operation_generation:
+            return False
+        current_state = current_state if current_state is not None else self._get_current_state()
+        current = self._capture_operation_identity(current_state)
+        return (
+            current.project_root == identity.project_root
+            and current.session_id == identity.session_id
+            and current.state_signature == identity.state_signature
+        )
+
+    @staticmethod
+    def _normalize_project_root(project_root: str) -> str:
+        if not project_root:
+            return ""
+        return os.path.normcase(os.path.normpath(os.path.abspath(project_root)))
+
+    @property
+    def is_compressing(self) -> bool:
+        """Whether any manual/automatic compression task is still live."""
+
+        return self._lock.locked() or any(
+            not task.done() for task in tuple(self._compression_tasks)
+        )
+
+    def _track_task(self, task: Optional[asyncio.Task]) -> None:
+        if task is None or task in self._compression_tasks:
+            return
+        self._compression_tasks.add(task)
+        task.add_done_callback(self._on_compression_task_done)
+
+    def _on_compression_task_done(self, task: asyncio.Task) -> None:
+        self._compression_tasks.discard(task)
+        # Scheduled auto-compression has no direct awaiter.  Retrieve its
+        # terminal exception to avoid "Task exception was never retrieved".
+        try:
+            task.exception()
+        except (asyncio.CancelledError, Exception):
+            pass
+
+    def invalidate_for_context_change(self, reason: str = "context_changed") -> int:
+        """Invalidate and cancel compression work owned by the old context."""
+
+        self._operation_generation += 1
+        try:
+            current_task = asyncio.current_task()
+        except RuntimeError:
+            current_task = None
+
+        cancelled = 0
+        for task in tuple(self._compression_tasks):
+            if task is current_task or task.done():
+                continue
+            task.cancel()
+            cancelled += 1
+        if cancelled and self.logger:
+            self.logger.info(
+                "Invalidated %s compression task(s): %s",
+                cancelled,
+                reason,
+            )
+        return cancelled
+
+    def _ensure_lifecycle_subscription(self) -> None:
+        if self._events_subscribed or self.event_bus is None:
+            return
+        try:
+            from shared.event_types import (
+                EVENT_SESSION_CHANGED,
+                EVENT_STATE_PROJECT_CLOSED,
+                EVENT_STATE_PROJECT_OPENED,
+            )
+
+            for event_type in (
+                EVENT_SESSION_CHANGED,
+                EVENT_STATE_PROJECT_CLOSED,
+                EVENT_STATE_PROJECT_OPENED,
+            ):
+                self.event_bus.subscribe(event_type, self._on_context_changed)
+            self._events_subscribed = True
+        except Exception as exc:
+            self.logger.warning(f"Failed to subscribe compression lifecycle: {exc}")
+
+    def _on_context_changed(self, event_data: Dict[str, Any]) -> None:
+        event_type = str(event_data.get("type", "") or "")
+        data = event_data.get("data", event_data)
+        action = str(data.get("action", "") or "") if isinstance(data, dict) else ""
+        self.invalidate_for_context_change(action or event_type or "context_changed")
+
     def _build_budget_snapshot(
         self,
         state: Dict[str, Any],
@@ -289,11 +434,20 @@ class ContextCompressionService:
             force=False,
         )
 
-    def schedule_auto_compress(self, source: str = "llm_turn_complete") -> None:
+    def schedule_auto_compress(
+        self,
+        source: str = "llm_turn_complete",
+    ) -> Optional[asyncio.Task]:
+        self._ensure_lifecycle_subscription()
+        if self.is_compressing:
+            return None
         try:
-            asyncio.create_task(self.maybe_auto_compress(source=source))
+            task = asyncio.create_task(self.maybe_auto_compress(source=source))
+            self._track_task(task)
+            return task
         except Exception as exc:
             self.logger.warning(f"Failed to schedule auto compression: {exc}")
+            return None
 
     async def _run_compression(
         self,
@@ -303,6 +457,12 @@ class ContextCompressionService:
         source: str,
         force: bool,
     ) -> Dict[str, Any]:
+        self._ensure_lifecycle_subscription()
+        try:
+            current_task = asyncio.current_task()
+        except RuntimeError:
+            current_task = None
+        self._track_task(current_task)
         if self.context_manager is None:
             result = {
                 "status": "failed",
@@ -326,7 +486,7 @@ class ContextCompressionService:
         keep_recent = keep_recent or DEFAULT_KEEP_RECENT_MESSAGES
         async with self._lock:
             state = self._get_current_state()
-            state_signature = self._build_state_signature(state)
+            operation_identity = self._capture_operation_identity(state)
             model_info = self._resolve_model()
             before = self._build_budget_snapshot(state, model_info["model"], model_info["provider"])
             if not force and before["usage_ratio"] < COMPRESS_AUTO_THRESHOLD:
@@ -337,26 +497,42 @@ class ContextCompressionService:
                     "source": source,
                 }
             adapter = _CompressionLLMAdapter(self.llm_client, model_info["model"])
-            engine_result = await self._compressor.compress(
-                state,
-                adapter,
-                keep_recent=keep_recent,
-                context_limit=before["input_limit"],
-                model=model_info["model"],
-            )
+            try:
+                engine_result = await self._compressor.compress(
+                    state,
+                    adapter,
+                    keep_recent=keep_recent,
+                    context_limit=before["input_limit"],
+                    model=model_info["model"],
+                )
+            except asyncio.CancelledError:
+                # A session/project transition uses cancellation as a prompt
+                # stop request.  Return a normal invalidated outcome to manual
+                # UI callers; unrelated shutdown/task cancellation still
+                # propagates through the regular asyncio contract.
+                if operation_identity.generation != self._operation_generation:
+                    return {
+                        "status": "invalidated",
+                        "mode": mode,
+                        "trigger_reason": trigger_reason,
+                        "source": source,
+                        "keep_recent": keep_recent,
+                        "error": "Compression context changed",
+                    }
+                raise
             current_state = self._get_current_state()
-            if self._build_state_signature(current_state) != state_signature:
-                result = {
-                    "status": "skipped",
+            if not self._is_operation_current(operation_identity, current_state):
+                # A stale result must be completely silent: publishing even a
+                # skipped/completed event after the UI has switched context can
+                # cause the new conversation to reload or show old feedback.
+                return {
+                    "status": "invalidated",
                     "mode": mode,
                     "trigger_reason": trigger_reason,
                     "source": source,
                     "keep_recent": keep_recent,
-                    "error": "Conversation changed during compression",
+                    "error": "Compression context changed",
                 }
-                if mode == "manual":
-                    self._publish_result(result)
-                return result
             new_state = engine_result.get("state", state)
             status = engine_result.get("status", "failed")
             after = self._build_budget_snapshot(new_state, model_info["model"], model_info["provider"])
@@ -379,15 +555,92 @@ class ContextCompressionService:
                 "model": model_info["model"],
                 "provider": model_info["provider"],
                 "model_id": model_info["model_id"],
+                "project_root": operation_identity.project_root,
+                "session_id": operation_identity.session_id,
             }
             if status in {"completed", "suggest_new_conversation"}:
-                self.context_manager.sync_state(new_state)
-                if self.session_state_manager:
+                # Recheck immediately at the commit boundary.  There is no
+                # await between this check, sync_state and persistence.
+                if not self._is_operation_current(operation_identity):
+                    return {
+                        "status": "invalidated",
+                        "mode": mode,
+                        "trigger_reason": trigger_reason,
+                        "source": source,
+                        "keep_recent": keep_recent,
+                        "error": "Compression context changed before commit",
+                    }
+                manager = self.session_state_manager
+                if manager is None:
+                    payload["status"] = "failed"
+                    payload["error"] = "SessionStateManager unavailable"
+                    self._publish_result(payload)
+                    return payload
+
+                try:
+                    # Persist the candidate state before installing it into the
+                    # live ContextManager.  Persistence is part of the commit,
+                    # not a best-effort side effect of a completed operation.
+                    persisted = manager.save_current_session(
+                        state=new_state,
+                        project_root=operation_identity.project_root,
+                        expected_session_id=operation_identity.session_id,
+                    )
+                except Exception as exc:
+                    persisted = False
+                    self.logger.warning(f"Failed to persist compressed session: {exc}")
+
+                if not persisted:
+                    # A persistence rejection can mean another thread changed
+                    # the owning session/project after the last identity
+                    # check.  The stale operation must stay silent and must not
+                    # dirty the newly active conversation.
+                    if not self._is_operation_current(operation_identity):
+                        return {
+                            "status": "invalidated",
+                            "mode": mode,
+                            "trigger_reason": trigger_reason,
+                            "source": source,
+                            "keep_recent": keep_recent,
+                            "error": "Compression context changed during persistence",
+                        }
                     try:
-                        self.session_state_manager.mark_dirty()
-                        self.session_state_manager.save_current_session()
-                    except Exception as exc:
-                        self.logger.warning(f"Failed to persist compressed session: {exc}")
+                        # SessionStateManager already retains dirty on a failed
+                        # durable commit.  Keep this defensive call for custom
+                        # managers/failure injectors that only report False.
+                        manager.mark_dirty()
+                    except Exception:
+                        pass
+                    payload["status"] = "failed"
+                    payload["error"] = "Failed to persist compressed session"
+                    self._publish_result(payload)
+                    return payload
+
+                # A synchronous persistence call may still race with a project
+                # transition on another thread.  Its disk write belongs to the
+                # captured session, but it must never install into a new live
+                # session.
+                if not self._is_operation_current(operation_identity):
+                    return {
+                        "status": "invalidated",
+                        "mode": mode,
+                        "trigger_reason": trigger_reason,
+                        "source": source,
+                        "keep_recent": keep_recent,
+                        "error": "Compression context changed after persistence",
+                    }
+
+                try:
+                    self.context_manager.sync_state(new_state)
+                except Exception as exc:
+                    try:
+                        manager.mark_dirty()
+                    except Exception:
+                        pass
+                    payload["status"] = "failed"
+                    payload["error"] = f"Failed to install compressed state: {exc}"
+                    self._publish_result(payload)
+                    return payload
                 if status == "completed" and COMPRESS_FALLBACK_NEW_CONVERSATION and after["usage_ratio"] >= COMPRESS_AUTO_THRESHOLD:
                     status = "suggest_new_conversation"
                     payload["status"] = status

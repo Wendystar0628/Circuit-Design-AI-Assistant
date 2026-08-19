@@ -46,10 +46,6 @@ PyQt6 - Python bindings for Qt
 License: GPL v3 / Commercial
 https://www.riverbankcomputing.com/software/pyqt/
 
-LangGraph - Framework for building stateful AI agents
-License: MIT
-https://github.com/langchain-ai/langgraph
-
 Zhipu AI GLM - Large Language Model API
 https://open.bigmodel.cn/
 

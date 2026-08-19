@@ -42,9 +42,8 @@ class RAGQueryResult:
     上层调用方：rag_search 工具、RAGManager。
     """
 
-    def __init__(self, hits: Optional[List[QueryHit]] = None, error: str = ""):
+    def __init__(self, hits: Optional[List[QueryHit]] = None):
         self.chunks: List[QueryHit] = hits or []
-        self._error = error
 
     @property
     def is_empty(self) -> bool:
@@ -106,6 +105,22 @@ class VectorStore:
         path_hash = hashlib.md5(self._project_root.encode("utf-8")).hexdigest()[:12]
         self._collection_name = f"project_{path_hash}"
 
+    @property
+    def backend_name(self) -> str:
+        return "chromadb"
+
+    @property
+    def metric(self) -> str:
+        return "cosine"
+
+    @property
+    def collection_name(self) -> str:
+        return self._collection_name
+
+    @property
+    def storage_path(self) -> str:
+        return self._storage_path
+
     # ============================================================
     # 初始化
     # ============================================================
@@ -160,12 +175,16 @@ class VectorStore:
             vectors:  与 chunks 等长的向量列表（来自 embedder.py）
         """
         if not self._collection:
-            logger.warning("VectorStore not initialized, skipping upsert")
-            return
+            raise RuntimeError("VectorStore is not initialized")
 
-        self._delete_by_file(rel_path)
+        if len(chunks) != len(vectors):
+            raise ValueError(
+                f"Chunk/vector count mismatch for {rel_path}: "
+                f"{len(chunks)} chunks != {len(vectors)} vectors"
+            )
 
         if not chunks:
+            self._delete_by_file(rel_path)
             return
 
         ids       = [c.chunk_id for c in chunks]
@@ -181,39 +200,72 @@ class VectorStore:
         ]
 
         try:
+            existing_ids = set(self._get_ids_by_file(rel_path))
             self._collection.upsert(
                 ids=ids,
                 documents=documents,
                 embeddings=vectors,
                 metadatas=metadatas,
             )
+            stale_ids = existing_ids.difference(ids)
+            if stale_ids:
+                self._collection.delete(ids=sorted(stale_ids))
             logger.debug(f"Upserted {len(chunks)} chunks for {rel_path}")
         except Exception as exc:
-            logger.error(f"Failed to upsert chunks for {rel_path}: {exc}")
+            raise RuntimeError(
+                f"Failed to upsert chunks for {rel_path}: {exc}"
+            ) from exc
 
     def delete_file(self, rel_path: str) -> None:
         """删除文件的所有 chunk"""
         if not self._collection:
-            return
+            raise RuntimeError("VectorStore is not initialized")
         self._delete_by_file(rel_path)
+
+    def delete_prefix(self, rel_prefix: str) -> int:
+        """Delete all chunks whose file path is within a directory prefix."""
+        if not self._collection:
+            raise RuntimeError("VectorStore is not initialized")
+        prefix = rel_prefix.replace("\\", "/").rstrip("/") + "/"
+        try:
+            existing = self._collection.get(include=["metadatas"])
+            ids = existing.get("ids", [])
+            metadatas = existing.get("metadatas", [])
+            matching_ids = [
+                chunk_id
+                for chunk_id, metadata in zip(ids, metadatas)
+                if str((metadata or {}).get("file_path", "")).replace("\\", "/").startswith(prefix)
+            ]
+            if matching_ids:
+                self._collection.delete(ids=matching_ids)
+            return len(matching_ids)
+        except Exception as exc:
+            raise RuntimeError(
+                f"Failed to delete chunks under {rel_prefix}: {exc}"
+            ) from exc
 
     def _delete_by_file(self, rel_path: str) -> None:
         try:
-            existing = self._collection.get(
-                where={"file_path": rel_path},
-                include=[],
-            )
-            ids = existing.get("ids", [])
+            ids = self._get_ids_by_file(rel_path)
             if ids:
                 self._collection.delete(ids=ids)
                 logger.debug(f"Deleted {len(ids)} old chunks for {rel_path}")
         except Exception as exc:
-            logger.debug(f"No old chunks to delete for {rel_path}: {exc}")
+            raise RuntimeError(
+                f"Failed to delete chunks for {rel_path}: {exc}"
+            ) from exc
+
+    def _get_ids_by_file(self, rel_path: str) -> List[str]:
+        existing = self._collection.get(
+            where={"file_path": rel_path},
+            include=[],
+        )
+        return list(existing.get("ids", []))
 
     def clear(self) -> None:
         """清空整个 Collection（重置知识库）"""
         if not self._client or not self._collection:
-            return
+            raise RuntimeError("VectorStore is not initialized")
         try:
             self._client.delete_collection(self._collection_name)
             self._collection = self._client.get_or_create_collection(
@@ -222,7 +274,7 @@ class VectorStore:
             )
             logger.info(f"VectorStore collection cleared: {self._collection_name}")
         except Exception as exc:
-            logger.error(f"Failed to clear VectorStore: {exc}")
+            raise RuntimeError(f"Failed to clear VectorStore: {exc}") from exc
 
     # ============================================================
     # 查询操作
@@ -244,7 +296,7 @@ class VectorStore:
             按 score 降序排列的 QueryHit 列表
         """
         if not self._collection:
-            return []
+            raise RuntimeError("VectorStore is not initialized")
 
         count = self._collection.count()
         if count == 0:
@@ -258,8 +310,7 @@ class VectorStore:
                 include=["documents", "metadatas", "distances"],
             )
         except Exception as exc:
-            logger.error(f"VectorStore query failed: {exc}")
-            return []
+            raise RuntimeError(f"VectorStore query failed: {exc}") from exc
 
         hits: List[QueryHit] = []
         docs      = results.get("documents", [[]])[0]

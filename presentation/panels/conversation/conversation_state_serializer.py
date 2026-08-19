@@ -489,6 +489,7 @@ class ConversationStateSerializer:
                 "changed_file_count": 0,
                 "total_added_lines": 0,
                 "total_deleted_lines": 0,
+                "operation_token": "",
             }
 
         return {
@@ -516,6 +517,7 @@ class ConversationStateSerializer:
             "changed_file_count": max(0, int(preview.changed_file_count or 0)),
             "total_added_lines": max(0, int(preview.total_added_lines or 0)),
             "total_deleted_lines": max(0, int(preview.total_deleted_lines or 0)),
+            "operation_token": str(preview.operation_token or ""),
         }
 
     def serialize_rollback_overlay_state(

@@ -346,10 +346,14 @@ class ZhipuResponseParser:
         
         try:
             data = json.loads(data_str)
-            return self._parse_stream_data(data)
         except json.JSONDecodeError as e:
             self._logger.warning(f"Failed to parse stream data: {e}")
-            return None
+            raise ResponseParseError(f"Invalid streaming payload: {e}") from e
+
+        if not isinstance(data, dict):
+            raise ResponseParseError("Streaming payload must be a JSON object")
+
+        return self._parse_stream_data(data)
     
     def _parse_stream_data(self, data: Dict[str, Any]) -> StreamChunk:
         """
@@ -363,18 +367,23 @@ class ZhipuResponseParser:
         """
         # 检查错误
         if "error" in data:
-            error = data["error"]
-            error_msg = error.get("message", str(error))
-            self._logger.error(f"Stream error: {error_msg}")
-            return StreamChunk(is_finished=True)
+            self._handle_error_response(data)
+
+        usage = None
+        if isinstance(data.get("usage"), dict):
+            usage = self._parse_usage(data["usage"])
         
         # 解析 choices
         choices = data.get("choices", [])
         if not choices:
-            return StreamChunk()
+            return StreamChunk(usage=usage)
+        if not isinstance(choices, list) or not isinstance(choices[0], dict):
+            raise ResponseParseError("Invalid choices in streaming payload")
         
         choice = choices[0]
         delta = choice.get("delta", {})
+        if not isinstance(delta, dict):
+            delta = {}
         
         # 提取增量内容
         content = delta.get("content")
@@ -392,10 +401,6 @@ class ZhipuResponseParser:
         is_finished = finish_reason is not None
         
         # 解析 usage（最后一块可能包含）
-        usage = None
-        if "usage" in data:
-            usage = self._parse_usage(data["usage"])
-        
         chunk = StreamChunk(
             content=content,
             reasoning_content=reasoning_content,
@@ -426,13 +431,18 @@ class ZhipuResponseParser:
         Raises:
             对应的异常类型
         """
-        error = response_data.get("error", {})
-        
+        error = response_data.get("error")
+
         if isinstance(error, str):
-            error = {"message": error}
-        
-        error_code = error.get("code", "")
-        error_message = error.get("message", "Unknown error")
+            error_code = ""
+            error_message = error or "Unknown error"
+        elif isinstance(error, dict):
+            error_code = str(error.get("code") or error.get("type") or "")
+            error_message = str(error.get("message") or "Unknown error")
+        else:
+            raise ResponseParseError("Malformed API error payload")
+
+        self._logger.error(f"Stream/API error: {error_message}")
         
         # 根据错误码分类
         self._raise_typed_error(error_code, error_message)

@@ -40,8 +40,6 @@ class SessionManager:
         self._session_state = None
         self._logger = None
         
-        # 初始化仿真结果监控器
-        self._initialize_simulation_result_watcher()
 
     @property
     def config_manager(self):
@@ -135,45 +133,14 @@ class SessionManager:
         editor_panel = self._panels["code_editor"]
         editor_panel.restore_session_files(open_files, active_file)
 
-    # ============================================================
-    # 仿真结果监控器生命周期管理
-    # ============================================================
-
-    def _initialize_simulation_result_watcher(self):
-        """
-        初始化仿真结果监控器
-        
-        在 SessionManager 初始化时调用，启动监控器的事件订阅。
-        监控器会自动响应项目打开/关闭事件。
-        """
-        try:
-            from domain.simulation.service.simulation_result_watcher import (
-                simulation_result_watcher
-            )
-            simulation_result_watcher.initialize()
-            if self.logger:
-                self.logger.info("SimulationResultWatcher initialized via SessionManager")
-        except Exception as e:
-            if self.logger:
-                self.logger.error(f"Failed to initialize SimulationResultWatcher: {e}")
-
     def dispose(self):
+        """Release SessionManager resources.
+
+        Simulation results are indexed from authoritative job lifecycle
+        events.  The old result-directory watcher was never fed those paths
+        by FileWatchTask and is intentionally no longer started here.
         """
-        释放资源
-        
-        在应用关闭时调用，清理所有管理的资源。
-        """
-        try:
-            # 释放仿真结果监控器
-            from domain.simulation.service.simulation_result_watcher import (
-                simulation_result_watcher
-            )
-            simulation_result_watcher.dispose()
-            if self.logger:
-                self.logger.info("SimulationResultWatcher disposed via SessionManager")
-        except Exception as e:
-            if self.logger:
-                self.logger.error(f"Failed to dispose SimulationResultWatcher: {e}")
+        return None
 
 
 __all__ = ["SessionManager"]

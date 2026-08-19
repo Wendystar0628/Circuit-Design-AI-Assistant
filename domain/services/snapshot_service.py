@@ -14,7 +14,7 @@
 ⚠️ 接口层级说明：
 - 同步方法（create_snapshot, restore_snapshot 等）是底层接口
 - 异步方法（create_snapshot_async, restore_snapshot_async 等）是应用层接口
-- LangGraph 节点和 UI 层必须使用异步方法，避免阻塞事件循环
+- 事件循环中的调用方必须使用异步方法，避免阻塞 UI
 - 异步方法通过 asyncio.to_thread() 将 shutil 操作卸载到线程池
 
 存储路径：
@@ -27,6 +27,7 @@
 - .git/ - Git 仓库
 - *.pyc - 编译文件
 - simulation_results/ - 仿真结果 bundle（可重新生成）
+- .venv/ / venv/ / node_modules/ - 本地依赖（永不因恢复而删除）
 
 被调用方：
 - user_checkpoint_node: 用户确认时创建快照（使用 create_snapshot_async）
@@ -43,8 +44,13 @@
 """
 
 import difflib
+import fnmatch
+import hashlib
+import json
 import os
 import shutil
+import stat
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -54,6 +60,11 @@ from domain.llm.agent.utils.edit_diff import generate_diff_string
 
 # 快照目录相对路径
 SNAPSHOTS_DIR = ".circuit_ai/snapshots"
+
+# Snapshot-owned metadata.  It is deliberately part of the ignore policy so a
+# project file with the same name can never be mistaken for restore metadata.
+SNAPSHOT_METADATA_FILE = ".snapshot_meta.json"
+SNAPSHOT_RESTORE_MANIFEST_VERSION = 1
 
 # 默认保留快照数量
 DEFAULT_KEEP_COUNT = 10
@@ -72,6 +83,7 @@ IGNORE_PATTERNS = [
     ".venv",
     "venv",
     "node_modules",
+    SNAPSHOT_METADATA_FILE,
 ]
 
 TEXT_PREVIEW_SUFFIXES = {
@@ -134,9 +146,6 @@ class SnapshotInfo:
     path: str
     """快照路径"""
 
-    iteration_count: int = 0
-    """对应的迭代次数（从快照 ID 解析）"""
-
     def to_dict(self) -> dict:
         """转换为字典"""
         return {
@@ -145,7 +154,6 @@ class SnapshotInfo:
             "size_bytes": self.size_bytes,
             "file_count": self.file_count,
             "path": self.path,
-            "iteration_count": self.iteration_count,
         }
 
 
@@ -158,6 +166,8 @@ class SnapshotFileChange:
     deleted_lines: int
     diff_preview: str = ""
     is_text: bool = False
+    current_revision: str = ""
+    snapshot_revision: str = ""
 
 
 @dataclass(frozen=True)
@@ -167,6 +177,28 @@ class SnapshotRestorePreview:
     changed_file_count: int
     total_added_lines: int
     total_deleted_lines: int
+
+
+@dataclass(frozen=True)
+class SnapshotRestoreScope:
+    """Limit which paths a restore may mutate.
+
+    Paths outside ``protected_roots`` remain part of the normal full-project
+    restore.  Inside a protected root only ``allowed_paths`` (and their
+    descendants) may be changed; ancestors are traversed without being
+    replaced or removed.  Conversation rollback uses this to restore its own
+    session files without time-travelling every other session and global
+    application state.
+    """
+
+    protected_roots: Tuple[str, ...] = ()
+    allowed_paths: Tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class _SnapshotRestorePolicy:
+    excluded_patterns: Tuple[str, ...]
+    allow_deletions: bool
 
 
 def create_snapshot(
@@ -198,7 +230,8 @@ def create_snapshot(
     safe_id = _sanitize_snapshot_id(snapshot_id)
 
     root = Path(project_root).resolve()
-    snapshot_dir = root / SNAPSHOTS_DIR / safe_id
+    snapshots_dir = _safe_snapshots_dir(root)
+    snapshot_dir = snapshots_dir / safe_id
 
     # 检查快照是否已存在
     if snapshot_dir.exists():
@@ -226,14 +259,24 @@ def create_snapshot(
         )
 
         # 写入元数据
-        _write_snapshot_metadata(snapshot_dir, safe_id)
+        _write_snapshot_metadata(
+            snapshot_dir,
+            safe_id,
+            excluded_patterns=all_patterns,
+        )
 
         return f"{SNAPSHOTS_DIR}/{safe_id}"
 
     except Exception as e:
         # 清理不完整的快照目录
-        if snapshot_dir.exists():
-            shutil.rmtree(snapshot_dir, ignore_errors=True)
+        if snapshot_dir.exists() and not _is_link_like(snapshot_dir):
+            try:
+                _validate_no_link_like_tree(snapshot_dir, label="incomplete snapshot")
+                shutil.rmtree(snapshot_dir)
+            except Exception:
+                # A raced-in reparse point is safer left behind for manual
+                # inspection than followed during best-effort cleanup.
+                pass
         raise RuntimeError(f"Failed to create snapshot: {e}") from e
 
 
@@ -242,19 +285,21 @@ def restore_snapshot(
     snapshot_id: str,
     *,
     backup_current: bool = True,
+    scope: Optional[SnapshotRestoreScope] = None,
 ) -> None:
     """
     从快照恢复项目文件
 
     恢复策略：
     1. 如果 backup_current=True，先备份当前状态
-    2. 删除项目中的可恢复文件（保留 .circuit_ai 等）
+    2. 仅删除捕获清单明确覆盖、但快照中不存在的路径
     3. 从快照复制文件到项目目录
 
     Args:
         project_root: 项目根目录路径
         snapshot_id: 快照标识
         backup_current: 是否在恢复前备份当前状态
+        scope: 可选的局部恢复边界；预览与恢复必须使用同一实例
 
     Raises:
         ValueError: 快照不存在
@@ -262,43 +307,75 @@ def restore_snapshot(
     """
     safe_id = _sanitize_snapshot_id(snapshot_id)
     root = Path(project_root).resolve()
-    snapshot_dir = root / SNAPSHOTS_DIR / safe_id
+    snapshots_dir = _safe_snapshots_dir(root)
+    snapshot_dir = snapshots_dir / safe_id
 
     if not snapshot_dir.exists():
         raise ValueError(f"Snapshot not found: {safe_id}")
 
-    # 备份当前状态（可选）
+    # Reject a redirecting/corrupt source before even creating the safety
+    # backup.  Otherwise the failed restore would immediately replay that
+    # backup and needlessly replace live files (including breaking legitimate
+    # hardlink topology) despite never having started the target restore.
+    _validate_no_link_like_tree(snapshot_dir, label="snapshot restore source")
+
+    # 备份当前状态（可选）。安全备份是破坏性恢复的先决条件；
+    # 创建失败时必须在触碰目标工作区之前中止。
     backup_id = None
+    backup_path: Optional[Path] = None
     if backup_current:
-        backup_id = f"_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        backup_id = f"_backup_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
+        backup_path = (snapshots_dir / backup_id).resolve()
         try:
             create_snapshot(project_root, backup_id)
-        except Exception:
-            # 备份失败不阻止恢复，但记录警告
-            backup_id = None
+        except Exception as backup_error:
+            raise RuntimeError(
+                "Failed to create safety backup; restore aborted before "
+                f"modifying the project: {backup_error}"
+            ) from backup_error
 
+    restore_completed = False
+    rollback_completed = False
     try:
         # 恢复文件
-        _restore_files_from_snapshot(root, snapshot_dir)
+        _restore_files_from_snapshot(root, snapshot_dir, scope=scope)
+        restore_completed = True
 
-    except Exception as e:
+    except Exception as restore_error:
         # 恢复失败，尝试从备份恢复
-        if backup_id:
+        if backup_id and backup_path is not None:
             try:
                 _restore_files_from_snapshot(
-                    root, root / SNAPSHOTS_DIR / backup_id
+                    root,
+                    backup_path,
+                    scope=scope,
                 )
-            except Exception:
-                pass  # 备份恢复也失败，保持当前状态
-        raise RuntimeError(f"Failed to restore snapshot: {e}") from e
+                rollback_completed = True
+            except Exception as rollback_error:
+                # 这是唯一可用的恢复点，不得在 finally 中删除。
+                # 绝对路径必须出现在异常中，便于人工恢复。
+                raise RuntimeError(
+                    "Failed to restore snapshot and failed to roll back the "
+                    "partial restore. Safety backup preserved at: "
+                    f"{backup_path}. Restore error: {restore_error}; "
+                    f"rollback error: {rollback_error}"
+                ) from rollback_error
+
+            raise RuntimeError(
+                f"Failed to restore snapshot: {restore_error}. "
+                "The project was rolled back from its safety backup."
+            ) from restore_error
+
+        raise RuntimeError(f"Failed to restore snapshot: {restore_error}") from restore_error
 
     finally:
-        # 清理临时备份
-        if backup_id:
+        # 只有目标恢复完成，或失败后已确认回滚成功，才能
+        # 清理安全备份。双重失败时保留它供人工恢复。
+        if backup_id and (restore_completed or rollback_completed):
             try:
                 delete_snapshot(project_root, backup_id)
             except Exception:
-                pass
+                pass  # 清理失败只会留下可恢复备份，不会破坏已完成的结果
 
 
 def list_snapshots(project_root: str) -> List[SnapshotInfo]:
@@ -312,14 +389,18 @@ def list_snapshots(project_root: str) -> List[SnapshotInfo]:
         List[SnapshotInfo]: 快照信息列表，按时间倒序排列
     """
     root = Path(project_root).resolve()
-    snapshots_dir = root / SNAPSHOTS_DIR
+    snapshots_dir = _safe_snapshots_dir(root)
 
     if not snapshots_dir.exists():
         return []
 
     snapshots = []
     for item in snapshots_dir.iterdir():
-        if item.is_dir() and not item.name.startswith("_"):
+        if (
+            not _is_link_like(item)
+            and item.is_dir()
+            and not item.name.startswith("_")
+        ):
             info = _get_snapshot_info(item)
             if info:
                 snapshots.append(info)
@@ -343,11 +424,14 @@ def delete_snapshot(project_root: str, snapshot_id: str) -> None:
     """
     safe_id = _sanitize_snapshot_id(snapshot_id)
     root = Path(project_root).resolve()
-    snapshot_dir = root / SNAPSHOTS_DIR / safe_id
+    snapshot_dir = _safe_snapshots_dir(root) / safe_id
 
     if not snapshot_dir.exists():
         raise ValueError(f"Snapshot not found: {safe_id}")
 
+    if _is_link_like(snapshot_dir):
+        raise RuntimeError("Refusing to delete link-like snapshot storage")
+    _validate_no_link_like_tree(snapshot_dir, label="snapshot delete source")
     shutil.rmtree(snapshot_dir)
 
 
@@ -406,7 +490,7 @@ def get_snapshot_info(
     """
     safe_id = _sanitize_snapshot_id(snapshot_id)
     root = Path(project_root).resolve()
-    snapshot_dir = root / SNAPSHOTS_DIR / safe_id
+    snapshot_dir = _safe_snapshots_dir(root) / safe_id
 
     if not snapshot_dir.exists():
         return None
@@ -417,15 +501,17 @@ def get_snapshot_info(
 def preview_restore_snapshot(
     project_root: str,
     snapshot_id: str,
+    *,
+    scope: Optional[SnapshotRestoreScope] = None,
 ) -> SnapshotRestorePreview:
     safe_id = _sanitize_snapshot_id(snapshot_id)
     root = Path(project_root).resolve()
-    snapshot_dir = root / SNAPSHOTS_DIR / safe_id
+    snapshot_dir = _safe_snapshots_dir(root) / safe_id
 
     if not snapshot_dir.exists():
         raise ValueError(f"Snapshot not found: {safe_id}")
 
-    return _build_restore_preview(root, snapshot_dir, safe_id)
+    return _build_restore_preview(root, snapshot_dir, safe_id, scope=scope)
 
 
 def snapshot_exists(project_root: str, snapshot_id: str) -> bool:
@@ -441,7 +527,7 @@ def snapshot_exists(project_root: str, snapshot_id: str) -> bool:
     """
     safe_id = _sanitize_snapshot_id(snapshot_id)
     root = Path(project_root).resolve()
-    snapshot_dir = root / SNAPSHOTS_DIR / safe_id
+    snapshot_dir = _safe_snapshots_dir(root) / safe_id
     return snapshot_dir.exists()
 
 
@@ -455,99 +541,8 @@ def get_snapshots_dir(project_root: str) -> str:
     Returns:
         str: 快照目录的完整路径
     """
-    return str(Path(project_root).resolve() / SNAPSHOTS_DIR)
-
-
-def get_previous_snapshot(project_root: str) -> Optional[SnapshotInfo]:
-    """
-    获取上一个快照（用于线性撤回）
-    
-    返回按时间排序的第二新的快照（最新的是当前迭代，上一个是撤回目标）
-    
-    Args:
-        project_root: 项目根目录路径
-        
-    Returns:
-        Optional[SnapshotInfo]: 上一个快照信息，若不存在返回 None
-    """
-    snapshots = list_snapshots(project_root)
-    
-    # 过滤掉临时快照（以 _ 开头）
-    regular_snapshots = [s for s in snapshots if not s.snapshot_id.startswith("_")]
-    
-    # 需要至少 2 个快照才能撤回
-    if len(regular_snapshots) < 2:
-        return None
-    
-    # 返回第二新的快照（索引 1，因为已按时间倒序排列）
-    return regular_snapshots[1]
-
-
-def pop_snapshot(project_root: str) -> Optional[str]:
-    """
-    弹出并删除最新快照（撤回后清理）
-    
-    用于撤回操作完成后，删除当前迭代的快照。
-    
-    Args:
-        project_root: 项目根目录路径
-        
-    Returns:
-        Optional[str]: 被删除的快照 ID，若无快照返回 None
-    """
-    snapshots = list_snapshots(project_root)
-    
-    # 过滤掉临时快照
-    regular_snapshots = [s for s in snapshots if not s.snapshot_id.startswith("_")]
-    
-    if not regular_snapshots:
-        return None
-    
-    # 删除最新的快照（索引 0）
-    latest = regular_snapshots[0]
-    try:
-        delete_snapshot(project_root, latest.snapshot_id)
-        return latest.snapshot_id
-    except Exception:
-        return None
-
-
-def generate_snapshot_id(iteration_count: int) -> str:
-    """
-    生成快照 ID
-    
-    格式：iter_{iteration_count:03d}_{timestamp}
-    示例：iter_001_20241220_143022
-    
-    Args:
-        iteration_count: 迭代次数
-        
-    Returns:
-        str: 快照 ID
-    """
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    return f"iter_{iteration_count:03d}_{timestamp}"
-
-
-def parse_iteration_from_snapshot_id(snapshot_id: str) -> int:
-    """
-    从快照 ID 解析迭代次数
-    
-    Args:
-        snapshot_id: 快照 ID
-        
-    Returns:
-        int: 迭代次数，解析失败返回 0
-    """
-    try:
-        # 格式：iter_001_20241220_143022
-        if snapshot_id.startswith("iter_"):
-            parts = snapshot_id.split("_")
-            if len(parts) >= 2:
-                return int(parts[1])
-    except (ValueError, IndexError):
-        pass
-    return 0
+    root = Path(project_root).resolve()
+    return str(_safe_snapshots_dir(root))
 
 
 # ============================================================
@@ -565,53 +560,165 @@ def _sanitize_snapshot_id(snapshot_id: str) -> str:
     return "".join(safe_chars) or "snapshot"
 
 
+def _is_link_like(path: Path) -> bool:
+    """Return whether ``path`` may redirect I/O outside its lexical tree.
+
+    On Windows an NTFS junction is a directory and is *not* reported by
+    ``Path.is_symlink()``.  Treat every junction and every reparse point as a
+    protected link-like node as well.  Snapshot code must never traverse,
+    overwrite, or delete through one of these paths.
+    """
+    try:
+        if path.is_symlink():
+            return True
+
+        is_junction = getattr(path, "is_junction", None)
+        if callable(is_junction) and is_junction():
+            return True
+
+        path_stat = path.lstat()
+        file_attributes = int(getattr(path_stat, "st_file_attributes", 0) or 0)
+        reparse_flag = int(getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0) or 0)
+        return bool(reparse_flag and file_attributes & reparse_flag)
+    except FileNotFoundError:
+        return False
+    except OSError as exc:
+        raise RuntimeError(f"Failed to inspect snapshot path {path}: {exc}") from exc
+
+
+def _safe_snapshots_dir(root: Path) -> Path:
+    """Return snapshot storage only when none of its ancestors redirects."""
+    current = root
+    for part in Path(SNAPSHOTS_DIR).parts:
+        current = current / part
+        if _is_link_like(current):
+            raise RuntimeError(
+                f"Snapshot storage contains a link-like path: {current}"
+            )
+    return current
+
+
+def _validate_no_link_like_tree(root: Path, *, label: str) -> None:
+    """Fail before mutation when a source tree contains a redirecting node."""
+    if _is_link_like(root):
+        raise RuntimeError(f"{label} is link-like: {root}")
+    if not root.is_dir():
+        raise RuntimeError(f"{label} is not a directory: {root}")
+
+    for directory, dir_names, file_names in os.walk(
+        root,
+        topdown=True,
+        followlinks=False,
+    ):
+        directory_path = Path(directory)
+        if directory_path != root and _is_link_like(directory_path):
+            raise RuntimeError(f"{label} contains a link-like path: {directory_path}")
+        for name in [*dir_names, *file_names]:
+            item_path = directory_path / name
+            if _is_link_like(item_path):
+                raise RuntimeError(
+                    f"{label} contains a link-like path: {item_path}"
+                )
+
+
 def _create_ignore_function(root: Path, patterns: List[str]):
     """
     创建忽略函数
 
     结合 shutil.ignore_patterns 和自定义路径匹配
     """
-    # 分离文件模式和目录模式
-    file_patterns = [p for p in patterns if "*" in p]
-    dir_patterns = [p for p in patterns if "*" not in p]
-
-    # 创建文件模式忽略函数
-    file_ignore = shutil.ignore_patterns(*file_patterns) if file_patterns else None
-
     def ignore_func(directory: str, contents: List[str]) -> set:
         ignored = set()
         dir_path = Path(directory)
-
-        # 应用文件模式
-        if file_ignore:
-            ignored.update(file_ignore(directory, contents))
-
-        # 应用目录模式
         for name in contents:
             item_path = dir_path / name
-
-            # 检查是否匹配目录模式
-            for pattern in dir_patterns:
-                # 相对于项目根目录的路径
-                try:
-                    rel_path = item_path.relative_to(root)
-                    rel_str = str(rel_path).replace("\\", "/")
-
-                    # 检查路径是否以模式开头或完全匹配
-                    if rel_str == pattern or rel_str.startswith(f"{pattern}/"):
-                        ignored.add(name)
-                        break
-
-                    # 检查目录名是否匹配
-                    if name == pattern:
-                        ignored.add(name)
-                        break
-                except ValueError:
-                    pass
+            if _is_link_like(item_path):
+                ignored.add(name)
+                continue
+            try:
+                relative_path = item_path.relative_to(root)
+            except ValueError:
+                continue
+            if _matches_any_snapshot_pattern(relative_path, patterns):
+                ignored.add(name)
 
         return ignored
 
     return ignore_func
+
+
+def _matches_any_snapshot_pattern(
+    relative_path: Path,
+    patterns: List[str] | Tuple[str, ...],
+) -> bool:
+    return any(
+        _matches_snapshot_pattern(relative_path, pattern)
+        for pattern in patterns
+        if str(pattern or "").strip()
+    )
+
+
+def _matches_snapshot_pattern(relative_path: Path, pattern: str) -> bool:
+    """Use the same path rules during capture, preview, and restore.
+
+    A slash-containing pattern is project-root relative.  A basename pattern
+    applies at any depth, which preserves the historical behavior for nested
+    ``node_modules``/``__pycache__`` directories and compiled files.
+    """
+    normalized_pattern = str(pattern or "").replace("\\", "/").strip("/")
+    if not normalized_pattern:
+        return False
+
+    relative_posix = relative_path.as_posix().strip("/")
+    parts = tuple(part for part in relative_path.parts if part not in {"", "."})
+
+    if "/" in normalized_pattern:
+        if any(char in normalized_pattern for char in "*?["):
+            return fnmatch.fnmatchcase(relative_posix, normalized_pattern)
+        return (
+            relative_posix == normalized_pattern
+            or relative_posix.startswith(f"{normalized_pattern}/")
+        )
+
+    return any(fnmatch.fnmatchcase(part, normalized_pattern) for part in parts)
+
+
+def _load_snapshot_restore_policy(snapshot_dir: Path) -> _SnapshotRestorePolicy:
+    """Load the capture-time policy used to decide safe deletions.
+
+    Legacy or damaged snapshots remain useful for copying old file contents,
+    but are intentionally non-destructive because their custom ignore policy
+    cannot be reconstructed safely.
+    """
+    excluded_patterns = list(IGNORE_PATTERNS)
+    allow_deletions = False
+    metadata_file = snapshot_dir / SNAPSHOT_METADATA_FILE
+
+    try:
+        metadata = json.loads(metadata_file.read_text(encoding="utf-8"))
+        manifest = metadata.get("restore_manifest", {})
+        if (
+            isinstance(manifest, dict)
+            and manifest.get("version") == SNAPSHOT_RESTORE_MANIFEST_VERSION
+            and manifest.get("captured_scope") == "."
+            and manifest.get("capture_complete") is True
+        ):
+            stored_patterns = manifest.get("excluded_patterns", [])
+            if isinstance(stored_patterns, list) and all(
+                isinstance(item, str) for item in stored_patterns
+            ):
+                excluded_patterns.extend(stored_patterns)
+                allow_deletions = True
+    except Exception:
+        # Copy-only restore is the safe fallback when metadata is absent or
+        # corrupt.  In particular, never infer that an uncaptured path should
+        # be deleted.
+        pass
+
+    return _SnapshotRestorePolicy(
+        excluded_patterns=tuple(dict.fromkeys(excluded_patterns)),
+        allow_deletions=allow_deletions,
+    )
 
 
 def _check_disk_space(source: Path, dest_parent: Path) -> None:
@@ -621,10 +728,26 @@ def _check_disk_space(source: Path, dest_parent: Path) -> None:
     粗略估计：要求可用空间至少是源目录大小的 1.5 倍
     """
     try:
-        # 获取源目录大小（快速估计，只计算顶层）
-        source_size = sum(
-            f.stat().st_size for f in source.rglob("*") if f.is_file()
-        )
+        # Never follow a symlink/junction/reparse point while estimating.  In
+        # particular, a project may contain a junction to a much larger or
+        # sensitive tree outside the project root.
+        source_size = 0
+        for directory, dir_names, file_names in os.walk(
+            source,
+            topdown=True,
+            followlinks=False,
+        ):
+            directory_path = Path(directory)
+            dir_names[:] = [
+                name
+                for name in dir_names
+                if not _is_link_like(directory_path / name)
+            ]
+            for name in file_names:
+                file_path = directory_path / name
+                if _is_link_like(file_path):
+                    continue
+                source_size += file_path.stat().st_size
 
         # 获取目标磁盘可用空间
         disk_usage = shutil.disk_usage(dest_parent)
@@ -645,29 +768,37 @@ def _check_disk_space(source: Path, dest_parent: Path) -> None:
         pass
 
 
-def _write_snapshot_metadata(snapshot_dir: Path, snapshot_id: str) -> None:
+def _write_snapshot_metadata(
+    snapshot_dir: Path,
+    snapshot_id: str,
+    *,
+    excluded_patterns: List[str],
+) -> None:
     """写入快照元数据"""
-    import json
-
     metadata = {
         "snapshot_id": snapshot_id,
         "timestamp": datetime.now().isoformat(),
         "created_by": "snapshot_service",
+        "restore_manifest": {
+            "version": SNAPSHOT_RESTORE_MANIFEST_VERSION,
+            "captured_scope": ".",
+            "capture_complete": True,
+            "excluded_patterns": list(dict.fromkeys(excluded_patterns)),
+            "deletion_semantics": "missing_within_captured_scope",
+        },
     }
 
-    metadata_file = snapshot_dir / ".snapshot_meta.json"
+    metadata_file = snapshot_dir / SNAPSHOT_METADATA_FILE
     metadata_file.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
 
 
 def _get_snapshot_info(snapshot_dir: Path) -> Optional[SnapshotInfo]:
     """获取快照信息"""
-    import json
-
-    if not snapshot_dir.is_dir():
+    if _is_link_like(snapshot_dir) or not snapshot_dir.is_dir():
         return None
 
     # 读取元数据
-    metadata_file = snapshot_dir / ".snapshot_meta.json"
+    metadata_file = snapshot_dir / SNAPSHOT_METADATA_FILE
     timestamp = ""
     snapshot_id = snapshot_dir.name
 
@@ -689,15 +820,25 @@ def _get_snapshot_info(snapshot_dir: Path) -> Optional[SnapshotInfo]:
     file_count = 0
 
     try:
-        for f in snapshot_dir.rglob("*"):
-            if f.is_file():
-                size_bytes += f.stat().st_size
+        for directory, dir_names, file_names in os.walk(
+            snapshot_dir,
+            topdown=True,
+            followlinks=False,
+        ):
+            directory_path = Path(directory)
+            dir_names[:] = [
+                name
+                for name in dir_names
+                if not _is_link_like(directory_path / name)
+            ]
+            for name in file_names:
+                file_path = directory_path / name
+                if _is_link_like(file_path):
+                    continue
+                size_bytes += file_path.stat().st_size
                 file_count += 1
     except Exception:
         pass
-
-    # 解析迭代次数
-    iteration_count = parse_iteration_from_snapshot_id(snapshot_id)
 
     return SnapshotInfo(
         snapshot_id=snapshot_id,
@@ -705,7 +846,6 @@ def _get_snapshot_info(snapshot_dir: Path) -> Optional[SnapshotInfo]:
         size_bytes=size_bytes,
         file_count=file_count,
         path=str(snapshot_dir),
-        iteration_count=iteration_count,
     )
 
 
@@ -713,9 +853,17 @@ def _build_restore_preview(
     root: Path,
     snapshot_dir: Path,
     snapshot_id: str,
+    *,
+    scope: Optional[SnapshotRestoreScope] = None,
 ) -> SnapshotRestorePreview:
-    current_files = _collect_restore_files(root)
-    snapshot_files = _collect_restore_files(snapshot_dir)
+    _validate_no_link_like_tree(snapshot_dir, label="snapshot preview source")
+    policy = _load_snapshot_restore_policy(snapshot_dir)
+    current_files = _collect_restore_files(root, policy=policy, scope=scope)
+    snapshot_files = _collect_restore_files(
+        snapshot_dir,
+        policy=policy,
+        scope=scope,
+    )
 
     changes: List[SnapshotFileChange] = []
     total_added_lines = 0
@@ -727,6 +875,12 @@ def _build_restore_preview(
     ):
         current_path = current_files.get(relative_path)
         snapshot_path = snapshot_files.get(relative_path)
+
+        # Without a complete capture manifest, absence from a legacy snapshot
+        # is not evidence that the live file should be deleted.  Preview and
+        # restore deliberately share this non-destructive fallback.
+        if current_path is not None and snapshot_path is None and not policy.allow_deletions:
+            continue
 
         if current_path and snapshot_path and _files_are_equal(current_path, snapshot_path):
             continue
@@ -749,27 +903,53 @@ def _build_restore_preview(
     )
 
 
-def _collect_restore_files(base_dir: Path) -> Dict[Path, Path]:
+def _collect_restore_files(
+    base_dir: Path,
+    *,
+    policy: _SnapshotRestorePolicy,
+    scope: Optional[SnapshotRestoreScope],
+) -> Dict[Path, Path]:
     collected: Dict[Path, Path] = {}
     if not base_dir.exists():
         return collected
+    if _is_link_like(base_dir):
+        raise RuntimeError(f"Restore tree root is link-like: {base_dir}")
 
-    for file_path in base_dir.rglob("*"):
-        if not file_path.is_file():
-            continue
+    # Top-down os.walk lets us prune excluded trees.  Previewing a project must
+    # not descend into potentially huge or sensitive .venv/node_modules/.git
+    # directories only to discard their files afterwards.
+    for directory, dir_names, file_names in os.walk(base_dir, topdown=True):
+        directory_path = Path(directory)
+        relative_dir = directory_path.relative_to(base_dir)
 
-        relative_path = file_path.relative_to(base_dir)
-        if file_path.name == ".snapshot_meta.json":
-            continue
-        if _is_protected_restore_path(relative_path):
-            continue
+        kept_directories: List[str] = []
+        for name in dir_names:
+            item_path = directory_path / name
+            if _is_link_like(item_path):
+                continue
+            relative_path = relative_dir / name
+            mode = _get_restore_path_mode(relative_path, policy=policy, scope=scope)
+            if mode != "protected":
+                kept_directories.append(name)
+        dir_names[:] = kept_directories
 
-        collected[relative_path] = file_path
+        for name in file_names:
+            item_path = directory_path / name
+            if _is_link_like(item_path):
+                continue
+            relative_path = relative_dir / name
+            if relative_path == Path(SNAPSHOT_METADATA_FILE):
+                continue
+            if _get_restore_path_mode(relative_path, policy=policy, scope=scope) != "included":
+                continue
+            collected[relative_path] = item_path
 
     return collected
 
 
 def _files_are_equal(first_path: Path, second_path: Path) -> bool:
+    if _is_link_like(first_path) or _is_link_like(second_path):
+        raise RuntimeError("Refusing to compare a link-like restore path")
     try:
         return first_path.read_bytes() == second_path.read_bytes()
     except Exception:
@@ -830,12 +1010,16 @@ def _build_snapshot_file_change(
         deleted_lines=deleted_lines,
         diff_preview=diff_preview,
         is_text=is_text,
+        current_revision=_file_revision(current_path),
+        snapshot_revision=_file_revision(snapshot_path),
     )
 
 
 def _read_text_preview(path: Optional[Path]) -> Tuple[str, bool]:
     if path is None or not path.exists():
         return "", True
+    if _is_link_like(path):
+        raise RuntimeError(f"Refusing to preview a link-like path: {path}")
 
     try:
         raw = path.read_bytes()
@@ -855,6 +1039,24 @@ def _read_text_preview(path: Optional[Path]) -> Tuple[str, bool]:
         return _normalize_preview_text(raw.decode("utf-8", errors="replace")), True
 
     return "", False
+
+
+def _file_revision(path: Optional[Path]) -> str:
+    """Return an exact content identity for restore-plan validation."""
+    if path is None:
+        return "missing"
+    if _is_link_like(path):
+        raise RuntimeError(f"Refusing to fingerprint a link-like path: {path}")
+    digest = hashlib.sha256()
+    try:
+        with path.open("rb") as file_obj:
+            for chunk in iter(lambda: file_obj.read(1024 * 1024), b""):
+                digest.update(chunk)
+    except Exception as exc:
+        raise RuntimeError(
+            f"Failed to fingerprint restore path {path}: {exc}"
+        ) from exc
+    return f"sha256:{digest.hexdigest()}"
 
 
 def _normalize_preview_text(text: str) -> str:
@@ -883,7 +1085,12 @@ def _truncate_diff_preview(diff_text: str, *, max_chars: int = 20000) -> str:
     return f"{diff_text[:max_chars]}\n...\n[diff truncated]"
 
 
-def _restore_files_from_snapshot(root: Path, snapshot_dir: Path) -> None:
+def _restore_files_from_snapshot(
+    root: Path,
+    snapshot_dir: Path,
+    *,
+    scope: Optional[SnapshotRestoreScope] = None,
+) -> None:
     """
     从快照恢复文件到项目目录
 
@@ -892,74 +1099,224 @@ def _restore_files_from_snapshot(root: Path, snapshot_dir: Path) -> None:
     2. 用快照内容覆盖当前项目文件
     3. 保留内部快照存储目录等受保护路径
     """
-    _sync_directory_from_snapshot(snapshot_dir, root, Path())
+    # Validate the complete source before touching the destination.  A
+    # hand-edited/corrupt snapshot containing a junction must not cause even a
+    # partial restore before the unsafe node is discovered.
+    _validate_no_link_like_tree(snapshot_dir, label="snapshot restore source")
+    policy = _load_snapshot_restore_policy(snapshot_dir)
+    _sync_directory_from_snapshot(
+        snapshot_dir,
+        root,
+        Path(),
+        policy=policy,
+        scope=scope,
+    )
 
 
 def _sync_directory_from_snapshot(
-    source_dir: Path,
+    source_dir: Optional[Path],
     dest_dir: Path,
     relative_dir: Path,
+    *,
+    policy: _SnapshotRestorePolicy,
+    scope: Optional[SnapshotRestoreScope],
 ) -> None:
+    if source_dir is not None and _is_link_like(source_dir):
+        raise RuntimeError(f"Snapshot source directory is link-like: {source_dir}")
+    if relative_dir != Path() and _is_link_like(dest_dir):
+        # Live link-like nodes are outside the captured restore authority.
+        # Preserve the link and, critically, never enumerate its target.
+        return
     dest_dir.mkdir(parents=True, exist_ok=True)
 
-    source_entries = {
-        item.name: item
-        for item in source_dir.iterdir()
-        if item.name != ".snapshot_meta.json"
-    }
+    source_entries: Dict[str, Path] = {}
+    if source_dir is not None and source_dir.is_dir():
+        for item in source_dir.iterdir():
+            if relative_dir == Path() and item.name == SNAPSHOT_METADATA_FILE:
+                continue
+            if _is_link_like(item):
+                raise RuntimeError(f"Snapshot source path is link-like: {item}")
+            source_entries[item.name] = item
     dest_entries = {item.name: item for item in dest_dir.iterdir()}
 
     for name, dest_item in dest_entries.items():
+        if _is_link_like(dest_item):
+            # Preserve redirecting live paths whether or not a snapshot entry
+            # has the same lexical name.
+            continue
         relative_path = relative_dir / name
-        if _is_protected_restore_path(relative_path):
+        mode = _get_restore_path_mode(relative_path, policy=policy, scope=scope)
+        if mode == "protected":
             continue
         if name in source_entries:
             continue
-        _remove_restore_path(dest_item)
+
+        if dest_item.is_dir():
+            # Recursively remove only captured files.  A direct rmtree here
+            # could erase an excluded nested node_modules/.venv directory.
+            _sync_directory_from_snapshot(
+                None,
+                dest_item,
+                relative_path,
+                policy=policy,
+                scope=scope,
+            )
+            if mode == "included" and policy.allow_deletions:
+                try:
+                    dest_item.rmdir()
+                except OSError:
+                    # Protected or excluded descendants intentionally keep the
+                    # containing directory alive.
+                    pass
+            continue
+
+        if mode == "included" and policy.allow_deletions:
+            _remove_restore_path(dest_item)
 
     for name, source_item in source_entries.items():
         relative_path = relative_dir / name
-        if _is_protected_restore_path(relative_path):
+        mode = _get_restore_path_mode(relative_path, policy=policy, scope=scope)
+        if mode == "protected":
             continue
 
         dest_item = dest_dir / name
         try:
+            if _is_link_like(source_item):
+                raise RuntimeError("snapshot source links are not restorable")
+            if _is_link_like(dest_item):
+                # A link may have appeared after the destination enumeration.
+                # Never replace it and never recurse through it.
+                continue
             if source_item.is_dir():
                 if dest_item.exists() and not dest_item.is_dir():
+                    if mode == "traverse":
+                        raise RuntimeError(
+                            "protected restore ancestor is not a directory"
+                        )
                     _remove_restore_path(dest_item)
                 dest_item.mkdir(parents=True, exist_ok=True)
-                _sync_directory_from_snapshot(source_item, dest_item, relative_path)
+                _sync_directory_from_snapshot(
+                    source_item,
+                    dest_item,
+                    relative_path,
+                    policy=policy,
+                    scope=scope,
+                )
+            elif mode == "traverse":
+                # A traversal-only path is never itself replaced.
+                continue
             else:
                 if dest_item.exists() and dest_item.is_dir():
-                    _remove_restore_path(dest_item)
-                dest_item.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(source_item, dest_item)
+                    _sync_directory_from_snapshot(
+                        None,
+                        dest_item,
+                        relative_path,
+                        policy=policy,
+                        scope=scope,
+                    )
+                    try:
+                        dest_item.rmdir()
+                    except OSError as exc:
+                        raise RuntimeError(
+                            "cannot replace directory containing protected files"
+                        ) from exc
+                _copy_restore_file_atomic(source_item, dest_item)
         except Exception as e:
             raise RuntimeError(f"Failed to restore {relative_path.as_posix()}: {e}") from e
 
 
-def _is_protected_restore_path(relative_path: Path) -> bool:
-    protected_paths = {
-        Path(".git"),
-        Path("__pycache__"),
-        Path(".pytest_cache"),
-        Path(".circuit_ai") / "snapshots",
-        Path("simulation_results"),
-    }
+def _get_restore_path_mode(
+    relative_path: Path,
+    *,
+    policy: _SnapshotRestorePolicy,
+    scope: Optional[SnapshotRestoreScope],
+) -> str:
+    """Return ``included``, ``traverse``, or ``protected`` for a path."""
     normalized = Path(*relative_path.parts) if relative_path.parts else Path()
-    for protected in protected_paths:
-        if normalized == protected or protected in normalized.parents:
-            return True
-    return False
+    if _matches_any_snapshot_pattern(normalized, policy.excluded_patterns):
+        return "protected"
+
+    if scope is None or not scope.protected_roots:
+        return "included"
+
+    protected_roots = tuple(_normalized_relative_path(item) for item in scope.protected_roots)
+    allowed_paths = tuple(_normalized_relative_path(item) for item in scope.allowed_paths)
+
+    containing_root = next(
+        (
+            root
+            for root in protected_roots
+            if normalized == root or root in normalized.parents
+        ),
+        None,
+    )
+    if containing_root is None:
+        return "included"
+
+    for allowed_path in allowed_paths:
+        if not (allowed_path == containing_root or containing_root in allowed_path.parents):
+            continue
+        if normalized == allowed_path or allowed_path in normalized.parents:
+            return "included"
+        if normalized in allowed_path.parents:
+            return "traverse"
+
+    return "protected"
+
+
+def _normalized_relative_path(value: str) -> Path:
+    normalized = str(value or "").replace("\\", "/").strip("/")
+    path = Path(*[part for part in normalized.split("/") if part not in {"", "."}])
+    if ".." in path.parts:
+        raise ValueError("Restore scope paths must stay within the project root")
+    return path
 
 
 def _remove_restore_path(path: Path) -> None:
-    if not path.exists() and not path.is_symlink():
+    if _is_link_like(path):
+        raise RuntimeError(f"Refusing to remove link-like restore path: {path}")
+    if not path.exists():
         return
-    if path.is_dir() and not path.is_symlink():
+    if path.is_dir():
         shutil.rmtree(path)
         return
     path.unlink()
+
+
+def _copy_restore_file_atomic(source_path: Path, dest_path: Path) -> None:
+    """Copy one restore file without writing through an existing hardlink.
+
+    ``shutil.copy2(source, dest)`` opens and truncates ``dest`` in place.  If
+    the project path is an NTFS/POSIX hardlink, that mutates every other name
+    for the same inode, including names outside the project.  Write a fresh
+    same-directory file completely, then atomically replace only the project
+    directory entry instead.
+    """
+    if _is_link_like(source_path):
+        raise RuntimeError(f"Snapshot source file is link-like: {source_path}")
+    if _is_link_like(dest_path):
+        raise RuntimeError(f"Restore destination is link-like: {dest_path}")
+
+    dest_path.parent.mkdir(parents=True, exist_ok=True)
+    file_descriptor, temp_name = tempfile.mkstemp(
+        prefix=f".{dest_path.name}.restore-",
+        suffix=".tmp",
+        dir=str(dest_path.parent),
+    )
+    os.close(file_descriptor)
+    temp_path = Path(temp_name)
+    try:
+        shutil.copy2(source_path, temp_path)
+        # Ensure the complete temporary content reaches the OS before the
+        # atomic directory-entry replacement.
+        # Windows' ``_commit`` (used by ``os.fsync``) requires a descriptor
+        # opened with write access; ``rb+`` does not alter the copied content.
+        with temp_path.open("rb+") as temp_file:
+            os.fsync(temp_file.fileno())
+        os.replace(temp_path, dest_path)
+    finally:
+        if temp_path.exists() and not _is_link_like(temp_path):
+            temp_path.unlink()
 
 
 # ============================================================
@@ -970,6 +1327,7 @@ __all__ = [
     "SnapshotInfo",
     "SnapshotFileChange",
     "SnapshotRestorePreview",
+    "SnapshotRestoreScope",
     "create_snapshot",
     "restore_snapshot",
     "list_snapshots",
@@ -979,11 +1337,6 @@ __all__ = [
     "preview_restore_snapshot",
     "snapshot_exists",
     "get_snapshots_dir",
-    # 线性撤回支持
-    "get_previous_snapshot",
-    "pop_snapshot",
-    "generate_snapshot_id",
-    "parse_iteration_from_snapshot_id",
     # 异步方法
     "create_snapshot_async",
     "restore_snapshot_async",
@@ -992,6 +1345,7 @@ __all__ = [
     "cleanup_old_snapshots_async",
     # 常量
     "SNAPSHOTS_DIR",
+    "SNAPSHOT_METADATA_FILE",
     "DEFAULT_KEEP_COUNT",
 ]
 
@@ -1036,6 +1390,7 @@ async def restore_snapshot_async(
     snapshot_id: str,
     *,
     backup_current: bool = True,
+    scope: Optional[SnapshotRestoreScope] = None,
 ) -> None:
     """
     异步从快照恢复项目文件
@@ -1046,12 +1401,14 @@ async def restore_snapshot_async(
         project_root: 项目根目录路径
         snapshot_id: 快照标识
         backup_current: 是否在恢复前备份当前状态
+        scope: 可选的局部恢复边界
     """
     return await asyncio.to_thread(
         restore_snapshot,
         project_root,
         snapshot_id,
-        backup_current=backup_current
+        backup_current=backup_current,
+        scope=scope,
     )
 
 

@@ -7,12 +7,18 @@ from presentation.panels.conversation.conversation_history_controller import (
 from presentation.panels.conversation.conversation_rag_controller import (
     ConversationRagController,
 )
+from presentation.panels.conversation.conversation_session_support import (
+    ConversationSessionSupport,
+)
 
 
 class _FakeSessionSupport:
     def __init__(self):
+        self.session_state_manager = object()
+        self.project_root = "E:/demo"
         self.opened_session_id = ""
         self.deleted_session_ids = []
+        self.deleted_project_roots = []
         self.current_session_id = "session-1"
         self.sessions = [
             SimpleNamespace(session_id="session-1", name="Session 1"),
@@ -28,6 +34,9 @@ class _FakeSessionSupport:
     def get_current_session_id(self):
         return self.current_session_id
 
+    def get_project_root(self):
+        return self.project_root
+
     def get_session_messages(self, session_id: str):
         return [{"type": "user", "content": f"preview:{session_id}"}]
 
@@ -35,8 +44,9 @@ class _FakeSessionSupport:
         self.opened_session_id = session_id
         return True
 
-    def delete_session(self, session_id: str) -> bool:
+    def delete_session(self, session_id: str, *, project_root=None) -> bool:
         self.deleted_session_ids.append(session_id)
+        self.deleted_project_roots.append(project_root)
         self.sessions = [session for session in self.sessions if session.session_id != session_id]
         return True
 
@@ -78,6 +88,7 @@ class _FakeQueryResult:
 class _FakeRagManager:
     def __init__(self):
         self.project_root = "E:/demo"
+        self.generation = 1
         self.is_available = True
         self.is_indexing = False
         self.init_error = None
@@ -110,7 +121,14 @@ class _FakeRagManager:
     def trigger_index(self):
         self.is_indexing = True
 
-    async def clear_index_async(self):
+    async def clear_index_async(
+        self,
+        *,
+        expected_generation: int,
+        expected_project_root: str,
+    ):
+        assert expected_generation == self.generation
+        assert expected_project_root
         await asyncio.sleep(0)
         self.cleared = True
 
@@ -152,11 +170,68 @@ def test_history_controller_handles_refresh_open_and_delete_flow():
     controller.request_delete_session("session-2")
     assert confirms[-1]["kind"] == "history_delete"
 
-    assert controller.handle_confirm_acceptance("history_delete", {"session_id": "session-2"}) is True
+    assert controller.handle_confirm_acceptance(
+        "history_delete",
+        confirms[-1]["payload"],
+    ) is True
     assert support.deleted_session_ids == ["session-2"]
+    assert support.deleted_project_roots == [
+        controller._normalize_project_root("E:/demo")
+    ]
     assert controller.state["is_open"] is True
     assert notices == []
     assert state_changes
+
+
+def test_history_delete_confirmation_cannot_retarget_to_new_project():
+    confirms = []
+    support = _FakeSessionSupport()
+    controller = ConversationHistoryController(
+        session_support=support,
+        get_text=_get_text,
+        on_state_changed=lambda: None,
+        on_notice_requested=lambda *args, **kwargs: None,
+        on_confirm_requested=lambda **kwargs: confirms.append(kwargs),
+        logger_getter=lambda: None,
+    )
+
+    support.project_root = "E:/project-a"
+    controller.request_delete_session("shared-session-id")
+    delete_payload = dict(confirms[-1]["payload"])
+
+    # Project B contains the same session ID.  The old confirmation must be
+    # consumed without invoking delete against either project.
+    support.project_root = "E:/project-b"
+    assert controller.handle_confirm_acceptance(
+        "history_delete",
+        delete_payload,
+    ) is True
+    assert support.deleted_session_ids == []
+    assert support.deleted_project_roots == []
+
+
+def test_session_support_delete_rejects_captured_root_after_project_switch():
+    class _Manager:
+        def __init__(self):
+            self.project_root = "E:/project-b"
+            self.deleted = []
+
+        def get_project_root(self):
+            return self.project_root
+
+        def delete_session(self, *, project_root, session_id):
+            self.deleted.append((project_root, session_id))
+            return True
+
+    manager = _Manager()
+    support = ConversationSessionSupport()
+    support._session_state_manager = manager
+
+    assert support.delete_session(
+        "shared-session-id",
+        project_root="E:/project-a",
+    ) is False
+    assert manager.deleted == []
 
 
 def test_rag_controller_builds_state_and_runs_search_and_clear_actions():
@@ -196,3 +271,64 @@ def test_rag_controller_builds_state_and_runs_search_and_clear_actions():
     assert frontend_state["search"]["result_text"] == ""
     assert frontend_state["info"]["message"] == "索引库已清空"
     assert state_changes
+
+
+def test_rag_controller_fatal_index_error_ends_visible_progress():
+    manager = _FakeRagManager()
+    manager.is_indexing = True
+    manager.index_error = "project scan failed"
+    controller = ConversationRagController(
+        rag_manager_getter=lambda: manager,
+        get_text=_get_text,
+        on_state_changed=lambda: None,
+        on_confirm_requested=lambda **kwargs: None,
+        logger_getter=lambda: None,
+    )
+
+    controller.handle_index_started({"data": {"total_files": 3}})
+    controller.handle_index_error({
+        "data": {
+            "error": "project scan failed",
+            "phase": "project_index",
+            "fatal": True,
+        }
+    })
+
+    frontend_state = controller.build_frontend_state()
+    assert frontend_state["progress"]["is_visible"] is False
+    assert frontend_state["status"]["phase"] == "error"
+    assert frontend_state["info"] == {
+        "message": "错误: project scan failed",
+        "tone": "error",
+    }
+
+
+def test_rag_controller_file_index_error_keeps_batch_progress_visible():
+    manager = _FakeRagManager()
+    manager.is_indexing = True
+    manager.index_error = "file read failed"
+    controller = ConversationRagController(
+        rag_manager_getter=lambda: manager,
+        get_text=_get_text,
+        on_state_changed=lambda: None,
+        on_confirm_requested=lambda **kwargs: None,
+        logger_getter=lambda: None,
+    )
+
+    controller.handle_index_started({"data": {"total_files": 3}})
+    controller.handle_index_error({
+        "data": {
+            "file_path": "src/broken.py",
+            "error": "file read failed",
+            "phase": "file_index",
+            "fatal": False,
+        }
+    })
+
+    frontend_state = controller.build_frontend_state()
+    assert frontend_state["progress"]["is_visible"] is True
+    assert frontend_state["status"]["phase"] == "indexing"
+    assert frontend_state["info"] == {
+        "message": "错误 (src/broken.py): file read failed",
+        "tone": "error",
+    }

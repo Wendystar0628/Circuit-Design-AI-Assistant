@@ -20,8 +20,9 @@ primary key for every later interaction:
 
 Internally the manager owns three pieces of infrastructure:
 
-1. A ``ThreadPoolExecutor`` for concurrent execution. Two jobs
-   targeting *different* circuits run in parallel; the per-job worker
+1. A ``ThreadPoolExecutor`` for executor-capability-aware concurrency.
+   Independent Python executors may run in parallel; ``SpiceExecutor``
+   serializes its complete process-global ngspice/cwd session.  Each job
    still runs its executor + persistence steps sequentially inside one
    pool thread.
 2. An index of :class:`SimulationJob` instances keyed by ``job_id``.
@@ -153,12 +154,17 @@ class SimulationJobManager:
         )
 
         self._lock = threading.Lock()
+        # Serialises EventBus publication against the close boundary.  Once
+        # close() has flipped ``_closed`` under this lock, no worker can emit
+        # lifecycle events into services/Qt loops that are being torn down.
+        self._publish_lock = threading.RLock()
         self._jobs: Dict[str, SimulationJob] = {}
         self._futures: Dict[str, concurrent.futures.Future] = {}
         self._done_events: Dict[str, threading.Event] = {}
         self._async_waiters: Dict[
             str, List[Tuple[asyncio.AbstractEventLoop, asyncio.Future]]
         ] = {}
+        self._closed = False
 
     # ------------------------------------------------------------------
     # Public API
@@ -198,24 +204,34 @@ class SimulationJobManager:
             origin=origin,
             project_root=project_root,
         )
+        config_snapshot: Dict[str, Any] = dict(analysis_config or {})
+        targets_snapshot: Dict[str, str] = dict(metric_targets or {})
         done_event = threading.Event()
+
+        # Register and submit atomically with respect to ``close``.  Without
+        # this boundary close() can shut the pool down after the job enters
+        # the index but before its Future is recorded, leaving a permanent
+        # PENDING job whose waiters never wake.
         with self._lock:
+            if self._closed:
+                raise RuntimeError("SimulationJobManager is closed")
             self._jobs[job.job_id] = job
             self._done_events[job.job_id] = done_event
             self._async_waiters[job.job_id] = []
-
-        config_snapshot: Dict[str, Any] = dict(analysis_config or {})
-        targets_snapshot: Dict[str, str] = dict(metric_targets or {})
-
-        future = self._pool.submit(
-            self._run_job,
-            job,
-            config_snapshot,
-            targets_snapshot,
-            version,
-            session_id,
-        )
-        with self._lock:
+            try:
+                future = self._pool.submit(
+                    self._run_job,
+                    job,
+                    config_snapshot,
+                    targets_snapshot,
+                    version,
+                    session_id,
+                )
+            except Exception:
+                self._jobs.pop(job.job_id, None)
+                self._done_events.pop(job.job_id, None)
+                self._async_waiters.pop(job.job_id, None)
+                raise
             self._futures[job.job_id] = future
         return job
 
@@ -346,16 +362,66 @@ class SimulationJobManager:
             self._notify_terminal(terminal_job)
         return True
 
-    def close(self) -> None:
-        """Shut down the worker pool.
+    def close(self, timeout: float = 0.0) -> bool:
+        """Idempotently stop accepting work and settle the existing queue.
 
-        Intended for application exit / test teardown. Pending jobs
-        get their futures cancelled; running jobs are allowed to finish
-        naturally so in-flight ngspice subprocesses are not left in a
-        half-dead state. This is not one of the business lifecycle
-        methods — it exists purely for resource hygiene.
+        Jobs which have not started become ``CANCELLED`` immediately and all
+        sync/async waiters are woken.  Running executors are not killed in the
+        middle of ngspice; they receive a cancel request and transition to
+        ``CANCELLED`` after their bundle (if any) has been persisted.  Worker
+        events are suppressed after the close boundary so they cannot publish
+        into an already-disposed Qt/EventBus graph.
+
+        ``timeout`` provides bounded settlement waiting.  The return value is
+        ``True`` only when every submitted Future is done; ``False`` tells the
+        caller that a non-interruptible executor is still winding down.  A
+        timeout of zero (the default) is non-blocking.
         """
-        self._pool.shutdown(wait=False, cancel_futures=True)
+        try:
+            bounded_timeout = max(0.0, float(timeout))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("timeout must be a non-negative number") from exc
+
+        cancelled_jobs: List[SimulationJob] = []
+        first_close = False
+        with self._publish_lock:
+            with self._lock:
+                if not self._closed:
+                    first_close = True
+                    self._closed = True
+                    for job_id, job in self._jobs.items():
+                        if job.is_terminal:
+                            continue
+                        job.request_cancel()
+                        if job.status is not JobStatus.PENDING:
+                            continue
+                        future = self._futures.get(job_id)
+                        if future is not None:
+                            future.cancel()
+                        # Even if the pool already assigned the Future to a
+                        # worker, it must acquire ``_lock`` before RUNNING.
+                        # Closing wins and makes the queued job terminal.
+                        job.mark_cancelled()
+                        cancelled_jobs.append(job)
+                futures = list(self._futures.values())
+
+        for job in cancelled_jobs:
+            self._publish_error(
+                job,
+                error_message=_CANCELLED_ERROR_MESSAGE,
+                cancelled=True,
+                result_path="",
+                export_root="",
+                duration_seconds=0.0,
+                allow_closed=True,
+            )
+            self._notify_terminal(job)
+        if first_close:
+            self._pool.shutdown(wait=False, cancel_futures=True)
+
+        if bounded_timeout and futures:
+            concurrent.futures.wait(futures, timeout=bounded_timeout)
+        return all(future.done() for future in futures)
 
     # ------------------------------------------------------------------
     # Worker path
@@ -379,15 +445,28 @@ class SimulationJobManager:
         surface as ``EVENT_SIM_ERROR`` — this worker never propagates
         them back to the pool future.
         """
-        # Cancellation preempted us before we could even start.
-        if job.cancel_requested:
-            self._finalize_cancelled(job, duration_seconds=0.0)
-            return
-
-        try:
-            job.mark_running()
-        except ValueError:
-            # Job already terminal (concurrent cancel beat us to it).
+        # The PENDING -> RUNNING transition shares the manager lock with
+        # request_cancel()/close(), so a queued job cannot be stranded in a
+        # non-terminal state during shutdown.
+        cancelled_on_entry = False
+        with self._lock:
+            if job.is_terminal:
+                return
+            if job.cancel_requested:
+                job.mark_cancelled()
+                cancelled_on_entry = True
+            else:
+                job.mark_running()
+        if cancelled_on_entry:
+            self._publish_error(
+                job,
+                error_message=_CANCELLED_ERROR_MESSAGE,
+                cancelled=True,
+                result_path="",
+                export_root="",
+                duration_seconds=0.0,
+            )
+            self._notify_terminal(job)
             return
 
         start_time = time.time()
@@ -415,75 +494,91 @@ class SimulationJobManager:
             )
             duration = time.time() - start_time
             err_msg = f"Simulation bundle persistence failed: {exc}"
-            job.mark_failed(error_message=err_msg)
-            self._publish_error(
-                job,
-                error_message=err_msg,
-                cancelled=False,
-                result_path="",
-                export_root="",
-                duration_seconds=duration,
-            )
+            # Cancellation intent and the terminal transition share one
+            # linearisation point.  If request_cancel()/close() registered
+            # first, cancellation wins even when the service raised; if this
+            # commit wins, a later cancel correctly returns False.
+            with self._lock:
+                cancelled = job.cancel_requested
+                if cancelled:
+                    job.mark_cancelled()
+                else:
+                    job.mark_failed(error_message=err_msg)
+            if cancelled:
+                self._publish_error(
+                    job,
+                    error_message=_CANCELLED_ERROR_MESSAGE,
+                    cancelled=True,
+                    result_path="",
+                    export_root="",
+                    duration_seconds=duration,
+                )
+            else:
+                self._publish_error(
+                    job,
+                    error_message=err_msg,
+                    cancelled=False,
+                    result_path="",
+                    export_root="",
+                    duration_seconds=duration,
+                )
             self._notify_terminal(job)
             return
 
         duration = time.time() - start_time
         export_root = _derive_export_root(result_path)
 
-        # Cancellation observed *after* the executor returned: ignore
-        # the outcome and record the job as CANCELLED. The bundle on
-        # disk stays (useful for post-mortem) but the event payload
-        # tells subscribers this run doesn't count.
-        if job.cancel_requested:
-            job.mark_cancelled()
-            self._publish_error(
+        # Decide cancellation/failure/completion and freeze the job while
+        # holding the same lock used by request_cancel() and close().  Event
+        # publication stays outside the lock to avoid invoking subscribers in
+        # the manager's critical section.
+        bundle_result_path = result_path if result_path and export_root else ""
+        bundle_export_root = export_root if result_path and export_root else ""
+        error_message = ""
+        with self._lock:
+            if job.cancel_requested:
+                terminal_status = JobStatus.CANCELLED
+                job.mark_cancelled(
+                    result_path=bundle_result_path or None,
+                    export_root=bundle_export_root or None,
+                )
+            elif not result.success:
+                terminal_status = JobStatus.FAILED
+                error_message = self._format_error_message(result)
+                job.mark_failed(
+                    error_message=error_message,
+                    result_path=bundle_result_path or None,
+                    export_root=bundle_export_root or None,
+                )
+            elif not bundle_result_path:
+                terminal_status = JobStatus.FAILED
+                error_message = "Simulation succeeded but bundle persistence failed"
+                job.mark_failed(error_message=error_message)
+            else:
+                terminal_status = JobStatus.COMPLETED
+                job.mark_completed(
+                    result_path=bundle_result_path,
+                    export_root=bundle_export_root,
+                )
+
+        if terminal_status is JobStatus.COMPLETED:
+            self._publish_complete(
                 job,
-                error_message=_CANCELLED_ERROR_MESSAGE,
-                cancelled=True,
-                result_path=result_path,
-                export_root=export_root,
+                result=result,
                 duration_seconds=duration,
             )
-            self._notify_terminal(job)
-            return
-
-        if not result.success:
-            err_msg = self._format_error_message(result)
-            job.mark_failed(error_message=err_msg)
+        else:
+            cancelled = terminal_status is JobStatus.CANCELLED
             self._publish_error(
                 job,
-                error_message=err_msg,
-                cancelled=False,
-                result_path=result_path,
-                export_root=export_root,
+                error_message=(
+                    _CANCELLED_ERROR_MESSAGE if cancelled else error_message
+                ),
+                cancelled=cancelled,
+                result_path=job.result_path or "",
+                export_root=job.export_root or "",
                 duration_seconds=duration,
             )
-            self._notify_terminal(job)
-            return
-
-        if not result_path or not export_root:
-            # Persistence is mandatory for a completed job — a "success"
-            # without a bundle is nonsensical and should surface as an
-            # error so downstream read tools don't chase a missing path.
-            err_msg = "Simulation succeeded but bundle persistence failed"
-            job.mark_failed(error_message=err_msg)
-            self._publish_error(
-                job,
-                error_message=err_msg,
-                cancelled=False,
-                result_path=result_path,
-                export_root=export_root,
-                duration_seconds=duration,
-            )
-            self._notify_terminal(job)
-            return
-
-        job.mark_completed(result_path=result_path, export_root=export_root)
-        self._publish_complete(
-            job,
-            result=result,
-            duration_seconds=duration,
-        )
         self._notify_terminal(job)
 
     # ------------------------------------------------------------------
@@ -534,6 +629,7 @@ class SimulationJobManager:
         result_path: str,
         export_root: str,
         duration_seconds: float,
+        allow_closed: bool = False,
     ) -> None:
         payload = {
             "job_id": job.job_id,
@@ -546,20 +642,30 @@ class SimulationJobManager:
             "export_root": export_root,
             "duration_seconds": float(duration_seconds),
         }
-        self._publish(EVENT_SIM_ERROR, payload)
+        self._publish(EVENT_SIM_ERROR, payload, allow_closed=allow_closed)
 
-    def _publish(self, event_type: str, payload: Dict[str, Any]) -> None:
-        bus = self._resolve_event_bus()
-        if bus is None:
-            return
-        try:
-            bus.publish(event_type, payload, source="simulation_job_manager")
-        except Exception as exc:  # pragma: no cover - defensive
-            _LOGGER.warning(
-                "SimulationJobManager failed to publish %s: %s",
-                event_type,
-                exc,
-            )
+    def _publish(
+        self,
+        event_type: str,
+        payload: Dict[str, Any],
+        *,
+        allow_closed: bool = False,
+    ) -> None:
+        with self._publish_lock:
+            with self._lock:
+                if self._closed and not allow_closed:
+                    return
+            bus = self._resolve_event_bus()
+            if bus is None:
+                return
+            try:
+                bus.publish(event_type, payload, source="simulation_job_manager")
+            except Exception as exc:  # pragma: no cover - defensive
+                _LOGGER.warning(
+                    "SimulationJobManager failed to publish %s: %s",
+                    event_type,
+                    exc,
+                )
 
     def _resolve_event_bus(self) -> Optional[EventBus]:
         if self._explicit_event_bus is not None:

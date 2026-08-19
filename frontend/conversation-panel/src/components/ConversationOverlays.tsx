@@ -222,10 +222,12 @@ function HistoryHeaderActions({
   history,
   selectedSession,
   bridge,
+  sessionActionsDisabled,
 }: {
   history: ConversationHistoryOverlayState
   selectedSession: ConversationSessionInfoState | null
   bridge: ConversationBridge | null
+  sessionActionsDisabled: boolean
 }) {
   const selectedSessionId = selectedSession?.session_id ?? ''
   const hasSelectedSession = Boolean(selectedSessionId)
@@ -235,7 +237,7 @@ function HistoryHeaderActions({
       <button
         type="button"
         className="secondary-button"
-        disabled={!hasSelectedSession}
+        disabled={!hasSelectedSession || sessionActionsDisabled}
         onClick={() => bridge?.openHistorySession?.(selectedSessionId)}
       >
         打开
@@ -243,7 +245,7 @@ function HistoryHeaderActions({
       <button
         type="button"
         className="secondary-button secondary-button--danger"
-        disabled={!hasSelectedSession}
+        disabled={!hasSelectedSession || sessionActionsDisabled}
         onClick={() => bridge?.requestDeleteHistorySession?.(selectedSessionId)}
       >
         删除
@@ -279,9 +281,11 @@ function HistoryHeaderInfo({
 function HistoryOverlay({
   history,
   bridge,
+  sessionActionsDisabled,
 }: {
   history: ConversationHistoryOverlayState
   bridge: ConversationBridge | null
+  sessionActionsDisabled: boolean
 }) {
   const selectedSession = findSelectedSession(history)
 
@@ -298,7 +302,12 @@ function HistoryOverlay({
           <div className="conversation-drawer__header-info conversation-drawer__header-info--history">
             <HistoryHeaderInfo history={history} />
           </div>
-          <HistoryHeaderActions history={history} selectedSession={selectedSession} bridge={bridge} />
+          <HistoryHeaderActions
+            history={history}
+            selectedSession={selectedSession}
+            bridge={bridge}
+            sessionActionsDisabled={sessionActionsDisabled}
+          />
         </div>
         <div className="conversation-drawer__content">
           <div className="conversation-drawer__list">
@@ -504,7 +513,13 @@ export function ConversationOverlays({ state, bridge, bridgeConnected }: Convers
 
   return (
     <>
-      {history.is_open ? <HistoryOverlay history={history} bridge={bridge} /> : null}
+      {history.is_open ? (
+        <HistoryOverlay
+          history={history}
+          bridge={bridge}
+          sessionActionsDisabled={!bridgeConnected || state.view_flags.is_busy}
+        />
+      ) : null}
       {rollback.is_open ? <RollbackOverlay preview={rollback.preview} bridge={bridge} /> : null}
       {model_config.is_open ? (
         <ModelConfigOverlay overlay={model_config} bridge={bridge} bridgeConnected={bridgeConnected} />

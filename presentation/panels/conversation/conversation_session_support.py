@@ -105,20 +105,39 @@ class ConversationSessionSupport:
             return False
         return new_state is not None
 
-    def delete_session(self, session_id: str) -> bool:
+    def delete_session(
+        self,
+        session_id: str,
+        *,
+        project_root: Optional[str] = None,
+    ) -> bool:
         manager = self.session_state_manager
-        project_root = self.get_project_root()
-        if manager is None or not project_root or not session_id:
+        current_project_root = self.get_project_root()
+        captured_project_root = str(project_root or current_project_root or "")
+        if manager is None or not captured_project_root or not session_id:
+            return False
+        # Deletion confirmations may outlive their project overlay.  Fail
+        # closed if the support now points elsewhere, and always pass the
+        # captured root explicitly so the manager cannot re-resolve project B.
+        if project_root and self._normalize_project_root(current_project_root) != self._normalize_project_root(captured_project_root):
             return False
         try:
             return bool(
                 manager.delete_session(
-                    project_root=project_root,
+                    project_root=captured_project_root,
                     session_id=session_id,
                 )
             )
         except Exception:
             return False
+
+    @staticmethod
+    def _normalize_project_root(project_root: str) -> str:
+        if not project_root:
+            return ""
+        return os.path.normcase(
+            os.path.realpath(os.path.abspath(os.fspath(project_root)))
+        )
 
     def rename_session(self, session_id: str, new_name: str) -> bool:
         manager = self.session_state_manager

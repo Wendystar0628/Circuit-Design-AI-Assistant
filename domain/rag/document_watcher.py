@@ -15,9 +15,11 @@
 
 import asyncio
 import logging
-from typing import Optional, Set
+import os
+from typing import Dict, Optional, Tuple
 
 from shared.event_types import EVENT_FILE_CHANGED
+from shared.file_change import FileChange, extract_file_change
 
 
 logger = logging.getLogger(__name__)
@@ -33,10 +35,13 @@ class DocumentWatcher:
     监听文件变更事件，防抖后触发 RAGManager 单文件增量索引。
     """
 
-    def __init__(self, event_bus=None, rag_manager=None):
+    def __init__(self, event_bus=None, rag_manager=None, file_manager=None):
         self._event_bus = event_bus
         self._rag_manager = rag_manager
-        self._pending_files: Set[str] = set()
+        self._file_manager = file_manager
+        self._pending_changes: Dict[
+            Tuple[str, str, str], Tuple[FileChange, int]
+        ] = {}
         self._debounce_task: Optional[asyncio.Task] = None
         self._subscribed = False
 
@@ -63,7 +68,7 @@ class DocumentWatcher:
         if self._debounce_task and not self._debounce_task.done():
             self._debounce_task.cancel()
 
-        self._pending_files.clear()
+        self._pending_changes.clear()
         if self._subscribed and self._event_bus is not None:
             try:
                 self._event_bus.unsubscribe(
@@ -94,25 +99,23 @@ class DocumentWatcher:
         if not manager or not manager.is_available:
             return
 
-        # 解包 EventBus 包装层
-        data = event_data.get("data", event_data) if isinstance(event_data, dict) else event_data
-
-        # 提取文件路径
-        file_path = None
-        if isinstance(data, dict):
-            file_path = data.get("file_path") or data.get("path")
-        elif isinstance(data, str):
-            file_path = data
-
-        if not file_path:
+        change = extract_file_change(event_data)
+        if change is None:
             return
 
-        normalized = str(file_path).replace("\\", "/")
+        normalized = str(change.path).replace("\\", "/")
         if normalized.endswith("/.circuit_ai/pending_workspace_edits.json"):
             return
 
-        # 加入待处理集合
-        self._pending_files.add(file_path)
+        if not self._belongs_to_current_project(change, manager.project_root):
+            return
+        if not self._matches_file_generation(change):
+            return
+
+        # Keep the newest form of the same operation and capture the RAG
+        # generation now; a project switch during debounce invalidates it.
+        key = (change.operation, change.path, change.dest_path)
+        self._pending_changes[key] = (change, int(manager.generation))
 
         # 重置防抖定时器
         if self._debounce_task and not self._debounce_task.done():
@@ -122,8 +125,8 @@ class DocumentWatcher:
             loop = asyncio.get_running_loop()
             self._debounce_task = loop.create_task(self._debounced_process())
         except RuntimeError:
-            # 没有运行中的事件循环，直接跳过
-            pass
+            # Tests and non-Qt callers may emit without an asyncio loop.
+            self._process_pending_changes()
 
     async def _debounced_process(self) -> None:
         """防抖处理：等待 DEBOUNCE_SECONDS 后触发工作线程索引
@@ -134,20 +137,65 @@ class DocumentWatcher:
         """
         await asyncio.sleep(DEBOUNCE_SECONDS)
 
-        if not self._pending_files:
+        self._process_pending_changes()
+
+    def _process_pending_changes(self) -> None:
+        if not self._pending_changes:
             return
 
-        files = list(self._pending_files)
-        self._pending_files.clear()
+        changes = list(self._pending_changes.values())
+        self._pending_changes.clear()
 
         manager = self.rag_manager
         if not manager or not manager.is_available:
             return
 
-        logger.debug(f"Triggering re-index for {len(files)} changed files")
+        logger.debug(f"Applying {len(changes)} changed files to RAG")
 
-        for file_path in files:
-            manager.trigger_index_single_file(file_path)
+        for change, rag_generation in changes:
+            if rag_generation != int(manager.generation):
+                continue
+            if not self._matches_file_generation(change):
+                continue
+            if not self._belongs_to_current_project(change, manager.project_root):
+                continue
+
+            if change.operation == "delete":
+                manager.trigger_delete_file(
+                    change.path, is_directory=change.is_directory
+                )
+            elif change.operation == "move":
+                manager.trigger_move_file(
+                    change.path,
+                    change.dest_path,
+                    is_directory=change.is_directory,
+                )
+            else:
+                manager.trigger_index_single_file(change.path)
+
+    @staticmethod
+    def _belongs_to_current_project(
+        change: FileChange,
+        project_root: Optional[str],
+    ) -> bool:
+        if not project_root:
+            return False
+        root = os.path.normcase(os.path.abspath(project_root))
+        return os.path.normcase(os.path.abspath(change.project_root)) == root
+
+    def _matches_file_generation(self, change: FileChange) -> bool:
+        """Compare producer identity to FileManager, never RAG generation.
+
+        RAG generation also changes for an embedding-model rebuild while the
+        FileManager project generation correctly remains stable.
+        """
+        if self._file_manager is None:
+            return False
+        try:
+            current = int(self._file_manager.project_generation)
+        except (AttributeError, TypeError, ValueError):
+            return False
+        return change.generation == current
 
 
 # ============================================================

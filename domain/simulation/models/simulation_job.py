@@ -174,10 +174,10 @@ class SimulationJob:
     """Project-relative POSIX path of ``result.json`` for the bundle
     (e.g. ``simulation_results/amp/2026-04-06_00-10-00/result.json``).
 
-    Populated only on ``COMPLETED``. The value is whatever the
+    Populated whenever the persistence layer produced a bundle, including
+    failed or post-execution-cancelled runs.  The value is whatever the
     persistence layer actually wrote to disk — never a predicted or
-    pre-computed path — so unique-suffix collisions are reflected
-    faithfully.
+    pre-computed path — so unique-suffix collisions are reflected faithfully.
     """
 
     export_root: Optional[str] = None
@@ -242,6 +242,8 @@ class SimulationJob:
         self,
         *,
         error_message: str,
+        result_path: Optional[str] = None,
+        export_root: Optional[str] = None,
         finished_at: Optional[_dt.datetime] = None,
     ) -> None:
         """Record a failed run and freeze the job.
@@ -253,14 +255,19 @@ class SimulationJob:
         self._require_non_terminal("FAILED")
         if not error_message:
             raise ValueError("error_message is required on failure")
+        self._validate_optional_bundle_paths(result_path, export_root)
         self.status = JobStatus.FAILED
         self.error_message = error_message
+        self.result_path = result_path
+        self.export_root = export_root
         self.finished_at = finished_at or _utcnow()
         self._freeze()
 
     def mark_cancelled(
         self,
         *,
+        result_path: Optional[str] = None,
+        export_root: Optional[str] = None,
         finished_at: Optional[_dt.datetime] = None,
     ) -> None:
         """Record a cancelled run and freeze the job.
@@ -270,7 +277,10 @@ class SimulationJob:
         :attr:`cancel_requested` and returned).
         """
         self._require_non_terminal("CANCELLED")
+        self._validate_optional_bundle_paths(result_path, export_root)
         self.status = JobStatus.CANCELLED
+        self.result_path = result_path
+        self.export_root = export_root
         self.finished_at = finished_at or _utcnow()
         self._freeze()
 
@@ -296,6 +306,17 @@ class SimulationJob:
             raise ValueError(
                 f"SimulationJob[{self.job_id}] is already terminal "
                 f"({self.status.value}); cannot transition to {target_status_name}"
+            )
+
+    @staticmethod
+    def _validate_optional_bundle_paths(
+        result_path: Optional[str],
+        export_root: Optional[str],
+    ) -> None:
+        """A persisted bundle is represented by both paths or by neither."""
+        if bool(result_path) != bool(export_root):
+            raise ValueError(
+                "result_path and export_root must either both be provided or both be omitted"
             )
 
     def _freeze(self) -> None:

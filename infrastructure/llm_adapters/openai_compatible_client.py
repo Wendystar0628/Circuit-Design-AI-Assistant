@@ -117,6 +117,11 @@ class OpenAICompatibleClient(BaseLLMClient):
                 request_body["thinking"] = {
                     "type": "enabled" if thinking else "disabled"
                 }
+                # DeepSeek V4+ 支持 reasoning_effort 参数控制推理强度
+                if thinking:
+                    reasoning_effort = self._resolve_reasoning_effort(actual_model)
+                    if reasoning_effort:
+                        request_body["reasoning_effort"] = reasoning_effort
 
         tool_names = []
         for tool in request_body.get("tools", []) or []:
@@ -157,6 +162,36 @@ class OpenAICompatibleClient(BaseLLMClient):
             return resolved_model_id.split(":", 1)[-1]
         except Exception:
             return model_name
+
+    def _resolve_reasoning_effort(self, model_name: str) -> Optional[str]:
+        """Resolve the ``reasoning_effort`` value for a DeepSeek V4+ model.
+
+        Looks up the model config to get the configured reasoning_effort.
+        Falls back to ``"high"`` for DeepSeek V4+ models when the config
+        does not specify an explicit value.
+
+        Returns ``None`` for non-DeepSeek providers or models that don't
+        support thinking — the parameter should then be omitted from the
+        request body entirely.
+        """
+        if self.provider_id != "deepseek":
+            return None
+        try:
+            from shared.model_registry import ModelRegistry
+
+            ModelRegistry.initialize()
+            model_config = ModelRegistry.get_model(f"{self.provider_id}:{model_name}")
+            if model_config is not None:
+                # Use the configured reasoning_effort if explicitly set
+                if model_config.reasoning_effort:
+                    return model_config.reasoning_effort
+                # Default to "high" for any DeepSeek model that supports thinking
+                if model_config.supports_thinking:
+                    return "high"
+        except Exception:
+            pass
+        # Sensible default for DeepSeek thinking mode
+        return "high"
 
     def _message_contains_images(self, message: Dict[str, Any]) -> bool:
         content = message.get("content")
@@ -204,6 +239,35 @@ class OpenAICompatibleClient(BaseLLMClient):
         if "context" in lowered and ("limit" in lowered or "length" in lowered):
             raise ContextOverflowError(message)
         raise APIError(message or f"HTTP {status}", status_code=status)
+
+    def _raise_stream_payload_error(self, payload: Dict[str, Any]) -> None:
+        """Raise a typed client error carried inside a successful SSE response."""
+        error = payload.get("error")
+        if isinstance(error, str):
+            error_code = ""
+            error_message = error or "Unknown API error"
+        elif isinstance(error, dict):
+            error_code = str(error.get("code") or error.get("type") or "")
+            error_message = str(error.get("message") or "Unknown API error")
+        else:
+            raise ResponseParseError(
+                f"Malformed {self.provider_id} streaming error payload"
+            )
+
+        prefix = f"{self.provider_id} stream API error"
+        detail = f" [{error_code}]" if error_code else ""
+        message = f"{prefix}{detail}: {error_message}"
+        classification = f"{error_code} {error_message}".lower()
+
+        if any(marker in classification for marker in ("auth", "unauthorized", "api key", "permission")):
+            raise AuthError(message)
+        if "rate" in classification or "quota" in classification:
+            raise RateLimitError(message)
+        if "context" in classification and any(
+            marker in classification for marker in ("limit", "length", "overflow", "exceed", "token")
+        ):
+            raise ContextOverflowError(message)
+        raise APIError(message)
 
     def _parse_chat_response(self, payload: Dict[str, Any]) -> ChatResponse:
         choices = payload.get("choices")
@@ -313,6 +377,7 @@ class OpenAICompatibleClient(BaseLLMClient):
         """
         request_body = self._build_request_body(messages, model, True, tools, thinking)
         accumulated_tool_calls: Dict[int, Dict[str, Any]] = {}
+        terminal_frame_observed = False
         try:
             async with self._create_async_client() as client:
                 async with client.stream("POST", self.CHAT_ENDPOINT, json=request_body) as response:
@@ -329,7 +394,13 @@ class OpenAICompatibleClient(BaseLLMClient):
                     async for line in response.aiter_lines():
                         stream_chunk = self._parse_sse_line(line, accumulated_tool_calls)
                         if stream_chunk is not None:
+                            if stream_chunk.is_finished:
+                                terminal_frame_observed = True
                             yield stream_chunk
+                    if not terminal_frame_observed:
+                        raise ResponseParseError(
+                            f"{self.provider_id} stream ended before a terminal frame"
+                        )
         except httpx.TimeoutException as exc:
             raise APIError(f"Stream timeout: {exc}") from exc
         except httpx.RequestError as exc:
@@ -365,8 +436,16 @@ class OpenAICompatibleClient(BaseLLMClient):
         except json.JSONDecodeError as exc:
             raise ResponseParseError(f"Invalid streaming payload: {exc}") from exc
 
+        if not isinstance(payload, dict):
+            raise ResponseParseError("Streaming payload must be a JSON object")
+        if "error" in payload:
+            self._raise_stream_payload_error(payload)
+
+        usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else None
         choices = payload.get("choices")
         if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+            if usage is not None:
+                return StreamChunk(usage=usage)
             return None
         choice = choices[0]
         delta = choice.get("delta") if isinstance(choice.get("delta"), dict) else {}
@@ -378,7 +457,6 @@ class OpenAICompatibleClient(BaseLLMClient):
             reasoning_content = self._extract_text(delta.get("reasoning"))
 
         finish_reason = choice.get("finish_reason")
-        usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else None
         if not (content or reasoning_content or finish_reason or usage):
             return None
         return StreamChunk(

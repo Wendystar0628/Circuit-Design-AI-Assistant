@@ -11,7 +11,6 @@ from shared.constants.paths import (
     SNAPSHOTS_DIR,
     CONVERSATIONS_DIR,
     TEMP_DIR,
-    CHECKPOINTS_DB,
 )
 
 __all__ = [
@@ -21,5 +20,4 @@ __all__ = [
     "SNAPSHOTS_DIR",
     "CONVERSATIONS_DIR",
     "TEMP_DIR",
-    "CHECKPOINTS_DB",
 ]

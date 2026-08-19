@@ -23,7 +23,7 @@
 ┌──────────────────────────┐  ┌──────────────────────────────┐
 │   MessageStore (内存层)   │  │   context_service (文件层)   │
 │  职责：                   │  │  职责：                      │
-│  - GraphState.messages   │  │  - 会话文件 CRUD             │
+│  - state["messages"]    │  │  - 会话文件 CRUD             │
 │  - 消息添加/获取/分类     │  │  - 会话索引管理              │
 │  特点：无状态，纯内存操作  │  │  特点：无状态，纯文件 I/O    │
 └──────────────────────────┘  └──────────────────────────────┘
@@ -49,20 +49,17 @@
 import logging
 import os
 import threading
+import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from typing import Any, Dict, List, Optional
 
 from domain.llm.working_context_builder import (
     WORKING_CONTEXT_COMPRESSED_COUNT_KEY,
     WORKING_CONTEXT_KEEP_RECENT_KEY,
     WORKING_CONTEXT_SUMMARY_KEY,
 )
-
-if TYPE_CHECKING:
-    from application.graph.state import GraphState
-
 
 @dataclass
 class SessionInfo:
@@ -201,10 +198,21 @@ class SessionStateManager:
 
         if should_persist:
             try:
-                self.save_current_session(project_root=previous_project_root)
+                if not self.save_current_session(project_root=previous_project_root):
+                    # ProjectService performs the authoritative preflight
+                    # before publishing the close event.  This handler is only
+                    # a last-resort safety net for legacy/direct publishers. A
+                    # failed fallback must retain the dirty in-memory state so
+                    # it can still be recovered or retried explicitly.
+                    if self.logger:
+                        self.logger.error(
+                            "项目关闭事件到达时会话仍未能持久化；保留 dirty 会话状态"
+                        )
+                    return
             except Exception as e:
                 if self.logger:
-                    self.logger.warning(f"项目关闭时保存当前会话失败: {e}")
+                    self.logger.error(f"项目关闭时保存当前会话失败，保留 dirty 状态: {e}")
+                return
 
         with self._lock:
             self._current_session_id = ""
@@ -247,18 +255,14 @@ class SessionStateManager:
                 and self._normalize_project_root(self._project_root) == resolved_project_root
                 and context_service.session_exists(resolved_project_root, self._current_session_id)
             ):
-                context_service.set_current_session_id(
-                    resolved_project_root,
-                    self._current_session_id,
-                )
-                self._project_root = resolved_project_root
-                if (
+                needs_activation = (
                     sync_to_context_manager
                     and (
                         runtime_session_id != self._current_session_id
                         or normalized_runtime_project_root != resolved_project_root
                     )
-                ):
+                )
+                if needs_activation:
                     if isinstance(current_state, dict) and current_state:
                         current_state = self._attach_session_identity(
                             current_state,
@@ -277,8 +281,15 @@ class SessionStateManager:
                         current_state,
                         sync_to_context_manager=True,
                     )
-                elif sync_to_context_manager:
-                    self._sync_state_to_context_manager(current_state)
+                else:
+                    if not context_service.set_current_session_id(
+                        resolved_project_root,
+                        self._current_session_id,
+                    ):
+                        raise IOError("Failed to persist the active session identity")
+                    self._project_root = resolved_project_root
+                    if sync_to_context_manager:
+                        self._sync_state_to_context_manager(current_state)
                 return current_state
 
             last_session_id = context_service.get_current_session_id(resolved_project_root)
@@ -292,7 +303,11 @@ class SessionStateManager:
             )
 
         if last_session_id:
-            context_service.remove_from_session_index(resolved_project_root, last_session_id)
+            if not context_service.remove_from_session_index(
+                resolved_project_root,
+                last_session_id,
+            ):
+                raise IOError("Failed to remove a stale current session from the index")
 
         session_id = self.create_session(resolved_project_root)
         return self._build_empty_session_state(resolved_project_root, session_id)
@@ -308,9 +323,8 @@ class SessionStateManager:
 
             if self._is_dirty and self._current_session_id:
                 active_project_root = self._project_root or resolved_project_root
-                self.save_current_session(
-                    project_root=active_project_root,
-                )
+                if not self.save_current_session(project_root=active_project_root):
+                    raise IOError("Failed to persist current session before creating a new one")
 
             previous_session_id = self._current_session_id
             session_id, session_name = self._create_empty_session(resolved_project_root)
@@ -350,11 +364,11 @@ class SessionStateManager:
 
             if session_id == self._current_session_id:
                 current_state = state if state is not None else self._get_current_state()
-                if self._is_dirty:
-                    self.save_current_session(
+                if self._is_dirty and not self.save_current_session(
                         state=current_state,
                         project_root=resolved_project_root,
-                    )
+                    ):
+                    raise IOError("Failed to persist current session before synchronizing it")
                 if sync_to_context_manager:
                     self._sync_state_to_context_manager(current_state)
                 return current_state
@@ -362,10 +376,11 @@ class SessionStateManager:
             # 保存当前会话（如果有未保存的更改）
             if self._is_dirty and self._current_session_id and self._current_session_id != session_id:
                 active_project_root = self._project_root or resolved_project_root
-                self.save_current_session(
+                if not self.save_current_session(
                     state=state,
                     project_root=active_project_root,
-                )
+                ):
+                    raise IOError("Failed to persist current session before switching")
             
             previous_session_id = self._current_session_id
             new_state = self._build_session_state(
@@ -419,18 +434,20 @@ class SessionStateManager:
         self,
         state: Optional[Dict[str, Any]] = None,
         project_root: Optional[str] = None,
+        *,
+        expected_session_id: Optional[str] = None,
     ) -> bool:
         """
         保存当前会话
         
         执行步骤：
-        1. 从 GraphState 提取消息
+        1. 从当前会话状态提取消息
         2. 通过 context_service 保存到文件
         3. 更新会话索引
         4. 重置 _is_dirty 标志
         
         Args:
-            state: 当前 GraphState（字典形式）
+            state: 当前会话状态字典
             project_root: 项目根目录路径
             
         Returns:
@@ -452,11 +469,29 @@ class SessionStateManager:
                 if self.logger:
                     self.logger.warning("无当前会话，无法保存")
                 return False
+
+            if expected_session_id and self._current_session_id != expected_session_id:
+                if self.logger:
+                    self.logger.warning(
+                        "拒绝将候选状态保存到已切换的会话: expected=%s, current=%s",
+                        expected_session_id,
+                        self._current_session_id,
+                    )
+                return False
             
             resolved_project_root = self._resolve_project_root(project_root)
             if not resolved_project_root:
                 if self.logger:
                     self.logger.warning("无项目路径，无法保存会话")
+                return False
+            if (
+                expected_session_id
+                and self._project_root
+                and self._normalize_project_root(self._project_root)
+                != self._normalize_project_root(resolved_project_root)
+            ):
+                if self.logger:
+                    self.logger.warning("拒绝跨项目保存压缩候选状态")
                 return False
 
             current_state = state if state is not None else self._get_current_state()
@@ -467,30 +502,100 @@ class SessionStateManager:
             
             # 获取预览文本
             preview = self._build_session_preview(messages)
-            
-            # 保存消息到文件
-            context_service.save_messages(
-                resolved_project_root,
-                self._current_session_id,
-                messages_data
-            )
-            
-            # 更新会话索引
-            context_service.update_session_index(
-                resolved_project_root,
-                self._current_session_id,
-                {
-                    "updated_at": datetime.now().isoformat(),
-                    "message_count": len(messages),
-                    "preview": preview,
-                    WORKING_CONTEXT_SUMMARY_KEY: current_state.get(WORKING_CONTEXT_SUMMARY_KEY, ""),
-                    WORKING_CONTEXT_COMPRESSED_COUNT_KEY: current_state.get(WORKING_CONTEXT_COMPRESSED_COUNT_KEY, 0),
-                    WORKING_CONTEXT_KEEP_RECENT_KEY: current_state.get(WORKING_CONTEXT_KEEP_RECENT_KEY, 0),
-                    "circuit_file_path": current_state.get("circuit_file_path", ""),
-                    "last_metrics": current_state.get("last_metrics", {}),
-                    "error_context": current_state.get("error_context", ""),
-                }
-            )
+
+            # Fail closed before either durable file is replaced.  Existing
+            # corruption is evidence that needs explicit recovery; treating it
+            # as an empty session/index would silently destroy that evidence and
+            # may drop unrelated session-index entries.
+            had_session_file = False
+            previous_messages_data: List[Dict[str, Any]] = []
+            try:
+                had_session_file = context_service.session_exists(
+                    resolved_project_root,
+                    self._current_session_id,
+                )
+                if had_session_file:
+                    previous_messages_data = context_service.load_messages(
+                        resolved_project_root,
+                        self._current_session_id,
+                    )
+                context_service.get_session_metadata(
+                    resolved_project_root,
+                    self._current_session_id,
+                )
+            except Exception as exc:
+                self._is_dirty = True
+                if self.logger:
+                    self.logger.error(
+                        f"会话存储预检失败，拒绝覆盖并保留 dirty 状态: {exc}"
+                    )
+                return False
+
+            session_file_replaced = False
+
+            def restore_previous_session_file() -> None:
+                """Best-effort rollback when the paired index commit fails."""
+                try:
+                    if had_session_file:
+                        context_service.save_messages(
+                            resolved_project_root,
+                            self._current_session_id,
+                            previous_messages_data,
+                        )
+                    else:
+                        session_path = (
+                            Path(resolved_project_root)
+                            / context_service.CONVERSATIONS_DIR
+                            / f"{self._current_session_id}.json"
+                        )
+                        session_path.unlink(missing_ok=True)
+                except Exception as rollback_exc:
+                    if self.logger:
+                        self.logger.critical(
+                            "会话索引提交失败后无法恢复原会话文件: "
+                            f"{rollback_exc}"
+                        )
+
+            try:
+                # 保存消息到文件
+                context_service.save_messages(
+                    resolved_project_root,
+                    self._current_session_id,
+                    messages_data
+                )
+                session_file_replaced = True
+
+                # A session save is successful only when both the session file
+                # and its index metadata are durable.  Keep dirty on failure so
+                # a later retry cannot be skipped.
+                index_saved = context_service.update_session_index(
+                    resolved_project_root,
+                    self._current_session_id,
+                    {
+                        "updated_at": datetime.now().isoformat(),
+                        "message_count": len(messages),
+                        "preview": preview,
+                        WORKING_CONTEXT_SUMMARY_KEY: current_state.get(WORKING_CONTEXT_SUMMARY_KEY, ""),
+                        WORKING_CONTEXT_COMPRESSED_COUNT_KEY: current_state.get(WORKING_CONTEXT_COMPRESSED_COUNT_KEY, 0),
+                        WORKING_CONTEXT_KEEP_RECENT_KEY: current_state.get(WORKING_CONTEXT_KEEP_RECENT_KEY, 0),
+                        "circuit_file_path": current_state.get("circuit_file_path", ""),
+                        "last_metrics": current_state.get("last_metrics", {}),
+                        "error_context": current_state.get("error_context", ""),
+                    }
+                )
+                if not index_saved:
+                    restore_previous_session_file()
+                    self._is_dirty = True
+                    if self.logger:
+                        self.logger.error("会话索引保存失败，保留 dirty 状态")
+                    return False
+            except Exception as exc:
+                if session_file_replaced:
+                    restore_previous_session_file()
+                self._is_dirty = True
+                if self.logger:
+                    self.logger.error(f"保存会话失败，保留 dirty 状态: {exc}")
+                return False
             
             self._project_root = resolved_project_root
 
@@ -532,7 +637,20 @@ class SessionStateManager:
             
             if success:
                 # 从索引中移除
-                context_service.remove_from_session_index(resolved_project_root, session_id)
+                if not context_service.remove_from_session_index(
+                    resolved_project_root,
+                    session_id,
+                ):
+                    # The durable file has already been removed, but the index
+                    # is still authoritative for activation.  Report failure
+                    # and stop before selecting a fallback from that stale
+                    # index; claiming success here can reactivate the deleted
+                    # current session.
+                    if self.logger:
+                        self.logger.error(
+                            f"会话文件已删除但索引更新失败，停止后续激活: {session_id}"
+                        )
+                    return False
                 
                 if self.logger:
                     self.logger.info(f"会话已删除: {session_id}")
@@ -663,19 +781,62 @@ class SessionStateManager:
     ) -> bool:
         with self._lock:
             if not self._current_session_id:
-                return False
+                # A transition preflight has nothing to persist when no
+                # conversation is active.
+                return True
 
             resolved_project_root = self._resolve_project_root(project_root)
             if not resolved_project_root:
                 return False
+            if (
+                self._project_root
+                and self._normalize_project_root(self._project_root)
+                != self._normalize_project_root(resolved_project_root)
+            ):
+                # Never save a current-session candidate into a different
+                # project's conversations directory.
+                return False
 
             from domain.services import context_service
 
-            if self._is_dirty or not context_service.session_exists(
-                resolved_project_root,
-                self._current_session_id,
-            ):
-                return self.save_current_session(project_root=resolved_project_root)
+            try:
+                session_file_exists = context_service.session_exists(
+                    resolved_project_root,
+                    self._current_session_id,
+                )
+                if session_file_exists:
+                    # Existing-but-corrupt is not equivalent to persisted.
+                    context_service.load_messages(
+                        resolved_project_root,
+                        self._current_session_id,
+                    )
+                metadata = context_service.get_session_metadata(
+                    resolved_project_root,
+                    self._current_session_id,
+                )
+                indexed_current_id = context_service.get_current_session_id(
+                    resolved_project_root
+                )
+            except Exception as exc:
+                self._is_dirty = True
+                if self.logger:
+                    self.logger.error(f"会话持久化预检失败: {exc}")
+                return False
+
+            if self._is_dirty or not session_file_exists or metadata is None:
+                if not self.save_current_session(
+                    project_root=resolved_project_root,
+                    expected_session_id=self._current_session_id,
+                ):
+                    return False
+
+            if indexed_current_id != self._current_session_id:
+                if not context_service.set_current_session_id(
+                    resolved_project_root,
+                    self._current_session_id,
+                ):
+                    self._is_dirty = True
+                    return False
 
             self._project_root = resolved_project_root
             return True
@@ -813,10 +974,10 @@ class SessionStateManager:
         
         Args:
             project_root: 项目根目录路径
-            state: 初始 GraphState（字典形式）
+            state: 初始会话状态字典
             
         Returns:
-            Dict: 更新后的 GraphState（字典形式）
+            Dict: 更新后的会话状态字典
         """
         return self.ensure_active_session(
             project_root=project_root,
@@ -841,12 +1002,15 @@ class SessionStateManager:
         """
         生成会话 ID
         
-        格式：YYYYMMDD_HHMMSS
+        格式：YYYYMMDD_HHMMSS_microseconds_uuid
         
         Returns:
             str: 会话 ID
         """
-        return datetime.now().strftime("%Y%m%d_%H%M%S")
+        return (
+            datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            + f"_{uuid.uuid4().hex[:8]}"
+        )
     
     def _generate_session_name(self) -> str:
         """
@@ -993,24 +1157,8 @@ class SessionStateManager:
 
     def _build_empty_conversation_state(
         self,
-        state: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        from domain.llm.working_context_builder import (
-            WORKING_CONTEXT_COMPRESSED_COUNT_KEY,
-            WORKING_CONTEXT_KEEP_RECENT_KEY,
-            WORKING_CONTEXT_SUMMARY_KEY,
-        )
-
-        base_state = self._build_clean_state_base()
-        base_state["messages"] = []
-        base_state[WORKING_CONTEXT_SUMMARY_KEY] = ""
-        base_state[WORKING_CONTEXT_COMPRESSED_COUNT_KEY] = 0
-        base_state[WORKING_CONTEXT_KEEP_RECENT_KEY] = 0
-        base_state["circuit_file_path"] = ""
-        base_state["sim_result_path"] = ""
-        base_state["last_metrics"] = {}
-        base_state["error_context"] = ""
-        return base_state
+        return self._build_clean_state_base()
 
     def _build_empty_session_state(self, project_root: str, session_id: str) -> Dict[str, Any]:
         base_state = self._build_empty_conversation_state()
@@ -1030,21 +1178,17 @@ class SessionStateManager:
         return updated_state
 
     def _build_clean_state_base(self) -> Dict[str, Any]:
-        try:
-            from application.graph.state import GraphState
-
-            return GraphState().to_dict()
-        except Exception:
-            return {
-                "messages": [],
-                WORKING_CONTEXT_SUMMARY_KEY: "",
-                WORKING_CONTEXT_COMPRESSED_COUNT_KEY: 0,
-                WORKING_CONTEXT_KEEP_RECENT_KEY: 0,
-                "circuit_file_path": "",
-                "sim_result_path": "",
-                "last_metrics": {},
-                "error_context": "",
-            }
+        """Build only fields owned and persisted by the conversation runtime."""
+        return {
+            "messages": [],
+            WORKING_CONTEXT_SUMMARY_KEY: "",
+            WORKING_CONTEXT_COMPRESSED_COUNT_KEY: 0,
+            WORKING_CONTEXT_KEEP_RECENT_KEY: 0,
+            "circuit_file_path": "",
+            "sim_result_path": "",
+            "last_metrics": {},
+            "error_context": "",
+        }
 
     def _activate_session(
         self,
@@ -1055,7 +1199,8 @@ class SessionStateManager:
     ) -> None:
         from domain.services import context_service
 
-        context_service.set_current_session_id(project_root, session_id)
+        if not context_service.set_current_session_id(project_root, session_id):
+            raise IOError(f"Failed to persist active session id: {session_id}")
         self._current_session_id = session_id
         self._project_root = project_root
         self._is_dirty = False
@@ -1066,11 +1211,23 @@ class SessionStateManager:
     def _create_empty_session(self, project_root: str) -> tuple[str, str]:
         from domain.services import context_service
 
-        session_id = self._generate_session_id()
+        # The UUID suffix makes collisions exceedingly unlikely, while the
+        # explicit loop is the authoritative last line of defence against a
+        # clock/UUID fault or a test/injected ID generator.
+        session_id = ""
+        for _attempt in range(64):
+            candidate = self._generate_session_id()
+            if not context_service.session_exists(project_root, candidate):
+                metadata = context_service.get_session_metadata(project_root, candidate)
+                if metadata is None:
+                    session_id = candidate
+                    break
+        if not session_id:
+            raise IOError("Unable to allocate a unique session id")
         session_name = self._generate_session_name()
 
         context_service.save_messages(project_root, session_id, [])
-        context_service.update_session_index(
+        index_saved = context_service.update_session_index(
             project_root,
             session_id,
             {
@@ -1082,6 +1239,12 @@ class SessionStateManager:
             },
             set_current=True,
         )
+        if not index_saved:
+            try:
+                context_service.delete_session(project_root, session_id)
+            except Exception:
+                pass
+            raise IOError("Failed to persist new session index")
 
         self._current_session_id = session_id
         self._project_root = project_root

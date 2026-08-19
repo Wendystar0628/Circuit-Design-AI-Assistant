@@ -55,7 +55,11 @@
     )
 """
 
+import copy
 import json
+import os
+import threading
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -68,6 +72,21 @@ SESSIONS_INDEX_FILE = "sessions.json"
 
 # 会话节点回滚清单后缀
 ROLLBACK_CHECKPOINTS_SUFFIX = ".rollback.json"
+
+
+class ContextStorageError(IOError):
+    """Base error for conversation persistence failures."""
+
+
+class CorruptContextStorageError(ContextStorageError):
+    """An existing JSON file cannot be parsed or violates its schema."""
+
+
+class SessionMetadataConflictError(ContextStorageError):
+    """A session index entry changed before a conditional replacement."""
+
+
+_sessions_index_lock = threading.RLock()
 
 
 def save_messages(
@@ -131,7 +150,17 @@ def load_messages(
         return []
     
     data = _read_json_file(file_path)
-    return data.get("messages", [])
+    stored_session_id = data.get("session_id")
+    if stored_session_id and stored_session_id != session_id:
+        raise CorruptContextStorageError(
+            f"Session identity mismatch in {file_path}: {stored_session_id!r}"
+        )
+    messages = data.get("messages")
+    if not isinstance(messages, list):
+        raise CorruptContextStorageError(
+            f"Session messages must be a list: {file_path}"
+        )
+    return messages
 
 
 def append_message(
@@ -406,9 +435,10 @@ def set_current_session_id(project_root: str, session_id: str) -> bool:
     Returns:
         bool: 是否设置成功
     """
-    index_data = _load_sessions_index(project_root)
-    index_data["current_session_id"] = session_id
-    return _save_sessions_index(project_root, index_data)
+    with _sessions_index_lock:
+        index_data = _load_sessions_index(project_root)
+        index_data["current_session_id"] = session_id
+        return _save_sessions_index(project_root, index_data)
 
 
 def get_session_metadata(
@@ -455,32 +485,93 @@ def update_session_index(
     Returns:
         bool: 是否更新成功
     """
-    index_data = _load_sessions_index(project_root)
-    sessions = index_data.get("sessions", [])
-    
-    # 查找是否已存在
-    existing_idx = None
-    for i, session in enumerate(sessions):
-        if session.get("session_id") == session_id:
-            existing_idx = i
-            break
-    
-    if existing_idx is not None:
-        # 更新现有记录
-        sessions[existing_idx].update(updates)
-    else:
-        # 添加新记录
-        new_session = {"session_id": session_id}
-        new_session.update(updates)
-        sessions.append(new_session)
-    
-    index_data["sessions"] = sessions
-    
-    # 设置当前会话
-    if set_current:
-        index_data["current_session_id"] = session_id
-    
-    return _save_sessions_index(project_root, index_data)
+    with _sessions_index_lock:
+        index_data = _load_sessions_index(project_root)
+        sessions = index_data.get("sessions", [])
+
+        # 查找是否已存在
+        existing_idx = None
+        for i, session in enumerate(sessions):
+            if session.get("session_id") == session_id:
+                existing_idx = i
+                break
+
+        if existing_idx is not None:
+            # 更新现有记录
+            sessions[existing_idx].update(updates)
+        else:
+            # 添加新记录
+            new_session = {"session_id": session_id}
+            new_session.update(updates)
+            sessions.append(new_session)
+
+        index_data["sessions"] = sessions
+
+        # 设置当前会话
+        if set_current:
+            index_data["current_session_id"] = session_id
+
+        return _save_sessions_index(project_root, index_data)
+
+
+def replace_session_metadata(
+    project_root: str,
+    session_id: str,
+    metadata: Dict[str, Any],
+    *,
+    expected_metadata: Dict[str, Any],
+) -> bool:
+    """Atomically replace exactly one session entry in ``sessions.json``.
+
+    Conversation rollback owns one session, not the project-wide index.  A
+    normal ``dict.update`` would leave post-checkpoint keys behind, while
+    restoring the whole historical ``sessions.json`` would erase unrelated
+    sessions created later.  This operation therefore replaces only the
+    selected entry and preserves both every other entry and the global
+    ``current_session_id`` value.
+
+    Existing corruption or an absent/duplicated session identity is rejected
+    before the atomic file replacement.
+    """
+
+    if not session_id:
+        raise ValueError("Session ID cannot be empty")
+    if not isinstance(metadata, dict) or not isinstance(expected_metadata, dict):
+        raise ValueError("Session metadata and expected metadata must be objects")
+
+    replacement = copy.deepcopy(metadata)
+    stored_session_id = replacement.get("session_id")
+    if stored_session_id not in (None, "", session_id):
+        raise CorruptContextStorageError(
+            "Replacement session metadata identity does not match "
+            f"{session_id!r}: {stored_session_id!r}"
+        )
+    replacement["session_id"] = session_id
+
+    with _sessions_index_lock:
+        index_data = _load_sessions_index(project_root)
+        sessions = index_data.get("sessions", [])
+        matching_indexes = [
+            index
+            for index, item in enumerate(sessions)
+            if item.get("session_id") == session_id
+        ]
+        if len(matching_indexes) != 1:
+            raise CorruptContextStorageError(
+                "Expected exactly one session metadata entry for "
+                f"{session_id!r}, found {len(matching_indexes)}"
+            )
+
+        current_metadata = sessions[matching_indexes[0]]
+        if current_metadata != expected_metadata:
+            raise SessionMetadataConflictError(
+                f"Session metadata changed before replacement: {session_id!r}"
+            )
+
+        updated_sessions = list(sessions)
+        updated_sessions[matching_indexes[0]] = replacement
+        index_data["sessions"] = updated_sessions
+        return _save_sessions_index(project_root, index_data)
 
 
 def remove_from_session_index(project_root: str, session_id: str) -> bool:
@@ -494,19 +585,20 @@ def remove_from_session_index(project_root: str, session_id: str) -> bool:
     Returns:
         bool: 是否移除成功
     """
-    index_data = _load_sessions_index(project_root)
-    sessions = index_data.get("sessions", [])
-    
-    # 过滤掉要删除的会话
-    index_data["sessions"] = [
-        s for s in sessions if s.get("session_id") != session_id
-    ]
-    
-    # 如果删除的是当前会话，清空 current_session_id
-    if index_data.get("current_session_id") == session_id:
-        index_data["current_session_id"] = ""
-    
-    return _save_sessions_index(project_root, index_data)
+    with _sessions_index_lock:
+        index_data = _load_sessions_index(project_root)
+        sessions = index_data.get("sessions", [])
+
+        # 过滤掉要删除的会话
+        index_data["sessions"] = [
+            s for s in sessions if s.get("session_id") != session_id
+        ]
+
+        # 如果删除的是当前会话，清空 current_session_id
+        if index_data.get("current_session_id") == session_id:
+            index_data["current_session_id"] = ""
+
+        return _save_sessions_index(project_root, index_data)
 
 
 # ============================================================
@@ -514,18 +606,54 @@ def remove_from_session_index(project_root: str, session_id: str) -> bool:
 # ============================================================
 
 def _read_json_file(file_path: Path) -> Dict[str, Any]:
-    """读取 JSON 文件"""
+    """Read an existing JSON object, distinguishing missing from corruption."""
+
+    if not file_path.exists():
+        raise FileNotFoundError(str(file_path))
     try:
         content = file_path.read_text(encoding="utf-8")
-        return json.loads(content) if content.strip() else {}
-    except (json.JSONDecodeError, Exception):
-        return {}
+    except OSError as exc:
+        raise ContextStorageError(f"Failed to read {file_path}: {exc}") from exc
+    if not content.strip():
+        raise CorruptContextStorageError(f"JSON file is empty: {file_path}")
+    try:
+        data = json.loads(content)
+    except json.JSONDecodeError as exc:
+        raise CorruptContextStorageError(
+            f"Invalid JSON in {file_path}: {exc}"
+        ) from exc
+    if not isinstance(data, dict):
+        raise CorruptContextStorageError(
+            f"JSON root must be an object: {file_path}"
+        )
+    return data
 
 
 def _write_json_file(file_path: Path, data: Dict[str, Any]) -> None:
-    """写入 JSON 文件"""
+    """Atomically and durably replace a JSON file.
+
+    The temporary file lives beside the target so ``os.replace`` stays on the
+    same filesystem.  On Windows every handle is closed before replacement.
+    A failed write/flush/replace leaves the previous target untouched.
+    """
+
     content = json.dumps(data, indent=2, ensure_ascii=False)
-    file_path.write_text(content, encoding="utf-8")
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = file_path.with_name(
+        f".{file_path.name}.{uuid.uuid4().hex}.tmp"
+    )
+    try:
+        with temp_path.open("w", encoding="utf-8", newline="") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_path, file_path)
+    except Exception:
+        try:
+            temp_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
 
 
 def _get_sessions_index_path(project_root: str) -> Path:
@@ -556,12 +684,23 @@ def _load_sessions_index(project_root: str) -> Dict[str, Any]:
         }
     
     data = _read_json_file(index_path)
-    
+
     # 确保必要字段存在
     if "current_session_id" not in data:
         data["current_session_id"] = ""
     if "sessions" not in data:
         data["sessions"] = []
+
+    if not isinstance(data["current_session_id"], str):
+        raise CorruptContextStorageError(
+            f"current_session_id must be a string: {index_path}"
+        )
+    if not isinstance(data["sessions"], list) or not all(
+        isinstance(item, dict) for item in data["sessions"]
+    ):
+        raise CorruptContextStorageError(
+            f"sessions must be a list of objects: {index_path}"
+        )
     
     return data
 
@@ -615,9 +754,13 @@ __all__ = [
     "set_current_session_id",
     "get_session_metadata",
     "update_session_index",
+    "replace_session_metadata",
     "remove_from_session_index",
     # 常量
     "CONVERSATIONS_DIR",
     "SESSIONS_INDEX_FILE",
     "ROLLBACK_CHECKPOINTS_SUFFIX",
+    "ContextStorageError",
+    "CorruptContextStorageError",
+    "SessionMetadataConflictError",
 ]

@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from shared.file_change import FileChange, extract_file_change
 from shared.path_utils import normalize_absolute_path, normalize_identity_path
 from shared.workspace_file_types import file_type_label, file_type_label_key
 
@@ -465,12 +466,19 @@ class CodeEditorPanel(QWidget):
 
     def _activate_code_entry(self, entry: WorkspaceEditorSessionEntry) -> bool:
         editor = self._ensure_code_editor()
-        content = entry.buffer_content if entry.is_dirty and entry.buffer_content is not None else self._read_file_text(entry.path)
+        was_dirty = bool(entry.is_dirty)
+        buffered_content = entry.buffer_content
+        content = buffered_content if was_dirty and buffered_content is not None else self._read_file_text(entry.path)
         editor.set_file_path(entry.path)
         editor.set_highlighter(os.path.splitext(entry.path)[1].lower())
+        # load_content(False) emits modification_changed, which updates the
+        # active session entry.  Restore the captured dirty state afterwards
+        # so switching/rebinding a tab cannot erase its in-memory buffer.
         editor.load_content(content)
+        entry.is_dirty = was_dirty
+        entry.buffer_content = buffered_content if was_dirty else None
         editor.setReadOnly(entry.is_readonly)
-        if entry.is_dirty:
+        if was_dirty:
             editor.set_modified(True)
         self._apply_pending_state_to_active_editor()
         self._show_content_widget(editor)
@@ -760,6 +768,222 @@ class CodeEditorPanel(QWidget):
         if removed_paths and self.logger:
             self.logger.info(f"Closed {len(removed_paths)} editor tabs for files removed by rollback")
 
+    @staticmethod
+    def _path_is_same_or_descendant(path: str, root: str) -> bool:
+        """Return whether ``path`` is ``root`` or is lexically below it."""
+        try:
+            path_identity = normalize_identity_path(path)
+            root_identity = normalize_identity_path(root)
+            return os.path.commonpath([path_identity, root_identity]) == root_identity
+        except (OSError, ValueError):
+            return False
+
+    def _file_change_matches_current_project(self, change: FileChange) -> bool:
+        """Reject late filesystem events from an earlier project generation."""
+        manager = self.file_manager
+        if manager is None:
+            return False
+
+        try:
+            current_root = manager.get_work_dir()
+        except Exception:
+            current_root = None
+        if current_root is None:
+            return False
+
+        current_root_text = str(current_root)
+        if (
+            self._normalize_identity_path(change.project_root)
+            != self._normalize_identity_path(current_root_text)
+        ):
+            return False
+
+        try:
+            current_generation = int(manager.project_generation)
+        except (AttributeError, TypeError, ValueError):
+            return False
+        return change.generation == current_generation
+
+    def _moved_entry_target(
+        self,
+        entry_path: str,
+        source_path: str,
+        dest_path: str,
+        *,
+        is_directory: bool,
+    ) -> Optional[str]:
+        source_display = self._normalize_display_path(source_path)
+        entry_display = self._normalize_display_path(entry_path)
+        if not is_directory:
+            if (
+                self._normalize_identity_path(entry_display)
+                != self._normalize_identity_path(source_display)
+            ):
+                return None
+            return self._normalize_display_path(dest_path)
+
+        if not self._path_is_same_or_descendant(entry_display, source_display):
+            return None
+        try:
+            relative_path = os.path.relpath(entry_display, source_display)
+        except (OSError, ValueError):
+            return None
+        return self._normalize_display_path(
+            os.path.join(self._normalize_display_path(dest_path), relative_path)
+        )
+
+    def _build_moved_entry(
+        self,
+        entry: WorkspaceEditorSessionEntry,
+        dest_path: str,
+    ) -> WorkspaceEditorSessionEntry:
+        """Rebuild path-derived metadata while retaining the editor buffer."""
+        moved_entry = build_workspace_editor_session_entry(dest_path)
+        is_dirty = self._entry_is_dirty(entry)
+        moved_entry.buffer_content = entry.buffer_content
+        moved_entry.is_dirty = is_dirty
+        moved_entry.cursor_line = entry.cursor_line
+        moved_entry.cursor_column = entry.cursor_column
+
+        if is_dirty and moved_entry.view_kind != entry.view_kind:
+            # A rename across viewer kinds cannot safely pour an unsaved code
+            # buffer into an image/PDF/etc. viewer.  Keep the editable view for
+            # this tab while still rebinding its path, so Save cannot recreate
+            # the source file and the user's buffer remains reachable.
+            moved_entry.view_kind = entry.view_kind
+            moved_entry.is_readonly = entry.is_readonly
+        return moved_entry
+
+    @staticmethod
+    def _prefer_move_collision_candidate(
+        current: tuple[str, WorkspaceEditorSessionEntry, bool],
+        candidate: tuple[str, WorkspaceEditorSessionEntry, bool],
+        active_identity_path: str,
+    ) -> tuple[str, WorkspaceEditorSessionEntry, bool]:
+        """Choose one tab when a move lands on an already-open identity."""
+        current_old_identity, current_entry, _current_moved = current
+        candidate_old_identity, candidate_entry, _candidate_moved = candidate
+        if candidate_entry.is_dirty != current_entry.is_dirty:
+            return candidate if candidate_entry.is_dirty else current
+        if candidate_old_identity == active_identity_path:
+            return candidate
+        if current_old_identity == active_identity_path:
+            return current
+        return current
+
+    def _rebind_open_entries_for_move(
+        self,
+        source_path: str,
+        dest_path: str,
+        *,
+        is_directory: bool,
+    ) -> bool:
+        """Atomically re-key tabs affected by a filesystem move."""
+        if not source_path or not dest_path:
+            return False
+
+        self._capture_active_entry_state()
+        old_active_identity = self._active_identity_path
+        candidates: list[tuple[str, WorkspaceEditorSessionEntry, bool]] = []
+        old_to_new_identity: Dict[str, str] = {}
+        moved_count = 0
+
+        for old_identity, entry in list(self._session_entries.items()):
+            target_path = self._moved_entry_target(
+                entry.path,
+                source_path,
+                dest_path,
+                is_directory=is_directory,
+            )
+            if target_path is None:
+                candidates.append((old_identity, entry, False))
+                old_to_new_identity[old_identity] = old_identity
+                continue
+
+            moved_count += 1
+            try:
+                moved_entry = self._build_moved_entry(entry, target_path)
+            except Exception as exc:
+                # Never leave an editor bound to the vanished source path.  A
+                # malformed/unrepresentable destination closes that old tab;
+                # normal moves preserve dirty buffers through _build_moved_entry.
+                old_to_new_identity[old_identity] = ""
+                if self.logger:
+                    self.logger.error(
+                        f"Failed to rebind moved editor tab {entry.path} -> "
+                        f"{target_path}: {exc}"
+                    )
+                continue
+            candidates.append((old_identity, moved_entry, True))
+            old_to_new_identity[old_identity] = moved_entry.identity_path
+
+        if moved_count == 0:
+            return False
+
+        # Build a complete replacement dictionary first, then swap it once.
+        # This keeps directory moves from exposing a half-rekeyed tab model to
+        # signals or the React tab bar.
+        selected_by_identity: Dict[
+            str,
+            tuple[str, WorkspaceEditorSessionEntry, bool],
+        ] = {}
+        for candidate in candidates:
+            identity_path = candidate[1].identity_path
+            current = selected_by_identity.get(identity_path)
+            if current is None:
+                selected_by_identity[identity_path] = candidate
+                continue
+            selected_by_identity[identity_path] = self._prefer_move_collision_candidate(
+                current,
+                candidate,
+                old_active_identity,
+            )
+            if self.logger:
+                self.logger.warning(
+                    f"Collapsed duplicate editor tabs after move: {identity_path}"
+                )
+
+        rebound_entries = {
+            identity_path: selected[1]
+            for identity_path, selected in selected_by_identity.items()
+        }
+        new_active_identity = old_to_new_identity.get(old_active_identity, "")
+        if new_active_identity not in rebound_entries:
+            new_active_identity = next(iter(rebound_entries), "")
+
+        with self._batch_state_updates():
+            self._session_entries = rebound_entries
+            self._active_identity_path = new_active_identity
+            active_entry = self._get_active_entry()
+            if active_entry is not None:
+                try:
+                    self._load_entry_into_view(active_entry)
+                except Exception as exc:
+                    # The path identity is already safely rebound.  If a
+                    # short-lived filesystem race prevents reload, keep the
+                    # tab on the destination and let the next change retry it.
+                    if (
+                        active_entry.view_kind == VIEW_KIND_CODE
+                        and self._shared_code_editor is not None
+                    ):
+                        self._shared_code_editor.set_file_path(active_entry.path)
+                    if self.logger:
+                        self.logger.warning(
+                            f"Moved editor tab rebound but refresh failed: "
+                            f"{active_entry.path}: {exc}"
+                        )
+                self._update_status_bar(active_entry.path)
+            else:
+                self._reset_status_bar()
+            self._update_empty_state()
+            self._schedule_state_refresh(editable=True, workspace=True)
+
+        if self.logger:
+            self.logger.info(
+                f"Rebound {moved_count} editor tab(s): {source_path} -> {dest_path}"
+            )
+        return True
+
     def _reload_active_code_entry(self, entry: WorkspaceEditorSessionEntry) -> bool:
         editor = self._ensure_code_editor()
         line_number, column_number = editor.get_cursor_position()
@@ -813,34 +1037,84 @@ class CodeEditorPanel(QWidget):
 
     def _close_entry(self, entry: WorkspaceEditorSessionEntry, *, activate_fallback: bool) -> bool:
         if self._entry_is_dirty(entry):
-            reply = QMessageBox.question(
-                self,
-                self._get_text("dialog.confirm.title", "Confirm"),
-                self._get_text(
-                    "dialog.confirm.save_changes",
-                    "Save changes to {name}?",
-                ).format(name=os.path.basename(entry.path)),
-                QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel,
-            )
+            reply = self._prompt_close_decision(entry)
             if reply == QMessageBox.StandardButton.Save:
                 if not self._save_entry(entry):
                     return False
             elif reply == QMessageBox.StandardButton.Cancel:
                 return False
+            elif reply != QMessageBox.StandardButton.Discard:
+                # Treat closing the prompt or any unexpected response as a
+                # veto.  A workspace transition must fail closed rather than
+                # silently discard an edit.
+                return False
         return self._discard_entry_by_identity(entry.identity_path, activate_fallback=activate_fallback)
 
-    def close_all_tabs(self):
-        ordered_identities = list(self._session_entries.keys())
-        for identity_path in ordered_identities:
-            entry = self._session_entries.get(identity_path)
-            if entry is None:
+    def _prompt_close_decision(
+        self,
+        entry: WorkspaceEditorSessionEntry,
+    ) -> QMessageBox.StandardButton:
+        """Ask how a dirty entry should be handled before it is closed."""
+        return QMessageBox.question(
+            self,
+            self._get_text("dialog.confirm.title", "Confirm"),
+            self._get_text(
+                "dialog.confirm.save_changes",
+                "Save changes to {name}?",
+            ).format(name=os.path.basename(entry.path)),
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel,
+        )
+
+    def prepare_close_all(self) -> bool:
+        """Synchronously resolve dirty editors before a workspace transition.
+
+        This is deliberately a *prepare* step: discarded buffers are kept in
+        memory until the project transition actually commits.  The subsequent
+        project opened/closed event calls :meth:`_discard_all_tabs`.  Therefore
+        a Cancel response or a failed ``ProjectService.close_project()`` leaves
+        the current project and all editor tabs intact.
+        """
+        self._capture_active_entry_state()
+        entries_to_save = []
+
+        # Collect every decision before closing any tab.  In particular, a
+        # Cancel on the second dirty file must not have already removed the
+        # first tab.
+        for entry in list(self._session_entries.values()):
+            if not self._entry_is_dirty(entry):
                 continue
-            if not self._close_entry(entry, activate_fallback=False):
-                return
+            reply = self._prompt_close_decision(entry)
+            if reply == QMessageBox.StandardButton.Cancel:
+                return False
+            if reply == QMessageBox.StandardButton.Save:
+                entries_to_save.append(entry)
+                continue
+            if reply != QMessageBox.StandardButton.Discard:
+                return False
+
+        # Saving is the only intentional mutation performed during prepare.
+        # If a save fails, abort the project transition and keep every tab.
+        for entry in entries_to_save:
+            if not self._save_entry(entry):
+                return False
+        return True
+
+    def _discard_all_tabs(self) -> None:
+        """Commit a prepared transition without displaying another prompt."""
+        self._session_entries.clear()
         self._active_identity_path = ""
         self._reset_status_bar()
         self._update_empty_state()
         self._schedule_state_refresh(editable=True, workspace=True)
+
+    def close_all_tabs(self) -> bool:
+        """Prompt for dirty buffers, then close all tabs on success."""
+        if not self.prepare_close_all():
+            return False
+        self._discard_all_tabs()
+        return True
 
     def get_open_files(self) -> list:
         return [entry.path for entry in self._session_entries.values()]
@@ -986,13 +1260,16 @@ class CodeEditorPanel(QWidget):
 
     def _on_project_opened(self, event_data: Dict[str, Any]):
         del event_data
-        self.close_all_tabs()
+        # Dirty-file decisions are resolved synchronously before the service
+        # mutates project state.  Project events are the commit notification,
+        # so they must never ask a second, too-late question.
+        self._discard_all_tabs()
         self._update_empty_state()
         self._emit_workspace_file_state(force=True)
 
     def _on_project_closed(self, event_data: Dict[str, Any]):
         del event_data
-        self.close_all_tabs()
+        self._discard_all_tabs()
         self._update_empty_state()
         self._emit_workspace_file_state(force=True)
 
@@ -1000,18 +1277,29 @@ class CodeEditorPanel(QWidget):
         self._refresh_pending_workspace_edit_views(state)
 
     def _on_file_changed(self, event_data: Dict[str, Any]):
-        data = event_data.get("data", event_data)
-        file_path = data.get("path", "") if isinstance(data, dict) else ""
-        if not file_path:
+        change = extract_file_change(event_data)
+        if change is None or not self._file_change_matches_current_project(change):
             return
-        normalized = str(file_path).replace("\\", "/")
-        if normalized.endswith("/.circuit_ai/pending_workspace_edits.json"):
+
+        normalized_path = change.path.replace("\\", "/")
+        normalized_dest = change.dest_path.replace("\\", "/")
+        if (
+            normalized_path.endswith("/.circuit_ai/pending_workspace_edits.json")
+            or normalized_dest.endswith("/.circuit_ai/pending_workspace_edits.json")
+        ):
             return
-        operation = data.get("operation", "") if isinstance(data, dict) else ""
-        if operation == "delete":
+
+        if change.operation == "delete":
             self.sync_open_tabs_with_workspace()
             return
-        self.reload_file(file_path)
+        if change.operation == "move":
+            self._rebind_open_entries_for_move(
+                change.path,
+                change.dest_path,
+                is_directory=change.is_directory,
+            )
+            return
+        self.reload_file(change.path)
 
     def _on_pending_edit_accept_file_requested(self, file_path: str):
         service = self.pending_workspace_edit_service

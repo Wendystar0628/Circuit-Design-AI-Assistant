@@ -40,6 +40,7 @@ class ActionHandlers:
         self._i18n_manager = None
         self._config_manager = None
         self._project_service = None
+        self._session_state_manager = None
         self._logger = None
 
     # ============================================================
@@ -82,6 +83,21 @@ class ActionHandlers:
             except Exception:
                 pass
         return self._project_service
+
+    @property
+    def session_state_manager(self):
+        """延迟获取权威会话状态管理器。"""
+        if self._session_state_manager is None:
+            try:
+                from shared.service_locator import ServiceLocator
+                from shared.service_names import SVC_SESSION_STATE_MANAGER
+
+                self._session_state_manager = ServiceLocator.get_optional(
+                    SVC_SESSION_STATE_MANAGER
+                )
+            except Exception:
+                pass
+        return self._session_state_manager
 
     @property
     def logger(self):
@@ -195,94 +211,165 @@ class ActionHandlers:
         if folder:
             self._open_project(folder)
 
-    def _open_project(self, folder_path: str):
+    def prepare_workspace_transition(self) -> bool:
+        """Resolve editor buffers and persist conversation state before moving.
+
+        The editor performs a synchronous prepare phase and returns ``False``
+        when the user cancels or a requested save fails.  Callers must stop
+        immediately in that case; no project service or fallback state may be
+        touched.  Conversation persistence is likewise a precondition, so the
+        same method safely guards project switch, project close and app close.
+        """
+        code_editor = self._get_panel("code_editor")
+        if code_editor is not None:
+            prepare_close_all = getattr(code_editor, "prepare_close_all", None)
+            if not callable(prepare_close_all):
+                if self.logger:
+                    self.logger.error(
+                        "Code editor does not expose prepare_close_all(); "
+                        "workspace transition vetoed"
+                    )
+                return False
+
+            try:
+                if not bool(prepare_close_all()):
+                    return False
+            except Exception as exc:
+                # A broken preflight must fail closed.  Continuing here could
+                # bind an old dirty editor to newly initialised services.
+                if self.logger:
+                    self.logger.error(f"Workspace transition preflight failed: {exc}")
+                return False
+
+        manager = self.session_state_manager
+        project_root = ""
+        project_service = self.project_service
+        get_project_root = getattr(project_service, "get_current_project_path", None)
+        if callable(get_project_root):
+            try:
+                project_root = str(get_project_root() or "")
+            except Exception:
+                project_root = ""
+        if not project_root and manager is not None:
+            get_manager_root = getattr(manager, "get_project_root", None)
+            if callable(get_manager_root):
+                try:
+                    project_root = str(get_manager_root() or "")
+                except Exception:
+                    project_root = ""
+
+        # No active project/conversation means there is nothing else to save.
+        if not project_root:
+            return True
+        if manager is None:
+            self._report_session_persistence_failure(
+                "Conversation session service is unavailable."
+            )
+            return False
+        try:
+            if manager.ensure_current_session_persisted(project_root):
+                return True
+        except Exception as exc:
+            if self.logger:
+                self.logger.error(f"Conversation persistence preflight failed: {exc}")
+            self._report_session_persistence_failure(str(exc))
+            return False
+
+        self._report_session_persistence_failure(
+            "The current conversation could not be saved."
+        )
+        return False
+
+    def _report_session_persistence_failure(self, detail: str) -> None:
+        """Show one actionable warning for a transition persistence veto."""
+        message = self._get_text(
+            "dialog.session_persistence_failed",
+            "The current conversation could not be saved. The workspace was "
+            "left open so you can retry.",
+        )
+        if detail and self.logger:
+            self.logger.error(f"{message} Detail: {detail}")
+        QMessageBox.warning(
+            self._main_window,
+            self._get_text("dialog.error.title", "Error"),
+            message,
+        )
+
+    def _report_project_service_unavailable(self) -> None:
+        """Report a hard lifecycle dependency without faking project state."""
+        message = self._get_text(
+            "dialog.project_service_unavailable",
+            "Project service is unavailable. Workspace state was not changed. "
+            "Please restart the application.",
+        )
+        if self.logger:
+            self.logger.error(message)
+        QMessageBox.warning(
+            self._main_window,
+            self._get_text("dialog.error.title", "Error"),
+            message,
+        )
+
+    def _open_project(self, folder_path: str) -> bool:
         """
         打开项目
         
         每次打开项目都会：
-        1. 调用 project_service.initialize_project() 初始化项目
-        2. 初始化项目状态目录并发布项目打开状态
+        1. 同步预检并处理未保存编辑器；Cancel 时不改变任何项目状态
+        2. 通过 project_service.switch_project() 关闭旧项目并初始化新项目
+        3. 初始化项目状态目录并发布项目打开状态
         """
         if self.logger:
             self.logger.info(f"Opening workspace: {folder_path}")
-        
-        if self.project_service:
-            success, msg = self.project_service.initialize_project(folder_path)
-            if not success:
-                QMessageBox.warning(
-                    self._main_window,
-                    self._get_text("dialog.error.title", "Error"),
-                    msg
-                )
-                return
+
+        project_service = self.project_service
+        if project_service is None:
+            self._report_project_service_unavailable()
+            return False
+
+        if not self.prepare_workspace_transition():
             if self.logger:
-                self.logger.info(f"Project initialized: {msg}")
-        else:
-            # 降级处理：project_service 不可用时的备用逻辑
-            self._create_project_structure_fallback(folder_path)
+                self.logger.info("Workspace transition cancelled before project state changed")
+            return False
 
-    def _create_project_structure_fallback(self, folder_path: str) -> None:
-        """
-        降级处理：手动创建项目目录结构
-        
-        当 project_service 不可用时，仅创建必要的隐藏状态目录。
-        """
-        from pathlib import Path
-        
-        path = Path(folder_path)
-        
-        # 创建 .circuit_ai/ 隐藏目录
-        hidden_dir = path / ".circuit_ai"
-        try:
-            hidden_dir.mkdir(parents=True, exist_ok=True)
-            (hidden_dir / "snapshots").mkdir(parents=True, exist_ok=True)
-        except Exception as e:
-            if self.logger:
-                self.logger.warning(f"创建隐藏目录失败: {e}")
+        # Both the folder picker and the recent-project menu use this same
+        # path.  ``switch_project`` is also valid when no project is open:
+        # close_project() is then a successful no-op.
+        success, msg = project_service.switch_project(folder_path)
+        if not success:
+            QMessageBox.warning(
+                self._main_window,
+                self._get_text("dialog.error.title", "Error"),
+                msg
+            )
+            return False
+        if self.logger:
+            self.logger.info(f"Project initialized: {msg}")
+        return True
 
-        # 发布项目打开事件
-        try:
-            from shared.service_locator import ServiceLocator
-            from shared.service_names import SVC_EVENT_BUS
-
-            event_bus = ServiceLocator.get_optional(SVC_EVENT_BUS)
-            if event_bus:
-                from shared.event_types import EVENT_STATE_PROJECT_OPENED
-                event_bus.publish(EVENT_STATE_PROJECT_OPENED, {
-                    "path": folder_path,
-                    "name": os.path.basename(folder_path),
-                    "is_existing": False,
-                    "has_history": False,
-                    "status": "ready",
-                })
-        except Exception as e:
-            if self.logger:
-                self.logger.warning(f"发布项目打开事件失败: {e}")
-
-    def on_close_workspace(self):
+    def on_close_workspace(self) -> bool:
         """关闭工作文件夹"""
-        if self.project_service:
-            success, msg = self.project_service.close_project()
-            if not success:
-                QMessageBox.warning(
-                    self._main_window,
-                    self._get_text("dialog.error.title", "Error"),
-                    msg
-                )
-                return
+        project_service = self.project_service
+        if project_service is None:
+            self._report_project_service_unavailable()
+            return False
+
+        if not self.prepare_workspace_transition():
             if self.logger:
-                self.logger.info(f"Project closed: {msg}")
-        else:
-            try:
-                from shared.service_locator import ServiceLocator
-                from shared.service_names import SVC_EVENT_BUS
-                
-                event_bus = ServiceLocator.get_optional(SVC_EVENT_BUS)
-                if event_bus:
-                    from shared.event_types import EVENT_STATE_PROJECT_CLOSED
-                    event_bus.publish(EVENT_STATE_PROJECT_CLOSED, {"path": None})
-            except Exception:
-                pass
+                self.logger.info("Workspace close cancelled before project state changed")
+            return False
+
+        success, msg = project_service.close_project()
+        if not success:
+            QMessageBox.warning(
+                self._main_window,
+                self._get_text("dialog.error.title", "Error"),
+                msg
+            )
+            return False
+        if self.logger:
+            self.logger.info(f"Project closed: {msg}")
+        return True
 
     def on_save_file(self):
         """保存当前文件"""
@@ -296,19 +383,12 @@ class ActionHandlers:
             if self.logger:
                 self.logger.info(f"Save all: {saved_count} file(s) saved")
 
-    def on_recent_project_clicked(self, path: str):
+    def on_recent_project_clicked(self, path: str) -> bool:
         """点击最近项目"""
         if os.path.isdir(path):
-            if self.project_service:
-                success, msg = self.project_service.switch_project(path)
-                if not success:
-                    QMessageBox.warning(
-                        self._main_window,
-                        self._get_text("dialog.error.title", "Error"),
-                        msg
-                    )
-            else:
-                self._open_project(path)
+            # Keep recent-project restore and the normal folder picker on the
+            # exact same vetoable transition path.
+            return self._open_project(path)
         else:
             reply = QMessageBox.question(
                 self._main_window,
@@ -318,7 +398,8 @@ class ActionHandlers:
             )
             if reply == QMessageBox.StandardButton.Yes:
                 if self.project_service:
-                    self.project_service.remove_from_recent(path)
+                    return bool(self.project_service.remove_from_recent(path))
+        return False
 
     def on_clear_recent_projects(self):
         """清除最近项目记录"""

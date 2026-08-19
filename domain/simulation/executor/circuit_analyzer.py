@@ -33,7 +33,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Set, TYPE_CHECKING
 
-from domain.dependency.scanner.include_parser import IncludeParser, ParsedInclude
+from domain.simulation.spice.include_parser import IncludeParser, ParsedInclude
 
 if TYPE_CHECKING:
     from domain.simulation.executor.executor_registry import ExecutorRegistry

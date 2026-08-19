@@ -9,6 +9,7 @@ from PyQt6.QtWebChannel import QWebChannel
 from presentation.core.web_resource_host import app_resource_url, configure_app_web_view
 from presentation.panels.workspace_explorer_state_store import WorkspaceExplorerStateStore
 
+from shared.file_change import extract_file_change
 from shared.path_utils import normalize_identity_path
 from shared.workspace_file_types import (
     file_type_label,
@@ -705,20 +706,35 @@ class FileBrowserPanel(QWidget):
     def _on_file_changed(self, event_data: Dict[str, Any]) -> None:
         if not self._root_path:
             return
-        data = event_data.get("data", event_data)
-        if not isinstance(data, dict):
+        change = extract_file_change(event_data)
+        manager = self.file_manager
+        if change is None or manager is None:
             return
-        source_path = str(data.get("path", "") or "")
-        destination_path = str(data.get("dest_path", "") or "")
+        try:
+            manager_root = manager.get_work_dir()
+            manager_generation = int(manager.project_generation)
+        except (AttributeError, TypeError, ValueError):
+            return
+        if manager_root is None:
+            return
+        root_path = normalize_identity_path(self._root_path)
+        if (
+            normalize_identity_path(str(manager_root)) != root_path
+            or normalize_identity_path(change.project_root) != root_path
+            or change.generation != manager_generation
+        ):
+            return
+
+        source_path = change.path
+        destination_path = change.dest_path
         expanded_state_changed = False
-        if bool(data.get("is_directory", False)) and source_path and destination_path:
+        if change.operation == "move" and change.is_directory:
             expanded_state_changed = self._remap_expanded_directory_paths(source_path, destination_path)
-        root_path = os.path.normcase(os.path.abspath(self._root_path))
         relevant_change = False
         for changed_path in (source_path, destination_path):
             if not changed_path:
                 continue
-            normalized = os.path.normcase(os.path.abspath(changed_path))
+            normalized = normalize_identity_path(changed_path)
             try:
                 if os.path.commonpath([root_path, normalized]) == root_path:
                     relevant_change = True

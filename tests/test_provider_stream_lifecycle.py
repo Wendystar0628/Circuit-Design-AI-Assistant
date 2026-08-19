@@ -13,15 +13,29 @@ Authoritative invariants:
    ``async with client.stream(...)`` context, and lets httpx's
    ``AsyncShieldCancellation`` close the response synchronously.
    No ``aclose()`` side-channel is required in the producer.
+
+3. A transport EOF is not a protocol terminal. Providers must emit
+   ``[DONE]`` or a chunk with an explicit finish reason; otherwise a
+   partial response must surface as a typed error.
 """
 
 import asyncio
+import json
 
 import httpx
 import pytest
 
-from infrastructure.llm_adapters.base_client import StreamChunk
+from domain.llm.agent.agent_loop import AgentLoop
+from domain.llm.agent.tool_registry import ToolRegistry
+from domain.llm.agent.types import ToolContext
+from infrastructure.llm_adapters.base_client import (
+    APIError,
+    RateLimitError,
+    ResponseParseError,
+    StreamChunk,
+)
 from infrastructure.llm_adapters.openai_compatible_client import OpenAICompatibleClient
+from infrastructure.llm_adapters.zhipu.zhipu_response_parser import ZhipuResponseParser
 from infrastructure.llm_adapters.zhipu.zhipu_stream_handler import ZhipuStreamHandler
 
 
@@ -64,6 +78,92 @@ def test_zhipu_stream_handler_drains_normal_completion():
     chunks = asyncio.run(collect())
     assert any(c.content == "hello" for c in chunks)
     assert any(c.is_finished for c in chunks)
+
+
+def test_zhipu_stream_error_frame_without_choices_raises_api_error():
+    response = _FakeZhipuResponse([
+        'data: {"error":{"code":"server_error","message":"provider overloaded"}}\n',
+    ])
+
+    async def collect():
+        handler = ZhipuStreamHandler()
+        async for _ in handler.iterate_response(response):
+            pass
+
+    with pytest.raises(APIError, match="provider overloaded"):
+        asyncio.run(collect())
+
+
+def test_zhipu_partial_stream_eof_raises_parse_error():
+    response = _FakeZhipuResponse([
+        'data: {"choices":[{"delta":{"content":"partial"},"finish_reason":null}]}\n',
+    ])
+    received = []
+
+    async def collect():
+        handler = ZhipuStreamHandler()
+        async for chunk in handler.iterate_response(response):
+            received.append(chunk)
+
+    with pytest.raises(ResponseParseError, match="terminal frame"):
+        asyncio.run(collect())
+    assert any(chunk.content == "partial" for chunk in received)
+    assert not any(chunk.is_finished for chunk in received)
+
+
+def test_zhipu_malformed_sse_json_raises_parse_error():
+    parser = ZhipuResponseParser()
+
+    with pytest.raises(ResponseParseError, match="Invalid streaming payload"):
+        parser.parse_stream_line('data: {"choices":')
+
+
+def test_zhipu_stream_keeps_usage_and_tool_frames_compatible():
+    tool_start = {
+        "choices": [{
+            "delta": {
+                "tool_calls": [{
+                    "index": 0,
+                    "id": "call-1",
+                    "type": "function",
+                    "function": {"name": "lookup", "arguments": '{"q":'},
+                }],
+            },
+            "finish_reason": None,
+        }],
+    }
+    tool_end = {
+        "choices": [{
+            "delta": {
+                "tool_calls": [{
+                    "index": 0,
+                    "function": {"arguments": '"value"}'},
+                }],
+            },
+            "finish_reason": None,
+        }],
+    }
+    response = _FakeZhipuResponse([
+        f"data: {json.dumps(tool_start)}\n",
+        f"data: {json.dumps(tool_end)}\n",
+        'data: {"choices":[],"usage":{"prompt_tokens":2,"completion_tokens":3,"total_tokens":5}}\n',
+        'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n',
+        'data: [DONE]\n',
+    ])
+
+    async def collect():
+        handler = ZhipuStreamHandler()
+        return [chunk async for chunk in handler.iterate_response(response)]
+
+    chunks = asyncio.run(collect())
+    assert any(chunk.usage and chunk.usage["total_tokens"] == 5 for chunk in chunks)
+    tool_chunk = next(chunk for chunk in chunks if chunk.finish_reason == "tool_calls")
+    assert tool_chunk.tool_calls == [{
+        "id": "call-1",
+        "type": "function",
+        "function": {"name": "lookup", "arguments": {"q": "value"}},
+    }]
+    assert any(chunk.is_finished for chunk in chunks)
 
 
 # ---------------------------------------------------------------
@@ -142,9 +242,9 @@ class _FakeAsyncClientCtx:
         return _FakeResponseCtx(self._response)
 
 
-def _make_client(response) -> OpenAICompatibleClient:
+def _make_client(response, *, provider_id: str = "qwen") -> OpenAICompatibleClient:
     client = OpenAICompatibleClient(
-        provider_id="qwen",
+        provider_id=provider_id,
         api_key="fake-key",
         base_url="https://example.test/v1",
         model="fake-model",
@@ -175,6 +275,155 @@ def test_openai_compatible_stream_drains_sse_on_normal_finish():
     assert response.closed is True, "async-with exit must finalise the response"
     assert any(chunk.content == "hi" for chunk in chunks)
     assert any(chunk.is_finished for chunk in chunks)
+
+
+@pytest.mark.parametrize(
+    ("provider_id", "error_payload", "expected_error"),
+    [
+        (
+            "deepseek",
+            {"type": "server_error", "code": "upstream_error", "message": "deepseek unavailable"},
+            APIError,
+        ),
+        (
+            "qwen",
+            {"type": "rate_limit_error", "code": "quota_exceeded", "message": "qwen quota exceeded"},
+            RateLimitError,
+        ),
+    ],
+)
+def test_openai_compatible_error_frame_without_choices_raises_typed_error(
+    provider_id,
+    error_payload,
+    expected_error,
+):
+    response = _FakeSSEResponse([
+        f"data: {json.dumps({'error': error_payload})}",
+    ])
+
+    async def run():
+        client = _make_client(response, provider_id=provider_id)
+        async for _ in client.chat_stream(
+            messages=[{"role": "user", "content": "ping"}],
+            model="fake-model",
+        ):
+            pass
+
+    with pytest.raises(expected_error, match=provider_id):
+        asyncio.run(run())
+    assert response.closed is True
+
+
+def test_openai_compatible_partial_stream_eof_raises_parse_error():
+    response = _FakeSSEResponse([
+        'data: {"choices":[{"delta":{"content":"partial"},"finish_reason":null}]}',
+    ])
+    received = []
+
+    async def run():
+        client = _make_client(response, provider_id="deepseek")
+        async for chunk in client.chat_stream(
+            messages=[{"role": "user", "content": "ping"}],
+            model="fake-model",
+        ):
+            received.append(chunk)
+
+    with pytest.raises(ResponseParseError, match="terminal frame"):
+        asyncio.run(run())
+    assert any(chunk.content == "partial" for chunk in received)
+    assert not any(chunk.is_finished for chunk in received)
+    assert response.closed is True
+
+
+def test_openai_compatible_stream_keeps_usage_and_tool_frames_compatible():
+    tool_start = {
+        "choices": [{
+            "delta": {
+                "tool_calls": [{
+                    "index": 0,
+                    "id": "call-1",
+                    "type": "function",
+                    "function": {"name": "lookup", "arguments": '{"q":'},
+                }],
+            },
+            "finish_reason": None,
+        }],
+    }
+    tool_end = {
+        "choices": [{
+            "delta": {
+                "tool_calls": [{
+                    "index": 0,
+                    "function": {"arguments": '"value"}'},
+                }],
+            },
+            "finish_reason": None,
+        }],
+    }
+    response = _FakeSSEResponse([
+        f"data: {json.dumps(tool_start)}",
+        f"data: {json.dumps(tool_end)}",
+        'data: {"choices":[],"usage":{"prompt_tokens":2,"completion_tokens":3,"total_tokens":5}}',
+        'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}',
+        'data: [DONE]',
+    ])
+
+    async def run():
+        client = _make_client(response)
+        return [chunk async for chunk in client.chat_stream(
+            messages=[{"role": "user", "content": "ping"}],
+            model="fake-model",
+        )]
+
+    chunks = asyncio.run(run())
+    assert any(chunk.usage and chunk.usage["total_tokens"] == 5 for chunk in chunks)
+    tool_chunk = next(chunk for chunk in chunks if chunk.finish_reason == "tool_calls")
+    assert tool_chunk.tool_calls == [{
+        "id": "call-1",
+        "type": "function",
+        "function": {"name": "lookup", "arguments": '{"q":"value"}'},
+    }]
+    assert any(chunk.is_finished for chunk in chunks)
+
+
+def test_provider_sse_error_reaches_agent_loop_as_is_error(tmp_path):
+    response = _FakeSSEResponse([
+        'data: {"error":{"type":"server_error","message":"provider stream failed"}}',
+    ])
+
+    async def run():
+        client = _make_client(response, provider_id="deepseek")
+        loop = AgentLoop(
+            client=client,
+            registry=ToolRegistry(),
+            context=ToolContext(project_root=str(tmp_path)),
+            model="fake-model",
+        )
+        return await loop.run([{"role": "user", "content": "ping"}])
+
+    result = asyncio.run(run())
+    assert result.is_error is True
+    assert "provider stream failed" in result.error_message
+
+
+def test_premature_eof_reaches_agent_loop_as_is_error(tmp_path):
+    response = _FakeSSEResponse([
+        'data: {"choices":[{"delta":{"content":"partial"},"finish_reason":null}]}',
+    ])
+
+    async def run():
+        client = _make_client(response, provider_id="deepseek")
+        loop = AgentLoop(
+            client=client,
+            registry=ToolRegistry(),
+            context=ToolContext(project_root=str(tmp_path)),
+            model="fake-model",
+        )
+        return await loop.run([{"role": "user", "content": "ping"}])
+
+    result = asyncio.run(run())
+    assert result.is_error is True
+    assert "terminal frame" in result.error_message
 
 
 @pytest.mark.parametrize("legacy_kwarg", ["cancel_event", "stop_requested"])

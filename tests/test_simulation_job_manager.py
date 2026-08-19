@@ -21,6 +21,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import pytest
 
+import domain.services.simulation_job_manager as simulation_job_manager_module
 from domain.simulation.data.simulation_artifact_persistence import (
     BundlePersistenceResult,
 )
@@ -402,6 +403,8 @@ def test_executor_failure_emits_sim_error_with_identity_fields(
     # Failed bundles are persisted too so UI has log artefacts.
     assert payload["result_path"]
     assert payload["export_root"]
+    assert final.result_path == payload["result_path"]
+    assert final.export_root == payload["export_root"]
 
 
 def test_executor_without_matching_extension_reports_parameter_error(
@@ -736,11 +739,17 @@ def test_cancelling_running_job_finalises_as_cancelled(manager_factory, bus):
 
     final = manager.await_completion(job.job_id, timeout=3.0)
     assert final.status is JobStatus.CANCELLED
+    # Cancellation happened after execution, so the persisted diagnostic
+    # bundle remains reachable from the terminal job itself.
+    assert final.result_path
+    assert final.export_root
 
     cancellation = [
         e for e in bus.events_of(EVENT_SIM_ERROR) if e["job_id"] == job.job_id
     ]
     assert cancellation and cancellation[0]["cancelled"] is True
+    assert cancellation[0]["result_path"] == final.result_path
+    assert cancellation[0]["export_root"] == final.export_root
 
 
 def test_request_cancel_on_terminal_job_returns_false(manager_factory):
@@ -752,6 +761,53 @@ def test_request_cancel_on_terminal_job_returns_false(manager_factory):
     )
     manager.await_completion(job.job_id, timeout=2.0)
     assert manager.request_cancel(job.job_id) is False
+
+
+def test_cancel_between_service_return_and_terminal_commit_wins_atomically(
+    manager_factory, bus, monkeypatch
+):
+    """Regression for the old read-cancel / mark-complete race window."""
+    service_returned = threading.Event()
+    allow_terminal_commit = threading.Event()
+    original_derive_export_root = simulation_job_manager_module._derive_export_root
+
+    def pause_before_terminal_commit(result_path: str) -> str:
+        service_returned.set()
+        assert allow_terminal_commit.wait(timeout=2.0)
+        return original_derive_export_root(result_path)
+
+    monkeypatch.setattr(
+        simulation_job_manager_module,
+        "_derive_export_root",
+        pause_before_terminal_commit,
+    )
+    manager = manager_factory(executor=_FakeExecutor(success=True))
+    job = manager.submit(
+        circuit_file="amp.fake",
+        origin=JobOrigin.UI_EDITOR,
+        project_root="/tmp/project",
+    )
+
+    assert service_returned.wait(timeout=2.0)
+    # This returns before the worker is allowed to enter terminal commit.  The
+    # registered intent must therefore win over the successful service result.
+    assert manager.request_cancel(job.job_id) is True
+    allow_terminal_commit.set()
+
+    final = manager.await_completion(job.job_id, timeout=2.0)
+    assert final.status is JobStatus.CANCELLED
+    assert final.result_path
+    assert final.export_root
+    assert [
+        payload for payload in bus.events_of(EVENT_SIM_COMPLETE)
+        if payload["job_id"] == job.job_id
+    ] == []
+    cancellation = [
+        payload for payload in bus.events_of(EVENT_SIM_ERROR)
+        if payload["job_id"] == job.job_id
+    ]
+    assert len(cancellation) == 1
+    assert cancellation[0]["cancelled"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -783,6 +839,90 @@ def test_two_jobs_run_in_parallel(manager_factory):
     manager.await_completion(job_b.job_id, timeout=3.0)
     elapsed = time.monotonic() - start
     assert elapsed < 0.55, f"expected parallel execution, got {elapsed:.2f}s"
+
+
+# ---------------------------------------------------------------------------
+# Shutdown contract
+# ---------------------------------------------------------------------------
+
+
+def test_close_is_idempotent_cancels_queue_wakes_waiter_and_rejects_submit(
+    manager_factory, bus
+):
+    """Closing is a real lifecycle transition, not just pool cleanup."""
+    release_running = threading.Event()
+
+    class _BlockingExecutor(_FakeExecutor):
+        def execute(self, file_path, analysis_config=None):
+            self.execute_calls += 1
+            self.started_event.set()
+            release_running.wait(timeout=3.0)
+            return create_success_result(
+                executor=self.get_name(),
+                file_path=file_path,
+                analysis_type="tran",
+                data=SimulationData(),
+            )
+
+    executor = _BlockingExecutor()
+    manager = manager_factory(executor=executor, max_workers=1)
+    running = manager.submit(
+        circuit_file="running.fake",
+        origin=JobOrigin.UI_EDITOR,
+        project_root="/tmp/project",
+    )
+    assert executor.started_event.wait(timeout=2.0)
+    queued = manager.submit(
+        circuit_file="queued.fake",
+        origin=JobOrigin.AGENT_TOOL,
+        project_root="/tmp/project",
+    )
+
+    waiter_finished = threading.Event()
+    waiter_result: List[SimulationJob] = []
+
+    def wait_for_queued() -> None:
+        waiter_result.append(manager.await_completion(queued.job_id, timeout=2.0))
+        waiter_finished.set()
+
+    waiter = threading.Thread(target=wait_for_queued, daemon=True)
+    waiter.start()
+    assert manager.close(timeout=0.01) is False
+    assert manager.close() is False  # idempotent, still reports unsettled work
+
+    assert waiter_finished.wait(timeout=1.0)
+    assert waiter_result[0].status is JobStatus.CANCELLED
+    assert executor.execute_calls == 1
+    queued_errors = [
+        payload for payload in bus.events_of(EVENT_SIM_ERROR)
+        if payload["job_id"] == queued.job_id
+    ]
+    assert len(queued_errors) == 1
+    assert queued_errors[0]["cancelled"] is True
+
+    with pytest.raises(RuntimeError, match="closed"):
+        manager.submit(
+            circuit_file="too-late.fake",
+            origin=JobOrigin.UI_EDITOR,
+            project_root="/tmp/project",
+        )
+
+    # Running work is not killed mid-executor; it observes close's cancel
+    # request after persistence and keeps its diagnostic bundle paths.
+    release_running.set()
+    final_running = manager.await_completion(running.job_id, timeout=3.0)
+    assert final_running.status is JobStatus.CANCELLED
+    assert final_running.result_path
+    assert final_running.export_root
+    assert manager.close(timeout=1.0) is True
+    # The manager was already closed when the running worker committed.  Its
+    # state/waiters settle, but no lifecycle event is sent into torn-down UI
+    # services.
+    assert [
+        payload for payload in bus.events_of(EVENT_SIM_ERROR)
+        if payload["job_id"] == running.job_id
+    ] == []
+    waiter.join(timeout=1.0)
 
 
 # ---------------------------------------------------------------------------

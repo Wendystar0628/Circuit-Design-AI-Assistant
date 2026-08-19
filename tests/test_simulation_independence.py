@@ -1,4 +1,6 @@
+import logging
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from PyQt6.QtWidgets import QApplication
@@ -11,7 +13,12 @@ from domain.services.snapshot_service import (
     restore_snapshot,
 )
 from presentation.panels.simulation.simulation_tab import SimulationTab
-from shared.event_types import EVENT_SESSION_CHANGED
+from presentation.panels.simulation.simulation_view_model import SimulationViewModel
+from shared.event_types import (
+    EVENT_SESSION_CHANGED,
+    EVENT_SIM_ERROR,
+    EVENT_SIM_STARTED,
+)
 from shared.service_locator import ServiceLocator
 from shared.service_names import SVC_EVENT_BUS
 
@@ -57,6 +64,124 @@ def test_simulation_tab_does_not_subscribe_to_session_changed(qapp):
             tab.close()
             tab.deleteLater()
         ServiceLocator.unregister(SVC_EVENT_BUS)
+
+
+def test_simulation_view_model_does_not_subscribe_to_global_lifecycle_events(qapp):
+    """The tab is the only SIM lifecycle owner and performs identity routing."""
+    event_bus = _FakeEventBus()
+    ServiceLocator.register(SVC_EVENT_BUS, event_bus)
+    view_model = SimulationViewModel()
+    try:
+        view_model.initialize()
+        subscribed_events = [event_type for event_type, _ in event_bus.subscriptions]
+        assert EVENT_SIM_STARTED not in subscribed_events
+        assert EVENT_SIM_ERROR not in subscribed_events
+    finally:
+        view_model.dispose()
+        ServiceLocator.unregister(SVC_EVENT_BUS)
+
+
+def test_simulation_tab_updates_view_model_only_after_job_identity_filtering():
+    class _RecordingViewModel:
+        def __init__(self):
+            self.running_calls = 0
+            self.errors = []
+
+        def mark_running(self):
+            self.running_calls += 1
+
+        def mark_error(self, message):
+            self.errors.append(message)
+
+    view_model = _RecordingViewModel()
+    frontend_updates = []
+    fake_tab = SimpleNamespace(
+        _view_model=view_model,
+        _project_root="/project",
+        _displayed_job_id=None,
+        _displayed_circuit_file=None,
+        _displayed_result_path=None,
+        _awaiting_confirmation=False,
+        _runtime_status_message="",
+        _logger=logging.getLogger("test.simulation_tab_owner"),
+        _get_text=lambda _key, fallback: fallback,
+        _update_frontend_payloads=lambda: frontend_updates.append(True),
+        _refresh_circuit_result_index=lambda: None,
+    )
+
+    agent_started = {
+        "type": EVENT_SIM_STARTED,
+        "data": {
+            "job_id": "agent-job",
+            "origin": "agent_tool",
+            "circuit_file": "agent.cir",
+            "project_root": "/project",
+            "analysis_type": "tran",
+        },
+    }
+    SimulationTab._on_simulation_started(fake_tab, agent_started)
+    assert view_model.running_calls == 0
+    assert fake_tab._displayed_job_id is None
+
+    inactive_project_started = {
+        "type": EVENT_SIM_STARTED,
+        "data": {
+            "job_id": "old-ui-job",
+            "origin": "ui_editor",
+            "circuit_file": "old.cir",
+            "project_root": "/other-project",
+            "analysis_type": "tran",
+        },
+    }
+    SimulationTab._on_simulation_started(fake_tab, inactive_project_started)
+    assert view_model.running_calls == 0
+    assert fake_tab._displayed_job_id is None
+
+    ui_started = {
+        "type": EVENT_SIM_STARTED,
+        "data": {
+            "job_id": "ui-job",
+            "origin": "ui_editor",
+            "circuit_file": "ui.cir",
+            "project_root": "/project",
+            "analysis_type": "tran",
+        },
+    }
+    SimulationTab._on_simulation_started(fake_tab, ui_started)
+    assert view_model.running_calls == 1
+    assert fake_tab._displayed_job_id == "ui-job"
+
+    unrelated_error = {
+        "type": EVENT_SIM_ERROR,
+        "data": {
+            "job_id": "agent-job",
+            "origin": "agent_tool",
+            "circuit_file": "agent.cir",
+            "project_root": "/project",
+            "error_message": "agent failed",
+            "result_path": "",
+            "cancelled": False,
+            "duration_seconds": 0.1,
+        },
+    }
+    SimulationTab._on_simulation_error(fake_tab, unrelated_error)
+    assert view_model.errors == []
+
+    own_error = {
+        "type": EVENT_SIM_ERROR,
+        "data": {
+            "job_id": "ui-job",
+            "origin": "ui_editor",
+            "circuit_file": "ui.cir",
+            "project_root": "/project",
+            "error_message": "ui failed",
+            "result_path": "",
+            "cancelled": False,
+            "duration_seconds": 0.2,
+        },
+    }
+    SimulationTab._on_simulation_error(fake_tab, own_error)
+    assert view_model.errors == ["ui failed"]
 
 
 def test_session_state_manager_session_changed_event_omits_sim_result_path():

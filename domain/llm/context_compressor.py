@@ -354,6 +354,7 @@ class ContextCompressor:
         # 构建提示
         prompt = SUMMARY_PROMPT_TEMPLATE.format(conversation=conversation_text)
         
+        content = ""
         try:
             # 调用 LLM 生成摘要
             response = await llm_worker.generate(
@@ -361,15 +362,27 @@ class ContextCompressor:
                 max_tokens=1000,
                 temperature=0.3,
             )
-            
-            return response.get("content", "")
-            
+            raw_content = response.get("content", "") if isinstance(response, dict) else ""
+            if isinstance(raw_content, str):
+                content = raw_content.strip()
         except Exception as e:
             if self.logger:
                 self.logger.warning(f"LLM 摘要生成失败，使用简单摘要: {e}")
-            
-            # 回退到简单摘要
-            return self._generate_simple_summary(messages)
+
+        if content:
+            return content
+
+        if self.logger:
+            self.logger.warning("LLM returned an empty summary; using simple fallback")
+        fallback = self._generate_simple_summary(messages)
+        fallback = fallback.strip() if isinstance(fallback, str) else ""
+        if fallback:
+            return fallback
+
+        # Never advance compressed_count without a durable replacement for the
+        # covered history.  ``compress`` catches this and returns the original
+        # state with status=failed.
+        raise ValueError("Summary generation returned empty content")
     
     def _format_messages_for_summary(self, messages: List[BaseMessage]) -> str:
         """格式化消息用于摘要生成"""

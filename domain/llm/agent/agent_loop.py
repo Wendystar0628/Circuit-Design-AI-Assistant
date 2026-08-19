@@ -64,6 +64,7 @@ class TurnResult:
     reasoning_content: str = ""
     tool_calls: Optional[List[Dict[str, Any]]] = None
     finish_reason: Optional[str] = None
+    terminal_observed: bool = False
     usage: Optional[Dict[str, int]] = None
 
 
@@ -158,23 +159,30 @@ class AgentLoop:
                     messages, schemas, on_event, step_index
                 )
 
-                # ---- 2. 构建 assistant 消息并追加到历史 ----
-                assistant_msg = self._build_assistant_message(turn_result)
-                messages.append(assistant_msg)
-
-                # 累积最终结果（只保留最后一轮的文本内容）
+                # ---- 2. 先保留已生成内容，再校验终止语义 ----
                 if turn_result.content:
                     result.content = turn_result.content
                 if turn_result.reasoning_content:
                     result.reasoning_content = turn_result.reasoning_content
                 result.usage = turn_result.usage
 
-                # ---- 3. 检查是否有工具调用 ----
+                terminal_error = self._terminal_error_message(turn_result)
+                if terminal_error:
+                    self._logger.error(terminal_error)
+                    result.is_error = True
+                    result.error_message = terminal_error
+                    break
+
+                # ---- 3. 合法终止块才可写入 assistant 历史 ----
+                assistant_msg = self._build_assistant_message(turn_result)
+                messages.append(assistant_msg)
+
+                # ---- 4. 检查是否有工具调用 ----
                 if not turn_result.tool_calls:
                     # 无工具调用，循环结束
                     break
 
-                # ---- 4. 执行工具调用 ----
+                # ---- 5. 执行工具调用 ----
                 tool_results = await self._execute_tool_calls(
                     turn_result.tool_calls, on_event, step_index
                 )
@@ -192,10 +200,14 @@ class AgentLoop:
                 if any(tr.is_error for tr in tool_results):
                     messages.append(self._build_tool_recovery_message(tool_results))
             else:
-                # 达到最大轮次
-                self._logger.warning(
-                    f"Agent loop reached max turns ({self._max_turns})"
+                # 每轮都要求继续执行工具，最终没有机会生成完整回答。
+                error_message = (
+                    f"Agent loop reached max turns ({self._max_turns}) "
+                    "without a final assistant answer"
                 )
+                self._logger.error(error_message)
+                result.is_error = True
+                result.error_message = error_message
 
         except asyncio.CancelledError:
             self._logger.info("Agent loop cancelled")
@@ -274,10 +286,53 @@ class AgentLoop:
 
             if chunk.tool_calls:
                 turn.tool_calls = chunk.tool_calls
-            if chunk.finish_reason:
-                turn.finish_reason = chunk.finish_reason
+            if chunk.is_finished or chunk.finish_reason is not None:
+                turn.terminal_observed = True
+            if chunk.finish_reason is not None:
+                turn.finish_reason = str(chunk.finish_reason)
 
         return turn
+
+    @staticmethod
+    def _terminal_error_message(turn: TurnResult) -> Optional[str]:
+        """Validate provider terminal semantics, failing closed on ambiguity."""
+        if not turn.terminal_observed:
+            return "LLM stream ended without an explicit terminal marker"
+
+        raw_reason = str(turn.finish_reason or "").strip()
+        normalized_reason = raw_reason.casefold().replace("-", "_")
+
+        # [DONE] and equivalent terminal chunks may legitimately carry no reason,
+        # but a final turn still needs visible assistant content or tool calls.
+        if not normalized_reason or normalized_reason in {"stop", "end_turn"}:
+            if turn.tool_calls or str(turn.content or "").strip():
+                return None
+            return (
+                "LLM terminal response contained no final assistant content "
+                "or tool calls"
+            )
+
+        if normalized_reason == "tool_calls":
+            if turn.tool_calls:
+                return None
+            return (
+                "LLM stream ended with finish_reason='tool_calls' "
+                "but supplied no tool calls"
+            )
+
+        if normalized_reason in {"length", "max_tokens"}:
+            return (
+                "LLM response is incomplete because token generation stopped with "
+                f"finish_reason={raw_reason!r}"
+            )
+
+        if normalized_reason in {"content_filter", "blocked", "safety"}:
+            return (
+                "LLM response was blocked by the provider safety policy with "
+                f"finish_reason={raw_reason!r}"
+            )
+
+        return f"LLM response ended with unsupported finish_reason={raw_reason!r}"
 
     # ============================================================
     # 工具执行

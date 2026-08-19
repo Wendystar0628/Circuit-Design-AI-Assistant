@@ -24,6 +24,7 @@
     messages = view_model.messages
 """
 
+import asyncio
 import uuid
 from datetime import datetime
 from dataclasses import dataclass, field
@@ -154,6 +155,10 @@ class ConversationViewModel(QObject):
         # ``LLMExecutor`` 的 ``asyncio.Task`` 独占持有——VM 不再保存
         # 任何额外的停止状态。
         self._current_task_id: Optional[str] = None
+        self._active_session_id: str = ""
+        self._connected_llm_executor = None
+        self._message_submission_task: Optional[asyncio.Task] = None
+        self._message_submission_in_progress = False
 
         # 延迟获取的服务
         self._context_manager = None
@@ -208,7 +213,11 @@ class ConversationViewModel(QObject):
     @property
     def can_send(self) -> bool:
         """是否可以发送消息"""
-        return self._can_send and not self._is_loading
+        return (
+            self._can_send
+            and not self._is_loading
+            and not self._message_submission_in_progress
+        )
 
     @property
     def active_agent_steps(self) -> List[AgentStep]:
@@ -628,6 +637,14 @@ class ConversationViewModel(QObject):
         self._is_loading = True
         self._clear_active_agent_steps(emit_signal=False)
         self._current_task_id = f"llm_{uuid.uuid4().hex[:8]}"
+        manager = self.session_state_manager
+        if manager is not None:
+            try:
+                self._active_session_id = str(
+                    manager.get_current_session_id() or ""
+                )
+            except Exception:
+                self._active_session_id = ""
         self.can_send_changed.emit(False)
         self.load_messages()
     
@@ -757,15 +774,28 @@ class ConversationViewModel(QObject):
         if not self.can_send:
             return False
 
-        text_value = text.strip()
-        if not text_value and not attachments:
+        can_change, reason = self.can_change_session()
+        if not can_change:
+            if self.logger:
+                self.logger.warning(f"Message rejected while executor is busy: {reason}")
             return False
 
-        if self._active_suggestion_message_id:
-            self.mark_suggestion_expired()
+        owning_submission = asyncio.current_task()
+        if owning_submission is None:
+            return False
+        self._message_submission_task = owning_submission
+        self._message_submission_in_progress = True
+        self.can_send_changed.emit(False)
 
-        if self.context_manager:
-            try:
+        try:
+            text_value = text.strip()
+            if not text_value and not attachments:
+                return False
+
+            if self._active_suggestion_message_id:
+                self.mark_suggestion_expired()
+
+            if self.context_manager:
                 if self.conversation_rollback_service is None:
                     raise RuntimeError("Conversation rollback service unavailable")
 
@@ -792,23 +822,37 @@ class ConversationViewModel(QObject):
                 self._start_agent_run()
                 self._trigger_llm_call()
                 return True
+            return False
+        except asyncio.CancelledError:
+            if self.logger:
+                self.logger.info("Message submission cancelled by context change")
+            raise
+        except Exception as e:
+            if self.logger:
+                self.logger.error(f"发送消息失败: {e}")
+            self._is_loading = False
+            return False
+        finally:
+            if self._message_submission_task is owning_submission:
+                self._message_submission_task = None
+                self._message_submission_in_progress = False
+                if not self._is_loading:
+                    self.can_send_changed.emit(True)
 
-            except Exception as e:
-                if self.logger:
-                    self.logger.error(f"发送消息失败: {e}")
-                self._is_loading = False
-                self.can_send_changed.emit(True)
-                return False
-
-        return False
-
-    async def rollback_to_message(self, message_id: str) -> Tuple[bool, str]:
+    async def rollback_to_message(
+        self,
+        message_id: str,
+        operation_token: str,
+    ) -> Tuple[bool, str]:
         error_message = self._validate_rollback_target(message_id)
         if error_message:
             return False, error_message
 
         try:
-            result = await self.conversation_rollback_service.rollback_to_anchor(message_id)
+            result = await self.conversation_rollback_service.rollback_to_anchor(
+                message_id,
+                expected_operation_token=operation_token,
+            )
             success = bool(result.get("success", False))
             if success:
                 self._clear_active_agent_steps(emit_signal=False)
@@ -900,20 +944,21 @@ class ConversationViewModel(QObject):
             
             # 连接 LLMExecutor 信号。generation_finished 是终局信号，
             # 包含 outcome=completed/stopped/error 三种分支，一处分派。
-            llm_executor.agent_turn_started.connect(self._on_agent_turn_started)
-            llm_executor.stream_chunk.connect(self._on_llm_stream_chunk)
-            llm_executor.generation_finished.connect(self._on_generation_finished)
-            llm_executor.tool_execution_started.connect(self._on_tool_execution_started)
-            llm_executor.tool_execution_finished.connect(self._on_tool_execution_finished)
+            self._connect_llm_executor_signals(llm_executor)
             
-            # 默认使用 Agent 模式
-            # @asyncSlot() 装饰器会自动将协程调度到 qasync 事件循环中执行
-            llm_executor.execute_agent(
+            # 默认使用 Agent 模式。start_agent 在 qasync task 获得首个
+            # event-loop turn 前同步登记所有权，因此同 tick 的项目/会话
+            # 切换也能通过 request_stop 精确取消这一个排队 task。
+            scheduled_task = llm_executor.start_agent(
                 task_id=task_id,
                 messages=messages,
                 model=model,
                 thinking=enable_thinking,
             )
+            if scheduled_task is None:
+                # start_agent 已通过 generation_finished 发出权威错误；
+                # 不在这里重复落盘错误消息。
+                return
             
             if self.logger:
                 self.logger.info(
@@ -957,20 +1002,41 @@ class ConversationViewModel(QObject):
         self._ensure_agent_step(step_index)
         self._emit_display_state_changed()
 
-    def _disconnect_llm_executor_signals(self) -> None:
+    def _get_llm_executor(self):
         try:
             from shared.service_locator import ServiceLocator
             from shared.service_names import SVC_LLM_EXECUTOR
 
-            llm_executor = ServiceLocator.get_optional(SVC_LLM_EXECUTOR)
-            if llm_executor:
-                llm_executor.agent_turn_started.disconnect(self._on_agent_turn_started)
-                llm_executor.stream_chunk.disconnect(self._on_llm_stream_chunk)
-                llm_executor.generation_finished.disconnect(self._on_generation_finished)
-                llm_executor.tool_execution_started.disconnect(self._on_tool_execution_started)
-                llm_executor.tool_execution_finished.disconnect(self._on_tool_execution_finished)
+            return ServiceLocator.get_optional(SVC_LLM_EXECUTOR)
         except Exception:
-            pass
+            return None
+
+    def _connect_llm_executor_signals(self, llm_executor) -> None:
+        """Connect exactly one executor instance for the current run."""
+        self._disconnect_llm_executor_signals()
+        llm_executor.agent_turn_started.connect(self._on_agent_turn_started)
+        llm_executor.stream_chunk.connect(self._on_llm_stream_chunk)
+        llm_executor.generation_finished.connect(self._on_generation_finished)
+        llm_executor.tool_execution_started.connect(self._on_tool_execution_started)
+        llm_executor.tool_execution_finished.connect(self._on_tool_execution_finished)
+        self._connected_llm_executor = llm_executor
+
+    def _disconnect_llm_executor_signals(self) -> None:
+        llm_executor = self._connected_llm_executor
+        self._connected_llm_executor = None
+        if llm_executor is None:
+            return
+        for signal, callback in (
+            (llm_executor.agent_turn_started, self._on_agent_turn_started),
+            (llm_executor.stream_chunk, self._on_llm_stream_chunk),
+            (llm_executor.generation_finished, self._on_generation_finished),
+            (llm_executor.tool_execution_started, self._on_tool_execution_started),
+            (llm_executor.tool_execution_finished, self._on_tool_execution_finished),
+        ):
+            try:
+                signal.disconnect(callback)
+            except Exception:
+                pass
 
     # ============================================================
     # 生成终局事件分派
@@ -1090,8 +1156,10 @@ class ConversationViewModel(QObject):
 
     def _settle_generation(self) -> None:
         """生成结束后的通用收尾：清理状态、刷新 UI、重绘消息列表。"""
+        self._disconnect_llm_executor_signals()
         self._is_loading = False
         self._current_task_id = None
+        self._active_session_id = ""
         self._clear_active_agent_steps(emit_signal=False)
         self.load_messages()
         self._auto_save_session()
@@ -1239,10 +1307,14 @@ class ConversationViewModel(QObject):
     
     def clear(self) -> None:
         """清空显示数据"""
+        self.cancel_generation_for_context_change("cleanup")
         self._messages.clear()
         self._clear_active_agent_steps(emit_signal=False)
         self._is_loading = False
         self._current_task_id = None
+        self._active_session_id = ""
+        self._message_submission_task = None
+        self._message_submission_in_progress = False
         self._active_suggestion_message_id = None
         self.display_state_changed.emit()
     
@@ -1257,6 +1329,10 @@ class ConversationViewModel(QObject):
         Returns:
             (是否成功, 新会话名称或错误消息)
         """
+        can_change, reason = self.can_change_session()
+        if not can_change:
+            return False, reason
+
         if self.session_state_manager:
             try:
                 self.session_state_manager.create_session()
@@ -1362,12 +1438,17 @@ class ConversationViewModel(QObject):
         if self.logger:
             self.logger.debug(f"Session changed: action={action}, id={session_id}, name={session_name}")
 
-        if action in {"new", "switch", "delete", "rollback", "project_closed"}:
-            self._clear_active_agent_steps(emit_signal=False)
-            self._is_loading = False
-            self._current_task_id = None
+        context_changed = action in {"new", "switch", "rollback", "project_closed"}
+        if action == "delete" and self._active_session_id:
+            previous_session_id = str(data.get("previous_session_id", "") or "")
+            context_changed = (
+                previous_session_id == self._active_session_id
+                or session_id != self._active_session_id
+            )
+
+        if context_changed:
+            self.cancel_generation_for_context_change(action or "session_changed")
             self._active_suggestion_message_id = None
-            self.can_send_changed.emit(True)
         
         # 重新加载消息（ContextManager 状态已由 SessionStateManager 同步）
         self.load_messages()
@@ -1381,6 +1462,93 @@ class ConversationViewModel(QObject):
     # ============================================================
     # 停止控制
     # ============================================================
+
+    def can_change_session(self) -> Tuple[bool, str]:
+        """Return whether a session mutation can safely start now.
+
+        The desktop demo intentionally uses a single-flight policy.  Session
+        creation, switching and deletion are rejected until the active run has
+        reached its terminal signal; this prevents tools from writing into a
+        different session after the UI has switched context.
+        """
+        executor = self._connected_llm_executor or self._get_llm_executor()
+        executor_busy = bool(
+            executor is not None and getattr(executor, "is_generating", False)
+        )
+        compression_service = self.context_compression_service
+        compression_busy = bool(
+            compression_service is not None
+            and getattr(compression_service, "is_compressing", False)
+        )
+        if compression_busy:
+            return False, "当前上下文仍在压缩，请等待压缩结束"
+        if self._message_submission_in_progress or self._is_loading or executor_busy:
+            return False, "当前回答仍在生成，请先停止并等待生成结束"
+        return True, ""
+
+    def cancel_generation_for_context_change(self, reason: str) -> bool:
+        """Synchronously invalidate a run whose session/project is changing.
+
+        ``Task.cancel`` is synchronous: cancellation is injected at the next
+        await before the event loop can run unrelated UI work.  Signals are
+        disconnected and the task id is invalidated immediately, so a queued
+        terminal signal from the old context cannot persist into the new one.
+        """
+        task_id = self._current_task_id
+        executor = self._connected_llm_executor or self._get_llm_executor()
+        requested = False
+        compression_service = self.context_compression_service
+        if compression_service is not None:
+            try:
+                requested = bool(
+                    compression_service.invalidate_for_context_change(reason)
+                ) or requested
+            except Exception as exc:
+                if self.logger:
+                    self.logger.warning(
+                        f"Failed to invalidate compression for {reason}: {exc}"
+                    )
+        submission_task = self._message_submission_task
+        try:
+            current_task = asyncio.current_task()
+        except RuntimeError:
+            current_task = None
+        if (
+            submission_task is not None
+            and submission_task is not current_task
+            and not submission_task.done()
+        ):
+            submission_task.cancel()
+            requested = True
+        if executor is not None and task_id:
+            try:
+                requested = bool(executor.request_stop(task_id)) or requested
+            except Exception as exc:
+                if self.logger:
+                    self.logger.warning(
+                        f"Failed to cancel generation for {reason}: {exc}"
+                    )
+
+        self._disconnect_llm_executor_signals()
+        had_active_run = bool(
+            self._message_submission_in_progress
+            or self._is_loading
+            or task_id
+            or requested
+        )
+        self._message_submission_task = None
+        self._message_submission_in_progress = False
+        self._is_loading = False
+        self._current_task_id = None
+        self._active_session_id = ""
+        self._clear_active_agent_steps(emit_signal=False)
+        if had_active_run:
+            if self.logger:
+                self.logger.info(
+                    f"Generation invalidated for context change: reason={reason}"
+                )
+            self.can_send_changed.emit(True)
+        return requested
 
     def request_stop(self) -> bool:
         """请求停止当前生成。
@@ -1397,16 +1565,13 @@ class ConversationViewModel(QObject):
             return False
 
         try:
-            from shared.service_locator import ServiceLocator
-            from shared.service_names import SVC_LLM_EXECUTOR
-
-            llm_executor = ServiceLocator.get_optional(SVC_LLM_EXECUTOR)
+            llm_executor = self._connected_llm_executor or self._get_llm_executor()
             if not llm_executor:
                 if self.logger:
                     self.logger.warning("LLMExecutor not available for stop")
                 return False
 
-            success = llm_executor.request_stop()
+            success = llm_executor.request_stop(self._current_task_id)
             if success and self.logger:
                 self.logger.info("Stop requested by user")
             return success

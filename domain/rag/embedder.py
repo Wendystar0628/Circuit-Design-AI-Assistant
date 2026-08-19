@@ -10,6 +10,7 @@
 """
 
 import logging
+from dataclasses import dataclass
 from typing import List
 
 import httpx
@@ -28,6 +29,22 @@ _BATCH_SIZE = 32      # 每批最多 32 条（API 限制）
 _TIMEOUT = 30.0       # 单次请求超时秒数
 
 
+@dataclass(frozen=True)
+class EmbeddingRuntimeConfig:
+    """A task-stable embedding configuration.
+
+    RAG jobs may outlive a settings-panel change.  Resolving the model for
+    every HTTP batch can otherwise mix vector dimensions in one index run.
+    """
+
+    provider_id: str
+    model_name: str
+    base_url: str
+    batch_size: int
+    timeout: int
+    dimensions: int
+
+
 class Embedder:
     """
     智谱 embedding-3 向量化器
@@ -36,7 +53,13 @@ class Embedder:
     使用 httpx 同步调用（在 RAGWorkerThread 内执行，不阻塞 Qt 主线程）。
     """
 
-    def _get_embedding_config(self) -> tuple[str, str, str, int, int]:
+    def __init__(self, config: EmbeddingRuntimeConfig | None = None):
+        # Freeze once per project/runtime.  A later reindex creates a new
+        # Embedder and compares its signature before touching the collection.
+        self._config = config or self.resolve_runtime_config()
+
+    @classmethod
+    def resolve_runtime_config(cls) -> EmbeddingRuntimeConfig:
         try:
             from shared.service_locator import ServiceLocator
             from shared.service_names import SVC_CONFIG_MANAGER
@@ -75,9 +98,27 @@ class Embedder:
                 base_url = config_manager.get(CONFIG_EMBEDDING_BASE_URL, "") or default_base_url
                 timeout = int(config_manager.get(CONFIG_EMBEDDING_TIMEOUT, _TIMEOUT))
                 batch_size = int(config_manager.get(CONFIG_EMBEDDING_BATCH_SIZE, _BATCH_SIZE))
-                return configured_provider, model_name, base_url, max(batch_size, 1), max(timeout, 1)
+                model_config = EmbeddingModelRegistry.get_model_by_name(
+                    configured_provider, model_name
+                )
+                return EmbeddingRuntimeConfig(
+                    provider_id=configured_provider,
+                    model_name=model_name,
+                    base_url=str(base_url),
+                    batch_size=max(batch_size, 1),
+                    timeout=max(timeout, 1),
+                    dimensions=int(getattr(model_config, "dimensions", 0) or 0),
+                )
 
-            return provider_id, model_name, default_base_url, _BATCH_SIZE, int(_TIMEOUT)
+            model_config = EmbeddingModelRegistry.get_model_by_name(provider_id, model_name)
+            return EmbeddingRuntimeConfig(
+                provider_id=provider_id,
+                model_name=model_name,
+                base_url=str(default_base_url),
+                batch_size=_BATCH_SIZE,
+                timeout=int(_TIMEOUT),
+                dimensions=int(getattr(model_config, "dimensions", 0) or 0),
+            )
         except RuntimeError:
             raise
         except Exception as exc:
@@ -92,11 +133,36 @@ class Embedder:
                 model_name = default_model.name if default_model else "embedding-3"
                 base_url = provider.base_url if provider else "https://open.bigmodel.cn/api/paas/v4/embeddings"
                 logger.debug(f"Embedding config unavailable, fallback to registry default: {exc}")
-                return provider_id, model_name, base_url, _BATCH_SIZE, int(_TIMEOUT)
+                model_config = EmbeddingModelRegistry.get_model_by_name(provider_id, model_name)
+                return EmbeddingRuntimeConfig(
+                    provider_id=provider_id,
+                    model_name=model_name,
+                    base_url=str(base_url),
+                    batch_size=_BATCH_SIZE,
+                    timeout=int(_TIMEOUT),
+                    dimensions=int(getattr(model_config, "dimensions", 0) or 0),
+                )
             except Exception:
                 pass
             logger.debug(f"Embedding config unavailable, fallback to default: {exc}")
-            return "zhipu", "embedding-3", "https://open.bigmodel.cn/api/paas/v4/embeddings", _BATCH_SIZE, int(_TIMEOUT)
+            return EmbeddingRuntimeConfig(
+                provider_id="zhipu",
+                model_name="embedding-3",
+                base_url="https://open.bigmodel.cn/api/paas/v4/embeddings",
+                batch_size=_BATCH_SIZE,
+                timeout=int(_TIMEOUT),
+                dimensions=2048,
+            )
+
+    def _get_embedding_config(self) -> tuple[str, str, str, int, int]:
+        config = self._config
+        return (
+            config.provider_id,
+            config.model_name,
+            config.base_url,
+            config.batch_size,
+            config.timeout,
+        )
 
     # ============================================================
     # 内部
@@ -170,8 +236,19 @@ class Embedder:
 
     @property
     def model_name(self) -> str:
-        _, model_name, _, _, _ = self._get_embedding_config()
-        return model_name
+        return self._config.model_name
+
+    @property
+    def provider_id(self) -> str:
+        return self._config.provider_id
+
+    @property
+    def dimensions(self) -> int:
+        return self._config.dimensions
+
+    @property
+    def runtime_config(self) -> EmbeddingRuntimeConfig:
+        return self._config
 
 
-__all__ = ["Embedder"]
+__all__ = ["Embedder", "EmbeddingRuntimeConfig"]

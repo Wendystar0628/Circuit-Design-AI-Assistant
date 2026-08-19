@@ -1,8 +1,22 @@
 from __future__ import annotations
 
-from typing import Any, Callable, Dict
+import os
+import uuid
+from dataclasses import dataclass
+from typing import Any, Callable, Dict, Optional, Tuple
 
 from presentation.panels.conversation.conversation_session_support import ConversationSessionSupport
+
+
+@dataclass(frozen=True)
+class _SessionDeleteIdentity:
+    """One-shot owner identity captured before delete confirmation."""
+
+    support: Any
+    manager: Any
+    project_root: str
+    session_id: str
+    request_id: str
 
 
 class ConversationHistoryController:
@@ -15,6 +29,7 @@ class ConversationHistoryController:
         on_notice_requested: Callable[..., None],
         on_confirm_requested: Callable[..., None],
         logger_getter: Callable[[], Any],
+        can_mutate_session: Optional[Callable[[], Tuple[bool, str]]] = None,
     ) -> None:
         self._session_support = session_support
         self._get_text = get_text
@@ -22,7 +37,9 @@ class ConversationHistoryController:
         self._on_notice_requested = on_notice_requested
         self._on_confirm_requested = on_confirm_requested
         self._logger_getter = logger_getter
+        self._can_mutate_session = can_mutate_session or (lambda: (True, ""))
         self._state = self._create_history_overlay_state()
+        self._pending_delete_identity: Optional[_SessionDeleteIdentity] = None
 
     @property
     def logger(self):
@@ -40,6 +57,24 @@ class ConversationHistoryController:
 
     def _notify_state_changed(self) -> None:
         self._on_state_changed()
+
+    def _ensure_session_mutation_allowed(self) -> bool:
+        try:
+            allowed, message = self._can_mutate_session()
+        except Exception as exc:
+            allowed, message = False, str(exc)
+        if allowed:
+            return True
+        self._on_notice_requested(
+            message
+            or self._get_text(
+                "dialog.history.generation_active",
+                "当前回答仍在生成，请先停止并等待生成结束",
+            ),
+            title=self._get_text("dialog.warning.title", "警告"),
+            tone="error",
+        )
+        return False
 
     def _create_history_export_dialog_state(
         self,
@@ -103,10 +138,15 @@ class ConversationHistoryController:
         }
 
     def close(self) -> None:
+        self._pending_delete_identity = None
         self._state = self._create_history_overlay_state()
         self._notify_state_changed()
 
     def refresh(self, preferred_session_id: str = "") -> None:
+        # A project/session refresh invalidates any confirmation opened for the
+        # previous overlay contents.  Confirmation tokens are deliberately
+        # one-shot and never retargeted by session ID alone.
+        self._pending_delete_identity = None
         self._session_support.ensure_current_session_persisted()
         sessions = self._session_support.list_sessions()
         current_session_id = self._session_support.get_current_session_id()
@@ -141,6 +181,8 @@ class ConversationHistoryController:
 
     def open_session(self, session_id: str) -> bool:
         if not session_id:
+            return False
+        if not self._ensure_session_mutation_allowed():
             return False
         success = self._session_support.open_session(session_id)
         if success:
@@ -251,6 +293,21 @@ class ConversationHistoryController:
     def request_delete_session(self, session_id: str) -> None:
         if not session_id:
             return
+        if not self._ensure_session_mutation_allowed():
+            return
+        project_root = self._normalize_project_root(
+            self._session_support.get_project_root()
+        )
+        if not project_root:
+            return
+        identity = _SessionDeleteIdentity(
+            support=self._session_support,
+            manager=getattr(self._session_support, "session_state_manager", None),
+            project_root=project_root,
+            session_id=str(session_id),
+            request_id=uuid.uuid4().hex,
+        )
+        self._pending_delete_identity = identity
         self._on_confirm_requested(
             kind="history_delete",
             title=self._get_text("dialog.warning.title", "警告"),
@@ -261,16 +318,41 @@ class ConversationHistoryController:
             confirm_label=self._get_text("btn.delete", "删除"),
             cancel_label=self._get_text("btn.cancel", "取消"),
             tone="danger",
-            payload={"session_id": session_id},
+            payload={
+                "session_id": identity.session_id,
+                "request_id": identity.request_id,
+            },
         )
 
     def handle_confirm_acceptance(self, kind: str, payload: Any) -> bool:
         if str(kind or "") != "history_delete":
             return False
+        identity = self._pending_delete_identity
+        self._pending_delete_identity = None
+        request_id = str(payload.get("request_id", "") or "") if isinstance(payload, dict) else ""
         session_id = str(payload.get("session_id", "") or "") if isinstance(payload, dict) else ""
-        if not session_id:
+        if (
+            identity is None
+            or not request_id
+            or request_id != identity.request_id
+            or session_id != identity.session_id
+            or self._session_support is not identity.support
+            or getattr(self._session_support, "session_state_manager", None)
+            is not identity.manager
+            or self._normalize_project_root(
+                self._session_support.get_project_root()
+            )
+            != identity.project_root
+        ):
             return True
-        success = self._session_support.delete_session(session_id)
+        # The state can change between opening and accepting the confirmation
+        # dialog, so enforce the single-flight boundary again at commit time.
+        if not self._ensure_session_mutation_allowed():
+            return True
+        success = self._session_support.delete_session(
+            identity.session_id,
+            project_root=identity.project_root,
+        )
         if success:
             self.refresh()
             return True
@@ -280,6 +362,14 @@ class ConversationHistoryController:
             tone="error",
         )
         return True
+
+    @staticmethod
+    def _normalize_project_root(project_root: str) -> str:
+        if not project_root:
+            return ""
+        return os.path.normcase(
+            os.path.realpath(os.path.abspath(os.fspath(project_root)))
+        )
 
 
 __all__ = ["ConversationHistoryController"]

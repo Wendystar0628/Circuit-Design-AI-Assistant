@@ -7,13 +7,14 @@ import threading
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from PyQt6.QtCore import QObject, pyqtSignal
+from shared.event_types import EVENT_METRIC_TARGET_STATE_CHANGED
+
 
 class MetricTargetStorageError(RuntimeError):
     """Raised when metric targets cannot be loaded or committed safely."""
 
 
-class MetricTargetService(QObject):
+class MetricTargetService:
     """Per-circuit-file metric-target store.
 
     Each SPICE source file produces a set of ``.MEASURE`` metrics. The
@@ -37,10 +38,7 @@ class MetricTargetService(QObject):
       ``PendingWorkspaceEditService``'s life-cycle.
     """
 
-    state_changed = pyqtSignal(dict)
-
     def __init__(self):
-        super().__init__()
         self._targets: Dict[str, Dict[str, str]] = {}
         self._event_bus = None
         self._session_state_manager = None
@@ -50,7 +48,7 @@ class MetricTargetService(QObject):
         self._storage_error = ""
         self._storage_error_root = ""
         self._subscribe_events()
-        self.reload_from_storage(emit_signal=False)
+        self.reload_from_storage(publish_event=False)
 
     # ------------------------------------------------------------------
     # Service-locator wired dependencies (lazy).
@@ -154,9 +152,9 @@ class MetricTargetService(QObject):
             self._save_storage_locked(project_root, candidate)
             self._require_current_project(project_root)
             self._targets = candidate
-        return self._emit_state_changed()
+        return self._publish_state_changed()
 
-    def reload_from_storage(self, *, emit_signal: bool = True) -> Dict[str, Any]:
+    def reload_from_storage(self, *, publish_event: bool = True) -> Dict[str, Any]:
         with self._lock:
             self._targets = {}
             self._storage_error = ""
@@ -174,8 +172,8 @@ class MetricTargetService(QObject):
                     if self.logger:
                         self.logger.error(self._storage_error)
             state = self._build_state_locked()
-        if emit_signal:
-            self._emit_signals_for_state(state)
+        if publish_event:
+            self._publish_state(state)
         return state
 
     def get_state(self) -> Dict[str, Any]:
@@ -211,19 +209,26 @@ class MetricTargetService(QObject):
             self._storage_error = ""
             self._storage_error_root = ""
             state = self._build_state_locked()
-        self._emit_signals_for_state(state)
+        self._publish_state(state)
 
     # ------------------------------------------------------------------
     # Internals.
     # ------------------------------------------------------------------
 
-    def _emit_state_changed(self) -> Dict[str, Any]:
+    def _publish_state_changed(self) -> Dict[str, Any]:
         state = self.get_state()
-        self._emit_signals_for_state(state)
+        self._publish_state(state)
         return state
 
-    def _emit_signals_for_state(self, state: Dict[str, Any]) -> None:
-        self.state_changed.emit(state)
+    def _publish_state(self, state: Dict[str, Any]) -> None:
+        event_bus = self.event_bus
+        if event_bus is None:
+            return
+        event_bus.publish(
+            EVENT_METRIC_TARGET_STATE_CHANGED,
+            state,
+            source="metric_target_service",
+        )
 
     def _build_state_locked(self) -> Dict[str, Any]:
         files = [

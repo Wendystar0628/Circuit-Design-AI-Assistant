@@ -165,8 +165,7 @@ def test_file_manager_publishes_one_canonical_move_and_delete(tmp_path: Path):
     assert deleted.revision == "missing"
 
 
-def test_watchdog_publishes_same_canonical_contract(tmp_path: Path, qapp):
-    del qapp
+def test_watchdog_publishes_same_canonical_contract(tmp_path: Path):
     file_manager, event_bus = _install_file_services(tmp_path)
     file_path = tmp_path / "external.cir"
     file_path.write_text("V1 in 0 1\n", encoding="utf-8")
@@ -190,8 +189,7 @@ def test_watchdog_publishes_same_canonical_contract(tmp_path: Path, qapp):
     assert change.revision not in {"", "missing"}
 
 
-def test_watchdog_drops_event_without_project_identity(tmp_path: Path, qapp):
-    del qapp
+def test_watchdog_drops_event_without_project_identity(tmp_path: Path):
     _file_manager, event_bus = _install_file_services(tmp_path)
     file_path = tmp_path / "unscoped.cir"
     file_path.write_text("R1 in out 1k\n", encoding="utf-8")
@@ -212,9 +210,7 @@ def test_watchdog_drops_event_without_project_identity(tmp_path: Path, qapp):
 
 def test_near_window_external_write_with_different_hash_is_not_suppressed(
     tmp_path: Path,
-    qapp,
 ):
-    del qapp
     file_manager, event_bus = _install_file_services(tmp_path)
     file_path = tmp_path / "main.py"
     file_manager.write_file(file_path, "internal = 1\n")

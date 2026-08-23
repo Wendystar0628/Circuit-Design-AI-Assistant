@@ -1,6 +1,7 @@
 import json
 import os
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -69,6 +70,61 @@ def test_restore_and_preview_preserve_excluded_trees_at_any_depth(tmp_path: Path
     assert not generated_file.exists()
     assert venv_marker.read_text(encoding="utf-8") == "keep current venv\n"
     assert dependency_marker.read_text(encoding="utf-8") == "keep current dependency\n"
+
+
+def test_snapshot_excludes_regenerable_circuit_ai_runtime_directories(tmp_path: Path):
+    tracked_file = tmp_path / "design.cir"
+    tracked_file.write_text("snapshot design\n", encoding="utf-8")
+    runtime_files = [
+        tmp_path / ".circuit_ai" / "vector_store" / "vectors.bin",
+        tmp_path / ".circuit_ai" / "rag_storage" / "index_meta.json",
+        tmp_path / ".circuit_ai" / "temp" / "attachment.txt",
+    ]
+    for runtime_file in runtime_files:
+        runtime_file.parent.mkdir(parents=True, exist_ok=True)
+        runtime_file.write_text("runtime before\n", encoding="utf-8")
+
+    create_snapshot(str(tmp_path), "without-runtime-caches")
+    snapshot_root = tmp_path / SNAPSHOTS_DIR / "without-runtime-caches"
+    for runtime_file in runtime_files:
+        relative_path = runtime_file.relative_to(tmp_path)
+        assert not (snapshot_root / relative_path).exists()
+        runtime_file.write_text("runtime after\n", encoding="utf-8")
+
+    tracked_file.write_text("live design\n", encoding="utf-8")
+    preview = preview_restore_snapshot(str(tmp_path), "without-runtime-caches")
+    assert [change.relative_path for change in preview.changed_files] == ["design.cir"]
+
+    restore_snapshot(str(tmp_path), "without-runtime-caches", backup_current=False)
+    assert tracked_file.read_text(encoding="utf-8") == "snapshot design\n"
+    assert all(
+        runtime_file.read_text(encoding="utf-8") == "runtime after\n"
+        for runtime_file in runtime_files
+    )
+
+
+def test_snapshot_disk_preflight_ignores_excluded_large_runtime_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    tracked_file = tmp_path / "design.cir"
+    tracked_file.write_text("R1 in 0 1k\n", encoding="utf-8")
+    excluded_file = tmp_path / ".circuit_ai" / "vector_store" / "vectors.bin"
+    excluded_file.parent.mkdir(parents=True, exist_ok=True)
+    excluded_file.write_bytes(b"x" * (2 * 1024 * 1024))
+
+    # Enough for the captured design, deliberately far below 1.5x the cache.
+    monkeypatch.setattr(
+        snapshot_service.shutil,
+        "disk_usage",
+        lambda _path: SimpleNamespace(free=1024),
+    )
+
+    create_snapshot(str(tmp_path), "preflight-capture-scope")
+
+    snapshot_root = tmp_path / SNAPSHOTS_DIR / "preflight-capture-scope"
+    assert (snapshot_root / "design.cir").is_file()
+    assert not (snapshot_root / ".circuit_ai" / "vector_store").exists()
 
 
 def test_custom_capture_exclusion_is_reused_by_preview_and_restore(tmp_path: Path):

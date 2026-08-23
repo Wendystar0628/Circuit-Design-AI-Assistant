@@ -50,7 +50,7 @@ class Embedder:
     智谱 embedding-3 向量化器
 
     使用独立的 embedding 配置与 embedding 凭证。
-    使用 httpx 同步调用（在 RAGWorkerThread 内执行，不阻塞 Qt 主线程）。
+    使用 httpx 同步调用，并固定在 RAGWorkerThread 内执行以免阻塞事件循环。
     """
 
     def __init__(self, config: EmbeddingRuntimeConfig | None = None):

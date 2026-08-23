@@ -298,6 +298,29 @@ class ContextCompressionService:
             )
         return cancelled
 
+    async def shutdown(self) -> None:
+        """Cancel owned work and detach lifecycle subscriptions."""
+        self.invalidate_for_context_change("runtime_shutdown")
+        tasks = tuple(self._compression_tasks)
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self._compression_tasks.clear()
+
+        if self._events_subscribed and self.event_bus is not None:
+            from shared.event_types import (
+                EVENT_SESSION_CHANGED,
+                EVENT_STATE_PROJECT_CLOSED,
+                EVENT_STATE_PROJECT_OPENED,
+            )
+
+            for event_type in (
+                EVENT_SESSION_CHANGED,
+                EVENT_STATE_PROJECT_CLOSED,
+                EVENT_STATE_PROJECT_OPENED,
+            ):
+                self.event_bus.unsubscribe(event_type, self._on_context_changed)
+        self._events_subscribed = False
+
     def _ensure_lifecycle_subscription(self) -> None:
         if self._events_subscribed or self.event_bus is None:
             return
@@ -407,7 +430,7 @@ class ContextCompressionService:
     async def apply_manual_compression(
         self,
         keep_recent: Optional[int] = None,
-        source: str = "context_compress_dialog",
+        source: str = "conversation_ui",
     ) -> Dict[str, Any]:
         return await self._run_compression(
             keep_recent=keep_recent,

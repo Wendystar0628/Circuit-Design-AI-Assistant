@@ -1,0 +1,19 @@
+appId: io.circuitdesignai.desktop
+productName: Circuit Design AI
+asar: true
+directories:
+  output: release
+files:
+  - out/**
+  - package.json
+extraResources:
+  - from: ../../dist/desktop_backend.exe
+    to: backend/desktop_backend.exe
+win:
+  target:
+    - nsis
+  artifactName: ${productName}-${version}-${arch}.${ext}
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  deleteAppDataOnUninstall: false

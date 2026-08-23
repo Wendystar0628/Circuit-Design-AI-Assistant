@@ -12,7 +12,7 @@ Agent 工具调用模块
 - domain/llm/agent/ 是 Agent 功能的模块根
 - 依赖 infrastructure/llm_adapters/ 的 BaseLLMClient 和 StreamChunk
 - 依赖 domain/llm/message_helpers.py 的消息创建辅助函数
-- 被 domain/llm/llm_executor.py 调用以执行 Agent 模式
+- 由 ``ApplicationRuntime`` 组装并执行 Agent 模式
 
 模块结构：
 - types.py             : 基础类型定义（BaseTool、ToolResult、ToolContext、ToolCallInfo）

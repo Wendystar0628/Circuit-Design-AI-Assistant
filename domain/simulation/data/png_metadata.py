@@ -1,9 +1,8 @@
 """Safe PNG iTXt metadata injection (pure stdlib).
 
-PyQt ``QPixmap.save`` writes standards-compliant PNG files but refuses
-to attach custom textual metadata. Rather than pull in Pillow just for
-that, this module rewrites a PNG file in place, inserting ``iTXt``
-chunks right after the mandatory ``IHDR`` header.
+Rather than pull in an image framework solely to attach textual metadata,
+this module rewrites a PNG file in place and inserts ``iTXt`` chunks directly
+after the mandatory ``IHDR`` header.
 
 Generated chart and waveform attachments carry their circuit identity inside
 the PNG itself, just as manual text/CSV/JSON exports carry linkage headers.

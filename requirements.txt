@@ -1,52 +1,24 @@
-# Circuit Design AI - Dependencies
-# ================================
+# Circuit Design AI runtime
 
-# GUI Framework. Qt Core and WebEngine must use the same runtime build;
-# mixing minor versions causes an ABI-level crash when a WebEngine page opens.
-PyQt6==6.10.1
-PyQt6-Qt6==6.10.1
+# Desktop sidecar API
+fastapi>=0.115,<1
+uvicorn>=0.34,<1
+pydantic>=2.10,<3
 
-# Circuit Simulation
-# NOTE: PySpice removed due to compatibility issues with ngspice 42
-# Using ctypes to directly call ngspice shared library instead
-# ngspice 42 DLL is bundled in vendor/ngspice/
+# LLM and context management
+httpx>=0.25,<1
+langchain-core>=0.2,<2
+tiktoken>=0.5,<1
 
-langchain-core>=0.2.0
+# Project indexing and document extraction
+chromadb>=0.4,<2
+PyMuPDF>=1.23,<2
+python-docx>=1.1,<2
 
-# Vector Database & Embeddings
-chromadb>=0.4.0
-sentence-transformers>=3.3.0  # Required for ModernBERT support
-transformers>=4.48.0  # Required for ModernBERT architecture
+# Runtime services
+watchdog>=3,<7
+rapidfuzz>=3,<4
+numpy>=1.24,<3
 
-# Document Processing
-PyMuPDF>=1.23.0  # PDF document processing (text extraction, page rendering)
-python-docx>=1.1.0  # Word document reading (.docx format)
-
-# Visualization
-matplotlib>=3.7.0
-pyqtgraph>=0.13.0  # Interactive waveform plotting
-
-# Token Counting
-tiktoken>=0.5.0
-
-# HTTP Client (LLM API calls)
-httpx>=0.25.0
-
-# Async Qt Integration (qasync event loop fusion)
-qasync>=0.27.1
-
-# File System Monitoring
-watchdog>=3.0.0
-
-# Fuzzy Matching (high-performance C++ implementation)
-rapidfuzz>=3.0.0
-
-# Markdown Rendering (chat panel)
-markdown>=3.5.0
-
-# WebEngine for the React/KaTeX surfaces
-PyQt6-WebEngine==6.10.0
-PyQt6-WebEngine-Qt6==6.10.1
-
-# Utilities
-numpy>=1.24.0
+# Desktop sidecar packaging
+pyinstaller>=6.12,<7

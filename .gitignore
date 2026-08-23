@@ -50,3 +50,8 @@ TestCircuit/transcribed_circuits/
 dist/
 build/
 *.egg-info/
+
+# Electron / Vite
+node_modules/
+out/
+release/

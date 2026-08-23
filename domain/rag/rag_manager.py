@@ -255,7 +255,7 @@ class RAGManager:
         self._subscribed = False
         self._stopped = False
         self._document_watcher = None
-        # 后台工作线程：索引和查询在此线程运行，避免阻塞 Qt UI
+        # 后台工作线程：索引和查询在此线程运行，避免阻塞 API 事件循环。
         self._worker = worker or RAGWorkerThread()
 
     @property
@@ -844,12 +844,12 @@ class RAGManager:
         return result
 
     # ============================================================
-    # Qt 主线程入口方法（同步触发，工作在后台线程）
+    # 非阻塞运行时入口（同步入队，工作在后台线程）
     # ============================================================
 
     def trigger_index(self) -> None:
         """
-        从 Qt 主线程触发全量/增量索引（立即返回，不阻塞 UI）
+        触发全量/增量索引并立即返回。
 
         索引在 RAGWorkerThread 中异步执行。
         """
@@ -885,7 +885,7 @@ class RAGManager:
 
     def trigger_index_single_file(self, file_path: str) -> None:
         """
-        从 Qt 主线程触发单文件增量索引（立即返回，不阻塞 UI）
+        触发单文件增量索引并立即返回。
 
         Args:
             file_path: 文件路径（绝对或相对于项目根）
@@ -949,10 +949,10 @@ class RAGManager:
         top_k: int = DEFAULT_RAG_TOP_K,
     ) -> "RAGQueryResult":
         """
-        从 Qt 主线程异步查询知识库
+        从 asyncio 调用方异步查询知识库。
 
         将 query() 提交到工作线程执行，通过 asyncio.wrap_future()
-        让 Qt 主线程的协程可以 await 结果，同时不阻塞 UI。
+        让调用方 await 工作线程结果，同时不阻塞事件循环。
 
         Args:
             query_text: 查询文本

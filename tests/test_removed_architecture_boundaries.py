@@ -1,11 +1,50 @@
-"""Static boundaries for architecture prototypes removed from the runtime."""
+"""Static boundaries for the Electron plus headless-Python architecture."""
 
+from __future__ import annotations
+
+import ast
 from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
-REMOVED_MODULES = (
+LEGACY_RUNTIME_PATHS = (
+    "presentation",
+    "application/bootstrap.py",
+    "shared/async_runtime.py",
+    "domain/llm/llm_executor.py",
+    "frontend/conversation-panel",
+    "frontend/simulation-panel",
+    "frontend/workspace-panel",
+    "frontend/menu-bar",
+    "resources/conversation",
+    "resources/simulation",
+    "resources/workspace",
+    "resources/menu",
+    "resources/editor",
+    "resources/icons",
+    "resources/styles",
+    "resources/i18n",
+    "resources/katex",
+    "resources/prompts",
+    "resources/theme.py",
+    "resources/resources.qrc",
+    "main.py",
+    "CircuitDesignAI.spec",
+)
+
+PRESERVED_RUNTIME_PATHS = (
+    "resources/models",
+    "resources/resource_loader.py",
+    "resources/__init__.py",
+    "vendor/ngspice",
+    "frontend/desktop",
+    "desktop_backend",
+    "application/runtime.py",
+    "desktop_backend.spec",
+)
+
+REMOVED_PROTOTYPES = (
     "domain/llm/external_service_manager.py",
     "domain/simulation/data/resolution_pyramid.py",
     "domain/simulation/executor/circuit_analyzer.py",
@@ -23,10 +62,10 @@ REMOVED_MODULES = (
     "shared/worker_types.py",
     "shared/async_task_registry.py",
     "infrastructure/persistence/async_file_ops.py",
-    "presentation/panels/bottom_panel.py",
-    "presentation/panels/simulation/analysis_info_panel.py",
-    "presentation/panels/simulation/chart_signal_tree.py",
-    "presentation/panels/simulation/tuning_panel.py",
+    "shared/error_handler.py",
+    "shared/error_types.py",
+    "shared/i18n_manager.py",
+    "infrastructure/utils/markdown_renderer.py",
 )
 
 REMOVED_PACKAGES = (
@@ -36,9 +75,55 @@ REMOVED_PACKAGES = (
     "shared/tracing",
 )
 
+CORE_PYTHON_ROOTS = (
+    "application",
+    "domain",
+    "infrastructure",
+    "shared",
+    "desktop_backend",
+    "resources",
+)
 
-def test_removed_architecture_modules_have_no_python_implementation():
-    for relative_path in REMOVED_MODULES:
+FORBIDDEN_PRODUCTION_TEXT = (
+    "PyQt",
+    "PySide",
+    "qasync",
+    "QApplication",
+    "QObject",
+    "pyqtSignal",
+    "application.bootstrap",
+    "shared.async_runtime",
+    "domain.llm.llm_executor",
+)
+
+
+def _python_sources():
+    for relative_root in CORE_PYTHON_ROOTS:
+        yield from sorted((PROJECT_ROOT / relative_root).rglob("*.py"))
+
+
+def _import_targets(source: str) -> set[str]:
+    targets: set[str] = set()
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Import):
+            targets.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            targets.add(node.module)
+    return targets
+
+
+def test_legacy_desktop_runtime_paths_are_physically_absent():
+    for relative_path in LEGACY_RUNTIME_PATHS:
+        assert not (PROJECT_ROOT / relative_path).exists(), relative_path
+
+
+def test_required_modern_runtime_paths_are_preserved():
+    for relative_path in PRESERVED_RUNTIME_PATHS:
+        assert (PROJECT_ROOT / relative_path).exists(), relative_path
+
+
+def test_removed_prototypes_have_no_python_implementation():
+    for relative_path in REMOVED_PROTOTYPES:
         assert not (PROJECT_ROOT / relative_path).exists(), relative_path
 
     for relative_path in REMOVED_PACKAGES:
@@ -46,15 +131,38 @@ def test_removed_architecture_modules_have_no_python_implementation():
         assert not list(package_path.rglob("*.py")), relative_path
 
 
-def test_removed_services_and_events_are_not_exported():
-    service_names = (PROJECT_ROOT / "shared/service_names.py").read_text(
-        encoding="utf-8"
-    )
-    event_types = (PROJECT_ROOT / "shared/event_types.py").read_text(
-        encoding="utf-8"
-    )
+def test_core_python_has_no_qt_or_retired_runtime_imports():
+    for path in _python_sources():
+        source = path.read_text(encoding="utf-8")
+        relative_path = path.relative_to(PROJECT_ROOT).as_posix()
+        imports = _import_targets(source)
+
+        for target in imports:
+            assert target != "presentation" and not target.startswith("presentation."), (
+                relative_path,
+                target,
+            )
+            assert target not in {"PyQt5", "PyQt6", "PySide2", "PySide6", "qasync"}, (
+                relative_path,
+                target,
+            )
+            assert not target.startswith(("PyQt5.", "PyQt6.", "PySide2.", "PySide6.")), (
+                relative_path,
+                target,
+            )
+
+        for retired_text in FORBIDDEN_PRODUCTION_TEXT:
+            assert retired_text not in source, (relative_path, retired_text)
+
+
+def test_removed_services_and_ui_events_are_not_exported():
+    service_names = (PROJECT_ROOT / "shared/service_names.py").read_text(encoding="utf-8")
+    event_types = (PROJECT_ROOT / "shared/event_types.py").read_text(encoding="utf-8")
 
     for symbol in (
+        "SVC_ERROR_HANDLER",
+        "SVC_I18N_MANAGER",
+        "SVC_LLM_EXECUTOR",
         "SVC_WORKER_MANAGER",
         "SVC_ASYNC_TASK_REGISTRY",
         "SVC_ASYNC_FILE_OPS",
@@ -66,87 +174,44 @@ def test_removed_services_and_events_are_not_exported():
         "SVC_TRACING_LOGGER",
         "SVC_EXTERNAL_SERVICE_MANAGER",
         "SVC_DEPENDENCY_HEALTH_SERVICE",
-        "SVC_CPU_TASK_EXECUTOR",
-        "SVC_INFO_CARD_PERSISTENCE",
-        "SVC_TOOL_EXECUTOR",
-        "SVC_SIMULATION_SERVICE",
-        "SVC_WAVEFORM_DATA_SERVICE",
     ):
         assert symbol not in service_names
 
     for symbol in (
-        "EVENT_WORKER_STARTED",
-        "EVENT_WORKER_PROGRESS",
-        "EVENT_WORKER_COMPLETE",
-        "EVENT_WORKER_ERROR",
-        "EVENT_TASK_STARTED",
-        "EVENT_TASK_COMPLETED",
-        "EVENT_TASK_FAILED",
-        "EVENT_TASK_CANCELLED",
-        "EVENT_SIM_RESULT_FILE_CREATED",
-        "EVENT_ASYNC_SLOT_ERROR",
-        "EVENT_DEPENDENCY_SCAN_STARTED",
-        "EVENT_DEPENDENCY_SCAN_COMPLETE",
-        "EVENT_DEPENDENCY_REPORT_UPDATED",
-        "EVENT_DEPENDENCY_RESOLUTION_REQUESTED",
-        "EVENT_DEPENDENCY_RESOLUTION_COMPLETE",
-        "EVENT_SERVICE_CIRCUIT_OPEN",
-        "EVENT_SERVICE_CIRCUIT_CLOSE",
-        "EVENT_INFO_CARD_ADDED",
-        "EVENT_INFO_CARD_UPDATED",
-        "EVENT_INFO_CARD_REMOVED",
-        "EVENT_INFO_CARD_PINNED",
-        "EVENT_INFO_CARDS_LOADED",
-        "EVENT_INFO_PANEL_CATEGORY_CHANGED",
-        "EVENT_INFO_PANEL_CLEARED",
-        "EVENT_STATE_ITERATION_UPDATED",
-        "EVENT_DESIGN_COMPLETED",
-        "EVENT_DESIGN_ACCEPTED",
-        "EVENT_DESIGN_STOPPED",
-        "EVENT_REQUEST_RESIMULATION",
+        "EVENT_INIT_PHASE_COMPLETE",
+        "EVENT_INIT_COMPLETE",
+        "EVENT_UI_SEND_MESSAGE",
+        "EVENT_UI_ATTACH_FILES_TO_CONVERSATION",
+        "EVENT_UI_ACTIVATE_CONVERSATION_TAB",
+        "EVENT_PANEL_VISIBILITY_CHANGED",
+        "EVENT_TAB_CHANGED",
+        "EVENT_MODEL_CHANGED",
+        "EVENT_EMBEDDING_PROVIDER_CHANGED",
+        "EVENT_EMBEDDING_MODEL_READY",
+        "EVENT_WEB_SEARCH_STARTED",
+        "EVENT_WEB_SEARCH_COMPLETE",
+        "EVENT_WEB_SEARCH_ERROR",
+        "EVENT_ERROR_OCCURRED",
+        "EVENT_ERROR_RECOVERED",
+        "EVENT_FILE_LOCKED",
+        "EVENT_FILE_UNLOCKED",
+        "EVENT_FILE_CONFLICT_DETECTED",
+        "EVENT_FILE_SEARCH_INDEX_UPDATED",
+        "EVENT_SYMBOL_LOCATED",
+        "EVENT_REFERENCES_FOUND",
+        "EVENT_LANGUAGE_CHANGED",
+        "EVENT_ITERATION_AWAITING_CONFIRMATION",
+        "EVENT_ITERATION_USER_CONFIRMED",
+        "EVENT_ITERATION_USER_STOPPED",
+        "EVENT_ACTIVE_FILE_CHANGED",
     ):
         assert symbol not in event_types
 
 
-def test_bootstrap_and_packaging_do_not_reference_removed_modules():
-    bootstrap = (PROJECT_ROOT / "application/bootstrap.py").read_text(
-        encoding="utf-8"
-    )
-    spec_path = PROJECT_ROOT / "CircuitDesignAI.spec"
-    spec = spec_path.read_text(encoding="utf-8") if spec_path.exists() else ""
-
-    for module_name in (
-        "domain.llm.external_service_manager",
-        "domain.search",
-        "domain.dependency",
-        "domain.design",
-        "domain.simulation.service.simulation_result_watcher",
-        "domain.simulation.data.resolution_pyramid",
-        "domain.simulation.executor.circuit_analyzer",
-        "domain.simulation.executor.executor_registry",
-        "domain.simulation.executor.python_executor",
-        "domain.simulation.executor.simulation_executor",
-        "domain.simulation.service.parameter_extractor",
-        "domain.simulation.service.bundled_spice_library_injector",
-        "domain.simulation.service.tuning_service",
-        "infrastructure.persistence.async_file_ops",
-        "presentation.panels.bottom_panel",
-        "presentation.panels.simulation.analysis_info_panel",
-        "presentation.panels.simulation.chart_signal_tree",
-        "presentation.panels.simulation.tuning_panel",
-        "shared.async_task_registry",
-        "shared.tracing",
-        "shared.worker_manager",
-    ):
-        assert module_name not in bootstrap
-        assert module_name not in spec
-
-
-def test_removed_thread_bridge_is_not_exported():
-    async_runtime = (PROJECT_ROOT / "shared/async_runtime.py").read_text(
-        encoding="utf-8"
-    )
-    assert "run_coroutine_threadsafe" not in async_runtime
+def test_resource_loader_has_no_desktop_visual_authority():
+    source = (PROJECT_ROOT / "resources/resource_loader.py").read_text(encoding="utf-8")
+    for symbol in ("QIcon", "QApplication", "load_stylesheet", "get_stylesheet", "main.qss"):
+        assert symbol not in source
 
 
 def test_removed_spice_compatibility_layers_are_not_reintroduced():
@@ -163,10 +228,7 @@ def test_removed_spice_compatibility_layers_are_not_reintroduced():
         "rewrite_library_directives_for_runtime",
     ):
         assert symbol not in runtime_compatibility
-    for symbol in (
-        "compute_spice_source_closure",
-        "SpiceSourceClosureIdentity",
-    ):
+    for symbol in ("compute_spice_source_closure", "SpiceSourceClosureIdentity"):
         assert symbol not in source_closure
 
 
@@ -192,14 +254,3 @@ def test_regenerable_evaluation_and_transcription_outputs_are_ignored():
     gitignore = (PROJECT_ROOT / ".gitignore").read_text(encoding="utf-8")
     assert "evaluation/reports/" in gitignore
     assert "TestCircuit/transcribed_circuits/" in gitignore
-
-
-def test_qt_tests_use_one_nonempty_process_argv_fixture():
-    empty_application_argv = "QApplication(" + "[]" + ")"
-    for test_path in (PROJECT_ROOT / "tests").rglob("*.py"):
-        assert empty_application_argv not in test_path.read_text(encoding="utf-8"), test_path
-
-    shared_fixture = (PROJECT_ROOT / "tests/conftest.py").read_text(
-        encoding="utf-8"
-    )
-    assert 'QApplication(["circuit-design-ai-tests"])' in shared_fixture

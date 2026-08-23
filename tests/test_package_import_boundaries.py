@@ -33,13 +33,11 @@ def _run_import_probe(source: str) -> dict:
     return json.loads(payload_line[len(marker):])
 
 
-def test_importing_application_service_does_not_bootstrap_or_configure_runtime():
+def test_importing_application_service_does_not_configure_runtime():
     payload = _run_import_probe(
         """
         import json
         import os
-        import sys
-
         runtime_keys = (
             "SPICE_LIB_DIR",
             "SPICE_SCRIPTS",
@@ -49,19 +47,16 @@ def test_importing_application_service_does_not_bootstrap_or_configure_runtime()
         )
         before = {key: os.environ.get(key) for key in runtime_keys}
 
-        assert "application.bootstrap" not in sys.modules
         import application.pending_workspace_edit_service
 
         after = {key: os.environ.get(key) for key in runtime_keys}
         print("IMPORT_BOUNDARY_RESULT=" + json.dumps({
-            "bootstrap_loaded": "application.bootstrap" in sys.modules,
             "runtime_environment_changed": before != after,
         }))
         """
     )
 
     assert payload == {
-        "bootstrap_loaded": False,
         "runtime_environment_changed": False,
     }
 
@@ -80,8 +75,8 @@ def test_package_initializers_do_not_eagerly_load_barrel_members():
             "session_state_projector_loaded": (
                 "application.session_state_projector" in sys.modules
             ),
-            "llm_executor_loaded": "domain.llm.llm_executor" in sys.modules,
-            "bootstrap_loaded": "application.bootstrap" in sys.modules,
+            "runtime_loaded": "application.runtime" in sys.modules,
+            "agent_loop_loaded": "domain.llm.agent.agent_loop" in sys.modules,
         }))
         """
     )
@@ -89,8 +84,8 @@ def test_package_initializers_do_not_eagerly_load_barrel_members():
     assert payload == {
         "session_state_loaded": False,
         "session_state_projector_loaded": False,
-        "llm_executor_loaded": False,
-        "bootstrap_loaded": False,
+        "runtime_loaded": False,
+        "agent_loop_loaded": False,
     }
 
 
@@ -116,4 +111,32 @@ def test_application_tasks_package_does_not_eagerly_construct_file_watcher():
     assert payload == {
         "package_loaded_watcher": False,
         "concrete_watcher_loaded": True,
+    }
+
+
+def test_application_state_and_file_services_do_not_import_desktop_ui_runtime():
+    payload = _run_import_probe(
+        """
+        import json
+        import sys
+
+        import shared.event_bus
+        import application.pending_workspace_edit_service
+        import application.metric_target_service
+        import application.tasks.file_watch_task
+
+        print("IMPORT_BOUNDARY_RESULT=" + json.dumps({
+            "qt_modules": sorted(name for name in sys.modules if name.startswith("PyQt")),
+            "qasync_loaded": "qasync" in sys.modules,
+            "presentation_modules": sorted(
+                name for name in sys.modules if name == "presentation" or name.startswith("presentation.")
+            ),
+        }))
+        """
+    )
+
+    assert payload == {
+        "qt_modules": [],
+        "qasync_loaded": False,
+        "presentation_modules": [],
     }

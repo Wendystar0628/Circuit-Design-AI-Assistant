@@ -232,18 +232,17 @@ class AgentLoop:
     ) -> TurnResult:
         """流式调用 LLM 并累积结果。
 
-        本方法对"停止"语义**完全无感**。取消由 ``LLMExecutor`` 对
-        持有的 ``asyncio.Task`` 调 ``cancel()`` 发起，``CancelledError``
+        本方法对"停止"语义**完全无感**。取消由调用方对持有的
+        ``asyncio.Task`` 调 ``cancel()`` 发起，``CancelledError``
         会从 httpx 最深的 await（socket.recv）抛出，沿 ``chat_stream``
         内部的 ``async with`` 栈异常展开，httpx 通过
         ``AsyncShieldCancellation`` 完成 ``response.aclose()``
         的同步清理。本 ``async for`` 自然收到 ``CancelledError``
         并向上传播到 ``run()`` 的 ``except CancelledError: raise``
-        分支——由调用方 ``LLMExecutor`` 把 ``CancelledError`` 转换
-        为 ``generation_finished(outcome="stopped")``。
+        分支；``ApplicationRuntime`` 再把取消投影成权威会话状态。
 
         该设计**不走** async generator 的 ``aclose``-GeneratorExit
-        路径，从而规避 httpcore 1.x + anyio 4 + qasync 下
+        路径，从而规避 httpcore 1.x + anyio 4 下
         ``HTTP11ConnectionByteStream.__aiter__`` 的 ``except
         BaseException: await self.aclose()`` handler 中重入 anyio
         lock 失败所导致的 ``RuntimeError: no running event loop``。

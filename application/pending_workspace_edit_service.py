@@ -7,18 +7,13 @@ import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from PyQt6.QtCore import QObject, pyqtSignal
-
 from domain.llm.agent.utils.edit_diff import normalize_to_lf
+from shared.event_types import EVENT_PENDING_WORKSPACE_EDIT_STATE_CHANGED
 from shared.path_utils import normalize_absolute_path, normalize_identity_path
 
 
-class PendingWorkspaceEditService(QObject):
-    state_changed = pyqtSignal(dict)
-    summary_changed = pyqtSignal(dict)
-
+class PendingWorkspaceEditService:
     def __init__(self):
-        super().__init__()
         self._records: Dict[str, Dict[str, Any]] = {}
         self._event_bus = None
         self._file_manager = None
@@ -27,7 +22,7 @@ class PendingWorkspaceEditService(QObject):
         self._subscribed = False
         self._lock = threading.RLock()
         self._subscribe_events()
-        self.reload_from_storage(emit_signal=False)
+        self.reload_from_storage(publish_event=False)
 
     @property
     def event_bus(self):
@@ -134,7 +129,7 @@ class PendingWorkspaceEditService(QObject):
             else:
                 self._records.pop(abs_path, None)
             self._save_storage_locked()
-        return self._emit_state_changed()
+        return self._publish_state_changed()
 
     def accept_all_edits(self) -> Dict[str, Any]:
         with self._lock:
@@ -142,14 +137,14 @@ class PendingWorkspaceEditService(QObject):
                 return self._build_state_locked()
             self._records.clear()
             self._save_storage_locked()
-        return self._emit_state_changed()
+        return self._publish_state_changed()
 
     def reject_all_edits(self) -> Dict[str, Any]:
         with self._lock:
             for abs_path in list(self._records.keys()):
                 self._reject_file_locked(abs_path)
             self._save_storage_locked()
-        return self._emit_state_changed()
+        return self._publish_state_changed()
 
     def accept_file_edits(self, path: str) -> Dict[str, Any]:
         abs_path = self._normalize_path(path)
@@ -157,14 +152,14 @@ class PendingWorkspaceEditService(QObject):
             if abs_path in self._records:
                 self._records.pop(abs_path, None)
                 self._save_storage_locked()
-        return self._emit_state_changed()
+        return self._publish_state_changed()
 
     def reject_file_edits(self, path: str) -> Dict[str, Any]:
         abs_path = self._normalize_path(path)
         with self._lock:
             self._reject_file_locked(abs_path)
             self._save_storage_locked()
-        return self._emit_state_changed()
+        return self._publish_state_changed()
 
     def accept_hunk(self, path: str, hunk_id: str) -> Dict[str, Any]:
         abs_path = self._normalize_path(path)
@@ -196,7 +191,7 @@ class PendingWorkspaceEditService(QObject):
             ):
                 self._records.pop(abs_path, None)
             self._save_storage_locked()
-        return self._emit_state_changed()
+        return self._publish_state_changed()
 
     def reject_hunk(self, path: str, hunk_id: str) -> Dict[str, Any]:
         abs_path = self._normalize_path(path)
@@ -232,9 +227,9 @@ class PendingWorkspaceEditService(QObject):
             if not self._has_changes(baseline_exists, baseline_content, current_exists, current_content):
                 self._records.pop(abs_path, None)
             self._save_storage_locked()
-        return self._emit_state_changed()
+        return self._publish_state_changed()
 
-    def reload_from_storage(self, *, emit_signal: bool = True) -> Dict[str, Any]:
+    def reload_from_storage(self, *, publish_event: bool = True) -> Dict[str, Any]:
         with self._lock:
             self._records = {}
             project_root = self._get_project_root()
@@ -266,8 +261,8 @@ class PendingWorkspaceEditService(QObject):
                     }
             self._save_storage_locked()
             state = self._build_state_locked()
-        if emit_signal:
-            self._emit_signals_for_state(state)
+        if publish_event:
+            self._publish_state(state)
         return state
 
     def get_state(self) -> Dict[str, Any]:
@@ -303,7 +298,7 @@ class PendingWorkspaceEditService(QObject):
         with self._lock:
             self._records = {}
             state = self._build_state_locked()
-        self._emit_signals_for_state(state)
+        self._publish_state(state)
 
     def _on_session_changed(self, event_data: Dict[str, Any]) -> None:
         data = event_data.get("data", event_data) if isinstance(event_data, dict) else {}
@@ -324,14 +319,23 @@ class PendingWorkspaceEditService(QObject):
             self._delete_file_if_exists(abs_path)
         self._records.pop(abs_path, None)
 
-    def _emit_state_changed(self) -> Dict[str, Any]:
+    def _publish_state_changed(self) -> Dict[str, Any]:
         state = self.get_state()
-        self._emit_signals_for_state(state)
+        self._publish_state(state)
         return state
 
-    def _emit_signals_for_state(self, state: Dict[str, Any]) -> None:
-        self.state_changed.emit(state)
-        self.summary_changed.emit(self._build_summary_state(state))
+    def _publish_state(self, state: Dict[str, Any]) -> None:
+        event_bus = self.event_bus
+        if event_bus is None:
+            return
+        event_bus.publish(
+            EVENT_PENDING_WORKSPACE_EDIT_STATE_CHANGED,
+            {
+                "state": state,
+                "summary": self._build_summary_state(state),
+            },
+            source="pending_workspace_edit_service",
+        )
 
     def _build_summary_state(self, state: Dict[str, Any]) -> Dict[str, Any]:
         if not isinstance(state, dict):

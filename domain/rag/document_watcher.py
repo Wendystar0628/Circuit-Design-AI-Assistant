@@ -125,15 +125,15 @@ class DocumentWatcher:
             loop = asyncio.get_running_loop()
             self._debounce_task = loop.create_task(self._debounced_process())
         except RuntimeError:
-            # Tests and non-Qt callers may emit without an asyncio loop.
+            # Synchronous callers and tests may emit without an asyncio loop.
             self._process_pending_changes()
 
     async def _debounced_process(self) -> None:
         """防抖处理：等待 DEBOUNCE_SECONDS 后触发工作线程索引
 
-        asyncio.sleep 在 Qt 主线程协作执行（无 CPU 耗时），安全。
+        asyncio.sleep 在当前事件循环中协作执行（无 CPU 耗时）。
         实际索引工作通过 trigger_index_single_file 提交到 RAGWorkerThread，
-        不阻塞 Qt 主线程。
+        不阻塞 API 请求和事件分发。
         """
         await asyncio.sleep(DEBOUNCE_SECONDS)
 

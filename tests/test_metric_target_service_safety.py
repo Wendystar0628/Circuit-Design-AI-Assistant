@@ -10,6 +10,17 @@ from application.metric_target_service import (
     MetricTargetService,
     MetricTargetStorageError,
 )
+from shared.event_bus import EventBus
+from shared.event_types import EVENT_METRIC_TARGET_STATE_CHANGED
+from shared.service_locator import ServiceLocator
+from shared.service_names import SVC_EVENT_BUS
+
+
+@pytest.fixture(autouse=True)
+def _clear_services():
+    ServiceLocator.clear()
+    yield
+    ServiceLocator.clear()
 
 
 def _service_for(monkeypatch: pytest.MonkeyPatch, project_root: Path) -> MetricTargetService:
@@ -17,7 +28,7 @@ def _service_for(monkeypatch: pytest.MonkeyPatch, project_root: Path) -> MetricT
     active = {"root": str(project_root)}
     monkeypatch.setattr(service, "_get_project_root", lambda: active["root"])
     service._test_active_project = active  # type: ignore[attr-defined]
-    service.reload_from_storage(emit_signal=False)
+    service.reload_from_storage(publish_event=False)
     return service
 
 
@@ -114,3 +125,22 @@ def test_metric_target_commit_preserves_existing_schema(
         ]
     }
     assert service.get_targets_for_file("design.cir") == {"gain": ">= 20 dB"}
+
+
+def test_metric_target_state_is_published_through_event_bus(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    event_bus = EventBus()
+    ServiceLocator.register(SVC_EVENT_BUS, event_bus)
+    service = _service_for(monkeypatch, tmp_path)
+    received = []
+    event_bus.subscribe(EVENT_METRIC_TARGET_STATE_CHANGED, received.append)
+    circuit = tmp_path / "design.cir"
+    circuit.write_text("* test\n.end\n", encoding="utf-8")
+
+    state = service.set_targets_for_file(str(circuit), {"gain": ">= 20 dB"})
+
+    assert not hasattr(service, "state_changed")
+    assert received[-1]["data"] == state
+    assert received[-1]["source"] == "metric_target_service"

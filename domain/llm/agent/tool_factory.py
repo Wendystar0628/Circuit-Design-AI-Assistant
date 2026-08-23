@@ -75,9 +75,9 @@ def create_default_tools() -> ToolRegistry:
     registry.register(WebSearchTool())
 
     # ---- 仿真闭环：对项目内任意电路发起一次仿真，返回紧凑摘要 ----
-    # 与 UI 的 Run 按钮共享 SimulationJobManager 通道，但通过
-    # origin=AGENT_TOOL 与 UI_EDITOR 严格区分；tool 内部完全不触碰
-    # presentation/* 层，UI 刷新由 EventBus 订阅自然完成。
+    # 与桌面 Run 动作共享 SimulationJobManager 通道，但通过
+    # origin=AGENT_TOOL 与 UI_EDITOR 严格区分；tool 只依赖领域服务，
+    # 状态更新由运行时事件投影自然完成。
     registry.register(RunSimulationTool())
 
     # ---- Exact-handle result readers ----

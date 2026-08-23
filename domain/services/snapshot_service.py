@@ -43,6 +43,7 @@
     path = await snapshot_service.create_snapshot_async(project_root, snapshot_id)
 """
 
+import asyncio
 import difflib
 import fnmatch
 import hashlib
@@ -72,6 +73,9 @@ DEFAULT_KEEP_COUNT = 10
 # 快照时忽略的模式
 IGNORE_PATTERNS = [
     ".circuit_ai/snapshots",  # 避免递归快照
+    ".circuit_ai/vector_store",  # RAG 向量库可重建
+    ".circuit_ai/rag_storage",  # RAG 索引元数据可重建
+    ".circuit_ai/temp",  # 对话/仿真临时附件不属于工作区状态
     "simulation_results",     # 仿真 bundle 可重新生成
     "__pycache__",
     ".git",
@@ -237,16 +241,19 @@ def create_snapshot(
     if snapshot_dir.exists():
         raise ValueError(f"Snapshot already exists: {safe_id}")
 
-    # 确保快照父目录存在
-    snapshot_dir.parent.mkdir(parents=True, exist_ok=True)
-
-    # 检查磁盘空间（粗略估计）
-    _check_disk_space(root, snapshot_dir.parent)
-
-    # 构建忽略函数
+    # 预检和实际拷贝必须使用同一份捕获范围，否则可再生的大型
+    # 缓存仍会让每次对话发送遍历整棵目录，甚至误报磁盘空间不足。
     all_patterns = IGNORE_PATTERNS.copy()
     if ignore_patterns:
         all_patterns.extend(ignore_patterns)
+
+    # 确保快照父目录存在
+    snapshot_dir.parent.mkdir(parents=True, exist_ok=True)
+
+    # 检查实际捕获范围所需的磁盘空间（粗略估计）
+    _check_disk_space(root, snapshot_dir.parent, all_patterns)
+
+    # 构建忽略函数
     ignore_func = _create_ignore_function(root, all_patterns)
 
     try:
@@ -721,16 +728,20 @@ def _load_snapshot_restore_policy(snapshot_dir: Path) -> _SnapshotRestorePolicy:
     )
 
 
-def _check_disk_space(source: Path, dest_parent: Path) -> None:
+def _check_disk_space(
+    source: Path,
+    dest_parent: Path,
+    patterns: List[str] | Tuple[str, ...],
+) -> None:
     """
     检查磁盘空间是否足够
 
     粗略估计：要求可用空间至少是源目录大小的 1.5 倍
     """
     try:
-        # Never follow a symlink/junction/reparse point while estimating.  In
-        # particular, a project may contain a junction to a much larger or
-        # sensitive tree outside the project root.
+        # Never follow a symlink/junction/reparse point while estimating.  Use
+        # the capture policy top-down too, so excluded dependency/cache trees
+        # are neither traversed nor counted.
         source_size = 0
         for directory, dir_names, file_names in os.walk(
             source,
@@ -738,14 +749,23 @@ def _check_disk_space(source: Path, dest_parent: Path) -> None:
             followlinks=False,
         ):
             directory_path = Path(directory)
-            dir_names[:] = [
-                name
-                for name in dir_names
-                if not _is_link_like(directory_path / name)
-            ]
+            retained_dirs = []
+            for name in dir_names:
+                directory_item = directory_path / name
+                if _is_link_like(directory_item):
+                    continue
+                relative_path = directory_item.relative_to(source)
+                if _matches_any_snapshot_pattern(relative_path, patterns):
+                    continue
+                retained_dirs.append(name)
+            dir_names[:] = retained_dirs
+
             for name in file_names:
                 file_path = directory_path / name
                 if _is_link_like(file_path):
+                    continue
+                relative_path = file_path.relative_to(source)
+                if _matches_any_snapshot_pattern(relative_path, patterns):
                     continue
                 source_size += file_path.stat().st_size
 
@@ -1353,9 +1373,6 @@ __all__ = [
 # ============================================================
 # 异步包装方法（应用层接口）
 # ============================================================
-
-import asyncio
-
 
 async def create_snapshot_async(
     project_root: str,

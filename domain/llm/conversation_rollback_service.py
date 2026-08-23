@@ -23,6 +23,9 @@ from domain.services import context_service, snapshot_service
 from shared.constants import SYSTEM_DIR
 
 
+MAX_ROLLBACK_CHECKPOINTS = 20
+
+
 @dataclass(frozen=True)
 class RollbackMessageSummary:
     message_id: str
@@ -238,14 +241,23 @@ class ConversationRollbackService:
                 "snapshot_id": snapshot_id,
                 "created_at": datetime.now().isoformat(),
             }
-            append_result = context_service.append_rollback_checkpoint(
+            evicted_checkpoints = context_service.append_rollback_checkpoint(
                 project_root,
                 session_id,
                 checkpoint,
+                keep_count=MAX_ROLLBACK_CHECKPOINTS,
             )
-            if append_result is False:
+            if evicted_checkpoints is False:
                 raise RuntimeError("Failed to persist rollback checkpoint")
             checkpoint_committed = True
+
+            owned_prefix = self._get_session_snapshot_prefix(session_id)
+            for evicted_checkpoint in evicted_checkpoints:
+                evicted_snapshot_id = str(
+                    evicted_checkpoint.get("snapshot_id", "") or ""
+                )
+                if evicted_snapshot_id.startswith(owned_prefix):
+                    self._delete_owned_snapshot(project_root, evicted_snapshot_id)
         except BaseException:
             if snapshot_created and not checkpoint_committed:
                 self._delete_owned_snapshot(project_root, snapshot_id)

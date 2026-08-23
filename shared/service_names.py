@@ -8,8 +8,8 @@
 - 作为 ServiceLocator 注册和获取服务的键
 
 运行时说明：
-- 仅 bootstrap 实际注册的 key 才代表可用服务
-- SVC_SESSION_STATE 是项目/RAG 状态的轻量 UI 读模型
+- 仅 ``ApplicationRuntime`` 实际注册的 key 才代表可用服务
+- SVC_SESSION_STATE 是项目/RAG 状态的轻量 API 读模型
 - SVC_SESSION_STATE_PROJECTOR 连接项目/RAG 生命周期与该读模型
 
 设计原则：
@@ -28,15 +28,6 @@
 
 # 事件总线 - 跨组件通信
 SVC_EVENT_BUS = "event_bus"
-
-# 错误处理器 - 统一错误处理
-SVC_ERROR_HANDLER = "error_handler"
-
-# 国际化管理器 - 多语言支持
-SVC_I18N_MANAGER = "i18n_manager"
-
-# LLM 执行器 - LLM 调用执行引擎
-SVC_LLM_EXECUTOR = "llm_executor"
 
 # ============================================================
 # 基础设施层服务
@@ -117,9 +108,6 @@ SVC_SIMULATION_JOB_MANAGER = "simulation_job_manager"
 __all__ = [
     # 共享内核层
     "SVC_EVENT_BUS",
-    "SVC_ERROR_HANDLER",
-    "SVC_I18N_MANAGER",
-    "SVC_LLM_EXECUTOR",
     # 基础设施层
     "SVC_CREDENTIAL_MANAGER",
     "SVC_CONFIG_MANAGER",

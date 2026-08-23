@@ -11,8 +11,8 @@
 实现方式：
 - 使用 watchdog 库的 Observer 和 FileSystemEventHandler
 - Observer 在独立线程中运行（watchdog 内部管理）
-- 事件通过 QMetaObject.invokeMethod 转发到主线程
-- 主线程通过 EventBus.publish() 发布 EVENT_FILE_CHANGED 事件
+- 使用 threading.Timer 合并短时间内的重复事件
+- watchdog 工作线程可直接通过线程安全的 EventBus 发布事件
 
 生命周期管理：
 - watchdog 自带 Observer 线程并提供显式 stop 生命周期
@@ -32,24 +32,14 @@
     file_watcher.stop_watching()
 """
 
-import os
+import threading
 from pathlib import Path
-from typing import Any, Dict, Optional, Set
-
-from PyQt6.QtCore import QObject, QTimer, QMetaObject, Qt, pyqtSlot
+from typing import Any, Dict, Optional
 
 from watchdog.observers import Observer
 from watchdog.events import (
-    FileSystemEventHandler,
     FileSystemEvent,
-    FileCreatedEvent,
-    FileModifiedEvent,
-    FileDeletedEvent,
-    FileMovedEvent,
-    DirCreatedEvent,
-    DirModifiedEvent,
-    DirDeletedEvent,
-    DirMovedEvent,
+    FileSystemEventHandler,
 )
 
 
@@ -93,26 +83,23 @@ IGNORED_PATTERNS = {
 
 
 # ============================================================
-# 事件接收器（主线程）
+# 事件接收器与防抖
 # ============================================================
 
-class FileWatchReceiver(QObject):
+class FileWatchReceiver:
     """
-    文件监听事件接收器
-    
-    在主线程中接收来自 watchdog 线程的事件，
-    执行防抖处理后通过 EventBus 发布事件。
+    接收 watchdog 工作线程事件，防抖后通过 EventBus 发布。
+
+    EventBus 支持从任意线程同步发布，因此这里不需要 UI 线程桥接。
     """
-    
-    def __init__(self, parent: Optional[QObject] = None):
-        super().__init__(parent)
-        
+
+    def __init__(self):
         # 防抖缓冲区：{file_path: event_data}
         self._debounce_buffer: Dict[str, Dict[str, Any]] = {}
-        
-        # 防抖定时器
-        self._debounce_timer: Optional[QTimer] = None
-        
+        self._debounce_lock = threading.RLock()
+        self._debounce_timer: Optional[threading.Timer] = None
+        self._debounce_generation = 0
+
         # 延迟获取的服务
         self._event_bus = None
         self._file_manager = None
@@ -153,7 +140,6 @@ class FileWatchReceiver(QObject):
                 pass
         return self._file_manager
     
-    @pyqtSlot(str, str, bool, str, str, int)
     def on_file_event(
         self,
         path: str,
@@ -163,21 +149,15 @@ class FileWatchReceiver(QObject):
         project_root: str,
         generation: int,
     ) -> None:
-        """
-        接收文件事件（在主线程中调用）
-        
-        Args:
-            path: 文件路径
-            event_type: 事件类型（created, modified, deleted, moved）
-            is_directory: 是否为目录
-            dest_path: 移动目标路径（仅 moved 事件）
-        """
+        """Queue one watchdog event for latest-only per-path delivery."""
         operation = {
             "created": "create",
             "modified": "update",
             "deleted": "delete",
             "moved": "move",
-        }.get(event_type, event_type)
+        }.get(event_type)
+        if operation is None or not project_root or generation <= 0:
+            return
 
         # Capture project identity with the watchdog notification.  Do not
         # resolve it later from mutable FileManager state after a project switch.
@@ -190,31 +170,45 @@ class FileWatchReceiver(QObject):
             "generation": generation,
         }
         
-        # 加入防抖缓冲区（同一文件的多次事件会被覆盖）
-        self._debounce_buffer[path] = event_data
-        
-        # 启动防抖定时器
-        self._ensure_debounce_timer()
+        with self._debounce_lock:
+            # 同一路径仅保留最近事件。
+            self._debounce_buffer[path] = event_data
+            self._restart_debounce_timer_locked()
     
-    def _ensure_debounce_timer(self) -> None:
-        """确保防抖定时器已启动"""
-        if self._debounce_timer is None:
-            self._debounce_timer = QTimer(self)
-            self._debounce_timer.setSingleShot(True)
-            self._debounce_timer.timeout.connect(self._flush_debounce_buffer)
-        
-        # 重置定时器
-        self._debounce_timer.start(DEBOUNCE_INTERVAL_MS)
-    
-    @pyqtSlot()
-    def _flush_debounce_buffer(self) -> None:
+    def _restart_debounce_timer_locked(self) -> None:
+        timer = self._debounce_timer
+        if timer is not None:
+            timer.cancel()
+        self._debounce_generation += 1
+        generation = self._debounce_generation
+        timer = threading.Timer(
+            DEBOUNCE_INTERVAL_MS / 1000.0,
+            self._flush_debounce_buffer,
+            args=(generation,),
+        )
+        timer.daemon = True
+        self._debounce_timer = timer
+        timer.start()
+
+    def _flush_debounce_buffer(
+        self,
+        expected_generation: Optional[int] = None,
+    ) -> None:
         """刷新防抖缓冲区，发布所有缓冲的事件"""
-        if not self._debounce_buffer:
+        with self._debounce_lock:
+            if (
+                expected_generation is not None
+                and expected_generation != self._debounce_generation
+            ):
+                return
+            timer = self._debounce_timer
+            self._debounce_timer = None
+            if timer is not None:
+                timer.cancel()
+            events_to_publish = self._debounce_buffer
+            self._debounce_buffer = {}
+        if not events_to_publish:
             return
-        
-        # 取出所有缓冲的事件
-        events_to_publish = self._debounce_buffer.copy()
-        self._debounce_buffer.clear()
         
         # 发布事件
         if self.event_bus:
@@ -262,15 +256,19 @@ class FileWatchReceiver(QObject):
                         self.logger.debug(
                             f"File {change.operation}: {path}"
                         )
-                except Exception as e:
+                except Exception as exc:
                     if self.logger:
-                        self.logger.warning(f"Failed to publish file event: {e}")
+                        self.logger.warning(f"Failed to publish file event: {exc}")
     
     def clear_buffer(self) -> None:
-        """清空防抖缓冲区"""
-        self._debounce_buffer.clear()
-        if self._debounce_timer and self._debounce_timer.isActive():
-            self._debounce_timer.stop()
+        """Cancel pending delivery and drop buffered events."""
+        with self._debounce_lock:
+            timer = self._debounce_timer
+            self._debounce_timer = None
+            self._debounce_generation += 1
+            self._debounce_buffer.clear()
+        if timer is not None:
+            timer.cancel()
 
 
 # ============================================================
@@ -281,7 +279,7 @@ class CircuitFileEventHandler(FileSystemEventHandler):
     """
     电路文件事件处理器
     
-    在 watchdog 线程中运行，过滤事件后转发到主线程。
+    在 watchdog 线程中运行，过滤事件后直接交给线程安全接收器。
     """
     
     def __init__(
@@ -294,7 +292,7 @@ class CircuitFileEventHandler(FileSystemEventHandler):
         初始化事件处理器
         
         Args:
-            receiver: 主线程事件接收器
+            receiver: 线程安全事件接收器
             watch_root: 监听根目录
         """
         super().__init__()
@@ -355,15 +353,7 @@ class CircuitFileEventHandler(FileSystemEventHandler):
         is_directory: bool,
         dest_path: str = ""
     ) -> None:
-        """
-        分发事件到主线程
-        
-        Args:
-            path: 文件路径
-            event_type: 事件类型
-            is_directory: 是否为目录
-            dest_path: 移动目标路径
-        """
+        """Filter and enqueue one filesystem event."""
         # 过滤事件
         if self._should_ignore(path):
             return
@@ -371,19 +361,13 @@ class CircuitFileEventHandler(FileSystemEventHandler):
         if dest_path and self._should_ignore(dest_path):
             return
         
-        # 通过 Qt 信号机制转发到主线程
-        # 使用 Q_ARG 传递参数
-        from PyQt6.QtCore import Q_ARG
-        QMetaObject.invokeMethod(
-            self._receiver,
-            "on_file_event",
-            Qt.ConnectionType.QueuedConnection,
-            Q_ARG(str, path),
-            Q_ARG(str, event_type),
-            Q_ARG(bool, is_directory),
-            Q_ARG(str, dest_path),
-            Q_ARG(str, str(self._watch_root)),
-            Q_ARG(int, self._generation),
+        self._receiver.on_file_event(
+            path,
+            event_type,
+            is_directory,
+            dest_path,
+            str(self._watch_root),
+            self._generation,
         )
     
     def on_created(self, event: FileSystemEvent) -> None:
@@ -429,7 +413,7 @@ class CircuitFileEventHandler(FileSystemEventHandler):
 # 文件监听任务主类
 # ============================================================
 
-class FileWatchTask(QObject):
+class FileWatchTask:
     """
     文件监听任务
     
@@ -449,15 +433,13 @@ class FileWatchTask(QObject):
         file_watcher.stop_watching()
     """
     
-    def __init__(self, parent: Optional[QObject] = None):
+    def __init__(self):
         """初始化文件监听任务"""
-        super().__init__(parent)
-        
         # watchdog Observer
         self._observer: Optional[Observer] = None
         
         # 事件接收器
-        self._receiver = FileWatchReceiver(self)
+        self._receiver = FileWatchReceiver()
         
         # 当前监听路径
         self._watch_path: Optional[Path] = None
@@ -542,39 +524,36 @@ class FileWatchTask(QObject):
             
             return True
             
-        except Exception as e:
+        except Exception as exc:
             if self.logger:
-                self.logger.error(f"Failed to start file watching: {e}")
-            
-            # 清理
+                self.logger.error(f"Failed to start file watching: {exc}")
+            observer = self._observer
+            if observer is not None:
+                try:
+                    observer.stop()
+                    observer.join(timeout=2.0)
+                except Exception:
+                    pass
             self._observer = None
             self._watch_path = None
-            
             return False
     
     def stop_watching(self) -> None:
         """停止文件监听"""
-        if self._observer is None:
-            return
-        
+        observer = self._observer
+        watched_path = self._watch_path
+        self._observer = None
+        self._watch_path = None
         try:
-            # 停止 Observer
-            self._observer.stop()
-            self._observer.join(timeout=2.0)  # 等待最多 2 秒
-            
+            if observer is not None:
+                observer.stop()
+                observer.join(timeout=2.0)
+                if self.logger:
+                    self.logger.info(f"Stopped watching: {watched_path}")
+        except Exception as exc:
             if self.logger:
-                self.logger.info(f"Stopped watching: {self._watch_path}")
-            
-        except Exception as e:
-            if self.logger:
-                self.logger.warning(f"Error stopping file watcher: {e}")
-        
+                self.logger.warning(f"Error stopping file watcher: {exc}")
         finally:
-            # 清理
-            self._observer = None
-            self._watch_path = None
-            
-            # 清空防抖缓冲区
             self._receiver.clear_buffer()
     
     def restart_watching(self) -> bool:

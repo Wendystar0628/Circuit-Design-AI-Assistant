@@ -362,7 +362,12 @@ class SessionStateManager:
             if not context_service.session_exists(resolved_project_root, session_id):
                 raise ValueError(f"Session not found: {session_id}")
 
-            if session_id == self._current_session_id:
+            same_session_owner = (
+                session_id == self._current_session_id
+                and self._normalize_project_root(self._project_root)
+                == resolved_project_root
+            )
+            if same_session_owner:
                 current_state = state if state is not None else self._get_current_state()
                 if self._is_dirty and not self.save_current_session(
                         state=current_state,
@@ -374,7 +379,7 @@ class SessionStateManager:
                 return current_state
 
             # 保存当前会话（如果有未保存的更改）
-            if self._is_dirty and self._current_session_id and self._current_session_id != session_id:
+            if self._is_dirty and self._current_session_id:
                 active_project_root = self._project_root or resolved_project_root
                 if not self.save_current_session(
                     state=state,
@@ -454,10 +459,7 @@ class SessionStateManager:
             bool: 是否保存成功
         """
         from domain.services import context_service
-        from domain.llm.message_helpers import (
-            messages_to_dicts,
-            is_human_message,
-        )
+        from domain.llm.message_helpers import messages_to_dicts
         from domain.llm.working_context_builder import (
             WORKING_CONTEXT_COMPRESSED_COUNT_KEY,
             WORKING_CONTEXT_KEEP_RECENT_KEY,
@@ -485,13 +487,12 @@ class SessionStateManager:
                     self.logger.warning("无项目路径，无法保存会话")
                 return False
             if (
-                expected_session_id
-                and self._project_root
+                self._project_root
                 and self._normalize_project_root(self._project_root)
                 != self._normalize_project_root(resolved_project_root)
             ):
                 if self.logger:
-                    self.logger.warning("拒绝跨项目保存压缩候选状态")
+                    self.logger.warning("拒绝将当前会话保存到其他项目")
                 return False
 
             current_state = state if state is not None else self._get_current_state()

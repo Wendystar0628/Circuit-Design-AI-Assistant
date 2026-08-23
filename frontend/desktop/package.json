@@ -1,0 +1,33 @@
+{
+  "name": "circuit-design-ai-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Circuit Design AI desktop application",
+  "main": "./out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "test": "node --test tests/*.test.mjs",
+    "typecheck": "tsc --noEmit",
+    "build": "npm run typecheck && electron-vite build",
+    "build:backend": "..\\..\\circuit\\Scripts\\python.exe -m PyInstaller --noconfirm --clean --distpath ..\\..\\dist --workpath ..\\..\\build ..\\..\\desktop_backend.spec",
+    "package": "npm run build:backend && npm run build && electron-builder",
+    "package:win": "npm run build:backend && npm run build && electron-builder --win"
+  },
+  "dependencies": {
+    "@monaco-editor/react": "4.7.0",
+    "monaco-editor": "0.52.2",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@types/node": "26.2.0",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.4",
+    "@vitejs/plugin-react": "5.0.4",
+    "electron": "43.4.1",
+    "electron-builder": "26.15.3",
+    "electron-vite": "5.0.0",
+    "typescript": "5.9.3",
+    "vite": "7.3.6"
+  }
+}

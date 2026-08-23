@@ -1,443 +1,69 @@
-# Event Type Constants
-"""
-事件类型常量定义
+"""Canonical internal events for the headless application runtime.
 
-职责：
-- 集中定义所有事件类型常量
-- 避免字符串硬编码
-- 作为 EventBus 发布和订阅事件的键
-
-设计原则：
-- 纯常量定义，不依赖任何其他模块
-- 所有事件名使用 EVENT_ 前缀
-- 按功能模块分组组织
-- 命名规范：EVENT_{模块}_{动作}，全大写下划线分隔
-
-使用示例：
-    from shared.event_types import EVENT_INIT_COMPLETE
-    event_bus.subscribe(EVENT_INIT_COMPLETE, on_init_complete)
-    event_bus.publish(EVENT_INIT_COMPLETE, {"timestamp": time.time()})
+Events coordinate long-lived domain services inside the Python sidecar. The
+FastAPI adapter projects the subset needed by Electron onto the authenticated
+WebSocket contract; renderer-specific actions are ordinary REST requests.
 """
 
-# ============================================================
-# 初始化事件
-# ============================================================
-
-# 启动阶段完成通知
-EVENT_INIT_PHASE_COMPLETE = "init_phase_complete"
-
-# 所有初始化完成
-EVENT_INIT_COMPLETE = "init_complete"
-
-# ============================================================
-# UI 交互事件
-# ============================================================
-
-# 用户发送消息
-EVENT_UI_SEND_MESSAGE = "ui_send_message"
-
-# 请求将文件添加到对话附件区
-EVENT_UI_ATTACH_FILES_TO_CONVERSATION = "ui_attach_files_to_conversation"
-
-# 请求切换到对话标签页
-EVENT_UI_ACTIVATE_CONVERSATION_TAB = "ui_activate_conversation_tab"
-
-# ============================================================
-# 面板管理事件
-# ============================================================
-
-# 面板可见性变更
-# 携带数据：
-#   - panel_id: str - 面板 ID
-#   - visible: bool - 是否可见
-#   - region: str - 面板所属区域
-EVENT_PANEL_VISIBILITY_CHANGED = "panel_visibility_changed"
-
-# 标签页切换
-# 携带数据：
-#   - previous_tab: str - 之前的标签页 ID
-#   - current_tab: str - 当前标签页 ID
-EVENT_TAB_CHANGED = "tab_changed"
-
-# ============================================================
-# 状态变更事件
-# ============================================================
-
-# 项目打开
-# 携带数据：
-#   - path: str - 项目路径
-#   - name: str - 项目名称
-#   - status: str - 项目状态（ready/degraded）
-#   - degraded: bool - 是否为降级模式
+# Project and configuration lifecycle.
 EVENT_STATE_PROJECT_OPENED = "state_project_opened"
-
-# 项目关闭
-# 携带数据：
-#   - path: str - 关闭的项目路径
 EVENT_STATE_PROJECT_CLOSED = "state_project_closed"
-
-# 配置变更
 EVENT_STATE_CONFIG_CHANGED = "state_config_changed"
-
-# ============================================================
-# LLM 事件
-# ============================================================
-
-# LLM 配置变更请求
-# 由界面层在保存配置后发布，由应用层（bootstrap）订阅并刷新 LLM 运行时。
-# 携带数据：
-#   - provider: str - LLM 厂商 ID
-#   - model: str - 模型名称
-#   - old_model_id: str - 变更前模型 ID（可能为空字符串）
+EVENT_PENDING_WORKSPACE_EDIT_STATE_CHANGED = "pending_workspace_edit_state_changed"
+EVENT_METRIC_TARGET_STATE_CHANGED = "metric_target_state_changed"
 EVENT_LLM_CONFIG_CHANGED = "llm_config_changed"
 
-# 模型切换
-# 携带数据：
-#   - new_model_id: str - 新模型 ID（格式: "provider:model_name"）
-#   - old_model_id: str - 旧模型 ID（可能为空字符串）
-#   - provider: str - 厂商 ID
-#   - model_name: str - 模型名称
-#   - display_name: str - 模型显示名称
-#   - supports_thinking: bool - 是否支持深度思考
-#   - supports_vision: bool - 是否支持视觉
-EVENT_MODEL_CHANGED = "model_changed"
-
-# ============================================================
-# 嵌入模型事件
-# ============================================================
-
-# 嵌入模型厂商切换
-# 携带数据：
-#   - old_provider: str - 旧厂商 ID
-#   - new_provider: str - 新厂商 ID
-EVENT_EMBEDDING_PROVIDER_CHANGED = "embedding_provider_changed"
-
-# 嵌入模型就绪
-# 携带数据：
-#   - provider: str - 嵌入模型厂商 ID
-#   - model: str - 嵌入模型名称
-EVENT_EMBEDDING_MODEL_READY = "embedding_model_ready"
-
-# ============================================================
-# 联网搜索事件
-# ============================================================
-
-# 联网搜索开始
-# 携带数据：
-#   - query: str - 搜索查询
-#   - search_type: str - 搜索类型（"provider" | "general"）
-#   - provider: str - 搜索提供商（"zhipu" | "google" | "bing"）
-EVENT_WEB_SEARCH_STARTED = "web_search_started"
-
-# 联网搜索完成
-# 携带数据：
-#   - query: str - 搜索查询
-#   - results: list - 搜索结果列表
-#   - result_count: int - 结果数量
-#   - search_type: str - 搜索类型
-#   - provider: str - 搜索提供商
-EVENT_WEB_SEARCH_COMPLETE = "web_search_complete"
-
-# 联网搜索错误
-# 携带数据：
-#   - query: str - 搜索查询
-#   - error: str - 错误信息
-#   - provider: str - 搜索提供商
-EVENT_WEB_SEARCH_ERROR = "web_search_error"
-
-# ============================================================
-# 仿真生命周期事件（权威 schema，由 SimulationJobManager 独占发布）
-# ------------------------------------------------------------
-# 这三个事件是"一次仿真发生了什么"的唯一权威广播通道。manager
-# 发事件时按 schema 填全身份字段；订阅者必须从 payload["job_id"]
-# 路由，不允许按 "circuit_file" / 文件 mtime 或 "谁最后到"猜。
-#
-# 字段说明（所有字段均为**必填**，缺字段视作 producer bug）：
-#
-# - job_id       : str — 全局唯一仿真 job 标识；订阅者 routing key
-# - origin       : str — 触发来源（"ui_editor" / "agent_tool"）；用于 UI
-#                        区分人类触发与 agent 后台触发的结果
-# - circuit_file : str — 仿真输入电路文件绝对路径
-# - project_root : str — 项目根目录绝对路径
-# - session_id   : str — 会话标识；无会话绑定时为空字符串
-#
-# 订阅者入口**第一步**必须是"从 envelope 解包 payload、校验必填
-# 字段、读取 job_id"；任何"缺 job_id 就回退到老路径"的分支都是
-# 非法设计。用 :func:`shared.sim_event_payload.extract_sim_payload`
-# 统一做这件事，不要在每个订阅者里手搓 envelope 解包。
-# ============================================================
-
-# 仿真开始 —— 一次 job 进入 RUNNING 时发布；payload 仅含上述通用身份
-# 字段。分析类型以执行后持久化的 result.json 为唯一权威，STARTED 阶段
-# 不发布猜测值或第二份配置快照。
+# Simulation lifecycle. SimulationJobManager is the sole publisher. Every
+# payload carries job_id, origin, circuit_file, project_root, and session_id.
+# Completion additionally carries result_path, export_root, and duration.
+# Failure additionally carries error_message, cancelled, and duration.
 EVENT_SIM_STARTED = "sim_started"
-
-# 仿真完成 —— 一次 job 进入 SUCCEEDED 时发布
-# payload 在通用身份字段之上额外携带：
-#   - result_path      : str   — 项目根相对的 result.json 路径（必填，
-#                                 作为结果 bundle 的唯一锚点）
-#   - export_root      : str   — bundle 目录绝对路径
-#   - duration_seconds : float — 本次仿真总耗时（秒）
 EVENT_SIM_COMPLETE = "sim_complete"
-
-# 仿真错误 —— 一次 job 进入 FAILED / CANCELLED 时发布
-# payload 在通用身份字段之上额外携带：
-#   - error_message    : str   — 人类可读错误消息（executor / persistence
-#                                 / cancellation 三类失败统一汇聚到此）
-#   - result_path      : str   — 失败也落盘日志 bundle，此处给出
-#                                 result.json 相对路径供 agent 读取；
-#                                 bundle 写不成功时可以是 ""，但字段必须存在
-#   - export_root      : str   — 失败 bundle 目录绝对路径；写不成功时为 ""
-#   - cancelled        : bool  — 是否因取消导致（True 表示 CANCELLED）
-#   - duration_seconds : float — 失败前耗时（秒）
 EVENT_SIM_ERROR = "sim_error"
 
-# ============================================================
-# RAG 事件
-# ============================================================
-
-# RAG 初始化完成（服务就绪，可能还未索引）
-# 携带数据：
-#   - project_root: str - 项目根目录
-#   - status: str - "ready" | "error"
-#   - error: str - 错误信息（仅 status=error 时）
+# RAG lifecycle.
 EVENT_RAG_INIT_COMPLETE = "rag.init_complete"
-
-# RAG 索引开始
-# 携带数据：
-#   - total_files: int - 总文件数
-#   - track_id: str - 追踪 ID
 EVENT_RAG_INDEX_STARTED = "rag.index_started"
-
-# RAG 索引进度
-# 携带数据：
-#   - processed: int - 已处理文件数
-#   - total: int - 总文件数
-#   - current_file: str - 当前处理的文件（相对路径）
-#   - track_id: str - 追踪 ID
 EVENT_RAG_INDEX_PROGRESS = "rag.index_progress"
-
-# RAG 索引完成
-# 携带数据：
-#   - total_indexed: int - 已索引文件总数
-#   - failed: int - 失败文件数
-#   - duration_s: float - 耗时（秒）
-#   - entities_count: int - 提取的实体数
-#   - relations_count: int - 提取的关系数
 EVENT_RAG_INDEX_COMPLETE = "rag.index_complete"
-
-# RAG 索引错误（单文件级别）
-# 携带数据：
-#   - file_path: str - 失败文件路径（相对路径）
-#   - error: str - 错误信息
-#   - track_id: str - 追踪 ID
 EVENT_RAG_INDEX_ERROR = "rag.index_error"
-
-# RAG 检索完成
-# 携带数据：
-#   - query: str - 查询文本
-#   - mode: str - 检索模式（naive/local/global/hybrid/mix）
-#   - results_count: int - 检索结果数
-#   - entities_found: int - 匹配实体数
-#   - relations_found: int - 匹配关系数
-#   - chunks_found: int - 匹配分块数
 EVENT_RAG_QUERY_COMPLETE = "rag.query_complete"
-# ============================================================
-# 上下文压缩事件
-# ============================================================
 
-# 压缩结果
-# 携带数据：
-#   - status: str - 压缩状态（"completed" | "failed" | "skipped" | "suggest_new_conversation"）
-#   - mode: str - 触发模式（"manual" | "auto"）
-#   - trigger_reason: str - 触发原因
-#   - keep_recent: int - 保留的最近消息数
-#   - before_tokens / after_tokens / saved_tokens: int - 压缩前后 token 信息
-#   - before_ratio / after_ratio: float - 压缩前后占用比例
-#   - before_history_message_count / after_history_message_count: int - 历史消息总数（保持不删）
-#   - before_working_message_count / after_working_message_count: int - 工作上下文消息数
-#   - summary_tokens: int - 工作上下文摘要 token 数
-#   - model / provider / model_id: str - 执行压缩时使用的模型信息
-#   - error: str - 错误信息（仅 failed 或 skipped 时存在）
+# Conversation and workspace lifecycle.
 EVENT_CONTEXT_COMPRESS_COMPLETE = "context_compress_complete"
-
-# ============================================================
-# 对话管理事件
-# ============================================================
-
-# 会话状态变更（由 SessionStateManager 发布）
-# 携带数据：
-#   - session_id: str - 当前会话 ID
-#   - session_name: str - 当前会话名称
-#   - action: str - 触发动作（"new", "switch", "delete", "rename"）
-#   - previous_session_id: str - 之前的会话 ID（可选）
 EVENT_SESSION_CHANGED = "session_changed"
 EVENT_WORKSPACE_SYNC_REQUIRED = "workspace_sync_required"
 
-# ============================================================
-# 错误处理事件
-# ============================================================
-
-# 错误发生
-EVENT_ERROR_OCCURRED = "error_occurred"
-
-# 错误恢复
-EVENT_ERROR_RECOVERED = "error_recovered"
-
-# ============================================================
-# 文件操作事件
-# ============================================================
-
-# 磁盘文件变更（唯一 schema 见 shared.file_change.FileChange）
-# 携带数据（所有字段均存在）：
-#   - operation: str - create/update/delete/move
-#   - path: str - 源文件绝对路径
-#   - dest_path: str - move 的目标绝对路径，否则为空字符串
-#   - is_directory: bool - 是否为目录
-#   - origin: str - file_manager/file_watcher/其他磁盘 producer
-#   - project_root: str - producer 所属项目根目录
-#   - generation: int - FileManager 项目代际，切换项目时递增
-#   - revision: str - 内容 SHA-256，删除为 "missing"
-# 订阅者使用 shared.file_change.normalize_file_change/extract_file_change，
-# 不得再根据 producer 分支解析 event_type/action 等旧字段。
+# Canonical disk-change event; payloads use shared.file_change.FileChange.
 EVENT_FILE_CHANGED = "file_changed"
 
-# 文件锁定
-EVENT_FILE_LOCKED = "file_locked"
-
-# 文件解锁
-EVENT_FILE_UNLOCKED = "file_unlocked"
-
-# 文件外部修改冲突检测（TOCTOU 竞态条件）
-# 携带数据：
-#   - file_path: str - 冲突的文件路径
-#   - action: str - 后续动作（"retry" 表示 LLM 将重新读取）
-EVENT_FILE_CONFLICT_DETECTED = "file_conflict_detected"
-
-# ============================================================
-# 智能文件操作事件（File Intelligence）
-# ============================================================
-
-# 搜索索引更新完成
-# 携带数据：
-#   - file_count: int - 索引的文件数量
-#   - build_time_ms: float - 构建耗时（毫秒）
-EVENT_FILE_SEARCH_INDEX_UPDATED = "file_intelligence.search_index_updated"
-
-# 符号定位完成
-# 携带数据：
-#   - symbol_name: str - 符号名称
-#   - file_path: str - 定位到的文件路径
-#   - line: int - 行号
-#   - scope: str - 定位范围（current_file/include_files/project）
-EVENT_SYMBOL_LOCATED = "file_intelligence.symbol_located"
-
-# 引用查找完成
-# 携带数据：
-#   - symbol_name: str - 符号名称
-#   - reference_count: int - 引用数量
-#   - files_searched: int - 搜索的文件数量
-EVENT_REFERENCES_FOUND = "file_intelligence.references_found"
-
-# ============================================================
-# 国际化事件
-# ============================================================
-
-# 语言切换
-EVENT_LANGUAGE_CHANGED = "language_changed"
-
-# ============================================================
-# 迭代确认事件
-# ============================================================
-
-# 等待用户确认
-EVENT_ITERATION_AWAITING_CONFIRMATION = "iteration_awaiting_confirmation"
-
-# 用户确认继续
-EVENT_ITERATION_USER_CONFIRMED = "iteration_user_confirmed"
-
-# 用户停止
-EVENT_ITERATION_USER_STOPPED = "iteration_user_stopped"
-
-# 当前激活文件变更
-# 携带数据：
-#   - old_path: str - 旧文件路径
-#   - new_path: str - 新文件路径
-EVENT_ACTIVE_FILE_CHANGED = "active_file_changed"
-
-# ============================================================
-# Agent 循环事件
-# ============================================================
-
-# ============================================================
-# 关键事件列表（需要特殊保护）
-# ============================================================
-
-CRITICAL_EVENTS = [
-    EVENT_ITERATION_AWAITING_CONFIRMATION,
-    EVENT_ERROR_OCCURRED,
-]
-
-
-# ============================================================
-# 模块导出
-# ============================================================
+# Slow handlers for these identity-bearing lifecycle events are operationally
+# significant and should be logged by EventBus.
+CRITICAL_EVENTS = (
+    EVENT_SIM_STARTED,
+    EVENT_SIM_COMPLETE,
+    EVENT_SIM_ERROR,
+)
 
 __all__ = [
-    # 初始化事件
-    "EVENT_INIT_PHASE_COMPLETE",
-    "EVENT_INIT_COMPLETE",
-    # UI 交互事件
-    "EVENT_UI_SEND_MESSAGE",
-    "EVENT_UI_ATTACH_FILES_TO_CONVERSATION",
-    "EVENT_UI_ACTIVATE_CONVERSATION_TAB",
-    # 面板管理事件
-    "EVENT_PANEL_VISIBILITY_CHANGED",
-    "EVENT_TAB_CHANGED",
-    # 状态变更事件
     "EVENT_STATE_PROJECT_OPENED",
     "EVENT_STATE_PROJECT_CLOSED",
     "EVENT_STATE_CONFIG_CHANGED",
+    "EVENT_PENDING_WORKSPACE_EDIT_STATE_CHANGED",
+    "EVENT_METRIC_TARGET_STATE_CHANGED",
     "EVENT_LLM_CONFIG_CHANGED",
-    "EVENT_MODEL_CHANGED",
-    # 嵌入模型事件
-    "EVENT_EMBEDDING_PROVIDER_CHANGED",
-    "EVENT_EMBEDDING_MODEL_READY",
-    # 联网搜索事件
-    "EVENT_WEB_SEARCH_STARTED",
-    "EVENT_WEB_SEARCH_COMPLETE",
-    "EVENT_WEB_SEARCH_ERROR",
-    # 仿真事件
     "EVENT_SIM_STARTED",
     "EVENT_SIM_COMPLETE",
     "EVENT_SIM_ERROR",
-    # RAG 事件
     "EVENT_RAG_INIT_COMPLETE",
     "EVENT_RAG_INDEX_STARTED",
     "EVENT_RAG_INDEX_PROGRESS",
     "EVENT_RAG_INDEX_COMPLETE",
-    # 上下文压缩事件
+    "EVENT_RAG_INDEX_ERROR",
+    "EVENT_RAG_QUERY_COMPLETE",
     "EVENT_CONTEXT_COMPRESS_COMPLETE",
+    "EVENT_SESSION_CHANGED",
     "EVENT_WORKSPACE_SYNC_REQUIRED",
-    # 错误处理事件
-    "EVENT_ERROR_OCCURRED",
-    "EVENT_ERROR_RECOVERED",
-    # 文件操作事件
     "EVENT_FILE_CHANGED",
-    "EVENT_FILE_LOCKED",
-    "EVENT_FILE_UNLOCKED",
-    "EVENT_FILE_CONFLICT_DETECTED",
-    # 智能文件操作事件
-    "EVENT_FILE_SEARCH_INDEX_UPDATED",
-    "EVENT_SYMBOL_LOCATED",
-    "EVENT_REFERENCES_FOUND",
-    # 国际化事件
-    "EVENT_LANGUAGE_CHANGED",
-    # 迭代确认事件
-    "EVENT_ITERATION_AWAITING_CONFIRMATION",
-    "EVENT_ITERATION_USER_CONFIRMED",
-    "EVENT_ITERATION_USER_STOPPED",
-    "EVENT_ACTIVE_FILE_CHANGED",
-    # 关键事件列表
     "CRITICAL_EVENTS",
 ]

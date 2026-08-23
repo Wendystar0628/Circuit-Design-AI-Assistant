@@ -5,7 +5,11 @@ import pytest
 from application.tasks.file_watch_task import FileWatchReceiver
 from application.pending_workspace_edit_service import PendingWorkspaceEditService
 from infrastructure.persistence.file_manager import FileManager
-from shared.event_types import EVENT_FILE_CHANGED
+from shared.event_bus import EventBus
+from shared.event_types import (
+    EVENT_FILE_CHANGED,
+    EVENT_PENDING_WORKSPACE_EDIT_STATE_CHANGED,
+)
 from shared.service_locator import ServiceLocator
 from shared.service_names import SVC_EVENT_BUS, SVC_FILE_MANAGER, SVC_SESSION_STATE_MANAGER
 
@@ -148,8 +152,7 @@ def test_write_file_existing_path_publishes_single_update_event(tmp_path: Path):
     assert payload["operation"] == "update"
 
 
-def test_file_watcher_skips_recent_file_manager_echo(tmp_path: Path, qapp):
-    del qapp
+def test_file_watcher_skips_recent_file_manager_echo(tmp_path: Path):
     event_bus = _FakeEventBus()
     file_manager = FileManager()
     file_manager.set_work_dir(tmp_path)
@@ -172,3 +175,24 @@ def test_file_watcher_skips_recent_file_manager_echo(tmp_path: Path, qapp):
     receiver._flush_debounce_buffer()
 
     assert len(event_bus.published) == 1
+
+
+def test_pending_edit_state_is_published_through_event_bus(tmp_path: Path):
+    event_bus = EventBus()
+    ServiceLocator.register(SVC_EVENT_BUS, event_bus)
+    service = _create_service(tmp_path)
+    received = []
+    event_bus.subscribe(
+        EVENT_PENDING_WORKSPACE_EDIT_STATE_CHANGED,
+        received.append,
+    )
+
+    file_path = tmp_path / "main.py"
+    file_path.write_text("before\n", encoding="utf-8")
+    state = service.record_agent_edit(str(file_path), "after\n")
+
+    assert not hasattr(service, "state_changed")
+    assert not hasattr(service, "summary_changed")
+    assert received[-1]["data"]["state"] == state
+    assert received[-1]["data"]["summary"] == service.get_summary_state()
+    assert received[-1]["source"] == "pending_workspace_edit_service"

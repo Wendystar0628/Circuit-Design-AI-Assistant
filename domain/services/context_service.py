@@ -387,14 +387,30 @@ def append_rollback_checkpoint(
     project_root: str,
     session_id: str,
     checkpoint: Dict[str, Any],
-) -> None:
+    *,
+    keep_count: Optional[int] = None,
+) -> List[Dict[str, Any]]:
     checkpoints = load_rollback_checkpoints(project_root, session_id)
-    checkpoints = [
+    replaced = [
+        item for item in checkpoints
+        if item.get("anchor_message_id") == checkpoint.get("anchor_message_id")
+    ]
+    retained = [
         item for item in checkpoints
         if item.get("anchor_message_id") != checkpoint.get("anchor_message_id")
     ]
-    checkpoints.append(dict(checkpoint))
-    save_rollback_checkpoints(project_root, session_id, checkpoints)
+    retained.append(dict(checkpoint))
+
+    evicted = list(replaced)
+    if keep_count is not None:
+        if keep_count <= 0:
+            raise ValueError("Rollback checkpoint keep count must be positive")
+        overflow = max(0, len(retained) - keep_count)
+        evicted.extend(retained[:overflow])
+        retained = retained[overflow:]
+
+    save_rollback_checkpoints(project_root, session_id, retained)
+    return evicted
 
 
 def clear_rollback_checkpoints(

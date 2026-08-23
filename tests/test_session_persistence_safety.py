@@ -198,6 +198,80 @@ def test_same_session_switch_aborts_when_dirty_save_returns_false(
     sync.assert_not_called()
 
 
+def test_switch_between_copied_projects_with_same_session_id_preserves_ownership(
+    tmp_path: Path,
+):
+    project_a = tmp_path / "project-a"
+    project_b = tmp_path / "project-b"
+    project_a.mkdir()
+    project_b.mkdir()
+    shared_session_id = "copied-session-id"
+
+    context_service.save_messages(
+        str(project_a),
+        shared_session_id,
+        [{"type": "user", "content": "A persisted"}],
+    )
+    assert context_service.update_session_index(
+        str(project_a),
+        shared_session_id,
+        {"name": "A", "created_at": "now", "updated_at": "now"},
+        set_current=True,
+    )
+    project_b_messages = [{"type": "user", "content": "B must survive"}]
+    context_service.save_messages(
+        str(project_b),
+        shared_session_id,
+        project_b_messages,
+    )
+    assert context_service.update_session_index(
+        str(project_b),
+        shared_session_id,
+        {"name": "B", "created_at": "now", "updated_at": "now"},
+        set_current=True,
+    )
+
+    manager, context_manager = _manager_with_context()
+    manager.ensure_active_session(str(project_a))
+    context_manager.add_user_message("A unsaved")
+    manager.mark_dirty()
+
+    switched_state = manager.ensure_active_session(str(project_b))
+
+    assert manager.get_current_session_id() == shared_session_id
+    assert manager.get_project_root() == os.path.normcase(os.path.abspath(str(project_b)))
+    assert [message.content for message in switched_state["messages"]] == [
+        "B must survive"
+    ]
+    assert [message.content for message in context_manager.get_display_messages()] == [
+        "B must survive"
+    ]
+    assert context_service.load_messages(str(project_b), shared_session_id) == project_b_messages
+    assert [
+        message["content"]
+        for message in context_service.load_messages(str(project_a), shared_session_id)
+    ] == ["A persisted", "A unsaved"]
+
+
+def test_explicit_save_to_another_project_is_rejected_even_without_expected_id(
+    tmp_path: Path,
+):
+    project_a = tmp_path / "project-a"
+    project_b = tmp_path / "project-b"
+    project_a.mkdir()
+    project_b.mkdir()
+
+    manager, context_manager = _manager_with_context()
+    session_id = manager.create_session(str(project_a))
+    context_manager.add_user_message("belongs to A")
+    manager.mark_dirty()
+
+    assert manager.save_current_session(project_root=str(project_b)) is False
+    assert manager.get_project_root() == os.path.normcase(os.path.abspath(str(project_a)))
+    assert manager._is_dirty is True
+    assert not context_service.session_exists(str(project_b), session_id)
+
+
 def test_ensure_active_session_rejects_failed_current_identity_write(
     tmp_path: Path,
     monkeypatch,

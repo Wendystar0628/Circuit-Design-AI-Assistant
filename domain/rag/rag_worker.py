@@ -5,12 +5,13 @@ RAG 后台工作线程
 设计背景：
     Embedding（sentence-transformers）和 ChromaDB 均为同步阻塞调用，
     不需要 asyncio 事件循环。使用 ThreadPoolExecutor（单 worker）即可将
-    所有 RAG 操作移出 Qt 主线程，避免 UI 卡顿。
+    所有 RAG 操作移出 API 事件循环，避免阻塞请求与事件推送。
 
 通信机制：
-    Qt 主线程 → 工作线程：executor.submit(fn, *args)
-    工作线程  → Qt 主线程：EventBus.publish()（已内置跨线程 QMetaObject 投递）
-    查询结果回传：asyncio.wrap_future() 允许 Qt 协程 await concurrent.futures.Future
+    运行时 → 工作线程：executor.submit(fn, *args)
+    工作线程 → 运行时：EventBus.publish()
+    查询结果回传：asyncio.wrap_future() 将 concurrent.futures.Future
+    接回调用方的 asyncio 事件循环。
 """
 
 import logging
@@ -26,7 +27,7 @@ class RAGWorkerThread:
     RAG 专用后台工作线程（ThreadPoolExecutor 封装）
 
     使用单 worker 线程池串行执行所有 RAG 操作，
-    使 Qt 主线程（qasync 融合循环）始终保持响应。
+    使 API 事件循环保持响应。
 
     使用方式：
         worker = RAGWorkerThread()
@@ -38,7 +39,7 @@ class RAGWorkerThread:
         # 提交带参函数
         worker.submit(manager.index_single_file, file_path)
 
-        # 提交并在 Qt 协程中等待结果
+        # 提交并在 asyncio 协程中等待结果
         future = worker.submit(manager.query, query_text, top_k)
         result = await asyncio.wrap_future(future)
 

@@ -160,8 +160,8 @@ C1 cap 0 1u IC=5
 | `V(n1, n2)`       | 两节点间电压差 |
 | `I(Vname)`        | 流过名为 Vname 的电压源的电流 |
 | `vdb(node)`       | `20·log10(|V(node)|)`（AC 用） |
-| `vp(node)`        | 相位（度，AC 用） |
-| `onoise` / `inoise` | 输出 / 输入参考噪声功率谱（`.noise` 用） |
+| `vp(node)`        | 相位（弧度，AC 用；需要角度时显式乘 `180/pi`） |
+| `onoise` / `inoise` | 输出 / 输入参考噪声谱密度（`.noise` 用） |
 
 ---
 
@@ -174,7 +174,7 @@ C1 cap 0 1u IC=5
 | `.dc`    | `FIND <var> AT=<v>` / `WHEN <var>=<数值> RISE=1/FALL=1` | 表达式 target |
 | `.op`    | — | 任何 `.MEASURE` |
 | `.tran`  | `MAX` / `MIN` / `PP` / `AVG` / `INTEG` / `FIND <var> AT=<t>` / `WHEN <var>=<数值>` / `TRIG … TARG …` | 表达式 target |
-| `.ac`    | **仅** `FIND vdb(<node>) AT=<f>` | `MAX` / `MIN` / HSPICE 方言关键字 |
+| `.ac`    | `FIND` / `WHEN` / `TRIG … TARG …` / `AVG` / `MIN` / `MAX` / `PP` / `RMS` / `MIN_AT` / `MAX_AT` | HSPICE 方言关键字 |
 | `.noise` | **无**（直接用 `onoise` / `inoise` 输出频谱） | 任何 `.MEASURE NOISE`（ngspice 未实现） |
 
 ---
@@ -193,7 +193,6 @@ C1 cap 0 1u IC=5
 |---|---|
 | `.MEASURE AC f_peak WHEN vdb(out)=MAXAC`                    | `MAXAC` 非 ngspice 关键字 |
 | `.MEASURE AC f_3db WHEN vdb(out)=(av_midband-3)`            | 括号表达式 target 不稳定 |
-| `.MEASURE AC v_peak MAX vdb(out)`                           | ngspice 对 AC `MAX`/`MIN` 支持不稳定，会在 simulation 阶段崩溃 |
 | `.MEASURE NOISE total INTEG onoise FROM=1 TO=10Meg`         | ngspice `.MEAS` 不支持 `NOISE` 分析类型 |
 | `.tran 10u 5m UIC` 无任何 `IC=`                              | `UIC` 无效，等价于无 `UIC` |
 | 自写 `.model 2N3904 NPN (…)`                                 | 与 bundled 库冲突 |
@@ -276,4 +275,3 @@ R2  out 0   10k
 .noise V(out) Vin dec 20 1 10Meg
 .end
 ```
-

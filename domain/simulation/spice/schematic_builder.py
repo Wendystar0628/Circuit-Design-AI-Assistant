@@ -192,7 +192,11 @@ class SpiceSchematicBuilder:
         for component in components:
             scope_key = "/".join(component.scope_path)
             for pin in component.pins:
-                net_seed = "|".join([component.source_file, scope_key, pin.node_id])
+                # An included file is expanded into the caller's electrical
+                # scope. Top-level node ``out`` in the main deck and node
+                # ``out`` in an active include are therefore the same net;
+                # the source filename is provenance, not connectivity.
+                net_seed = "|".join([scope_key, pin.node_id])
                 net_id = hashlib.sha1(net_seed.encode("utf-8")).hexdigest()[:16]
                 payload = grouped.setdefault(
                     net_id,

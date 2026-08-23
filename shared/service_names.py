@@ -110,16 +110,6 @@ SVC_RAG_MANAGER = "rag_manager"
 # 仿真 Job 管理器 - 并发 job 提交与生命周期的唯一权威入口
 SVC_SIMULATION_JOB_MANAGER = "simulation_job_manager"
 
-# 仿真结果仓储 - result.json 的权威加载/枚举/按电路聚合读取入口
-# （Step 16 agent read-tool 基座通过 ToolContext 消费它，ToolContext
-# 由 LLMExecutor 从 ServiceLocator 取本 key 注入；agent 工具禁止再
-# import 模块级 singleton。UI 侧 SimulationTab 当前仍直 import 同一
-# 单例对象——那是独立的 UI 层 hygiene 议题，不在 Step 16 范围内。）
-SVC_SIMULATION_RESULT_REPOSITORY = "simulation_result_repository"
-
-# 执行器注册表 - 仿真执行器管理
-SVC_EXECUTOR_REGISTRY = "executor_registry"
-
 # ============================================================
 # 模块导出
 # ============================================================
@@ -152,6 +142,4 @@ __all__ = [
     "SVC_CONVERSATION_ROLLBACK_SERVICE",
     "SVC_RAG_MANAGER",
     "SVC_SIMULATION_JOB_MANAGER",
-    "SVC_SIMULATION_RESULT_REPOSITORY",
-    "SVC_EXECUTOR_REGISTRY",
 ]

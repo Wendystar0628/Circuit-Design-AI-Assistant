@@ -12,8 +12,8 @@ Vin in 0 DC 0
 R1 in  tap 10k
 R2 tap 0   10k
 
-* --- Analysis: sweep Vin from 0 V to 10 V in 100 mV steps ---
-.dc Vin 0 10 0.1
+* --- Extend one step past 10 V so AT=10 is not a floating endpoint ---
+.dc Vin 0 10.1 0.1
 
 .MEASURE DC v_tap_at_5v  FIND V(tap) AT=5
 .MEASURE DC v_tap_at_10v FIND V(tap) AT=10

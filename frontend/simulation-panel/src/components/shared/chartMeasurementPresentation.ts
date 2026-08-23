@@ -39,8 +39,8 @@ function resolveGroupMeta(chart: AnalysisChartViewState): Map<string, ChartSerie
 function buildGroupRows(
   groupLabel: string,
   groupSeries: ChartSeriesSnapshotState[],
-  valuesA: Record<string, number>,
-  valuesB: Record<string, number>,
+  valuesA: Record<string, number | null>,
+  valuesB: Record<string, number | null>,
 ): ChartMeasurementPresentationRow[] {
   return groupSeries.map((series) => ({
     id: series.name,

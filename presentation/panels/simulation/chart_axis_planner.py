@@ -24,7 +24,7 @@ _FAMILY_LABELS: Dict[str, str] = {
     "noise_voltage_density": "Voltage Noise Density (V/√Hz)",
     "noise_current_density": "Current Noise Density (A/√Hz)",
     "noise_other_density": "Noise Spectral Density",
-    "magnitude_db": "Magnitude (dB)",
+    "magnitude_db": "Magnitude (dB re 1 unit)",
     "phase_deg": "Phase (°)",
 }
 

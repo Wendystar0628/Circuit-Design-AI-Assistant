@@ -4,7 +4,7 @@ import functools
 import hashlib
 import re
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 from domain.simulation.spice.include_parser import IncludeParser
 from domain.simulation.spice.models import (
@@ -19,7 +19,12 @@ from domain.simulation.spice.models import (
     SpiceToken,
     TokenSpan,
 )
+from domain.simulation.spice.numeric import is_spice_number
 from domain.simulation.spice.primitive_resolver import SpicePrimitiveResolver
+from domain.simulation.spice.source_closure import (
+    SpiceSourceClosureGraph,
+    SpiceSourceView,
+)
 
 
 @functools.lru_cache(maxsize=1)
@@ -31,14 +36,11 @@ def _load_bundled_model_variants() -> Dict[str, str]:
     defines hundreds of models and the schematic is rendered on every
     editor refresh.
 
-    Users rarely put ``.model`` cards into their ``.cir`` files —
-    ``SpiceExecutor._inject_model_libraries`` pulls the definitions
-    from the bundled library at simulation time. For the schematic to
-    know NMOS vs PMOS at *render* time (before simulation runs) we
-    have to consult the same library ourselves. Local ``.model``
-    cards in the user's ``.cir`` always take precedence over
-    the bundled defaults so users can always
-    override a bundled part by redefining it inline.
+    This catalog is presentation metadata only: it can select an NMOS/PMOS or
+    NPN/PNP glyph for a familiar model name, but it never makes that model
+    available to ngspice.  A runnable deck must define the model inline or use
+    an explicit ``.include``/``.lib`` card.  Local ``.model`` definitions take
+    precedence over this visual hint.
 
     Swallows every I/O error silently: if the library is missing or
     unreadable we simply fall back to the generic ``mos`` / ``bjt``
@@ -52,7 +54,7 @@ def _load_bundled_model_variants() -> Dict[str, str]:
         return result
     if not cmp_dir.exists():
         return result
-    for entry in cmp_dir.iterdir():
+    for entry in sorted(cmp_dir.iterdir()):
         if not entry.is_file():
             continue
         try:
@@ -65,7 +67,7 @@ def _load_bundled_model_variants() -> Dict[str, str]:
             # same model name, the first one wins deterministically
             # (iteration order on `iterdir()` is filesystem-defined but
             # stable per run for a given directory layout).
-            result.setdefault(key, value)
+            result.setdefault(key.lower(), value)
     return result
 
 
@@ -79,12 +81,20 @@ _COMPONENT_SYMBOL_KINDS: Dict[str, str] = {
     "Q": "bjt",
     "M": "mos",
     "J": "jfet",
-    "U": "subckt_block",
+    "Z": "mesfet",
+    "K": "mutual_inductor",
+    "O": "transmission_line",
+    "Y": "transmission_line",
+    "U": "distributed_rc_line",
     "X": "subckt_block",
     "E": "controlled_source",
     "F": "controlled_source",
     "G": "controlled_source",
     "H": "controlled_source",
+    "B": "controlled_source",
+    "S": "switch",
+    "W": "switch",
+    "T": "transmission_line",
 }
 
 _READONLY_COMPLEX_EXPRESSION = "字段由复杂表达式描述，首版保持只读"
@@ -102,35 +112,141 @@ class SpiceParser:
         return self.parse_content(content, str(path))
 
     def parse_content(self, content: str, source_file: str) -> SpiceDocument:
+        lines = content.splitlines(keepends=True)
+        local_variants = self._collect_model_variants(lines[1:])
+        bundled_variants = _load_bundled_model_variants()
+        model_variants: Dict[str, str] = {**bundled_variants, **local_variants}
+
+        document = self._parse_content(
+            content,
+            source_file,
+            model_variants=model_variants,
+            skip_title=True,
+        )
+        self._primitive_resolver.apply(document)
+        return document
+
+    def parse_source_graph(
+        self,
+        source_graph: SpiceSourceClosureGraph,
+    ) -> SpiceDocument:
+        """Parse one already-collected effective SPICE source graph.
+
+        The main deck is parsed from its exact blob so its token offsets remain
+        valid for source patching. Dependency semantics come exclusively from
+        ``active_views``; physical-only blobs (for example an include inside an
+        unselected library section) can affect provenance and file watching but
+        never leak into the schematic model.
+        """
+
+        model_variants, model_conflicts = (
+            self._collect_source_graph_model_variants(source_graph.active_views)
+        )
+        main_blob = source_graph.main_blob
+        document = self._parse_content(
+            main_blob.source_text,
+            main_blob.key,
+            model_variants=model_variants,
+            skip_title=True,
+        )
+
+        for source_view in source_graph.active_views:
+            if source_view.is_main_deck:
+                continue
+            dependency_document = self._parse_content(
+                self._reconstruct_active_view(source_view),
+                source_view.key,
+                model_variants=model_variants,
+                skip_title=False,
+            )
+            self._make_dependency_fields_readonly(dependency_document)
+            document.components.extend(dependency_document.components)
+            document.includes.extend(dependency_document.includes)
+            document.subcircuits.extend(dependency_document.subcircuits)
+            document.parse_errors.extend(dependency_document.parse_errors)
+
+        subcircuit_conflicts = self._find_subcircuit_conflicts(
+            document.subcircuits
+        )
+        for model_name, locations in sorted(model_conflicts.items()):
+            document.add_parse_error(
+                SpiceParseError(
+                    message=(
+                        f"模型 {model_name} 在 active source closure 中重复定义："
+                        + "，".join(locations)
+                    ),
+                    source_file=main_blob.key,
+                    line_text="",
+                )
+            )
+        for subcircuit_name, locations in sorted(subcircuit_conflicts.items()):
+            document.add_parse_error(
+                SpiceParseError(
+                    message=(
+                        f"子电路 {subcircuit_name} 在 active source closure 中重复定义："
+                        + "，".join(locations)
+                    ),
+                    source_file=main_blob.key,
+                    line_text="",
+                )
+            )
+
+        self._primitive_resolver.apply(
+            document,
+            excluded_subcircuit_names=subcircuit_conflicts,
+        )
+        return document
+
+    def _parse_content(
+        self,
+        content: str,
+        source_file: str,
+        *,
+        model_variants: Dict[str, str],
+        skip_title: bool,
+    ) -> SpiceDocument:
         document = SpiceDocument(source_file=str(source_file or ""))
         subcircuit_stack: List[SpiceSubcircuit] = []
         lines = content.splitlines(keepends=True)
         absolute_offset = 0
 
-        # Pass 1: pre-scan every `.model` card so we know, for each
-        # model name referenced by a Q / M component, whether that model
-        # represents an N-channel or P-channel / NPN or PNP device. This
-        # information is the only trustworthy source for the schematic's
-        # NMOS vs PMOS (and NPN vs PNP) rendering choice — ngspice
-        # itself reads the same .model card at simulation time, so by
-        # mirroring that lookup here we keep schematic and simulator in
-        # lock-step without asking the user to hint anything.
-        #
-        # Local `.model` cards in the current file take precedence over
-        # the bundled standard-library defaults so users can always
-        # override a bundled part by redefining it inline.
-        local_variants = self._collect_model_variants(lines)
-        bundled_variants = _load_bundled_model_variants()
-        model_variants: Dict[str, str] = {**bundled_variants, **local_variants}
-
+        in_control = False
         for line_index, raw_line in enumerate(lines):
             line_text = raw_line.rstrip("\r\n")
             stripped = line_text.strip()
             line_span = self._make_line_span(line_index, line_text, absolute_offset)
 
-            if not stripped or stripped.startswith("*") or stripped.startswith(";"):
+            if skip_title and line_index == 0:
                 absolute_offset += len(raw_line)
                 continue
+
+            if not stripped or stripped.startswith(("*", ";", "$", "//")):
+                absolute_offset += len(raw_line)
+                continue
+
+            command = self._dot_command_name(line_text)
+            if command == ".control":
+                in_control = True
+                absolute_offset += len(raw_line)
+                continue
+            if command == ".endc":
+                in_control = False
+                absolute_offset += len(raw_line)
+                continue
+            if in_control:
+                absolute_offset += len(raw_line)
+                continue
+            if command == ".end":
+                if subcircuit_stack:
+                    document.add_parse_error(
+                        SpiceParseError(
+                            message=f".end 前子电路 {subcircuit_stack[-1].name} 未以 .ends 结束",
+                            source_file=str(source_file or ""),
+                            source_span=line_span,
+                            line_text=line_text,
+                        )
+                    )
+                break
 
             include = self._include_parser.parse_line(line_text, line_index + 1)
             if include is not None:
@@ -144,8 +260,7 @@ class SpiceParser:
                 absolute_offset += len(raw_line)
                 continue
 
-            lowered = stripped.lower()
-            if lowered.startswith(".subckt"):
+            if command == ".subckt":
                 subcircuit = self._parse_subcircuit_header(
                     line_text,
                     source_file,
@@ -155,12 +270,32 @@ class SpiceParser:
                 if subcircuit is not None:
                     subcircuit_stack.append(subcircuit)
                     document.add_subcircuit(subcircuit)
+                else:
+                    document.add_parse_error(
+                        SpiceParseError(
+                            message=".subckt 缺少子电路名称",
+                            source_file=str(source_file or ""),
+                            source_span=line_span,
+                            line_text=line_text,
+                        )
+                    )
                 absolute_offset += len(raw_line)
                 continue
 
-            if lowered.startswith(".ends"):
+            if command == ".ends":
                 if subcircuit_stack:
+                    # ngspice accepts an optional name on .ends but explicitly
+                    # does not check it against the active .subckt name.
                     subcircuit_stack.pop()
+                else:
+                    document.add_parse_error(
+                        SpiceParseError(
+                            message="孤立的 .ends 没有对应 .subckt",
+                            source_file=str(source_file or ""),
+                            source_span=line_span,
+                            line_text=line_text,
+                        )
+                    )
                 absolute_offset += len(raw_line)
                 continue
 
@@ -193,8 +328,108 @@ class SpiceParser:
 
             absolute_offset += len(raw_line)
 
-        self._primitive_resolver.apply(document)
+        if subcircuit_stack and not any(".end 前子电路" in error.message for error in document.parse_errors):
+            for subcircuit in subcircuit_stack:
+                document.add_parse_error(
+                    SpiceParseError(
+                        message=f"子电路 {subcircuit.name} 缺少 .ends",
+                        source_file=str(source_file or ""),
+                        source_span=subcircuit.source_span,
+                        line_text="",
+                    )
+                )
+
         return document
+
+    def _collect_source_graph_model_variants(
+        self,
+        source_views: Sequence[SpiceSourceView],
+    ) -> Tuple[Dict[str, str], Dict[str, Tuple[str, ...]]]:
+        semantic_lines: List[str] = []
+        definition_locations: Dict[str, List[str]] = {}
+        for source_view in source_views:
+            for source_line in source_view.lines:
+                semantic_lines.append(source_line.text)
+                stripped = source_line.text.strip()
+                if not stripped.lower().startswith(".model"):
+                    continue
+                pieces = stripped.split()
+                if len(pieces) < 2:
+                    continue
+                model_name = pieces[1].lower()
+                section_suffix = (
+                    f"[{source_view.library_section}]"
+                    if source_view.library_section
+                    else ""
+                )
+                definition_locations.setdefault(model_name, []).append(
+                    f"{source_view.key}{section_suffix}:{source_line.line_number}"
+                )
+
+        explicit_names = set(definition_locations)
+        explicit_variants = self._collect_model_variants(semantic_lines)
+        conflicts = {
+            model_name: tuple(locations)
+            for model_name, locations in definition_locations.items()
+            if len(locations) > 1
+        }
+        variants = {
+            model_name: variant
+            for model_name, variant in _load_bundled_model_variants().items()
+            if model_name not in explicit_names
+        }
+        variants.update(
+            {
+                model_name: variant
+                for model_name, variant in explicit_variants.items()
+                if model_name not in conflicts
+            }
+        )
+        return variants, conflicts
+
+    @staticmethod
+    def _reconstruct_active_view(source_view: SpiceSourceView) -> str:
+        if not source_view.lines:
+            return ""
+        physical_line_count = max(line.line_number for line in source_view.lines)
+        lines = ["\n"] * physical_line_count
+        for source_line in source_view.lines:
+            lines[source_line.line_number - 1] = f"{source_line.text}\n"
+        return "".join(lines)
+
+    @staticmethod
+    def _make_dependency_fields_readonly(document: SpiceDocument) -> None:
+        readonly_reason = "依赖源文件中的字段不能从主电路历史结果直接写回"
+        components = list(document.components)
+        for subcircuit in document.subcircuits:
+            components.extend(subcircuit.components)
+        for component in components:
+            for field in component.editable_fields:
+                field.editable = False
+                field.readonly_reason = readonly_reason
+
+    @staticmethod
+    def _find_subcircuit_conflicts(
+        subcircuits: Sequence[SpiceSubcircuit],
+    ) -> Dict[str, Tuple[str, ...]]:
+        locations: Dict[str, List[str]] = {}
+        for subcircuit in subcircuits:
+            name = str(subcircuit.name or "").strip().lower()
+            if not name:
+                continue
+            line_number = (
+                subcircuit.source_span.line_index + 1
+                if subcircuit.source_span is not None
+                else 0
+            )
+            locations.setdefault(name, []).append(
+                f"{subcircuit.source_file}:{line_number}"
+            )
+        return {
+            name: tuple(items)
+            for name, items in locations.items()
+            if len(items) > 1
+        }
 
     def _parse_subcircuit_header(
         self,
@@ -207,7 +442,12 @@ class SpiceParser:
         if len(tokens) < 2:
             return None
         name = tokens[1].text
-        port_names = [token.text for token in tokens[2:]]
+        port_names = []
+        for token in tokens[2:]:
+            normalized = token.text.strip().lower()
+            if normalized == "params:" or normalized.startswith("params:") or "=" in token.text:
+                break
+            port_names.append(token.text)
         return SpiceSubcircuit(
             name=name,
             port_names=port_names,
@@ -236,7 +476,7 @@ class SpiceParser:
         symbol_kind = _COMPONENT_SYMBOL_KINDS.get(prefix, "unknown")
         descriptor = self._describe_component(prefix, tokens, model_variants)
         node_tokens = descriptor["node_tokens"]
-        node_ids = [token.text for token in node_tokens]
+        node_ids = [_normalize_node_id(token.text) for token in node_tokens]
         pin_specs: List[Tuple[str, str]] = descriptor["pin_specs"]
         if len(pin_specs) != len(node_tokens):
             pin_specs = [(f"pin_{index + 1}", f"pin_{index + 1}") for index in range(len(node_tokens))]
@@ -244,7 +484,7 @@ class SpiceParser:
         pins = [
             SpicePin(
                 name=pin_specs[index][0],
-                node_id=token.text,
+                node_id=node_ids[index],
                 role=pin_specs[index][1],
             )
             for index, token in enumerate(node_tokens)
@@ -269,7 +509,7 @@ class SpiceParser:
             port_order=descriptor["port_order"],
             render_hints=descriptor["render_hints"],
             model_name=descriptor["model_name"],
-            subckt_name=descriptor["model_name"] if prefix in {"X", "U"} else "",
+            subckt_name=descriptor["model_name"] if prefix == "X" else "",
             resolved_model_name=descriptor["model_name"],
             raw_line=line_text,
         )
@@ -315,18 +555,35 @@ class SpiceParser:
             "PNP": "pnp",
             "NJF": "njf",
             "PJF": "pjf",
+            "NMF": "nmesfet",
+            "PMF": "pmesfet",
         }
+        logical_model_lines: List[str] = []
+        current_model = ""
         for raw_line in lines:
             stripped = raw_line.strip()
-            if not stripped:
+            if stripped.lower().startswith(".model"):
+                if current_model:
+                    logical_model_lines.append(current_model)
+                current_model = stripped
                 continue
-            lowered = stripped.lower()
-            if not lowered.startswith(".model"):
+            if current_model and stripped.startswith("+"):
+                current_model += " " + stripped[1:].strip()
+                continue
+            if current_model:
+                logical_model_lines.append(current_model)
+                current_model = ""
+        if current_model:
+            logical_model_lines.append(current_model)
+
+        pending_aliases: List[Tuple[str, str]] = []
+        for stripped in logical_model_lines:
+            if not stripped:
                 continue
             pieces = stripped.split()
             if len(pieces) < 3:
                 continue
-            model_name = pieces[1]
+            model_name = pieces[1].lower()
             # SPICE "AKO" (A Kind Of) inheritance lets one model extend
             # another: `.model NEW ako:BASE TYPE (override params)`. The
             # real device-type token therefore lives in pieces[3] when
@@ -337,7 +594,9 @@ class SpiceParser:
             # neutral `"bjt"` / `"mos"` / `"jfet"` symbol.
             type_piece_index = 2
             if pieces[type_piece_index].lower().startswith("ako:"):
-                if len(pieces) <= 3:
+                base_model = pieces[type_piece_index].split(":", 1)[1].strip().lower()
+                if len(pieces) <= 3 or pieces[3].startswith("("):
+                    pending_aliases.append((model_name, base_model))
                     continue
                 type_piece_index = 3
             # Split on "(" so we canonicalize three spellings of the type
@@ -366,6 +625,20 @@ class SpiceParser:
                     variants[model_name] = "pmos"
                 else:
                     variants[model_name] = "nmos"
+        unresolved = pending_aliases
+        while unresolved:
+            next_unresolved: List[Tuple[str, str]] = []
+            changed = False
+            for model_name, base_model in unresolved:
+                inherited = variants.get(base_model)
+                if inherited is None:
+                    next_unresolved.append((model_name, base_model))
+                    continue
+                variants[model_name] = inherited
+                changed = True
+            if not changed:
+                break
+            unresolved = next_unresolved
         return variants
 
     def _describe_component(
@@ -424,19 +697,30 @@ class SpiceParser:
             }
 
         if prefix == "Q":
-            node_tokens = tokens[1:4]
-            pin_specs = [
-                ("collector", "collector"),
-                ("base", "base"),
-                ("emitter", "emitter"),
-            ] if len(node_tokens) == 3 else []
-            model_name = tokens[4].text if len(tokens) > 4 else ""
+            model_index = self._resolve_bjt_model_token_index(tokens)
+            node_tokens = tokens[1:model_index] if model_index is not None else tokens[1:4]
+            if len(node_tokens) == 3:
+                pin_specs = [
+                    ("collector", "collector"),
+                    ("base", "base"),
+                    ("emitter", "emitter"),
+                ]
+            elif len(node_tokens) == 4:
+                pin_specs = [
+                    ("collector", "collector"),
+                    ("base", "base"),
+                    ("emitter", "emitter"),
+                    ("substrate", "substrate"),
+                ]
+            else:
+                pin_specs = []
+            model_name = tokens[model_index].text if model_index is not None else ""
             # Resolve the BJT channel variant from the .model lookup
             # built in pass 1. Falls back to the generic "bjt" marker
             # when no .model card was found (e.g. user-provided netlist
             # fragments without models), so downstream renderers can
             # still pick a neutral default.
-            variant = model_variants.get(model_name, "")
+            variant = model_variants.get(model_name.lower(), "")
             if variant not in ("npn", "pnp"):
                 variant = "bjt"
             return {
@@ -444,12 +728,12 @@ class SpiceParser:
                 "pin_specs": pin_specs,
                 "symbol_variant": variant,
                 "polarity_marks": {},
-                "port_order": ["collector", "base", "emitter"],
+                "port_order": [name for name, _ in pin_specs],
                 "render_hints": {"orientation": "right"},
                 "model_name": model_name,
             }
 
-        if prefix == "J":
+        if prefix in {"J", "Z"}:
             # SPICE JFET card: `Jxxx D G S <model>` (3 nodes + model name).
             # Electrode order is drain / gate / source, identical to the
             # first three positions of a MOSFET but without the body
@@ -465,8 +749,11 @@ class SpiceParser:
             # Resolve the JFET channel variant from the .model lookup.
             # Falls back to the generic "jfet" marker when no .model
             # card was found so the renderer can pick a neutral glyph.
-            variant = model_variants.get(model_name, "")
-            if variant not in ("njf", "pjf"):
+            variant = model_variants.get(model_name.lower(), "")
+            if prefix == "Z":
+                if variant not in ("nmesfet", "pmesfet"):
+                    variant = "mesfet"
+            elif variant not in ("njf", "pjf"):
                 variant = "jfet"
             return {
                 "node_tokens": node_tokens,
@@ -479,18 +766,28 @@ class SpiceParser:
             }
 
         if prefix == "M":
-            node_tokens = tokens[1:5]
-            pin_specs = [
-                ("drain", "drain"),
-                ("gate", "gate"),
-                ("source", "source"),
-                ("body", "body"),
-            ] if len(node_tokens) == 4 else []
-            model_name = tokens[5].text if len(tokens) > 5 else ""
+            model_index = self._resolve_mos_model_token_index(tokens)
+            node_tokens = tokens[1:model_index] if model_index is not None else tokens[1:5]
+            if len(node_tokens) == 3:
+                pin_specs = [
+                    ("drain", "drain"),
+                    ("gate", "gate"),
+                    ("source", "source"),
+                ]
+            elif len(node_tokens) == 4:
+                pin_specs = [
+                    ("drain", "drain"),
+                    ("gate", "gate"),
+                    ("source", "source"),
+                    ("body", "body"),
+                ]
+            else:
+                pin_specs = []
+            model_name = tokens[model_index].text if model_index is not None else ""
             # Same pattern as Q: resolve NMOS vs PMOS from the .model
             # lookup. Falls back to "mos" when no .model card was
             # found so callers can still render a neutral default.
-            variant = model_variants.get(model_name, "")
+            variant = model_variants.get(model_name.lower(), "")
             if variant not in ("nmos", "pmos"):
                 variant = "mos"
             return {
@@ -498,12 +795,12 @@ class SpiceParser:
                 "pin_specs": pin_specs,
                 "symbol_variant": variant,
                 "polarity_marks": {},
-                "port_order": ["drain", "gate", "source", "body"],
+                "port_order": [name for name, _ in pin_specs],
                 "render_hints": {"orientation": "right"},
                 "model_name": model_name,
             }
 
-        if prefix in {"X", "U"} and len(tokens) >= 3:
+        if prefix == "X" and len(tokens) >= 3:
             model_index = self._resolve_subckt_model_token_index(tokens)
             if model_index is None:
                 node_tokens = tokens[1:-1]
@@ -516,6 +813,137 @@ class SpiceParser:
                 "node_tokens": node_tokens,
                 "pin_specs": pin_specs,
                 "symbol_variant": "block",
+                "polarity_marks": {},
+                "port_order": [name for name, _ in pin_specs],
+                "render_hints": {"orientation": "horizontal"},
+                "model_name": model_name,
+            }
+
+        if prefix == "K":
+            # K cards reference inductor *instance names*, not electrical
+            # nodes.  Treating L1/L2 as nets created fictitious connectivity
+            # in the schematic.
+            return {
+                "node_tokens": [],
+                "pin_specs": [],
+                "symbol_variant": "mutual_inductance",
+                "polarity_marks": {},
+                "port_order": [],
+                "render_hints": {"orientation": "horizontal"},
+                "model_name": "",
+            }
+
+        if prefix in {"T", "O", "Y"}:
+            node_tokens = tokens[1:5]
+            pin_specs = [
+                ("port_1_positive", "port_1_positive"),
+                ("port_1_negative", "port_1_negative"),
+                ("port_2_positive", "port_2_positive"),
+                ("port_2_negative", "port_2_negative"),
+            ] if len(node_tokens) == 4 else []
+            model_name = tokens[5].text if prefix in {"O", "Y"} and len(tokens) > 5 else ""
+            return {
+                "node_tokens": node_tokens,
+                "pin_specs": pin_specs,
+                "symbol_variant": "lossless" if prefix == "T" else "lossy",
+                "polarity_marks": {},
+                "port_order": [name for name, _ in pin_specs],
+                "render_hints": {"orientation": "horizontal"},
+                "model_name": model_name,
+            }
+
+        if prefix == "U":
+            node_tokens = tokens[1:4]
+            pin_specs = [
+                ("terminal_1", "terminal_1"),
+                ("terminal_2", "terminal_2"),
+                ("capacitance_reference", "capacitance_reference"),
+            ] if len(node_tokens) == 3 else []
+            model_name = tokens[4].text if len(tokens) > 4 else ""
+            return {
+                "node_tokens": node_tokens,
+                "pin_specs": pin_specs,
+                "symbol_variant": "urc",
+                "polarity_marks": {},
+                "port_order": [name for name, _ in pin_specs],
+                "render_hints": {"orientation": "horizontal"},
+                "model_name": model_name,
+            }
+
+        if prefix in {"E", "G"}:
+            # Linear VCVS/VCCS cards have two output and two controlling
+            # nodes.  Behavioral/POLY variants cannot be represented by the
+            # simple four-pin glyph without lying about their connectivity,
+            # so only the unambiguous linear form receives semantic pins.
+            control_form = tokens[3].text.lower().split("=", 1)[0] if len(tokens) > 3 else ""
+            is_behavioral = control_form in {"value", "vol", "cur", "table", "laplace"} or control_form.startswith("poly(")
+            node_tokens = tokens[1:5] if len(tokens) >= 6 and not is_behavioral else tokens[1:3]
+            pin_specs = (
+                [
+                    ("output_positive", "output_positive"),
+                    ("output_negative", "output_negative"),
+                    ("control_positive", "control_positive"),
+                    ("control_negative", "control_negative"),
+                ]
+                if len(node_tokens) == 4
+                else [("output_positive", "output_positive"), ("output_negative", "output_negative")]
+            )
+            return {
+                "node_tokens": node_tokens,
+                "pin_specs": pin_specs,
+                "symbol_variant": "voltage_controlled",
+                "polarity_marks": {"output_positive": "+", "output_negative": "-"},
+                "port_order": [name for name, _ in pin_specs],
+                "render_hints": {"orientation": "horizontal"},
+                "model_name": "",
+            }
+
+        if prefix in {"F", "H", "B"}:
+            node_tokens = tokens[1:3]
+            pin_specs = [
+                ("output_positive", "output_positive"),
+                ("output_negative", "output_negative"),
+            ] if len(node_tokens) == 2 else []
+            return {
+                "node_tokens": node_tokens,
+                "pin_specs": pin_specs,
+                "symbol_variant": "current_controlled" if prefix in {"F", "H"} else "behavioral",
+                "polarity_marks": {"output_positive": "+", "output_negative": "-"},
+                "port_order": [name for name, _ in pin_specs],
+                "render_hints": {"orientation": "horizontal"},
+                "model_name": "",
+            }
+
+        if prefix == "S":
+            node_tokens = tokens[1:5]
+            pin_specs = [
+                ("terminal_positive", "terminal_positive"),
+                ("terminal_negative", "terminal_negative"),
+                ("control_positive", "control_positive"),
+                ("control_negative", "control_negative"),
+            ] if len(node_tokens) == 4 else []
+            model_name = tokens[5].text if len(tokens) > 5 else ""
+            return {
+                "node_tokens": node_tokens,
+                "pin_specs": pin_specs,
+                "symbol_variant": "voltage_controlled",
+                "polarity_marks": {},
+                "port_order": [name for name, _ in pin_specs],
+                "render_hints": {"orientation": "horizontal"},
+                "model_name": model_name,
+            }
+
+        if prefix == "W":
+            node_tokens = tokens[1:3]
+            pin_specs = [
+                ("terminal_positive", "terminal_positive"),
+                ("terminal_negative", "terminal_negative"),
+            ] if len(node_tokens) == 2 else []
+            model_name = tokens[4].text if len(tokens) > 4 else ""
+            return {
+                "node_tokens": node_tokens,
+                "pin_specs": pin_specs,
+                "symbol_variant": "current_controlled",
                 "polarity_marks": {},
                 "port_order": [name for name, _ in pin_specs],
                 "render_hints": {"orientation": "horizontal"},
@@ -536,11 +964,40 @@ class SpiceParser:
         }
 
     def _resolve_subckt_model_token_index(self, tokens: List[SpiceToken]) -> Optional[int]:
-        for index in range(len(tokens) - 1, 0, -1):
-            if "=" in tokens[index].text:
-                continue
-            return index
-        return None
+        for index in range(2, len(tokens)):
+            normalized = tokens[index].text.strip().lower()
+            if normalized == "params:" or normalized.startswith("params:") or "=" in tokens[index].text:
+                return index - 1 if index > 1 else None
+        return len(tokens) - 1 if len(tokens) > 2 else None
+
+    def _resolve_bjt_model_token_index(
+        self,
+        tokens: List[SpiceToken],
+    ) -> Optional[int]:
+        if len(tokens) <= 4:
+            return None
+        if len(tokens) == 5:
+            return 4
+        # With six or more tokens, position 5 is either the model of a
+        # four-terminal BJT or the first parameter of a three-terminal BJT.
+        # This structural distinction also works for models coming from user
+        # include files, whose names are intentionally not guessed from the
+        # bundled registry.
+        return 4 if _looks_like_bjt_parameter(tokens[5].text) else 5
+
+    def _resolve_mos_model_token_index(
+        self,
+        tokens: List[SpiceToken],
+    ) -> Optional[int]:
+        if len(tokens) <= 4:
+            return None
+        # Standard ngspice MOS cards always have D/G/S/B followed by the model
+        # name.  The shorter index is retained only to visualize an invalid
+        # three-node card truthfully; runtime normalization no longer repairs
+        # it by silently tying body to source.
+        if len(tokens) == 5 or (len(tokens) > 5 and _looks_like_instance_parameter(tokens[5].text)):
+            return 4
+        return 5
 
     def _build_editable_fields(
         self,
@@ -596,16 +1053,12 @@ class SpiceParser:
         return _READONLY_UNSUPPORTED_FIELD
 
     def _is_direct_editable_value(self, text: str) -> bool:
-        lowered = text.lower()
-        if any(marker in lowered for marker in ("{", "}", "(", ")")):
-            return False
-        if lowered.startswith("@") or lowered.startswith("="):
-            return False
-        return bool(re.match(r"^[a-z0-9_+\-.]+$", lowered))
+        return is_spice_number(text)
 
     def _tokenize_line(self, line_text: str, line_index: int, absolute_offset: int) -> List[SpiceToken]:
         tokens: List[SpiceToken] = []
-        for token_index, match in enumerate(re.finditer(r"\S+", line_text)):
+        code_text = line_text[:self._inline_comment_start(line_text)]
+        for token_index, match in enumerate(re.finditer(r"\S+", code_text)):
             start = match.start()
             end = match.end()
             tokens.append(
@@ -621,6 +1074,50 @@ class SpiceParser:
                 )
             )
         return tokens
+
+    @staticmethod
+    def _dot_command_name(line_text: str) -> str:
+        stripped = line_text[:SpiceParser._inline_comment_start(line_text)].strip()
+        if not stripped.startswith("."):
+            return ""
+        return stripped.split(None, 1)[0].lower()
+
+    @staticmethod
+    def _inline_comment_start(line_text: str) -> int:
+        quote = ""
+        brace_depth = 0
+        paren_depth = 0
+        for index, character in enumerate(str(line_text or "")):
+            if quote:
+                if character == quote:
+                    quote = ""
+                continue
+            if character in {"'", '"'}:
+                quote = character
+                continue
+            if character == "{":
+                brace_depth += 1
+                continue
+            if character == "}" and brace_depth:
+                brace_depth -= 1
+                continue
+            if character == "(":
+                paren_depth += 1
+                continue
+            if character == ")" and paren_depth:
+                paren_depth -= 1
+                continue
+            if (
+                character == "/"
+                and index + 1 < len(line_text)
+                and line_text[index + 1] == "/"
+                and brace_depth == 0
+                and paren_depth == 0
+            ):
+                return index
+            if character in {";", "$"} and brace_depth == 0 and paren_depth == 0:
+                return index
+        return len(str(line_text or ""))
 
     def _make_line_span(self, line_index: int, line_text: str, absolute_offset: int) -> SourceSpan:
         return SourceSpan(
@@ -645,6 +1142,29 @@ class SpiceParser:
             str(absolute_start),
         ])
         return hashlib.sha1(seed.encode("utf-8")).hexdigest()[:16]
+
+
+def _normalize_node_id(value: str) -> str:
+    text = str(value or "").strip().lower()
+    # Batch-mode ngspice node identifiers are case-insensitive and GND aliases
+    # node 0.  A case-sensitive schematic would otherwise display electrically
+    # identical nodes as separate nets and fail to match lowercase result
+    # vector names returned by ngspice.
+    return "0" if text == "gnd" else text
+
+
+def _looks_like_bjt_parameter(value: str) -> bool:
+    text = str(value or "").strip().lower()
+    if not text:
+        return False
+    if "=" in text or is_spice_number(text):
+        return True
+    return text in {"area", "off", "ic", "temp", "dtemp", "m"}
+
+
+def _looks_like_instance_parameter(value: str) -> bool:
+    text = str(value or "").strip().lower()
+    return bool(text) and ("=" in text or text in {"off", "ic", "temp", "dtemp", "m"})
 
 
 __all__ = ["SpiceParser"]

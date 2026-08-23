@@ -10,7 +10,7 @@
 * --- AC test input ---
 Vin in 0 AC 1
 
-* --- Transconductance: I_out = 0.001 * V(in), steered into 'out' ---
+* --- Inverting transconductance: current flows from 'out' to ground ---
 G1 out 0 in 0 1m
 
 * --- Parallel RC load at the output sets the pole ---

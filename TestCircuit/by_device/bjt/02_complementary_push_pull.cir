@@ -5,16 +5,17 @@
 * Devices exercised: V (supplies + input), R, Q (NPN 2N3904 + PNP 2N3906).
 
 .title Class-B Complementary Push-Pull
+.include "../../../resources/models/ngspice/testcircuit_discrete.lib"
 
 * --- Split supplies and shared sinusoidal input ---
 Vdd vdd 0 DC 12
 Vss vss 0 DC -12
 Vin in  0 SIN(0 3 1k)
 
-* --- Top half: NPN sinks from Vdd when V(in) is positive ---
+* --- Top half: NPN sources current from Vdd on positive half-cycles ---
 Qnpn vdd in out 2N3904
 
-* --- Bottom half: PNP sources to Vss when V(in) is negative ---
+* --- Bottom half: PNP sinks current into Vss on negative half-cycles ---
 Qpnp vss in out 2N3906
 
 * --- Load on the shared emitter node ---

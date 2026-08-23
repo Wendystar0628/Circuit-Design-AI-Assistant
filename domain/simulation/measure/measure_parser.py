@@ -1,175 +1,191 @@
-# Measure Parser
-"""
-.MEASURE 结果解析器
+"""Parse the measurement section emitted by ngspice.
 
-解析 ngspice 仿真输出中的 .MEASURE 结果。
-
-ngspice .MEASURE 输出格式示例：
-    简单格式：
-        gain_db                 =  2.050000e+01
-        f_3db                   =  1.000000e+06
-    
-    带范围格式：
-        rise_time               =  1.234567e-09 from=  1.000000e-09 to=  2.234567e-09
-    
-    TRIG/TARG 格式：
-        delay                   =  5.000000e-09 targ=  1.500000e-08 trig=  1.000000e-08
-    
-    失败格式：
-        f_3db                   =  failed
-
-使用示例：
-    parser = MeasureParser()
-    results = parser.parse_measure_output(ngspice_output)
-    for result in results:
-        print(f"{result.name}: {result.display_value}")
+The parser intentionally does not infer units or UI metadata. ngspice prints
+only numeric values here; the netlist statement is the authoritative source
+for physical semantics and is resolved by the executor after parsing.
 """
 
-import logging
+from __future__ import annotations
+
+import math
 import re
-from typing import Dict, List
+from collections import OrderedDict
+from typing import List, Optional, Sequence
 
-from domain.simulation.measure.measure_metadata import measure_metadata_resolver
 from domain.simulation.measure.measure_result import MeasureResult, MeasureStatus
 
 
+_SECTION_HEADER = re.compile(
+    r"^Measurements for (?P<analysis>.+?) Analysis$",
+    re.IGNORECASE,
+)
+_NUMBER = r"[-+]?(?:(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?|inf(?:inity)?|nan)"
+_SUCCESS_LINE = re.compile(
+    rf"^(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*"
+    rf"(?P<value>{_NUMBER})"
+    rf"(?P<details>(?:\s+(?:from|to|targ|trig|at)\s*=\s*{_NUMBER})*)\s*$",
+    re.IGNORECASE,
+)
+_FAILED_LINE = re.compile(
+    r"^\.meas(?:ure)?\s+(?:dc|ac|tran|sp)\s+"
+    r"(?P<name>[A-Za-z_][A-Za-z0-9_]*)\b.*\bfailed!\s*$",
+    re.IGNORECASE,
+)
+
+
 class MeasureParser:
-    """
-    .MEASURE 结果解析器
-    
-    从 ngspice 输出中提取 .MEASURE 语句的执行结果。
-    支持多种 ngspice 输出格式。
-    """
-    
-    # 匹配成功的 .MEASURE 结果（支持多种格式）
-    # 格式1: name = value
-    # 格式2: name = value from=xxx to=xxx
-    # 格式3: name = value targ=xxx trig=xxx
-    MEASURE_SUCCESS_PATTERN = re.compile(
-        r"^\s*(\w+)\s*=\s*([-+]?\d+\.?\d*(?:[eE][-+]?\d+)?)"
-        r"(?:\s+(?:from|targ|trig|at)\s*=\s*[-+]?\d+\.?\d*(?:[eE][-+]?\d+)?)*",
-        re.MULTILINE
-    )
-    
-    # 匹配失败的 .MEASURE 结果
-    MEASURE_FAILED_PATTERN = re.compile(
-        r"^\s*(\w+)\s*=\s*failed",
-        re.MULTILINE | re.IGNORECASE
-    )
-    
-    # 排除的变量名（ngspice 内部变量，不是测量结果）
-    EXCLUDED_NAMES = {
-        'time', 'frequency', 'temp', 'hertz', 'alter', 'sweep',
-        'v', 'i', 'vdb', 'vp', 'vm', 'vr', 'vi',  # 信号名前缀
-    }
-    
-    def __init__(self):
-        self._logger = logging.getLogger(__name__)
-    
-    def parse_measure_output(self, output: str) -> List[MeasureResult]:
+    """Extract final ``.measure`` outcomes from ngspice callback output."""
+
+    def parse_measure_output(
+        self,
+        output: str,
+        *,
+        analysis_type: str = "",
+        expected_names: Optional[Sequence[str]] = None,
+    ) -> List[MeasureResult]:
+        """Parse outcomes for exactly one authoritative analysis.
+
+        ngspice may print multiple measurement sections when an included file
+        adds another analysis.  A single-analysis result must never merge
+        those sections.  When ``expected_names`` is supplied, only those
+        closure-validated requests are admitted and every missing outcome is
+        materialized as ``FAILED`` instead of disappearing silently.
         """
-        解析 ngspice 输出中的 .MEASURE 结果
-        
-        Args:
-            output: ngspice 完整输出文本
-            
-        Returns:
-            List[MeasureResult]: 解析出的测量结果列表
-        """
-        results = []
-        parsed_names = set()
-        
-        # 预处理：移除 ngspice 输出中的前缀（如 "stdout "）
-        cleaned_output = self._clean_output(output)
-        
-        # 解析成功的测量
-        for match in self.MEASURE_SUCCESS_PATTERN.finditer(cleaned_output):
-            name = match.group(1)
-            value_str = match.group(2)
-            full_match = match.group(0).strip()
-            
-            # 跳过排除的名称
-            if name.lower() in self.EXCLUDED_NAMES:
-                continue
-            
-            # 跳过已解析的名称（避免重复）
-            if name in parsed_names:
-                continue
-            
-            try:
-                value = float(value_str)
-                metadata = measure_metadata_resolver.resolve(name)
-                
-                result = MeasureResult(
-                    name=name,
-                    value=value,
-                    unit=metadata.unit,
-                    status=MeasureStatus.OK,
-                    display_name=metadata.display_name,
-                    category=metadata.category,
-                    quantity_kind=metadata.quantity_kind,
-                    raw_output=full_match,
+
+        cleaned_lines = self._clean_output(output).splitlines()
+        in_measurement_output = False
+        requested_analysis = self._normalize_analysis_type(analysis_type)
+        expected_by_key = (
+            {
+                str(name).casefold(): str(name)
+                for name in expected_names
+                if str(name).strip()
+            }
+            if expected_names is not None
+            else None
+        )
+        results: "OrderedDict[str, MeasureResult]" = OrderedDict()
+        recent_error = ""
+
+        for raw_line in cleaned_lines:
+            line = raw_line.strip()
+            section = _SECTION_HEADER.fullmatch(line)
+            if section is not None:
+                section_analysis = self._normalize_analysis_type(
+                    section.group("analysis")
                 )
-                
-                results.append(result)
-                parsed_names.add(name)
-                
-                self._logger.debug(f"Parsed measure: {name} = {value} {metadata.unit}")
-                
-            except ValueError as e:
-                self._logger.warning(f"Failed to parse measure value: {name} = {value_str}")
-                results.append(MeasureResult(
-                    name=name,
-                    value=None,
-                    status=MeasureStatus.PARSE_ERROR,
-                    error_message=str(e),
-                    raw_output=full_match,
-                ))
-                parsed_names.add(name)
-        
-        # 解析失败的测量
-        for match in self.MEASURE_FAILED_PATTERN.finditer(cleaned_output):
-            name = match.group(1)
-            
-            # 跳过已解析的名称
-            if name in parsed_names:
+                in_measurement_output = (
+                    not requested_analysis
+                    or section_analysis == requested_analysis
+                )
+                recent_error = ""
                 continue
-            
-            results.append(MeasureResult(
-                name=name,
-                value=None,
-                status=MeasureStatus.FAILED,
-                error_message="Measurement condition not met",
-                raw_output=match.group(0).strip(),
-            ))
-            parsed_names.add(name)
-            
-            self._logger.debug(f"Measure failed: {name}")
-        
-        return results
-    
-    def _clean_output(self, output: str) -> str:
-        """
-        清理 ngspice 输出，移除前缀
-        
-        ngspice 共享库模式下，输出行可能带有 "stdout " 或 "stderr " 前缀
-        
-        Args:
-            output: 原始输出
-            
-        Returns:
-            str: 清理后的输出
-        """
+            if not in_measurement_output or not line:
+                continue
+
+            success = _SUCCESS_LINE.fullmatch(line)
+            if success is not None:
+                name = success.group("name")
+                if (
+                    expected_by_key is not None
+                    and name.casefold() not in expected_by_key
+                ):
+                    continue
+                raw_value = success.group("value")
+                try:
+                    value = float(raw_value)
+                except ValueError:
+                    value = math.nan
+
+                if math.isfinite(value):
+                    result = MeasureResult(
+                        name=name,
+                        value=value,
+                        status=MeasureStatus.OK,
+                        raw_output=line,
+                    )
+                else:
+                    result = MeasureResult(
+                        name=name,
+                        value=None,
+                        status=MeasureStatus.FAILED,
+                        raw_output=line,
+                        error_message=f"ngspice returned a non-finite value: {raw_value}",
+                    )
+                self._store_latest(results, result)
+                recent_error = ""
+                continue
+
+            failed = _FAILED_LINE.fullmatch(line)
+            if failed is not None:
+                name = failed.group("name")
+                if (
+                    expected_by_key is not None
+                    and name.casefold() not in expected_by_key
+                ):
+                    continue
+                self._store_latest(
+                    results,
+                    MeasureResult(
+                        name=name,
+                        value=None,
+                        status=MeasureStatus.FAILED,
+                        raw_output=line,
+                        error_message=recent_error or "Measurement condition was not satisfied",
+                    ),
+                )
+                recent_error = ""
+                continue
+
+            # The callback emits the useful reason (for example "out of
+            # interval") immediately before the echoed failed statement.
+            if line.lower().startswith("error:") or "out of interval" in line.lower():
+                recent_error = line
+
+        if expected_by_key is not None:
+            for key, expected_name in expected_by_key.items():
+                if key in results:
+                    continue
+                results[key] = MeasureResult(
+                    name=expected_name,
+                    value=None,
+                    status=MeasureStatus.FAILED,
+                    error_message=(
+                        "ngspice did not emit an outcome for this requested "
+                        "measurement in the authoritative analysis section"
+                    ),
+                )
+
+        return list(results.values())
+
+    @staticmethod
+    def _store_latest(
+        results: "OrderedDict[str, MeasureResult]",
+        result: MeasureResult,
+    ) -> None:
+        key = result.name.casefold()
+        if key in results:
+            del results[key]
+        results[key] = result
+
+    @staticmethod
+    def _clean_output(output: str) -> str:
         lines = []
         for line in output.splitlines():
-            # 移除 "stdout " 或 "stderr " 前缀
-            if line.startswith("stdout "):
-                line = line[7:]
-            elif line.startswith("stderr "):
-                line = line[7:]
+            callback_line = line.lstrip()
+            if callback_line.startswith("stdout ") or callback_line.startswith("stderr "):
+                line = callback_line[7:]
             lines.append(line)
         return "\n".join(lines)
 
+    @staticmethod
+    def _normalize_analysis_type(value: object) -> str:
+        normalized = str(value or "").strip().lstrip(".").casefold()
+        aliases = {
+            "transient": "tran",
+            "operating point": "op",
+        }
+        return aliases.get(normalized, normalized)
 
-# 模块级单例
+
 measure_parser = MeasureParser()

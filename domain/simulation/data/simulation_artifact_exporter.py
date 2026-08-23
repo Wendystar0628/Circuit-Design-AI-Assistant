@@ -1,48 +1,50 @@
 import csv
+import hashlib
+import io
 import json
+import os
 import re
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Final, List, Optional, Tuple
 
 from domain.simulation.data.op_result_data_builder import op_result_data_builder
-from domain.simulation.data.png_metadata import inject_png_text_chunks
+from domain.simulation.data.noise_totals import build_noise_totals_payload
+from domain.simulation.data.png_metadata import inject_png_itxt_chunks
 from domain.simulation.data.simulation_output_reader import simulation_output_reader
 from domain.simulation.data.waveform_data_service import waveform_data_service
+from domain.simulation.models.display_metric import DisplayMetric
 from domain.simulation.models.simulation_result import SimulationResult
+from domain.simulation.spice.source_closure import (
+    SPICE_SOURCE_CLOSURE_ALGORITHM,
+)
 
 
-EXPORT_SCHEMA_VERSION = 1
+EXPORT_SCHEMA_VERSION = 2
 
 # ---------------------------------------------------------------------------
-# Canonical disk layout — SINGLE source of truth for Step 15's
-# "stable artifact layout schema".
+# Canonical disk layout for manual exports and temporary attachments.
 #
-# Every simulation bundle — whether produced by the headless service,
-# the UI Run button, or an agent tool — lives at
-# ``<project_root>/<CANONICAL_RESULTS_DIR>/<stem>/<ts>/``. Under that
-# ``export_root`` the layout is fixed and exposed only through the
-# ``*_paths(export_root)`` helpers further down this file.
-#
-# Downstream modules (persistence, UI coordinators, bundle builders,
-# agent read tools, tests) MUST call those helpers to obtain paths.
-# Direct string concatenation like
-# ``export_root / "metrics" / "metrics.json"`` is a contract violation:
-# the grep-proof constraint in Step 15 of
-# ``AGENT_SIMULATION_TOOL_IMPLEMENTATION_PLAN.md`` states those literals
-# may appear only in this file and in the plan's schema section.
+# Committed bundles contain only ``result.json``. The category layout below is
+# used by user-requested external exports and bundle-external temporary
+# attachments. Consumers use the typed helpers instead of repeating filenames.
 # ---------------------------------------------------------------------------
 CANONICAL_RESULTS_DIR: Final[str] = "simulation_results"
 
 DEFAULT_EXPORT_FOLDER_NAME: Final[str] = "simulation_result"
+_WINDOWS_RESERVED_NAMES: Final[frozenset[str]] = frozenset({
+    "CON", "PRN", "AUX", "NUL",
+    *(f"COM{index}" for index in range(1, 10)),
+    *(f"LPT{index}" for index in range(1, 10)),
+})
+_MAX_FOLDER_COMPONENT_LENGTH: Final[int] = 96
 
 # Bundle root filename: every bundle's ``SimulationResult`` is serialised
 # here and all addressing flows through a ``result_path`` pointing at it.
 RESULT_JSON_FILENAME: Final[str] = "result.json"
 
-# Bundle root manifest filename: emitted by both headless persistence
-# (``SimulationArtifactPersistence``) and the UI-triggered export
-# coordinator. Two writers, same filename, one schema.
+# Manual export manifest. It is never written into a committed result bundle.
 EXPORT_MANIFEST_FILENAME: Final[str] = "export_manifest.json"
 
 # Artifact-type tag for the manifest payload itself (keeps all
@@ -52,13 +54,7 @@ ARTIFACT_TYPE_EXPORT_MANIFEST: Final[str] = "export_manifest"
 
 # ---- Canonical category names ----
 #
-# These names are simultaneously:
-#   1. The disk subdirectory names under ``export_root``
-#   2. The UI export-picker keys (ExportPanel, frontend state serializer)
-#   3. The keys used to index ``BundlePersistenceResult.category_files``
-# The three roles are deliberately unified — no translation layer means
-# no drift between "user picked X", "bundle has subdir X/", and
-# "persistence reports category X".
+# These names are both manual-export subdirectories and UI export-picker keys.
 
 CATEGORY_METRICS:       Final[str] = "metrics"
 CATEGORY_ANALYSIS_INFO: Final[str] = "analysis_info"
@@ -83,18 +79,8 @@ _CANONICAL_SUBDIRS: Final[Dict[str, str]] = {
     CATEGORY_WAVEFORMS:     CATEGORY_WAVEFORMS,
 }
 
-# Ordered tuples for the two consumption modes. Persistence (headless)
-# never writes chart/waveform PNGs — those are UI-side display snapshots.
-# The ExportPanel (display) can additionally trigger chart / waveform
-# bundles on top of the headless set.
-HEADLESS_ARTIFACT_CATEGORIES: Final[Tuple[str, ...]] = (
-    CATEGORY_METRICS,
-    CATEGORY_ANALYSIS_INFO,
-    CATEGORY_RAW_DATA,
-    CATEGORY_OUTPUT_LOG,
-    CATEGORY_OP_RESULT,
-)
-
+# Manual exports may include any pure-data or display category. Committed
+# simulation bundles do not use this list: they contain only result.json.
 DISPLAY_EXPORT_CATEGORIES: Final[Tuple[str, ...]] = (
     CATEGORY_METRICS,
     CATEGORY_CHARTS,
@@ -107,13 +93,7 @@ DISPLAY_EXPORT_CATEGORIES: Final[Tuple[str, ...]] = (
 
 
 # ---------------------------------------------------------------------------
-# Typed path bundles — one dataclass per artifact category
-#
-# Each dataclass exposes every canonical file path a consumer would need
-# for that category. Using a dataclass (rather than a single dict or a
-# ``get_path(category, kind)`` multiplexer) gives every caller static
-# attribute-typed access and forbids the "kind: str" polymorphism Step 15
-# explicitly bans.
+# Typed path bundles — one dataclass per artifact category.
 # ---------------------------------------------------------------------------
 
 
@@ -202,7 +182,7 @@ class SimulationArtifactExporter:
         return Path(export_root) / RESULT_JSON_FILENAME
 
     def export_manifest_path(self, export_root: str | Path) -> Path:
-        """Canonical ``export_manifest.json`` path at the bundle root."""
+        """Canonical manifest path at a user-requested export root."""
         return Path(export_root) / EXPORT_MANIFEST_FILENAME
 
     def metrics_paths(self, export_root: str | Path) -> MetricsArtifactPaths:
@@ -287,12 +267,11 @@ class SimulationArtifactExporter:
     def build_project_export_root(self, project_root: str | Path, result: SimulationResult) -> Path:
         """Resolve the canonical bundle root **without** touching disk.
 
-        Callers that own persistence (``SimulationArtifactPersistence``,
-        attachment coordinators) use this helper to derive the exact
+        ``SimulationArtifactPersistence`` uses this helper to derive the exact
         ``<project_root>/simulation_results/<stem>/<ts>/`` path and
-        create/reuse it themselves; this keeps path derivation purely a
-        function of ``(project_root, result)`` and leaves collision
-        handling (the ``_N`` suffix) to the single persistence entry.
+        atomically publishes it. No public helper may create that directory
+        directly because a canonical bundle must never exist without its
+        authoritative ``result.json``.
         """
         return self._build_export_root(
             Path(project_root) / CANONICAL_RESULTS_DIR,
@@ -309,19 +288,6 @@ class SimulationArtifactExporter:
         export_root.mkdir(parents=True, exist_ok=False)
         return export_root
 
-    def create_project_export_root(self, project_root: str | Path, result: SimulationResult) -> Path:
-        """Resolve and physically create the canonical project bundle root.
-
-        Thin convenience wrapper for call sites that need the bundle
-        directory to exist right away (attachment fallbacks, integration
-        tests). The unique-suffix collision rule is delegated to
-        ``_build_export_root`` so two rapid-fire calls with the same
-        timestamp produce ``<ts>`` and ``<ts>_2`` respectively.
-        """
-        export_root = self.build_project_export_root(project_root, result)
-        export_root.mkdir(parents=True, exist_ok=False)
-        return export_root
-
     def _build_export_root(self, base_directory: str | Path, result: SimulationResult) -> Path:
         root = Path(base_directory)
         circuit_folder = self._format_circuit_folder(getattr(result, "file_path", ""))
@@ -333,7 +299,16 @@ class SimulationArtifactExporter:
         return self._sanitize_folder_name(candidate or DEFAULT_EXPORT_FOLDER_NAME)
 
     def dumps_json(self, payload: Dict[str, Any]) -> str:
-        return json.dumps(payload, ensure_ascii=False, indent=2)
+        return json.dumps(
+            payload,
+            ensure_ascii=False,
+            indent=2,
+            allow_nan=False,
+        )
+
+    def write_json(self, path: str | Path, payload: Dict[str, Any]) -> None:
+        """Atomically write a strict JSON artifact."""
+        self._atomic_write_text(Path(path), self.dumps_json(payload))
 
     def build_artifact_payload(
         self,
@@ -362,6 +337,8 @@ class SimulationArtifactExporter:
             "artifact_type": artifact_type,
             "file_name": Path(result.file_path).name if result.file_path else "",
             "file_path": result.file_path,
+            "source_digest": result.source_digest,
+            "source_digest_algorithm": SPICE_SOURCE_CLOSURE_ALGORITHM,
             "analysis_type": result.analysis_type,
             "timestamp": result.timestamp,
             "success": result.success,
@@ -395,6 +372,8 @@ class SimulationArtifactExporter:
             ("artifact_type", str(artifact_type or "")),
             ("circuit_file", file_name),
             ("file_path", file_path),
+            ("source_digest", str(result.source_digest or "")),
+            ("source_digest_algorithm", SPICE_SOURCE_CLOSURE_ALGORITHM),
             ("analysis_type", str(getattr(result, "analysis_type", "") or "")),
             ("executor", str(getattr(result, "executor", "") or "")),
             ("timestamp", str(getattr(result, "timestamp", "") or "")),
@@ -413,10 +392,9 @@ class SimulationArtifactExporter:
         lines = [f"# {key}: {value}" for key, value in self.build_linkage_entries(result, artifact_type)]
         return "\n".join(lines) + "\n\n"
 
-    def build_png_text_chunks(self, result: SimulationResult, artifact_type: str) -> Dict[str, str]:
-        """Return tEXt chunk payload for PNG injection. Empty values
-        are dropped — PNG tEXt requires non-empty keyword/value pairs
-        to actually carry meaning.
+    def build_png_itxt_chunks(self, result: SimulationResult, artifact_type: str) -> Dict[str, str]:
+        """Return iTXt chunk payload for PNG injection. Empty values
+        are dropped because they carry no linkage information.
         """
         return {
             key: value
@@ -431,9 +409,9 @@ class SimulationArtifactExporter:
         artifact_type: str,
         body: str,
     ) -> None:
-        Path(path).write_text(
+        self._atomic_write_text(
+            Path(path),
             self.build_text_header_block(result, artifact_type) + (body or ""),
-            encoding="utf-8",
         )
 
     def write_csv_with_header(
@@ -444,20 +422,26 @@ class SimulationArtifactExporter:
         columns: List[str],
         rows: List[Dict[str, Any]],
     ) -> None:
-        with Path(path).open("w", newline="", encoding="utf-8") as handle:
-            handle.write(self.build_text_header_block(result, artifact_type))
-            writer = csv.writer(handle)
-            writer.writerow(columns)
-            for row in rows:
-                writer.writerow([row.get(column, "") for column in columns])
+        handle = io.StringIO(newline="")
+        handle.write(self.build_text_header_block(result, artifact_type))
+        writer = csv.writer(handle)
+        writer.writerow(columns)
+        for row in rows:
+            writer.writerow([row.get(column, "") for column in columns])
+        self._atomic_write_text(Path(path), handle.getvalue())
 
     def inject_png_linkage(self, path: str | Path, result: SimulationResult, artifact_type: str) -> bool:
         """Rewrite a PNG file in place with canonical circuit-linkage
-        tEXt chunks. Returns ``True`` if the file was touched.
+        iTXt chunks. Returns ``True`` if the file was touched.
         """
-        return inject_png_text_chunks(path, self.build_png_text_chunks(result, artifact_type))
+        return inject_png_itxt_chunks(path, self.build_png_itxt_chunks(result, artifact_type))
 
-    def export_metrics(self, export_root: Path, result: SimulationResult, metrics: List[Any]) -> List[str]:
+    def export_metrics(
+        self,
+        export_root: Path,
+        result: SimulationResult,
+        metrics: List[DisplayMetric],
+    ) -> List[str]:
         """Export the current ``DisplayMetric`` list as CSV + JSON side
         by side. Columns are restricted to fields that actually carry
         meaning to the agent / downstream pipeline. ``target`` is the
@@ -473,10 +457,13 @@ class SimulationArtifactExporter:
             "name",
             "value",
             "unit",
+            "status",
+            "error_message",
             "raw_value",
             "target",
         ]
         rows = [self._metric_to_row(metric) for metric in metrics]
+        noise_totals = build_noise_totals_payload(result)
         self.write_csv_with_header(paths.csv_path, result, CATEGORY_METRICS, columns, rows)
 
         self._write_json(paths.json_path, self.build_artifact_payload(
@@ -484,7 +471,11 @@ class SimulationArtifactExporter:
             artifact_type=CATEGORY_METRICS,
             summary={
                 "metric_count": len(rows),
+                "failed_metric_count": sum(
+                    1 for row in rows if row["status"] != "OK"
+                ),
                 "metrics_with_target": sum(1 for row in rows if row.get("target")),
+                "noise_totals_available": noise_totals["available"],
             },
             files={
                 "csv": paths.csv_path.name,
@@ -492,6 +483,7 @@ class SimulationArtifactExporter:
             data={
                 "columns": columns,
                 "rows": rows,
+                "noise_totals": noise_totals,
             },
         ))
         return [str(paths.csv_path), str(paths.json_path)]
@@ -530,6 +522,7 @@ class SimulationArtifactExporter:
         columns = [x_label, *signal_names]
         rows = self._build_snapshot_rows(snapshot)
         series = self._build_snapshot_series(snapshot)
+        noise_totals = build_noise_totals_payload(result)
 
         self.write_csv_with_header(paths.csv_path, result, CATEGORY_RAW_DATA, columns, rows)
 
@@ -540,6 +533,7 @@ class SimulationArtifactExporter:
                 "row_count": len(rows),
                 "signal_count": len(signal_names),
                 "x_axis_label": x_label,
+                "noise_totals_available": noise_totals["available"],
             },
             files={
                 "csv": paths.csv_path.name,
@@ -548,6 +542,7 @@ class SimulationArtifactExporter:
                 "columns": columns,
                 "rows": rows,
                 "series": series,
+                "noise_totals": noise_totals,
             },
         ))
         return [str(paths.csv_path), str(paths.json_path)]
@@ -560,25 +555,21 @@ class SimulationArtifactExporter:
         self.write_text_with_header(paths.text_path, result, CATEGORY_OUTPUT_LOG, raw_output)
 
         log_lines = simulation_output_reader.get_output_log_from_text(raw_output)
-        error_count = sum(1 for line in log_lines if line.is_error())
-        warning_count = sum(1 for line in log_lines if line.is_warning())
-        info_count = len(log_lines) - error_count - warning_count
-        first_error = next((line.content for line in log_lines if line.is_error()), None)
+        log_summary = simulation_output_reader.summarize_text(raw_output)
         self._write_json(paths.json_path, self.build_artifact_payload(
             result,
             CATEGORY_OUTPUT_LOG,
             summary={
-                "total_lines": len(log_lines),
-                "error_count": error_count,
-                "warning_count": warning_count,
-                "info_count": info_count,
-                "first_error": first_error,
+                "total_lines": log_summary.total_lines,
+                "error_count": log_summary.error_count,
+                "warning_count": log_summary.warning_count,
+                "info_count": log_summary.info_count,
+                "first_error": log_summary.first_error,
             },
             files={
                 "text": paths.text_path.name,
             },
             data={
-                "raw_output": raw_output,
                 "lines": [line.to_dict() for line in log_lines],
             },
         ))
@@ -611,14 +602,16 @@ class SimulationArtifactExporter:
         ))
         return [str(paths.text_path), str(paths.json_path)]
 
-    def _metric_to_row(self, metric: Any) -> Dict[str, Any]:
+    def _metric_to_row(self, metric: DisplayMetric) -> Dict[str, Any]:
         return {
-            "display_name": str(getattr(metric, "display_name", "") or ""),
-            "name": str(getattr(metric, "name", "") or ""),
-            "value": str(getattr(metric, "value", "") or ""),
-            "unit": str(getattr(metric, "unit", "") or ""),
-            "raw_value": getattr(metric, "raw_value", None),
-            "target": str(getattr(metric, "target", "") or ""),
+            "display_name": metric.display_name,
+            "name": metric.name,
+            "value": metric.value,
+            "unit": metric.unit,
+            "status": metric.status,
+            "error_message": metric.error_message,
+            "raw_value": self._finite_or_none(metric.raw_value),
+            "target": metric.target,
         }
 
     def _build_snapshot_rows(self, snapshot) -> List[Dict[str, Any]]:
@@ -627,14 +620,17 @@ class SimulationArtifactExporter:
 
         rows: List[Dict[str, Any]] = []
         for row_index in range(snapshot.total_rows):
-            row: Dict[str, Any] = {snapshot.x_label: float(snapshot.x_values[row_index])}
+            x_value = self._finite_or_none(snapshot.x_values[row_index])
+            row: Dict[str, Any] = {snapshot.x_label: x_value}
             for signal_name in snapshot.signal_names:
                 column = snapshot.signal_columns.get(signal_name)
                 if column is None or row_index >= len(column):
-                    row[signal_name] = ""
+                    row[signal_name] = None
                     continue
                 raw_value = column[row_index]
-                row[signal_name] = float(raw_value) if self._is_finite_number(raw_value) else ""
+                row[signal_name] = (
+                    float(raw_value) if self._is_finite_number(raw_value) else None
+                )
             rows.append(row)
         return rows
 
@@ -642,7 +638,7 @@ class SimulationArtifactExporter:
         if snapshot is None:
             return []
 
-        x_values = [float(value) for value in snapshot.x_values]
+        x_values = [self._finite_or_none(value) for value in snapshot.x_values]
         series: List[Dict[str, Any]] = []
         for signal_name in snapshot.signal_names:
             column = snapshot.signal_columns.get(signal_name)
@@ -676,6 +672,7 @@ class SimulationArtifactExporter:
             "requested_x_range": self._serialize_range(info.get("requested_x_range") or result.requested_x_range),
             "actual_x_range": self._serialize_range(info.get("actual_x_range") or result.actual_x_range),
             "parameters": parameters,
+            "noise_totals": build_noise_totals_payload(result),
         }
 
     def _build_analysis_info_text(self, payload: Dict[str, Any]) -> str:
@@ -694,6 +691,17 @@ class SimulationArtifactExporter:
         ]
         for key, value in (payload.get("parameters") or {}).items():
             lines.append(f"  {key}: {value}")
+        noise_totals = payload.get("noise_totals") or {}
+        if noise_totals.get("applicable"):
+            lines.extend(["", "integrated_noise_totals:"])
+            if noise_totals.get("available"):
+                for item in noise_totals.get("items") or []:
+                    unit = str(item["unit"])
+                    lines.append(
+                        f"  {item.get('key')}: {item.get('value')} {unit} RMS"
+                    )
+            else:
+                lines.append("  unavailable")
         return "\n".join(lines).strip()
 
     def _serialize_range(self, value: Any) -> List[float] | None:
@@ -712,11 +720,16 @@ class SimulationArtifactExporter:
         safe = safe.replace("/", "-").replace("\\", "-")
         safe = safe.replace("+", "_").replace("Z", "")
         safe = safe.replace(".", "_")
-        return safe or "simulation_time_unknown"
+        return self._sanitize_folder_name(safe or "simulation_time_unknown")
 
     def _sanitize_folder_name(self, value: str) -> str:
-        safe = re.sub(r'[<>:"/\\|?*]+', "_", str(value or "").strip())
+        safe = re.sub(r'[\x00-\x1f<>:"/\\|?*]+', "_", str(value or "").strip())
         safe = safe.rstrip(" .")
+        if safe.upper() in _WINDOWS_RESERVED_NAMES:
+            safe = f"_{safe}"
+        if len(safe) > _MAX_FOLDER_COMPONENT_LENGTH:
+            digest = hashlib.sha256(safe.encode("utf-8")).hexdigest()[:12]
+            safe = f"{safe[:_MAX_FOLDER_COMPONENT_LENGTH - len(digest) - 1]}_{digest}"
         return safe or DEFAULT_EXPORT_FOLDER_NAME
 
     def _ensure_unique_directory(self, path: Path) -> Path:
@@ -730,7 +743,30 @@ class SimulationArtifactExporter:
             suffix += 1
 
     def _write_json(self, path: Path, payload: Dict[str, Any]) -> None:
-        path.write_text(self.dumps_json(payload), encoding="utf-8")
+        self.write_json(path, payload)
+
+    def _atomic_write_text(self, path: Path, content: str) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, temp_name = tempfile.mkstemp(
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            dir=str(path.parent),
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
+                handle.write(content)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temp_name, path)
+        except Exception:
+            try:
+                os.unlink(temp_name)
+            except FileNotFoundError:
+                pass
+            raise
+
+    def _finite_or_none(self, value: Any) -> Optional[float]:
+        return float(value) if self._is_finite_number(value) else None
 
     def _is_finite_number(self, value: Any) -> bool:
         try:
@@ -761,7 +797,6 @@ __all__ = [
     "CATEGORY_CHARTS",
     "CATEGORY_WAVEFORMS",
     # Ordered category tuples
-    "HEADLESS_ARTIFACT_CATEGORIES",
     "DISPLAY_EXPORT_CATEGORIES",
     # Typed path bundles
     "MetricsArtifactPaths",

@@ -1,6 +1,7 @@
 * Resistor Thermal Noise
-* Simplest possible noise testbed: a single resistor's thermal
-* (Johnson) noise spectral density measured at an open node.
+* A two-resistor divider noise testbed. With the ideal AC source
+* grounding R1, the output noise comes from the parallel thermal-noise
+* contributions of R1 and R2 at the divider node.
 * The `.noise` analysis reports both input-referred and output
 * noise densities as a function of frequency.
 * Devices exercised: V (AC test source), R.

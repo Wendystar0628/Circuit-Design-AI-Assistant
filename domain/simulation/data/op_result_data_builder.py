@@ -2,9 +2,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from domain.simulation.data.op_result_payload import (
-    build_op_result_payload_from_signals,
     build_op_result_sections,
-    normalize_op_result_payload,
     render_op_result_markdown,
 )
 from domain.simulation.models.simulation_result import SimulationResult
@@ -26,7 +24,9 @@ class OpResultDataBuilder:
         assert result is not None
         return {
             "is_available": True,
-            "file_name": Path(str(result.file_path or "")).name if str(result.file_path or "") else "",
+            "file_name": Path(str(result.file_path or "")).name
+            if str(result.file_path or "")
+            else "",
             "analysis_command": str(result.analysis_command or ".op"),
             "row_count": int(payload.get("row_count", 0)),
             "section_count": int(payload.get("section_count", 0)),
@@ -47,13 +47,7 @@ class OpResultDataBuilder:
         data = result.data
         assert data is not None
 
-        payload = normalize_op_result_payload(getattr(data, "op_result", {}))
-        if int(payload.get("row_count", 0)) == 0:
-            payload = build_op_result_payload_from_signals(
-                getattr(data, "signals", {}),
-                getattr(data, "signal_types", {}),
-            )
-            data.op_result = payload
+        payload = data.op_result
         return payload if int(payload.get("row_count", 0)) > 0 else {}
 
     def is_available(self, result: Optional[SimulationResult]) -> bool:
@@ -63,7 +57,7 @@ class OpResultDataBuilder:
         return bool(
             result is not None
             and result.success
-            and getattr(result, "data", None) is not None
+            and result.data is not None
             and str(result.analysis_type or "").lower() == "op"
         )
 

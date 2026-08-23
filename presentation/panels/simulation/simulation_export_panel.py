@@ -1,6 +1,7 @@
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
+from PyQt6.QtCore import QObject
 from PyQt6.QtWidgets import (
     QFileDialog,
     QMessageBox,
@@ -8,11 +9,12 @@ from PyQt6.QtWidgets import (
 )
 
 from domain.simulation.data.op_result_data_builder import op_result_data_builder
+from domain.simulation.data.simulation_artifact_exporter import CANONICAL_RESULTS_DIR
 from domain.simulation.models.simulation_result import SimulationResult
 from presentation.panels.simulation.simulation_export_coordinator import SimulationExportCoordinator
 
 
-class SimulationExportPanel(QWidget):
+class SimulationExportPanel(QObject):
     """User-facing manual export panel.
 
     Owns **only** the user's selected output directory and selection of
@@ -23,8 +25,10 @@ class SimulationExportPanel(QWidget):
 
     def __init__(self, chart_viewer, waveform_widget, parent=None):
         super().__init__(parent)
+        self._dialog_parent = parent if isinstance(parent, QWidget) else None
         self._export_coordinator = SimulationExportCoordinator(chart_viewer, waveform_widget)
         self._result: Optional[SimulationResult] = None
+        self._project_root: Optional[Path] = None
         self._metrics: List[Any] = []
         self._manual_export_directory: Optional[Path] = None
         self._selected_type_preferences: Set[str] = set(self._export_coordinator.all_export_types())
@@ -32,6 +36,13 @@ class SimulationExportPanel(QWidget):
 
     def set_result(self, result: Optional[SimulationResult]):
         self._result = result
+
+    def set_project_root(self, project_root: str):
+        normalized = str(project_root or "").strip()
+        next_root = Path(normalized).resolve() if normalized else None
+        if next_root != self._project_root:
+            self._manual_export_directory = None
+        self._project_root = next_root
 
     def set_metrics(self, metrics: List[Any]):
         self._metrics = list(metrics)
@@ -77,21 +88,32 @@ class SimulationExportPanel(QWidget):
     def choose_export_directory(self) -> bool:
         start_directory = str(self._manual_export_directory) if self._manual_export_directory is not None else ""
         base_directory = QFileDialog.getExistingDirectory(
-            self,
+            self._dialog_parent,
             self._get_text("simulation.export.choose_directory", "选择导出根目录"),
             start_directory,
             QFileDialog.Option.ShowDirsOnly,
         )
         if not base_directory:
             return False
-        self._manual_export_directory = Path(base_directory)
+        selected_directory = Path(base_directory)
+        if not self._manual_export_directory_is_allowed(selected_directory):
+            QMessageBox.warning(
+                self._dialog_parent,
+                self._get_text("simulation.export.title", "统一数据导出"),
+                self._get_text(
+                    "simulation.export.reserved_directory",
+                    "不能将手动导出写入项目的 simulation_results 目录，请选择其他目录。",
+                ),
+            )
+            return False
+        self._manual_export_directory = selected_directory
         return True
 
     def export_selected(self):
         result = self._result
         if result is None:
             QMessageBox.warning(
-                self,
+                self._dialog_parent,
                 self._get_text("simulation.export.title", "统一数据导出"),
                 self._get_text("simulation.export.no_result", "当前没有可导出的仿真结果。"),
             )
@@ -100,7 +122,7 @@ class SimulationExportPanel(QWidget):
         selected_types = self._get_selected_types()
         if not selected_types:
             QMessageBox.warning(
-                self,
+                self._dialog_parent,
                 self._get_text("simulation.export.title", "统一数据导出"),
                 self._get_text("simulation.export.no_selection", "请至少选择一种导出内容。"),
             )
@@ -108,22 +130,43 @@ class SimulationExportPanel(QWidget):
 
         if self._manual_export_directory is None:
             QMessageBox.warning(
-                self,
+                self._dialog_parent,
                 self._get_text("simulation.export.title", "统一数据导出"),
                 self._get_text("simulation.export.no_directory", "请先选择导出目录。"),
             )
             return None
+        if not self._manual_export_directory_is_allowed(self._manual_export_directory):
+            QMessageBox.warning(
+                self._dialog_parent,
+                self._get_text("simulation.export.title", "统一数据导出"),
+                self._get_text(
+                    "simulation.export.reserved_directory",
+                    "不能将手动导出写入项目的 simulation_results 目录，请选择其他目录。",
+                ),
+            )
+            return None
 
-        execution = self._export_coordinator.export_to_base_directory(
-            str(self._manual_export_directory),
-            result,
-            selected_types,
-            self._metrics,
-        )
+        try:
+            execution = self._export_coordinator.export_to_base_directory(
+                str(self._manual_export_directory),
+                result,
+                selected_types,
+                self._metrics,
+            )
+        except Exception as exc:
+            QMessageBox.warning(
+                self._dialog_parent,
+                self._get_text("simulation.export.title", "统一数据导出"),
+                self._get_text(
+                    "simulation.export.failed",
+                    "导出失败：{message}",
+                ).format(message=str(exc)),
+            )
+            return None
 
         if execution.errors:
             QMessageBox.warning(
-                self,
+                self._dialog_parent,
                 self._get_text("simulation.export.title", "统一数据导出"),
                 self._get_text(
                     "simulation.export.partial_failed",
@@ -133,7 +176,7 @@ class SimulationExportPanel(QWidget):
             return execution
 
         QMessageBox.information(
-            self,
+            self._dialog_parent,
             self._get_text("simulation.export.title", "统一数据导出"),
             self._get_text(
                 "simulation.export.success",
@@ -172,7 +215,23 @@ class SimulationExportPanel(QWidget):
         ]
 
     def _can_export_selected(self) -> bool:
-        return self._result is not None and bool(self._get_selected_types()) and self._manual_export_directory is not None
+        return bool(
+            self._result is not None
+            and self._get_selected_types()
+            and self._manual_export_directory is not None
+            and self._manual_export_directory_is_allowed(self._manual_export_directory)
+        )
+
+    def _manual_export_directory_is_allowed(self, directory: Path) -> bool:
+        if self._project_root is None:
+            return True
+        candidate = Path(directory).resolve()
+        reserved_root = (self._project_root / CANONICAL_RESULTS_DIR).resolve()
+        try:
+            candidate.relative_to(reserved_root)
+            return False
+        except ValueError:
+            return True
 
     def _export_type_label(self, export_type: str) -> str:
         labels = {

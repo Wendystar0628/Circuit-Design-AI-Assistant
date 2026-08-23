@@ -6,6 +6,7 @@
 * Devices exercised: V, R, Q (NPN bundled 2N3904).
 
 .title NPN Pulse Switch
+.include "../../resources/models/ngspice/testcircuit_discrete.lib"
 
 * --- Supply and 5 V logic-level pulse drive ---
 Vdd vdd 0  DC 5
@@ -21,7 +22,7 @@ Q1 col base 0 2N3904
 * --- Analysis: several switching cycles ---
 .tran 50n 50u
 
-.MEASURE TRAN v_col_low  MIN V(col)
-.MEASURE TRAN v_col_high MAX V(col)
+.MEASURE TRAN v_col_low  AVG V(col) FROM=2u TO=4u
+.MEASURE TRAN v_col_high AVG V(col) FROM=7u TO=9u
 
 .end

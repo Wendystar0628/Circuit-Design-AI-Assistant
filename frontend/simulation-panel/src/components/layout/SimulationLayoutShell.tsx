@@ -21,6 +21,7 @@ interface SimulationLayoutShellProps {
   bridgeConnected: boolean
   children: ReactNode
   onTabSelect(tabId: SimulationTabId): void
+  onCancelSimulation(): void
 }
 
 export function SimulationLayoutShell({
@@ -28,6 +29,7 @@ export function SimulationLayoutShell({
   bridgeConnected,
   children,
   onTabSelect,
+  onCancelSimulation,
 }: SimulationLayoutShellProps) {
   const runtime = state.simulation_runtime
   const activeTab = state.surface_tabs.active_tab
@@ -35,9 +37,9 @@ export function SimulationLayoutShell({
   const uiText = state.ui_text
   const hasStatusMessage = Boolean(runtime.status_message)
   const hasError = Boolean(runtime.error_message)
-  const shouldShowEmptyHint = runtime.is_empty && !SELF_CONTAINED_TABS.has(activeTab)
+  const isBusy = runtime.status === 'running' || runtime.status === 'cancelling'
+  const shouldShowEmptyHint = runtime.is_empty && !isBusy && !hasStatusMessage && !hasError && !SELF_CONTAINED_TABS.has(activeTab)
   const canOpenCircuitSelection = availableTabs.includes('circuit_selection')
-  const statusToneClassName = runtime.awaiting_confirmation ? 'surface-state-card--warning' : 'surface-state-card--info'
 
   return (
     <div className="simulation-shell">
@@ -61,9 +63,21 @@ export function SimulationLayoutShell({
                     <div className="muted-text">{runtime.error_message}</div>
                   </div>
                 ) : hasStatusMessage ? (
-                  <div className={`surface-state-card ${statusToneClassName}`}>
+                  <div className="surface-state-card surface-state-card--info">
                     <div className="card-title">{getUiText(uiText, 'panel.simulation.status_title', 'Runtime Status')}</div>
                     <div className="muted-text">{runtime.status_message}</div>
+                  </div>
+                ) : null}
+                {runtime.can_cancel ? (
+                  <div className="surface-state-actions">
+                    <button
+                      type="button"
+                      className="sim-compact-button"
+                      disabled={!bridgeConnected || runtime.status === 'cancelling'}
+                      onClick={onCancelSimulation}
+                    >
+                      {getUiText(uiText, 'simulation.cancel', 'Cancel Simulation')}
+                    </button>
                   </div>
                 ) : null}
                 {shouldShowEmptyHint ? (

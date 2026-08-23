@@ -6,6 +6,7 @@
 * Devices exercised: V, I (current source), R, Q (NPN bundled 2N3904).
 
 .title BJT Current Mirror
+.include "../../resources/models/ngspice/testcircuit_discrete.lib"
 
 * --- Supply ---
 Vdd vdd 0 DC 10
@@ -13,7 +14,7 @@ Vdd vdd 0 DC 10
 * --- Reference current into the diode-connected transistor ---
 Iref vdd ref DC 1m
 
-* --- Mirror output load (Q2 sources current into Rout) ---
+* --- Mirror output load (Q2 sinks current supplied through Rout) ---
 Rout vdd mirror 5k
 
 * --- Diode-connected Q1 sets the reference VBE ---

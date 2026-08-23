@@ -10,6 +10,7 @@
 * Devices exercised: V, M (PMOS BSS84 x3 + NMOS BSS123 x3), C (x3).
 
 .title 3-Stage CMOS Ring Oscillator
+.include "../../resources/models/ngspice/testcircuit_discrete.lib"
 
 * --- Supply ---
 Vdd vdd 0 DC 5

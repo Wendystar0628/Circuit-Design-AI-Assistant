@@ -61,7 +61,9 @@ class WaveformViewportManager:
         if actual_x_data is not None:
             actual_domain = finite_range(to_view_x_data(actual_x_data))
 
-        x_domain = requested_domain or actual_domain
+        # The rendered data is authoritative.  Requested ranges may include
+        # unsupported or truncated regions and should not force a blank plot.
+        x_domain = actual_domain or requested_domain
 
         left_y_ranges = []
         right_y_ranges = []
@@ -105,6 +107,8 @@ class WaveformViewportManager:
         right_y_range: Optional[Tuple[float, float]],
         *,
         log_x_enabled: bool,
+        left_log_y_enabled: bool,
+        right_log_y_enabled: bool,
     ) -> None:
         if x_range is None:
             return
@@ -120,9 +124,17 @@ class WaveformViewportManager:
             applied_right_y = right_y_range or base_y_range
             right_vb.setYRange(applied_right_y[0], applied_right_y[1], padding=0.0)
         apply_dynamic_tick_spacing(plot_item.getAxis('bottom'), x_range, log_enabled=log_x_enabled)
-        apply_dynamic_tick_spacing(plot_item.getAxis('left'), base_y_range, log_enabled=False)
+        apply_dynamic_tick_spacing(
+            plot_item.getAxis('left'),
+            base_y_range,
+            log_enabled=left_log_y_enabled,
+        )
         if right_vb is not None:
-            apply_dynamic_tick_spacing(plot_item.getAxis('right'), right_y_range or base_y_range, log_enabled=False)
+            apply_dynamic_tick_spacing(
+                plot_item.getAxis('right'),
+                right_y_range or base_y_range,
+                log_enabled=right_log_y_enabled,
+            )
 
     def reload_viewport_data(
         self,

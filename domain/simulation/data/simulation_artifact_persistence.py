@@ -1,262 +1,255 @@
-"""Headless simulation artifact persistence.
+"""Atomically persist the one authoritative simulation result document.
 
-This service owns the **disk side-effect** of every simulation, no
-matter who triggered it. It takes a fully-populated
-``SimulationResult`` plus the project root, resolves the canonical
-bundle location (``<project_root>/simulation_results/<stem>/<ts>/``),
-and writes the ``result.json`` root plus every headless artifact
-category (see ``HEADLESS_ARTIFACT_CATEGORIES`` in
-``simulation_artifact_exporter``) and a bundle-root
-``export_manifest.json`` summary.
-
-Concrete file layout — including per-category filenames — is owned
-by ``simulation_artifact_exporter`` (Step 15 canonical layout schema);
-this service only decides **which** categories to emit and **in what
-order**. It never constructs artifact paths itself.
-
-UI chart/waveform PNG rendering is intentionally **not** performed
-here — that still runs in the display layer because it needs the
-user's current viewport / signal-visibility state. Agents that want
-waveform or chart files invoke dedicated read tools which render
-matplotlib PNGs on demand; those tools reuse the same bundle directory
-so nothing moves around.
-
-The service is deliberately free of Qt, EventBus, and ServiceLocator
-dependencies: every input flows through function arguments so the
-same call site is exercised by the UI's simulation pipeline, the
-agent's job manager, and standalone unit tests.
+A committed bundle contains exactly ``result.json``.  Metrics, logs, raw-data
+tables, OP reports and images are views derived from that document and are
+created only by the manual exporter or in the bundle-external attachment cache.
+Keeping the committed bundle this small removes duplicate authorities and makes
+the directory rename below a real all-or-nothing publication boundary.
 """
 
 from __future__ import annotations
 
-import logging
-from dataclasses import dataclass, field
+import json
+import errno
+import os
+import shutil
+import tempfile
+from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Dict, List, Mapping, Optional, Sequence
 
-from domain.simulation.data.op_result_data_builder import op_result_data_builder
 from domain.simulation.data.simulation_artifact_exporter import (
-    ARTIFACT_TYPE_EXPORT_MANIFEST,
-    CATEGORY_ANALYSIS_INFO,
-    CATEGORY_METRICS,
-    CATEGORY_OP_RESULT,
-    CATEGORY_OUTPUT_LOG,
-    CATEGORY_RAW_DATA,
-    HEADLESS_ARTIFACT_CATEGORIES,
+    CANONICAL_RESULTS_DIR,
     RESULT_JSON_FILENAME,
     simulation_artifact_exporter,
 )
-from domain.simulation.models.display_metric import DisplayMetric
+from domain.simulation.models.simulation_error import SimulationError
 from domain.simulation.models.simulation_result import SimulationResult
-from domain.simulation.service.display_metric_builder import display_metric_builder
-from domain.simulation.service.simulation_result_repository import (
-    simulation_result_repository,
-)
 
 
-_LOGGER = logging.getLogger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# Artifact categories
-# ---------------------------------------------------------------------------
-#
-# Write order: ``HEADLESS_ARTIFACT_CATEGORIES`` declared by the
-# exporter is the single source of truth. ``op_result`` is conditional
-# on ``op_result_data_builder.is_available(result)``. Exposed as
-# ``ARTIFACT_CATEGORY_ORDER`` purely for the (unchanged) public
-# ``__all__`` contract of this module.
-
-ARTIFACT_CATEGORY_ORDER = HEADLESS_ARTIFACT_CATEGORIES
+def _reject_nonstandard_json_constant(token: str) -> None:
+    raise ValueError(f"Non-standard JSON numeric constant is forbidden: {token}")
 
 
 @dataclass
 class BundlePersistenceResult:
-    """Outcome of a single ``persist_bundle`` call."""
+    """Published bundle identity returned after the atomic rename."""
 
     export_root: Path
-    """Resolved bundle directory (``simulation_results/<stem>/<ts>/``)."""
-
     result_path: str
-    """``result.json`` path, POSIX, relative to ``project_root``."""
-
-    written_files: List[str] = field(default_factory=list)
-    """All successfully-written file paths (absolute)."""
-
-    category_files: Dict[str, List[str]] = field(default_factory=dict)
-    """Per-category mapping of written files (relative to export_root)."""
-
-    errors: List[Dict[str, str]] = field(default_factory=list)
-    """Per-category failures; empty when everything succeeded."""
-
-    @property
-    def success(self) -> bool:
-        return not self.errors
 
 
 class SimulationArtifactPersistence:
-    """Write the full bundle for a simulation result in one call."""
+    """Publish one portable ``result.json`` in a new immutable bundle."""
 
     def persist_bundle(
         self,
         project_root: str,
         result: SimulationResult,
-        metric_targets: Optional[Mapping[str, str]] = None,
     ) -> BundlePersistenceResult:
-        """Create the bundle directory and flush every pure-data artifact.
+        project = self._require_project_root(project_root)
+        persisted_result = self._build_persisted_result(project, result)
+        final_hint = simulation_artifact_exporter.build_project_export_root(
+            project,
+            persisted_result,
+        )
+        staging_root = self._create_staging_root(project, final_hint.name)
+        committed_root: Path | None = None
 
-        Args:
-            project_root: Absolute project directory.
-            result: Fully-populated simulation result.
-            metric_targets: ``{metric_name: target_text}`` map. The UI
-                caller passes ``MetricTargetService.get_targets_for_file``;
-                headless callers (agent job manager) pass ``{}``.
+        try:
+            simulation_artifact_exporter.write_json(
+                simulation_artifact_exporter.result_json_path(staging_root),
+                persisted_result.to_dict(),
+            )
+            self._validate_staged_bundle(staging_root)
+            committed_root = self._commit_staged_bundle(
+                project,
+                persisted_result,
+                staging_root,
+            )
+            result_path = (
+                simulation_artifact_exporter.result_json_path(committed_root)
+                .relative_to(project)
+                .as_posix()
+            )
+        except Exception:
+            if staging_root.exists():
+                shutil.rmtree(staging_root, ignore_errors=True)
+            self._remove_empty_staging_parent(staging_root.parent)
+            if committed_root is not None:
+                self._remove_failed_commit(project, committed_root)
+            raise
+
+        return BundlePersistenceResult(
+            export_root=committed_root,
+            result_path=result_path,
+        )
+
+    def _build_persisted_result(
+        self,
+        project_root: Path,
+        result: SimulationResult,
+    ) -> SimulationResult:
+        """Build and strictly validate the sole portable disk representation.
+
+        Request identity belongs to ``SimulationService``.  This persistence
+        boundary alone translates an already-approved result into canonical
+        project-relative paths, then performs the same strict round-trip used
+        by repository reads before any staging/results directory is created.
         """
-        if not project_root:
-            raise ValueError("project_root is required for bundle persistence")
-
-        export_root = simulation_artifact_exporter.build_project_export_root(
-            project_root, result
+        if not isinstance(result, SimulationResult):
+            raise TypeError("result must be a SimulationResult")
+        raw_file = Path(str(result.file_path or "").replace("\\", "/"))
+        resolved_file = (
+            raw_file.resolve(strict=False)
+            if raw_file.is_absolute()
+            else (project_root / raw_file).resolve(strict=False)
         )
-        export_root.mkdir(parents=True, exist_ok=True)
+        try:
+            portable_file_path = resolved_file.relative_to(project_root).as_posix()
+        except ValueError as exc:
+            raise ValueError(
+                "Simulation artifacts cannot reference a circuit outside the current project"
+            ) from exc
 
-        result_rel_path = simulation_result_repository.save(
-            project_root=project_root,
-            result=result,
-            export_root=export_root,
-        )
-        result_abs_path = simulation_artifact_exporter.result_json_path(export_root)
-
-        outcome = BundlePersistenceResult(
-            export_root=export_root,
-            result_path=result_rel_path,
-            written_files=[str(result_abs_path)],
-            category_files={RESULT_JSON_FILENAME: [RESULT_JSON_FILENAME]},
-        )
-
-        metrics = self._build_display_metrics(result, metric_targets)
-
-        for category in ARTIFACT_CATEGORY_ORDER:
-            if category == CATEGORY_OP_RESULT and not op_result_data_builder.is_available(result):
-                continue
-            try:
-                files = self._export_category(export_root, result, category, metrics)
-            except Exception as exc:  # pragma: no cover - defensive
-                _LOGGER.warning(
-                    "Bundle category '%s' failed to persist: %s", category, exc
+        persisted_error = result.error
+        if isinstance(persisted_error, SimulationError):
+            if persisted_error.file_path is not None:
+                raw_error_file = Path(
+                    str(persisted_error.file_path).replace("\\", "/")
                 )
-                outcome.errors.append({"artifact_type": category, "message": str(exc)})
-                continue
-            outcome.written_files.extend(files)
-            outcome.category_files[category] = self._as_relative(export_root, files)
-
-        manifest_path = self._write_manifest(export_root, result, outcome)
-        outcome.written_files.append(str(manifest_path))
-        outcome.category_files[ARTIFACT_TYPE_EXPORT_MANIFEST] = [manifest_path.name]
-
-        return outcome
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
-    def _build_display_metrics(
-        self,
-        result: SimulationResult,
-        metric_targets: Optional[Mapping[str, str]],
-    ) -> List[DisplayMetric]:
-        return display_metric_builder.build(result, metric_targets or {})
-
-    def _export_category(
-        self,
-        export_root: Path,
-        result: SimulationResult,
-        category: str,
-        metrics: Sequence[DisplayMetric],
-    ) -> List[str]:
-        """Dispatch one category to its exporter method.
-
-        Every entry in the dispatch table below uses the same
-        ``(export_root, result, metrics)`` signature so there is no
-        ``kind: str`` polymorphism — the category string is used once,
-        as a dict key, and never again. Adding a category is an entry
-        in the table plus a helper in ``simulation_artifact_exporter``.
-        """
-        runner = self._CATEGORY_RUNNERS.get(category)
-        if runner is None:
-            raise ValueError(f"Unknown artifact category: {category}")
-        return runner(export_root, result, metrics)
-
-    # Dispatch table: each runner accepts ``(export_root, result,
-    # metrics)`` and returns the list of written file paths. Runners
-    # that do not consume ``metrics`` simply ignore the argument — the
-    # uniform signature is what lets us avoid kind-string branching.
-    _CATEGORY_RUNNERS = {
-        CATEGORY_METRICS:       lambda root, result, metrics:
-            simulation_artifact_exporter.export_metrics(root, result, list(metrics)),
-        CATEGORY_ANALYSIS_INFO: lambda root, result, metrics:
-            simulation_artifact_exporter.export_analysis_info(root, result),
-        CATEGORY_RAW_DATA:      lambda root, result, metrics:
-            simulation_artifact_exporter.export_raw_data(root, result),
-        CATEGORY_OUTPUT_LOG:    lambda root, result, metrics:
-            simulation_artifact_exporter.export_output_log(root, result),
-        CATEGORY_OP_RESULT:     lambda root, result, metrics:
-            simulation_artifact_exporter.export_op_result(root, result),
-    }
-
-    def _write_manifest(
-        self,
-        export_root: Path,
-        result: SimulationResult,
-        outcome: BundlePersistenceResult,
-    ) -> Path:
-        manifest_path = simulation_artifact_exporter.export_manifest_path(export_root)
-        persisted_categories = [
-            category
-            for category in (RESULT_JSON_FILENAME, *ARTIFACT_CATEGORY_ORDER)
-            if category in outcome.category_files
-        ]
-        payload = simulation_artifact_exporter.build_artifact_payload(
-            result,
-            ARTIFACT_TYPE_EXPORT_MANIFEST,
-            summary={
-                "category_count": len(persisted_categories),
-                "exported_file_count": len(outcome.written_files) + 1,
-                "error_count": len(outcome.errors),
-            },
-            files={
-                "categories": {
-                    category: outcome.category_files.get(category, [])
-                    for category in persisted_categories
-                },
-                "manifest": manifest_path.name,
-            },
-            data={
-                "persisted_categories": persisted_categories,
-                "exported_files": self._as_relative(
-                    export_root, [*outcome.written_files, str(manifest_path)]
+                resolved_error_file = (
+                    raw_error_file.resolve(strict=False)
+                    if raw_error_file.is_absolute()
+                    else (project_root / raw_error_file).resolve(strict=False)
+                )
+                if os.path.normcase(str(resolved_error_file)) != os.path.normcase(
+                    str(resolved_file)
+                ):
+                    raise ValueError(
+                        "Simulation error circuit identity must match its result"
+                    )
+            persisted_error = replace(
+                persisted_error,
+                file_path=(
+                    portable_file_path
+                    if persisted_error.file_path is not None
+                    else None
                 ),
-                "errors": outcome.errors,
-            },
-        )
-        manifest_path.write_text(
-            simulation_artifact_exporter.dumps_json(payload),
-            encoding="utf-8",
-        )
-        return manifest_path
+            )
 
-    def _as_relative(self, export_root: Path, file_paths: Sequence[str]) -> List[str]:
-        root = export_root.resolve()
-        relative: List[str] = []
-        for file_path in file_paths:
-            path = Path(file_path)
+        portable_result = replace(
+            result,
+            file_path=portable_file_path,
+            error=persisted_error,
+        )
+        return SimulationResult.from_dict(portable_result.to_dict())
+
+    def _validate_staged_bundle(self, staging_root: Path) -> None:
+        expected_file = simulation_artifact_exporter.result_json_path(staging_root)
+        files = {
+            path.relative_to(staging_root).as_posix()
+            for path in staging_root.rglob("*")
+            if path.is_file()
+        }
+        if files != {RESULT_JSON_FILENAME} or not expected_file.is_file():
+            raise RuntimeError(
+                f"Staged simulation bundle must contain only {RESULT_JSON_FILENAME}"
+            )
+        try:
+            payload = json.loads(
+                expected_file.read_text(encoding="utf-8"),
+                parse_constant=_reject_nonstandard_json_constant,
+            )
+            SimulationResult.from_dict(payload)
+        except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
+            raise RuntimeError("Staged result.json failed strict validation") from exc
+
+    def _commit_staged_bundle(
+        self,
+        project_root: Path,
+        result: SimulationResult,
+        staging_root: Path,
+    ) -> Path:
+        """Atomically publish a complete directory, retrying name collisions."""
+        while True:
+            destination = simulation_artifact_exporter.build_project_export_root(
+                project_root,
+                result,
+            )
+            self._ensure_safe_destination_parent(project_root, destination.parent)
             try:
-                relative.append(
-                    path.resolve().relative_to(root).as_posix()
-                )
-            except Exception:
-                relative.append(path.name)
-        return relative
+                staging_root.rename(destination)
+                self._remove_empty_staging_parent(staging_root.parent)
+                return destination
+            except OSError as exc:
+                if exc.errno in {errno.EEXIST, errno.ENOTEMPTY}:
+                    continue
+                raise
+
+    def _create_staging_root(self, project_root: Path, run_name: str) -> Path:
+        results_root = project_root / CANONICAL_RESULTS_DIR
+        results_root.mkdir(parents=True, exist_ok=True)
+        if self._is_reparse_point(results_root):
+            raise ValueError("simulation_results must not be a symlink or junction")
+        staging_parent = results_root / ".__bundle_tmp__"
+        staging_parent.mkdir(exist_ok=True)
+        if self._is_reparse_point(staging_parent):
+            raise ValueError(
+                "simulation bundle staging directory must not be a symlink or junction"
+            )
+        return Path(tempfile.mkdtemp(prefix=f"{run_name}-", dir=str(staging_parent)))
+
+    def _ensure_safe_destination_parent(
+        self,
+        project_root: Path,
+        parent: Path,
+    ) -> None:
+        results_root = (project_root / CANONICAL_RESULTS_DIR).resolve(strict=False)
+        if parent.exists() and self._is_reparse_point(parent):
+            raise ValueError("simulation bundle destination must not be a symlink or junction")
+        parent.mkdir(parents=True, exist_ok=True)
+        if self._is_reparse_point(parent):
+            raise ValueError("simulation bundle destination must not be a symlink or junction")
+        try:
+            parent.resolve(strict=False).relative_to(results_root)
+        except ValueError as exc:
+            raise ValueError("simulation bundle destination escaped the project") from exc
+
+    def _remove_failed_commit(self, project_root: Path, bundle_root: Path) -> None:
+        """Remove only the exact directory this transaction just published."""
+        results_root = (project_root / CANONICAL_RESULTS_DIR).resolve(strict=False)
+        try:
+            relative = bundle_root.resolve(strict=False).relative_to(results_root)
+        except ValueError:
+            return
+        if len(relative.parts) < 2 or self._is_reparse_point(bundle_root):
+            return
+        shutil.rmtree(bundle_root, ignore_errors=True)
+
+    def _require_project_root(self, project_root: str) -> Path:
+        if not isinstance(project_root, str) or not project_root.strip():
+            raise ValueError("project_root is required for bundle persistence")
+        raw_root = Path(project_root)
+        if not raw_root.is_absolute():
+            raise ValueError("project_root must be an absolute path")
+        if not raw_root.is_dir():
+            raise ValueError("project_root must be an existing directory")
+        if self._is_reparse_point(raw_root):
+            raise ValueError("project_root must not be a symlink or junction")
+        return raw_root.resolve(strict=True)
+
+    @staticmethod
+    def _is_reparse_point(path: Path) -> bool:
+        return path.is_symlink() or bool(
+            getattr(os.path, "isjunction", lambda _path: False)(path)
+        )
+
+    @staticmethod
+    def _remove_empty_staging_parent(path: Path) -> None:
+        try:
+            path.rmdir()
+        except OSError:
+            pass
 
 
 simulation_artifact_persistence = SimulationArtifactPersistence()
@@ -266,5 +259,4 @@ __all__ = [
     "SimulationArtifactPersistence",
     "simulation_artifact_persistence",
     "BundlePersistenceResult",
-    "ARTIFACT_CATEGORY_ORDER",
 ]

@@ -6,17 +6,18 @@
 * Devices exercised: V, R, J (NJF bundled 2N3819, x2).
 
 .title NJF Cascode Operating Point
+.include "../../../resources/models/ngspice/testcircuit_discrete.lib"
 
 * --- Supply ---
 Vdd vdd 0 DC 15
 
-* --- Gate bias divider: G2 mid-rail, G1 at ground via self-bias Rs ---
+* --- Gate bias divider: G2 keeps the upper gate reverse-biased ---
 Rg1 0 g1 1Meg
-Rg2 vdd g2 22k
-Rg3 g2  0 47k
+Rg2 vdd g2 47k
+Rg3 g2  0 12k
 
 * --- Load at the very top of the cascode ---
-Rd vdd drain_top 4.7k
+Rd vdd drain_top 3.3k
 
 * --- Source self-bias on J1 ---
 Rs src 0 680

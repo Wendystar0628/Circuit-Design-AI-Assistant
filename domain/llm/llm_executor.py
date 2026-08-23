@@ -495,8 +495,10 @@ class LLMExecutor(QObject):
         except Exception as e:
             logging.getLogger(__name__).warning(f"Failed to get project root: {e}")
 
-        import os
-        return os.getcwd()
+        # Tools that mutate or inspect project-scoped data must fail closed
+        # when no project is open.  Treating the process cwd as a project made
+        # run_simulation and result readers operate on an unrelated checkout.
+        return ""
 
     def _get_rag_query_service(self):
         try:
@@ -526,24 +528,18 @@ class LLMExecutor(QObject):
             return None
 
     def _get_sim_result_repository(self):
-        """从 ServiceLocator 取 SimulationResultRepository 注入给 ToolContext。
+        """Inject the stateless result repository into ``ToolContext``.
 
-        read_metrics / read_output_log / read_op_result / read_chart_image
-        共用的 read 基座通过 context 使用此仓储完成 ``circuit_file``/
-        ``result_path`` → ``SimulationResult`` → bundle 目录的解析链；
-        tool 内部禁止再走 ServiceLocator 或 import 模块级单例。
+        The repository has no lifecycle or mutable runtime state, so a second
+        ServiceLocator entry only created two misleading access paths.  Tools
+        still receive it explicitly through their context and remain easy to
+        replace in tests.
         """
-        try:
-            from shared.service_locator import ServiceLocator
-            from shared.service_names import SVC_SIMULATION_RESULT_REPOSITORY
+        from domain.simulation.service.simulation_result_repository import (
+            simulation_result_repository,
+        )
 
-            return ServiceLocator.get_optional(SVC_SIMULATION_RESULT_REPOSITORY)
-        except Exception as e:
-            if self.logger:
-                self.logger.debug(
-                    f"Failed to get simulation result repository: {e}"
-                )
-            return None
+        return simulation_result_repository
 
     def _get_pending_workspace_edit_service(self):
         """从 ServiceLocator 取 PendingWorkspaceEditService 注入给 ToolContext。

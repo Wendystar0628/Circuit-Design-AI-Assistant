@@ -13,10 +13,8 @@
 
 from .ngspice_config import (
     configure_ngspice,
-    get_ngspice_path,
     is_ngspice_available,
     get_configuration_error,
-    get_ngspice_info,
 )
 
 from .model_config import (
@@ -64,10 +62,8 @@ from .web_search_tool import (
 __all__ = [
     # ngspice 配置
     "configure_ngspice",
-    "get_ngspice_path",
     "is_ngspice_available",
     "get_configuration_error",
-    "get_ngspice_info",
     # AI 模型配置
     "configure_models",
     "get_embedding_model_path",

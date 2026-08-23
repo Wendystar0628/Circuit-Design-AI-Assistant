@@ -12,15 +12,27 @@ from PyQt6.QtWidgets import (
 )
 
 from domain.simulation.data.simulation_artifact_exporter import simulation_artifact_exporter
+from domain.simulation.data.downsampler import align_xy
+from domain.simulation.data.signal_semantics import (
+    insert_nested_dc_breaks,
+    parse_nested_dc_sweep,
+)
 from domain.simulation.data.waveform_data_service import WaveformDataService
 from domain.simulation.models.chart_type import ChartType
 from domain.simulation.models.simulation_result import SimulationResult
 from presentation.panels.simulation.bode_overlay_chart_page import BodeOverlayChartPage
 from presentation.panels.simulation.chart_axis_planner import apply_axis_plan, build_chart_axis_plan
-from presentation.panels.simulation.chart_export_utils import write_chart_csv
+from presentation.panels.simulation.chart_export_utils import (
+    enrich_chart_export_with_nested_dc,
+    write_chart_csv,
+)
 from presentation.panels.simulation.chart_page_widget import ChartPage
 from presentation.panels.simulation.chart_view_types import ChartSeries, ChartSpec
-from presentation.panels.simulation.ltspice_plot_interaction import finite_range
+from presentation.panels.simulation.ltspice_plot_interaction import (
+    finite_range,
+    to_axis_values,
+    unwrap_phase_degrees,
+)
 from resources.theme import (
     COLOR_BG_SECONDARY,
     COLOR_TEXT_SECONDARY,
@@ -168,6 +180,7 @@ class ChartViewer(QWidget):
         chart_payload = page.build_export_payload()
         if chart_payload is None:
             return []
+        enrich_chart_export_with_nested_dc(chart_payload, self._result)
 
         chart_index = 1
         # Chart-entry filenames (``{idx:02d}_{chart_type}.{png,csv,json}``)
@@ -400,7 +413,7 @@ class ChartViewer(QWidget):
             if x_data is None:
                 return None
             series = self._build_bode_overlay_series(result, x_data)
-            return ChartSpec(chart_type, "Bode Overlay", resolved_x_label, "Magnitude (dB)", series, log_x=resolved_log_x, x_domain=resolved_x_domain, secondary_y_label="Phase (°)")
+            return ChartSpec(chart_type, "AC Magnitude & Phase", resolved_x_label, "Magnitude (dB re 1 unit)", series, log_x=resolved_log_x, x_domain=resolved_x_domain, secondary_y_label="Phase (°)")
 
         if chart_type == ChartType.DC_SWEEP and analysis == "dc":
             x_data = resolved_x_data
@@ -424,29 +437,15 @@ class ChartViewer(QWidget):
         x_data: Optional[np.ndarray],
         log_enabled: bool,
     ) -> Optional[Tuple[float, float]]:
+        if x_data is not None:
+            actual_domain = finite_range(to_axis_values(x_data, log_enabled=log_enabled))
+            if actual_domain is not None:
+                return actual_domain
+
         requested_range = result.requested_x_range
-        if requested_range is not None:
-            requested_array = np.asarray(requested_range, dtype=float)
-            if log_enabled:
-                transformed = np.full(requested_array.shape, np.nan, dtype=float)
-                mask = np.isfinite(requested_array) & (requested_array > 0)
-                transformed[mask] = np.log10(requested_array[mask])
-                requested_domain = finite_range(transformed)
-            else:
-                requested_domain = finite_range(requested_array)
-            if requested_domain is not None:
-                return requested_domain
-
-        if x_data is None:
+        if requested_range is None:
             return None
-
-        if log_enabled:
-            transformed = np.full(x_data.shape, np.nan, dtype=float)
-            mask = np.isfinite(x_data) & (x_data > 0)
-            transformed[mask] = np.log10(x_data[mask])
-            return finite_range(transformed)
-
-        return finite_range(np.asarray(x_data, dtype=float))
+        return finite_range(to_axis_values(requested_range, log_enabled=log_enabled))
 
     def _build_real_signal_series(
         self,
@@ -460,13 +459,25 @@ class ChartViewer(QWidget):
         series: List[ChartSeries] = []
         for index, signal_name in enumerate(self._get_base_signal_names(result)):
             y_data = data.get_signal(signal_name)
-            if y_data is None or np.iscomplexobj(y_data) or len(y_data) != len(x_data):
+            if y_data is None or np.iscomplexobj(y_data):
+                continue
+            x_series, y_series = align_xy(x_data, y_data)
+            nested_sweep = parse_nested_dc_sweep(result.analysis_type, result.analysis_command)
+            if nested_sweep is not None:
+                x_series, y_series = insert_nested_dc_breaks(
+                    x_series,
+                    y_series,
+                    nested_sweep,
+                )
+            invalid_x = ~np.isfinite(x_series)
+            y_series[invalid_x] = np.nan
+            if len(x_series) == 0 or not np.any(np.isfinite(x_series) & np.isfinite(y_series)):
                 continue
             series.append(
                 ChartSeries(
                     name=signal_name,
-                    x_data=np.asarray(x_data, dtype=float),
-                    y_data=np.asarray(y_data, dtype=float),
+                    x_data=x_series,
+                    y_data=y_series,
                     color=SERIES_COLORS[index % len(SERIES_COLORS)],
                     axis_family=self._resolve_real_signal_axis_family(result, signal_name, analysis),
                 )
@@ -483,21 +494,45 @@ class ChartViewer(QWidget):
             return []
         series: List[ChartSeries] = []
         color_index = 0
+        signal_types = getattr(data, "signal_types", {})
         for signal_name in self._get_base_signal_names(result):
             raw_signal = data.get_signal(signal_name)
             if raw_signal is None or not np.iscomplexobj(raw_signal):
                 continue
-
-            magnitude_data = 20 * np.log10(np.maximum(np.abs(raw_signal), 1e-30))
-            phase_data = np.degrees(np.angle(raw_signal))
-
-            if len(magnitude_data) != len(x_data) or len(phase_data) != len(x_data):
+            signal_type = WaveformDataService.get_signal_type(signal_name, signal_types)
+            if signal_type not in {"voltage", "current"}:
                 continue
+
+            complex_values = np.asarray(raw_signal, dtype=np.complex128)
+            x_values = np.asarray(x_data, dtype=float)
+            point_count = min(len(x_values), len(complex_values))
+            x_values = x_values[:point_count]
+            complex_values = complex_values[:point_count]
+            if len(x_values) == 0:
+                continue
+            finite_complex = (
+                np.isfinite(x_values)
+                & np.isfinite(np.real(complex_values))
+                & np.isfinite(np.imag(complex_values))
+            )
+            if not np.any(finite_complex):
+                continue
+            absolute = np.full(len(complex_values), np.nan, dtype=float)
+            absolute[finite_complex] = np.abs(complex_values[finite_complex])
+            with np.errstate(divide="ignore", invalid="ignore"):
+                magnitude_data = 20.0 * np.log10(absolute)
+            magnitude_data[~np.isfinite(magnitude_data)] = np.nan
+            if not np.any(np.isfinite(magnitude_data)):
+                continue
+            phase_data = np.full(len(complex_values), np.nan, dtype=float)
+            defined_phase = finite_complex & (absolute > 0)
+            phase_data[defined_phase] = np.angle(complex_values[defined_phase], deg=True)
+            phase_data = unwrap_phase_degrees(phase_data)
             color = SERIES_COLORS[color_index % len(SERIES_COLORS)]
             series.append(
                 ChartSeries(
                     name=f"{signal_name} | Mag",
-                    x_data=np.asarray(x_data, dtype=float),
+                    x_data=x_values,
                     y_data=np.asarray(magnitude_data, dtype=float),
                     color=color,
                     axis_key="left",
@@ -510,7 +545,7 @@ class ChartViewer(QWidget):
             series.append(
                 ChartSeries(
                     name=f"{signal_name} | Phase",
-                    x_data=np.asarray(x_data, dtype=float),
+                    x_data=x_values,
                     y_data=np.asarray(phase_data, dtype=float),
                     color=color,
                     axis_key="right",
@@ -533,14 +568,17 @@ class ChartViewer(QWidget):
             signal = data.get_signal(signal_name)
             if signal is None:
                 continue
-            y_data = np.abs(signal) if np.iscomplexobj(signal) else np.asarray(signal, dtype=float)
-            if len(y_data) != len(x_data):
+            raw_y = np.abs(signal) if np.iscomplexobj(signal) else np.asarray(signal, dtype=float)
+            x_series, y_data = align_xy(x_data, raw_y)
+            if len(x_series) == 0:
                 continue
-            y_data = np.maximum(np.asarray(y_data, dtype=float), 1e-30)
+            y_data[~np.isfinite(x_series) | ~np.isfinite(y_data) | (y_data <= 0)] = np.nan
+            if not np.any(np.isfinite(x_series) & np.isfinite(y_data)):
+                continue
             series.append(
                 ChartSeries(
                     name=signal_name,
-                    x_data=np.asarray(x_data, dtype=float),
+                    x_data=x_series,
                     y_data=y_data,
                     color=SERIES_COLORS[color_index % len(SERIES_COLORS)],
                     axis_family=self._resolve_real_signal_axis_family(result, signal_name, "noise"),

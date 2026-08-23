@@ -6,13 +6,14 @@
 * Devices exercised: V, R, C, M (PMOS bundled BSS84).
 
 .title PMOS Common-Source AC Response
+.include "../../resources/models/ngspice/testcircuit_discrete.lib"
 
 * --- Negative supply and AC test source ---
 Vss vss 0 DC -5
 Vin in  0 AC 1
 
 * --- Gate DC bias network (forms a divider from Vss to ground) ---
-Rg1 vss gate 1Meg
+Rg1 vss gate 1.43Meg
 Rg2 gate 0   1Meg
 
 * --- Drain load resistor on the -5 V rail ---

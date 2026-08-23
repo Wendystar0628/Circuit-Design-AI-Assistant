@@ -5,6 +5,7 @@
 * Devices exercised: V, D (bundled 1N4148), R, C.
 
 .title Diode Half-Wave Rectifier
+.include "../../resources/models/ngspice/testcircuit_discrete.lib"
 
 * --- AC line source, 50 Hz, 5 Vpk ---
 Vac ac_in 0 SIN(0 5 50)

@@ -1,14 +1,12 @@
-"""DisplayMetric — the authoritative presentation-layer metric row.
+"""DisplayMetric — the shared formatted metric row.
 
-Lives in the domain layer so headless pipelines (artifact persistence,
-agent tools) can build metric rows without importing UI code. The UI
-view-model re-exports this dataclass unchanged.
+The UI, root-backed agent reader and manual exporter build this type without
+depending on presentation widgets.
 
 Each row is a fully-formatted value string, not raw numbers, so the
-same objects flow into the frontend table, the conversation attachment
-panel, and the ``metrics.csv`` / ``metrics.json`` artifacts. Any
-additional derivations (scoring, diff against goals) must stay off
-this type — keep it as a thin display record.
+same objects can flow into the frontend table, temporary conversation
+attachments and user-requested exports. Keep scoring and target evaluation off
+this thin display record.
 """
 
 from __future__ import annotations
@@ -21,8 +19,7 @@ from typing import Optional
 class DisplayMetric:
     """UI-friendly representation of a ``.MEASURE`` result.
 
-    Fields are intentionally narrowed to the columns genuinely consumed
-    by downstream (frontend table, JSON export, agent attachment).
+    Fields match the frontend, agent readout and manual export columns.
     """
 
     name: str
@@ -32,10 +29,16 @@ class DisplayMetric:
     """Localised display name."""
 
     value: str
-    """Formatted numeric string (e.g. ``"20.5 dB"``)."""
+    """Formatted numeric string, or empty when ``status`` is not ``OK``."""
 
     unit: str
     """Unit symbol (``dB`` / ``Hz`` / ``V`` / ...)."""
+
+    status: str
+    """Authoritative measurement outcome (``OK`` / ``FAILED`` / ``PARSE_ERROR``)."""
+
+    error_message: str
+    """ngspice or parser failure reason. Empty only for a successful row."""
 
     raw_value: Optional[float] = None
     """Raw numeric value for downstream arithmetic."""

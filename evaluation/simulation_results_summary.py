@@ -12,12 +12,13 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-from evaluation.results_eval_utils import (
+from domain.simulation.data.simulation_output_reader import simulation_output_reader  # noqa: E402
+from domain.simulation.measure.measure_result import MeasureStatus  # noqa: E402
+from evaluation.results_eval_utils import (  # noqa: E402
     count_signal_entries,
     count_x_axis_points,
     describe_numeric,
-    load_json,
-    metric_rows_to_dict,
+    load_simulation_result,
     normalize_for_csv,
     write_csv,
     write_json,
@@ -26,60 +27,44 @@ from evaluation.results_eval_utils import (
 logger = logging.getLogger("evaluation.simulation_results_summary")
 
 
-def _safe_load_json(path: Path) -> Dict[str, Any]:
-    if not path.is_file():
-        return {}
-    try:
-        return load_json(path)
-    except Exception as exc:
-        logger.warning("Failed to read %s: %s", path, exc)
-        return {}
-
-
 def _summarize_bundle(result_json_path: Path, results_root: Path) -> Dict[str, Any]:
     bundle_dir = result_json_path.parent
-    result_payload = _safe_load_json(result_json_path)
-    manifest_payload = _safe_load_json(bundle_dir / "export_manifest.json")
-    analysis_payload = _safe_load_json(bundle_dir / "analysis_info" / "analysis_info.json")
-    metrics_payload = _safe_load_json(bundle_dir / "metrics" / "metrics.json")
-    output_log_payload = _safe_load_json(bundle_dir / "output_log" / "output_log.json")
-
-    result_data = result_payload.get("data") or {}
-    result_meta = analysis_payload.get("metadata") or {}
-    output_summary = output_log_payload.get("summary") or {}
-    manifest_summary = manifest_payload.get("summary") or {}
-    metric_rows = ((metrics_payload.get("data") or {}).get("rows") or [])
-
-    circuit_name = str(result_meta.get("file_name") or Path(result_payload.get("file_path") or "").name or bundle_dir.parent.name)
+    result = load_simulation_result(result_json_path)
+    metric_values = {
+        measurement.name: float(measurement.value)
+        for measurement in (result.measurements or [])
+        if measurement.status is MeasureStatus.OK
+        and measurement.is_valid
+        and measurement.value is not None
+    }
+    output_summary = simulation_output_reader.summarize_text(result.raw_output or "")
+    circuit_name = str(Path(result.file_path).name or bundle_dir.parent.name)
     circuit_stem = Path(circuit_name).stem if circuit_name else bundle_dir.parent.name
-    duration_ms = None
-    try:
-        duration_ms = float(result_meta.get("duration_seconds") or result_payload.get("duration_seconds") or 0.0) * 1000.0
-    except (TypeError, ValueError):
-        duration_ms = None
+    first_error = output_summary.first_error
+    if not first_error and result.error is not None:
+        first_error = str(getattr(result.error, "message", result.error))
 
     return {
         "bundle_rel_path": bundle_dir.relative_to(results_root).as_posix(),
         "bundle_timestamp": bundle_dir.name,
         "circuit_name": circuit_name,
         "circuit_stem": circuit_stem,
-        "analysis_type": str(result_meta.get("analysis_type") or result_payload.get("analysis_type") or "unknown").lower(),
-        "success": bool(result_payload.get("success")),
-        "duration_ms": duration_ms,
-        "metric_row_count": len(metric_rows),
-        "metric_values": metric_rows_to_dict(metrics_payload) if metrics_payload else {},
-        "artifact_file_count": int(manifest_summary.get("exported_file_count") or 0),
-        "manifest_error_count": int(manifest_summary.get("error_count") or 0),
-        "warning_count": int(output_summary.get("warning_count") or 0),
-        "error_count": int(output_summary.get("error_count") or 0),
-        "first_error": output_summary.get("first_error"),
-        "data_point_count": count_x_axis_points(result_payload),
-        "signal_count": count_signal_entries(result_payload),
-        "timestamp": str(result_meta.get("timestamp") or result_payload.get("timestamp") or ""),
-        "x_axis_kind": str(result_meta.get("x_axis_kind") or ""),
-        "analysis_command": str(result_meta.get("analysis_command") or result_payload.get("analysis_command") or ""),
-        "result_file_path": str(result_payload.get("file_path") or ""),
-        "has_metrics": len(metric_rows) > 0,
+        "analysis_type": str(result.analysis_type or "unknown").lower(),
+        "success": result.success,
+        "source_digest": result.source_digest,
+        "duration_ms": float(result.duration_seconds) * 1000.0,
+        "metric_row_count": len(metric_values),
+        "metric_values": metric_values,
+        "warning_count": output_summary.warning_count,
+        "error_count": output_summary.error_count,
+        "first_error": first_error,
+        "data_point_count": count_x_axis_points(result),
+        "signal_count": count_signal_entries(result),
+        "timestamp": result.timestamp,
+        "x_axis_kind": result.x_axis_kind,
+        "analysis_command": result.analysis_command,
+        "result_file_path": result.file_path,
+        "has_metrics": bool(metric_values),
     }
 
 
@@ -96,7 +81,19 @@ def _latest_records(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 def summarize_simulation_results(results_root: str, output_json: str, output_csv: str) -> Dict[str, Any]:
     root = Path(results_root).expanduser().resolve()
     result_files = sorted(root.rglob("result.json"))
-    records = [_summarize_bundle(path, root) for path in result_files]
+    records: List[Dict[str, Any]] = []
+    invalid_results: List[Dict[str, str]] = []
+    for path in result_files:
+        try:
+            records.append(_summarize_bundle(path, root))
+        except Exception as exc:
+            logger.warning("Invalid simulation result %s: %s", path, exc)
+            invalid_results.append(
+                {
+                    "result_path": path.relative_to(root).as_posix(),
+                    "error": str(exc),
+                }
+            )
     latest = _latest_records(records)
 
     successes = [r for r in records if r["success"]]
@@ -121,13 +118,14 @@ def summarize_simulation_results(results_root: str, output_json: str, output_csv
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "simulation_results_root": str(root),
         "summary": {
+            "discovered_result_files": len(result_files),
             "total_bundles": len(records),
+            "invalid_result_count": len(invalid_results),
             "unique_circuits": len({r['circuit_stem'] for r in records}),
             "success_count": len(successes),
             "success_rate_pct": (len(successes) / len(records) * 100.0) if records else 0.0,
             "latest_bundle_count": len(latest),
             "latest_success_rate_pct": (len(latest_successes) / len(latest) * 100.0) if latest else 0.0,
-            "total_artifact_files": sum(int(r["artifact_file_count"] or 0) for r in records),
             "bundles_with_metrics": sum(1 for r in records if r["has_metrics"]),
             "warning_free_rate_pct": (sum(1 for r in records if int(r['warning_count']) == 0) / len(records) * 100.0) if records else 0.0,
             "error_free_rate_pct": (sum(1 for r in records if int(r['error_count']) == 0) / len(records) * 100.0) if records else 0.0,
@@ -140,6 +138,7 @@ def summarize_simulation_results(results_root: str, output_json: str, output_csv
             "error_count": describe_numeric([r["error_count"] for r in records]),
         },
         "per_analysis_type": per_analysis,
+        "invalid_results": invalid_results,
         "latest_records": latest,
         "records": records,
     }

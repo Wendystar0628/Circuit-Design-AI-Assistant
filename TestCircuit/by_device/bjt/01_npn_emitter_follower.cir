@@ -6,6 +6,7 @@
 * Devices exercised: V, R, Q (NPN bundled 2N3904).
 
 .title NPN Emitter Follower
+.include "../../../resources/models/ngspice/testcircuit_discrete.lib"
 
 * --- Supply ---
 Vdd vdd 0 DC 12

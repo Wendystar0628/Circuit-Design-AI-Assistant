@@ -40,23 +40,16 @@ function Root() {
 
   useEffect(() => {
     const api: SimulationAppApi = {
-      setState(nextState) {
-        setState(normalizeSimulationState(nextState))
-      },
-      setSchematicDocument(nextState) {
-        setSchematicDocument(normalizeSchematicDocument(nextState))
-      },
-      finishSchematicWrite(nextState) {
-        setSchematicWriteResult(normalizeSchematicWriteResult(nextState))
-      },
-      setRawDataDocument(nextState) {
-        setRawDataDocument(normalizeRawDataDocument(nextState))
-      },
-      setRawDataViewport(nextState) {
-        setRawDataViewport(normalizeRawDataViewport(nextState))
-      },
-      finishRawDataCopy(nextState) {
-        setRawDataCopyResult(normalizeRawDataCopyResult(nextState))
+      applySnapshot(snapshot) {
+        // One WebChannel call updates every peer document. React 18 batches
+        // these setters, so a new result can never render with the previous
+        // raw-data or schematic revision for an intermediate frame.
+        setState(normalizeSimulationState(snapshot.state))
+        setSchematicDocument(normalizeSchematicDocument(snapshot.schematicDocument))
+        setSchematicWriteResult(normalizeSchematicWriteResult(snapshot.schematicWriteResult))
+        setRawDataDocument(normalizeRawDataDocument(snapshot.rawDataDocument))
+        setRawDataViewport(normalizeRawDataViewport(snapshot.rawDataViewport))
+        setRawDataCopyResult(normalizeRawDataCopyResult(snapshot.rawDataCopyResult))
       },
     }
     window.simulationApp = api

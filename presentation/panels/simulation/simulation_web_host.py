@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtWidgets import QLabel, QSizePolicy, QVBoxLayout, QWidget
 from PyQt6.QtWebChannel import QWebChannel
 
@@ -37,6 +37,13 @@ class SimulationWebHost(QWidget):
         self._web_view: Optional[QWebEngineView] = None
         self._fallback_label: Optional[QLabel] = None
         self._simulation_tab: Optional["SimulationTab"] = None
+        # Coalesce all Python-side state changes that happen in one Qt tick
+        # into one JS call.  The previous six independent dispatch paths let
+        # React briefly combine a new result with the previous raw-data or
+        # schematic document.
+        self._dispatch_timer = QTimer(self)
+        self._dispatch_timer.setSingleShot(True)
+        self._dispatch_timer.timeout.connect(self._dispatch_snapshot)
         self._setup_ui()
 
     @property
@@ -83,64 +90,54 @@ class SimulationWebHost(QWidget):
         if not ok:
             return
         self._page_loaded = True
-        self._dispatch_state()
-        self._dispatch_schematic_document()
-        self._dispatch_schematic_write_result()
-        self._dispatch_raw_data_document()
-        self._dispatch_raw_data_viewport()
-        self._dispatch_raw_data_copy_result()
 
     def _on_ready(self) -> None:
         self._page_loaded = True
         self._frontend_ready = True
-        self._dispatch_state()
-        self._dispatch_schematic_document()
-        self._dispatch_schematic_write_result()
-        self._dispatch_raw_data_document()
-        self._dispatch_raw_data_viewport()
-        self._dispatch_raw_data_copy_result()
+        self._dispatch_timer.stop()
+        self._dispatch_snapshot()
 
     def set_state(self, state: Dict[str, Any]) -> None:
         normalized = state if isinstance(state, dict) else {}
         if normalized == self._state:
             return
         self._state = normalized
-        self._dispatch_state()
+        self._schedule_snapshot_dispatch()
 
     def set_schematic_document(self, state: Dict[str, Any]) -> None:
         normalized = state if isinstance(state, dict) else {}
         if normalized == self._schematic_document:
             return
         self._schematic_document = normalized
-        self._dispatch_schematic_document()
+        self._schedule_snapshot_dispatch()
 
     def finish_schematic_write(self, state: Dict[str, Any]) -> None:
         normalized = state if isinstance(state, dict) else {}
         if normalized == self._schematic_write_result:
             return
         self._schematic_write_result = normalized
-        self._dispatch_schematic_write_result()
+        self._schedule_snapshot_dispatch()
 
     def set_raw_data_document(self, state: Dict[str, Any]) -> None:
         normalized = state if isinstance(state, dict) else {}
         if normalized == self._raw_data_document:
             return
         self._raw_data_document = normalized
-        self._dispatch_raw_data_document()
+        self._schedule_snapshot_dispatch()
 
     def set_raw_data_viewport(self, state: Dict[str, Any]) -> None:
         normalized = state if isinstance(state, dict) else {}
         if normalized == self._raw_data_viewport:
             return
         self._raw_data_viewport = normalized
-        self._dispatch_raw_data_viewport()
+        self._schedule_snapshot_dispatch()
 
     def finish_raw_data_copy(self, state: Dict[str, Any]) -> None:
         normalized = state if isinstance(state, dict) else {}
         if normalized == self._raw_data_copy_result:
             return
         self._raw_data_copy_result = normalized
-        self._dispatch_raw_data_copy_result()
+        self._schedule_snapshot_dispatch()
 
     def attach_simulation_tab(self, simulation_tab: Optional["SimulationTab"]) -> None:
         if simulation_tab is self._simulation_tab:
@@ -195,6 +192,9 @@ class SimulationWebHost(QWidget):
         self.finish_raw_data_copy(self._simulation_tab.get_authoritative_raw_data_copy_result())
 
     def cleanup(self) -> None:
+        self._dispatch_timer.stop()
+        self._frontend_ready = False
+        self._page_loaded = False
         if self._web_view is not None:
             try:
                 self._web_view.loadStarted.disconnect(self._on_load_started)
@@ -211,60 +211,31 @@ class SimulationWebHost(QWidget):
                 pass
         self.attach_simulation_tab(None)
 
-    def _dispatch_state(self) -> None:
+    def _schedule_snapshot_dispatch(self) -> None:
         if self._web_view is None or not self._page_loaded or not self._frontend_ready:
             if self._fallback_label is not None:
                 runtime = self._state.get("simulation_runtime", {}) if isinstance(self._state, dict) else {}
                 self._fallback_label.setText(str(runtime.get("project_root") or get_i18n_text("panel.simulation", "Simulation Results")))
             return
-        script = "window.simulationApp && window.simulationApp.setState(%s);" % json.dumps(
-            self._state,
-            ensure_ascii=False,
-        )
-        self._web_view.page().runJavaScript(script)
+        if not self._dispatch_timer.isActive():
+            self._dispatch_timer.start(0)
 
-    def _dispatch_schematic_document(self) -> None:
+    def _dispatch_snapshot(self) -> None:
         if self._web_view is None or not self._page_loaded or not self._frontend_ready:
             return
-        script = "window.simulationApp && window.simulationApp.setSchematicDocument(%s);" % json.dumps(
-            self._schematic_document,
-            ensure_ascii=False,
-        )
-        self._web_view.page().runJavaScript(script)
-
-    def _dispatch_schematic_write_result(self) -> None:
-        if self._web_view is None or not self._page_loaded or not self._frontend_ready:
-            return
-        script = "window.simulationApp && window.simulationApp.finishSchematicWrite(%s);" % json.dumps(
-            self._schematic_write_result,
-            ensure_ascii=False,
-        )
-        self._web_view.page().runJavaScript(script)
-
-    def _dispatch_raw_data_document(self) -> None:
-        if self._web_view is None or not self._page_loaded or not self._frontend_ready:
-            return
-        script = "window.simulationApp && window.simulationApp.setRawDataDocument(%s);" % json.dumps(
-            self._raw_data_document,
-            ensure_ascii=False,
-        )
-        self._web_view.page().runJavaScript(script)
-
-    def _dispatch_raw_data_viewport(self) -> None:
-        if self._web_view is None or not self._page_loaded or not self._frontend_ready:
-            return
-        script = "window.simulationApp && window.simulationApp.setRawDataViewport(%s);" % json.dumps(
-            self._raw_data_viewport,
-            ensure_ascii=False,
-        )
-        self._web_view.page().runJavaScript(script)
-
-    def _dispatch_raw_data_copy_result(self) -> None:
-        if self._web_view is None or not self._page_loaded or not self._frontend_ready:
-            return
-        script = "window.simulationApp && window.simulationApp.finishRawDataCopy(%s);" % json.dumps(
-            self._raw_data_copy_result,
-            ensure_ascii=False,
+        snapshot = {
+            "state": self._state,
+            "schematicDocument": self._schematic_document,
+            "schematicWriteResult": self._schematic_write_result,
+            "rawDataDocument": self._raw_data_document,
+            "rawDataViewport": self._raw_data_viewport,
+            "rawDataCopyResult": self._raw_data_copy_result,
+        }
+        # ensure_ascii escapes JS line separators as well as arbitrary source
+        # text, keeping the JSON literal safe inside runJavaScript.
+        script = "window.simulationApp && window.simulationApp.applySnapshot(%s);" % json.dumps(
+            snapshot,
+            ensure_ascii=True,
         )
         self._web_view.page().runJavaScript(script)
 

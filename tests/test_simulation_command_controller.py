@@ -1,11 +1,9 @@
-"""Behavioural tests for ``SimulationCommandController`` (Step 6).
+"""Behavioural tests for ``SimulationCommandController``.
 
 The controller is the editor Run-button glue: it submits jobs to
 ``SimulationJobManager`` and observes ``EVENT_SIM_*`` to update its
-own UI state. The Step-5 AST guard already enforces that every
-handler decodes payload via ``extract_sim_payload`` on its first
-line; these tests cover the *behavioural* contract that Step 6
-locks in:
+own UI state. Every handler decodes the strict canonical event payload;
+these tests cover the resulting behavioural contract:
 
 * Lifecycle events for jobs the controller did **not** submit are
   ignored (so an agent-origin run never flips the editor button).
@@ -31,11 +29,12 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
 import pytest
-from PyQt6.QtWidgets import QApplication, QMainWindow, QMessageBox
+from PyQt6.QtWidgets import QMainWindow, QMessageBox
 
 from presentation.simulation_command_controller import SimulationCommandController
 from shared.event_bus import EventBus
 from shared.event_types import (
+    EVENT_STATE_PROJECT_OPENED,
     EVENT_SIM_COMPLETE,
     EVENT_SIM_ERROR,
     EVENT_SIM_STARTED,
@@ -46,22 +45,7 @@ from shared.service_names import (
     SVC_SESSION_STATE,
     SVC_SIMULATION_JOB_MANAGER,
 )
-
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture(scope="session")
-def qapp():
-    """Reuse a single QApplication across the test module — Qt forbids
-    constructing more than one per process and pytest-qt's qtbot is
-    overkill here since we never run the event loop."""
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
+from shared.path_utils import normalize_identity_path
 
 
 @dataclass
@@ -73,6 +57,8 @@ class _FakeJob:
     in this fake would be over-fitting."""
 
     job_id: str
+    circuit_file: str
+    project_root: str
     is_terminal: bool = False
 
 
@@ -90,16 +76,25 @@ class _FakeManager:
         self._jobs: Dict[str, _FakeJob] = {}
         self._next_index = 0
         self.submit_calls: List[Dict[str, Any]] = []
+        self.cancel_calls: List[str] = []
 
     def submit(self, **kwargs: Any) -> _FakeJob:
         self._next_index += 1
-        job = _FakeJob(job_id=f"job_{self._next_index:03d}")
+        job = _FakeJob(
+            job_id=f"job_{self._next_index:03d}",
+            circuit_file=str(kwargs.get("circuit_file") or ""),
+            project_root=str(kwargs.get("project_root") or ""),
+        )
         self._jobs[job.job_id] = job
         self.submit_calls.append(dict(kwargs))
         return job
 
     def query(self, job_id: str) -> Optional[_FakeJob]:
         return self._jobs.get(job_id)
+
+    def request_cancel(self, job_id: str) -> bool:
+        self.cancel_calls.append(job_id)
+        return job_id in self._jobs
 
     def mark_terminal(self, job_id: str) -> None:
         """Test helper: simulate the manager finishing a job *before*
@@ -130,7 +125,8 @@ def services(qapp, monkeypatch):
     manager = _FakeManager()
     ServiceLocator.register(SVC_EVENT_BUS, bus)
     ServiceLocator.register(SVC_SIMULATION_JOB_MANAGER, manager)
-    ServiceLocator.register(SVC_SESSION_STATE, _FakeSessionState())
+    session_state = _FakeSessionState()
+    ServiceLocator.register(SVC_SESSION_STATE, session_state)
 
     # QMessageBox.warning / .information would block on a real modal
     # dialog. Capture the (kind, text) tuples instead so tests can
@@ -150,6 +146,7 @@ def services(qapp, monkeypatch):
         "bus": bus,
         "manager": manager,
         "dialogs": dialogs,
+        "session_state": session_state,
     }
 
     ServiceLocator.clear()
@@ -162,6 +159,15 @@ def controller(services):
     runs at teardown to symmetrise."""
     main_window = QMainWindow()
     ctrl = SimulationCommandController(main_window)
+    claimed_jobs = []
+
+    class _FakeResultTab:
+        def claim_ui_job(self, **identity):
+            claimed_jobs.append(identity)
+            return True
+
+    ctrl.bind_simulation_tab(_FakeResultTab())
+    services["claimed_jobs"] = claimed_jobs
     yield ctrl
     ctrl.shutdown()
     main_window.close()
@@ -171,10 +177,9 @@ def _payload_started(job_id: str, **overrides: Any) -> Dict[str, Any]:
     base = {
         "job_id": job_id,
         "origin": "ui_editor",
-        "circuit_file": "amp.cir",
+        "circuit_file": "/tmp/proj/amp.cir",
         "project_root": "/tmp/proj",
-        "analysis_type": "tran",
-        "config": {},
+        "session_id": "session-test",
     }
     base.update(overrides)
     return base
@@ -184,12 +189,12 @@ def _payload_complete(job_id: str, **overrides: Any) -> Dict[str, Any]:
     base = {
         "job_id": job_id,
         "origin": "ui_editor",
-        "circuit_file": "amp.cir",
+        "circuit_file": "/tmp/proj/amp.cir",
         "project_root": "/tmp/proj",
         "result_path": "simulation_results/amp/ts/result.json",
         "export_root": "/tmp/proj/simulation_results/amp/ts",
-        "success": True,
         "duration_seconds": 0.1,
+        "session_id": "session-test",
     }
     base.update(overrides)
     return base
@@ -199,13 +204,14 @@ def _payload_error(job_id: str, **overrides: Any) -> Dict[str, Any]:
     base = {
         "job_id": job_id,
         "origin": "ui_editor",
-        "circuit_file": "amp.cir",
+        "circuit_file": "/tmp/proj/amp.cir",
         "project_root": "/tmp/proj",
         "error_message": "boom",
         "result_path": "simulation_results/amp/ts/result.json",
         "export_root": "/tmp/proj/simulation_results/amp/ts",
         "cancelled": False,
         "duration_seconds": 0.1,
+        "session_id": "session-test",
     }
     base.update(overrides)
     return base
@@ -224,7 +230,7 @@ def test_complete_event_for_unregistered_job_is_ignored(controller, services):
     services["bus"].publish(EVENT_SIM_COMPLETE, _payload_complete("job_external_1"))
 
     assert services["dialogs"] == []
-    assert controller._submitted_jobs == set()
+    assert controller._submitted_jobs == {}
 
 
 def test_error_event_for_unregistered_job_does_not_pop_dialog(controller, services):
@@ -234,13 +240,13 @@ def test_error_event_for_unregistered_job_does_not_pop_dialog(controller, servic
     # submit, so popping a modal would be hijacking the user's
     # attention for someone else's run.
     assert services["dialogs"] == []
-    assert controller._submitted_jobs == set()
+    assert controller._submitted_jobs == {}
 
 
 def test_started_event_for_unregistered_job_does_not_touch_state(controller, services):
     services["bus"].publish(EVENT_SIM_STARTED, _payload_started("job_external_3"))
 
-    assert controller._submitted_jobs == set()
+    assert controller._submitted_jobs == {}
 
 
 # ---------------------------------------------------------------------------
@@ -253,7 +259,7 @@ def test_complete_event_for_our_job_clears_registry(controller, services):
     event must drop it from ``_submitted_jobs`` so the Run button
     can re-enable. Without this the button would stick disabled
     forever after one successful run."""
-    controller._submitted_jobs.add("job_001")
+    controller._submitted_jobs["job_001"] = normalize_identity_path("/tmp/proj")
 
     services["bus"].publish(EVENT_SIM_COMPLETE, _payload_complete("job_001"))
 
@@ -261,7 +267,7 @@ def test_complete_event_for_our_job_clears_registry(controller, services):
 
 
 def test_error_event_with_real_failure_pops_warning_dialog(controller, services):
-    controller._submitted_jobs.add("job_002")
+    controller._submitted_jobs["job_002"] = normalize_identity_path("/tmp/proj")
 
     services["bus"].publish(
         EVENT_SIM_ERROR,
@@ -281,7 +287,7 @@ def test_error_event_with_cancellation_does_not_pop_dialog(controller, services)
     """Cancellation is intentional — a "you cancelled successfully"
     modal is pure noise. The job must still leave the registry so
     the button re-enables."""
-    controller._submitted_jobs.add("job_003")
+    controller._submitted_jobs["job_003"] = normalize_identity_path("/tmp/proj")
 
     services["bus"].publish(
         EVENT_SIM_ERROR,
@@ -305,7 +311,7 @@ def test_has_active_submission_returns_false_for_unknown_job(controller, service
     """If the manager has no record of an id we hold, treat it as not
     running — better to falsely re-enable the button than to leave it
     stuck. Manager-as-truth wins over local-set-as-truth."""
-    controller._submitted_jobs.add("job_ghost")
+    controller._submitted_jobs["job_ghost"] = normalize_identity_path("/tmp/proj")
     assert services["manager"].query("job_ghost") is None
 
     assert controller._has_active_submission() is False
@@ -323,7 +329,7 @@ def test_has_active_submission_returns_false_when_manager_marks_terminal(
         origin=None,  # _FakeManager does not validate
         project_root="/tmp/proj",
     )
-    controller._submitted_jobs.add(job.job_id)
+    controller._submitted_jobs[job.job_id] = normalize_identity_path("/tmp/proj")
     assert controller._has_active_submission() is True
 
     services["manager"].mark_terminal(job.job_id)
@@ -351,8 +357,7 @@ def test_run_simulation_submits_with_ui_editor_origin(controller, services):
 
     assert len(services["manager"].submit_calls) == 1
     call = services["manager"].submit_calls[0]
-    # Origin is the whole point of Step 5/6's identity scheme — make
-    # sure the controller stamps it correctly. Importing JobOrigin
+    # Origin is part of the exact ownership identity. Importing JobOrigin
     # locally here avoids the production-code's lazy-import dance.
     from domain.simulation.models.simulation_job import JobOrigin
     assert call["origin"] is JobOrigin.UI_EDITOR
@@ -362,6 +367,11 @@ def test_run_simulation_submits_with_ui_editor_origin(controller, services):
     # The returned job_id must immediately enter the registry so the
     # next event can be routed before any roundtrip with the manager.
     assert len(controller._submitted_jobs) == 1
+    assert services["claimed_jobs"] == [{
+        "job_id": next(iter(controller._submitted_jobs)),
+        "project_root": "/tmp/proj",
+        "circuit_file": "/tmp/proj/amp.cir",
+    }]
 
 
 def test_run_simulation_refuses_second_submission_while_active(controller, services):
@@ -379,6 +389,24 @@ def test_run_simulation_refuses_second_submission_while_active(controller, servi
     assert any(kind == "information" for kind, _ in services["dialogs"])
 
 
+def test_rejected_tab_claim_cancels_job_instead_of_leaving_it_unowned(
+    controller,
+    services,
+):
+    _ready_controller_for_run(controller)
+    controller.bind_simulation_tab(
+        type("RejectingResultTab", (), {
+            "claim_ui_job": lambda _self, **_identity: False,
+        })()
+    )
+
+    with pytest.raises(RuntimeError, match="rejected the submitted job identity"):
+        controller.run_simulation()
+
+    assert services["manager"].cancel_calls == ["job_001"]
+    assert controller._submitted_jobs == {}
+
+
 def test_run_simulation_re_enables_after_complete_event(controller, services):
     _ready_controller_for_run(controller)
     controller.run_simulation()
@@ -387,11 +415,27 @@ def test_run_simulation_re_enables_after_complete_event(controller, services):
 
     services["bus"].publish(EVENT_SIM_COMPLETE, _payload_complete(job_id))
 
-    assert controller._submitted_jobs == set()
+    assert controller._submitted_jobs == {}
     assert controller._has_active_submission() is False
     # And a fresh submission now goes through.
     controller.run_simulation()
     assert len(services["manager"].submit_calls) == 2
+
+
+def test_project_switch_releases_old_submission_and_ignores_its_failure(controller, services):
+    _ready_controller_for_run(controller)
+    controller.run_simulation()
+    old_job_id = next(iter(controller._submitted_jobs))
+
+    services["session_state"].project_root = "/tmp/new-project"
+    services["bus"].publish(EVENT_STATE_PROJECT_OPENED, {"path": "/tmp/new-project"})
+
+    assert controller._submitted_jobs == {}
+    services["bus"].publish(
+        EVENT_SIM_ERROR,
+        _payload_error(old_job_id, project_root="/tmp/proj", error_message="old failure"),
+    )
+    assert services["dialogs"] == []
 
 
 def test_run_simulation_raises_if_manager_unregistered(controller, services):
@@ -441,7 +485,7 @@ def test_shutdown_unsubscribes_so_later_events_are_ignored(services):
     QMainWindow) leak across window reopens."""
     main_window = QMainWindow()
     ctrl = SimulationCommandController(main_window)
-    ctrl._submitted_jobs.add("job_sub")
+    ctrl._submitted_jobs["job_sub"] = normalize_identity_path("/tmp/proj")
 
     ctrl.shutdown()
 

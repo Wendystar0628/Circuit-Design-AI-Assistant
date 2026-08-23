@@ -12,13 +12,14 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-from domain.simulation.executor.executor_registry import ExecutorRegistry
-from domain.simulation.executor.spice_executor import SpiceExecutor
-from domain.simulation.spice.analysis_directive_authority import detect_last_analysis_type_from_text
-from domain.services.simulation_service import SimulationService
-from infrastructure.utils.ngspice_config import configure_ngspice
-from evaluation.results_eval_utils import (
-    bundle_has_expected_files,
+from domain.simulation.executor.spice_executor import SpiceExecutor  # noqa: E402
+from domain.simulation.data.simulation_output_reader import simulation_output_reader  # noqa: E402
+from domain.simulation.measure.measure_result import MeasureStatus  # noqa: E402
+from domain.simulation.spice.source_closure import collect_spice_source_closure  # noqa: E402
+from domain.simulation.service.simulation_result_repository import simulation_result_repository  # noqa: E402
+from domain.services.simulation_service import SimulationService  # noqa: E402
+from infrastructure.utils.ngspice_config import configure_ngspice  # noqa: E402
+from evaluation.results_eval_utils import (  # noqa: E402
     count_components_in_cir_text,
     count_measure_directives,
     count_signal_entries,
@@ -27,8 +28,6 @@ from evaluation.results_eval_utils import (
     group_from_relative_path,
     has_measure_directive,
     iter_circuit_files,
-    load_json,
-    metric_rows_to_dict,
     normalize_for_csv,
     subgroup_from_relative_path,
     write_csv,
@@ -38,55 +37,82 @@ from evaluation.results_eval_utils import (
 logger = logging.getLogger("evaluation.testcircuit_batch")
 
 
-def _safe_load_json(path: Path) -> Dict[str, Any]:
-    if not path.is_file():
-        return {}
-    try:
-        return load_json(path)
-    except Exception as exc:
-        logger.warning("Failed to read %s: %s", path, exc)
-        return {}
-
-
 def _build_record(test_root: Path, circuit_path: Path, service: SimulationService) -> Dict[str, Any]:
     source_text = circuit_path.read_text(encoding="utf-8", errors="ignore")
     relative_path = circuit_path.relative_to(test_root).as_posix()
     has_measure = has_measure_directive(source_text)
     measure_count = count_measure_directives(source_text)
-    expected_analysis_type = detect_last_analysis_type_from_text(source_text)
+    analysis_commands = collect_spice_source_closure(
+        circuit_path
+    ).main_analysis_commands
+    expected_analysis_type = (
+        analysis_commands[0].analysis_type
+        if len(analysis_commands) == 1
+        else "unknown"
+    )
     source_component_count = count_components_in_cir_text(source_text)
 
-    result, result_path = service.run_simulation(
-        file_path=str(circuit_path),
-        project_root=str(test_root),
+    result_path = ""
+    try:
+        result_path = service.run_simulation(
+            file_path=str(circuit_path),
+            project_root=str(test_root),
+        )
+        loaded = simulation_result_repository.load(str(test_root), result_path)
+        if not loaded.success or loaded.data is None:
+            raise RuntimeError(
+                loaded.error_message
+                or f"Simulation result could not be loaded: {result_path}"
+            )
+    except Exception as exc:
+        persistence_error = str(exc) or type(exc).__name__
+        return {
+            "circuit_rel_path": relative_path,
+            "circuit_name": circuit_path.name,
+            "circuit_stem": circuit_path.stem,
+            "group": group_from_relative_path(relative_path),
+            "subgroup": subgroup_from_relative_path(relative_path),
+            "expected_analysis_type": expected_analysis_type,
+            "actual_analysis_type": str(expected_analysis_type or "unknown").lower(),
+            "component_count": source_component_count,
+            "measure_directive_count": measure_count,
+            "has_measure": has_measure,
+            "result_valid": False,
+            "persistence_error": persistence_error,
+            "source_digest": None,
+            "simulation_success": False,
+            "duration_ms": None,
+            "metric_row_count": 0,
+            "metric_values": {},
+            "warning_count": 0,
+            "error_count": 0,
+            "first_error": persistence_error,
+            "data_point_count": 0,
+            "signal_count": 0,
+            "result_path": str(result_path or ""),
+            "bundle_dir": "",
+        }
+    authoritative = loaded.data
+    bundle_dir = test_root / Path(result_path).parent
+    metric_values = {
+        measurement.name: float(measurement.value)
+        for measurement in (authoritative.measurements or [])
+        if measurement.status is MeasureStatus.OK
+        and measurement.is_valid
+        and measurement.value is not None
+    }
+    output_summary = simulation_output_reader.summarize_text(
+        authoritative.raw_output or ""
     )
-
-    bundle_dir = test_root / Path(result_path).parent if result_path else None
-    result_payload = _safe_load_json(bundle_dir / "result.json") if bundle_dir else {}
-    manifest_payload = _safe_load_json(bundle_dir / "export_manifest.json") if bundle_dir else {}
-    analysis_payload = _safe_load_json(bundle_dir / "analysis_info" / "analysis_info.json") if bundle_dir else {}
-    output_log_payload = _safe_load_json(bundle_dir / "output_log" / "output_log.json") if bundle_dir else {}
-    metrics_payload = _safe_load_json(bundle_dir / "metrics" / "metrics.json") if bundle_dir else {}
-
-    metric_rows = ((metrics_payload.get("data") or {}).get("rows") or []) if metrics_payload else []
-    output_summary = output_log_payload.get("summary") or {}
-    manifest_summary = manifest_payload.get("summary") or {}
-    analysis_meta = analysis_payload.get("metadata") or {}
-
-    duration_ms = float(result.duration_seconds) * 1000.0
-    if analysis_meta.get("duration_seconds") is not None:
-        try:
-            duration_ms = float(analysis_meta.get("duration_seconds")) * 1000.0
-        except (TypeError, ValueError):
-            pass
-
+    duration_ms = float(authoritative.duration_seconds) * 1000.0
     actual_analysis_type = str(
-        analysis_meta.get("analysis_type")
-        or result_payload.get("analysis_type")
-        or result.analysis_type
-        or expected_analysis_type
-        or "unknown"
+        authoritative.analysis_type or expected_analysis_type or "unknown"
     ).lower()
+    first_error = output_summary.first_error
+    if not first_error and authoritative.error is not None:
+        first_error = str(
+            getattr(authoritative.error, "message", authoritative.error)
+        )
 
     record = {
         "circuit_rel_path": relative_path,
@@ -99,19 +125,20 @@ def _build_record(test_root: Path, circuit_path: Path, service: SimulationServic
         "component_count": source_component_count,
         "measure_directive_count": measure_count,
         "has_measure": has_measure,
-        "simulation_success": bool(result.success),
+        "result_valid": True,
+        "persistence_error": "",
+        "source_digest": authoritative.source_digest,
+        "simulation_success": bool(authoritative.success),
         "duration_ms": duration_ms,
-        "metric_row_count": len(metric_rows),
-        "metric_values": metric_rows_to_dict(metrics_payload) if metrics_payload else {},
-        "warning_count": int(output_summary.get("warning_count") or 0),
-        "error_count": int(output_summary.get("error_count") or 0),
-        "first_error": output_summary.get("first_error"),
-        "data_point_count": count_x_axis_points(result_payload) if result_payload else 0,
-        "signal_count": count_signal_entries(result_payload) if result_payload else 0,
-        "artifact_file_count": int(manifest_summary.get("exported_file_count") or 0),
-        "bundle_complete": bool(bundle_dir) and bundle_has_expected_files(bundle_dir, has_measure),
+        "metric_row_count": len(metric_values),
+        "metric_values": metric_values,
+        "warning_count": output_summary.warning_count,
+        "error_count": output_summary.error_count,
+        "first_error": first_error,
+        "data_point_count": count_x_axis_points(authoritative),
+        "signal_count": count_signal_entries(authoritative),
         "result_path": result_path,
-        "bundle_dir": bundle_dir.as_posix() if bundle_dir else "",
+        "bundle_dir": bundle_dir.as_posix(),
     }
     return record
 
@@ -144,12 +171,10 @@ def run_batch(test_root: str, output_json: str, output_csv: str) -> Dict[str, An
     circuit_files = iter_circuit_files(root)
 
     configure_ngspice()
-    registry = ExecutorRegistry()
     spice_executor = SpiceExecutor()
     if not spice_executor.is_available():
         raise RuntimeError(spice_executor._init_error or "SpiceExecutor is not available")
-    registry.register(spice_executor)
-    service = SimulationService(registry=registry)
+    service = SimulationService(executor=spice_executor)
 
     records: List[Dict[str, Any]] = []
     for index, circuit_path in enumerate(circuit_files, start=1):
@@ -158,11 +183,11 @@ def run_batch(test_root: str, output_json: str, output_csv: str) -> Dict[str, An
 
     successes = [r for r in records if r["simulation_success"]]
     failures = [r for r in records if not r["simulation_success"]]
+    valid_results = [r for r in records if r["result_valid"]]
+    invalid_results = [r for r in records if not r["result_valid"]]
     measured_circuits = [r for r in records if r["has_measure"]]
     measured_successes = [r for r in measured_circuits if r["simulation_success"]]
     metric_captured = [r for r in measured_successes if r["metric_row_count"] > 0]
-    bundle_complete = [r for r in successes if r["bundle_complete"]]
-
     analysis_counter = Counter(r["actual_analysis_type"] for r in records)
     group_counter = Counter(r["group"] for r in records)
     subgroup_counter = Counter(r["subgroup"] for r in records)
@@ -177,7 +202,9 @@ def run_batch(test_root: str, output_json: str, output_csv: str) -> Dict[str, An
             "success_count": len(successes),
             "failure_count": len(failures),
             "success_rate_pct": (len(successes) / len(records) * 100.0) if records else 0.0,
-            "bundle_complete_rate_pct": (len(bundle_complete) / len(successes) * 100.0) if successes else 0.0,
+            "result_valid_count": len(valid_results),
+            "result_invalid_count": len(invalid_results),
+            "result_valid_rate_pct": (len(valid_results) / len(records) * 100.0) if records else 0.0,
             "measured_circuit_count": len(measured_circuits),
             "metric_capture_rate_pct": (len(metric_captured) / len(measured_successes) * 100.0) if measured_successes else None,
             "analysis_type_distribution": dict(sorted(analysis_counter.items())),
@@ -199,6 +226,8 @@ def run_batch(test_root: str, output_json: str, output_csv: str) -> Dict[str, An
                 "actual_analysis_type": r["actual_analysis_type"],
                 "first_error": r["first_error"],
                 "error_count": r["error_count"],
+                "result_valid": r["result_valid"],
+                "persistence_error": r["persistence_error"],
             }
             for r in failures
         ],
@@ -227,7 +256,6 @@ def main() -> None:
     print(f"Total circuits:        {summary['total_circuits']}")
     print(f"Success count:         {summary['success_count']}")
     print(f"Success rate:          {summary['success_rate_pct']:.2f}%")
-    print(f"Bundle complete rate:  {summary['bundle_complete_rate_pct']:.2f}%")
     metric_capture = summary.get("metric_capture_rate_pct")
     print(f"Metric capture rate:   {metric_capture:.2f}%" if metric_capture is not None else "Metric capture rate:   N/A")
     duration_mean = (summary.get("duration_ms") or {}).get("mean")

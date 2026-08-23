@@ -1,0 +1,56 @@
+* Class-AB Small-Signal Amplifier
+* A three-stage discrete feedback amplifier used to demonstrate
+* class-AB biasing with ordinary 2N3904/2N3906 small-signal models:
+*
+*   Stage 1 - NPN differential input pair with a 1 mA tail source.
+*   Stage 2 - PNP common-emitter voltage-amplifier stage.
+*   Stage 3 - complementary emitter followers biased by two diodes.
+*
+* The output pair drives a 1 kohm laboratory load. This is deliberately
+* not presented as a loudspeaker power amplifier: these small-signal
+* transistor models do not establish power-device SOA or thermal safety.
+* Global feedback sets a nominal closed-loop gain near 5.5 V/V.
+* Devices exercised: V, I, R, D, Q (NPN 2N3904 x3 + PNP 2N3906 x2).
+
+.title Class-AB Small-Signal Feedback Amplifier
+.include "../../resources/models/ngspice/testcircuit_discrete.lib"
+
+* --- Split supplies and small sine input ---
+Vdd vdd 0 DC 12
+Vss vss 0 DC -12
+Vin in  0 SIN(0 50m 1k)
+
+* --- Differential input stage ---
+Itail tail vss DC 1m
+Rin in  b1  1k
+Rbias b1 0  100k
+Rf out b2 10k
+Rg b2  0  2.2k
+Rc2 vdd c2 10k
+Q1 vdd b1 tail 2N3904
+Q2 c2  b2 tail 2N3904
+
+* --- PNP voltage-amplifier stage ---
+Re3 vdd e3 1k
+Rc3 c3  vss 10k
+Q3 c3 c2 e3 2N3906
+
+* --- Diode-biased complementary emitter-follower output ---
+D1 c3 np 1N4148
+D2 np pp 1N4148
+Rbias3 pp vss 4.7k
+Q4 vdd c3 e4 2N3904
+Q5 vss pp e5 2N3906
+Re4 e4 out 22
+Re5 e5 out 22
+
+* --- High-impedance small-signal load ---
+Rload out 0 1k
+
+.tran 10u 5m
+
+.MEASURE TRAN v_out_pp PP V(out) FROM=1m TO=5m
+.MEASURE TRAN v_out_avg AVG V(out) FROM=1m TO=5m
+.MEASURE TRAN i_vdd_peak MAX par('-I(Vdd)') FROM=1m TO=5m
+
+.end

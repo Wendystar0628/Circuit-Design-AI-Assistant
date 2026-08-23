@@ -12,6 +12,7 @@ import {
 import type { SimulationBridge } from '../../bridge/bridge'
 import type { RawDataCopyResultState, RawDataDocumentState, RawDataViewportState } from '../../types/state'
 import { getUiText, type UiTextMap } from '../../uiText'
+import { NoiseTotalsSummary } from '../shared/NoiseTotalsSummary'
 
 const FALLBACK_ROW_HEIGHT_PX = 28
 const FALLBACK_COLUMN_HEADER_HEIGHT_PX = 32
@@ -542,6 +543,7 @@ export const RawDataTab = memo(function RawDataTab({ rawDataCopyResult, rawDataD
   return (
     <div className="tab-surface">
       <div className="raw-data-grid-shell">
+        <NoiseTotalsSummary noiseTotals={rawDataDocument.noise_totals} uiText={uiText} />
         <div className="raw-data-grid__statusbar">
           <span>{statusSummary}</span>
           <span>{copyFeedbackText || shortcutHint}</span>

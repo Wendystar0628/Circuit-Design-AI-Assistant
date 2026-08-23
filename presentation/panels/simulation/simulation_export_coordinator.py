@@ -17,10 +17,7 @@ from domain.simulation.data.simulation_artifact_exporter import (
 from domain.simulation.models.simulation_result import SimulationResult
 
 
-# Public alias. The authoritative order lives in
-# ``simulation_artifact_exporter.DISPLAY_EXPORT_CATEGORIES`` (Step 15
-# canonical layout schema); kept as ``EXPORT_TYPE_ORDER`` for the
-# stable ``__all__`` contract consumed by ExportPanel.
+# The exporter owns the canonical category order used by the manual UI.
 EXPORT_TYPE_ORDER = DISPLAY_EXPORT_CATEGORIES
 
 
@@ -50,10 +47,9 @@ class SimulationExportCoordinator:
     Unlike ``SimulationArtifactPersistence`` (headless, project-internal)
     this writes to a **user-chosen** folder and can additionally emit
     chart / waveform PNG bundles captured from the live widgets. The
-    on-disk filenames — both per-category and the bundle-root
-    ``export_manifest.json`` — are owned by
-    ``simulation_artifact_exporter`` (Step 15); this class never
-    constructs a path literal itself.
+    on-disk filenames — both per-category and the manual export's
+    ``export_manifest.json`` — are owned by ``simulation_artifact_exporter``;
+    this class never writes into the committed project result bundle.
     """
 
     def __init__(self, chart_viewer, waveform_widget):

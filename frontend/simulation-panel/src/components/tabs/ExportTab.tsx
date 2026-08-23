@@ -20,6 +20,7 @@ const EXPORT_ITEM_LABELS: Record<string, { key: string; fallback: string }> = {
 
 export function ExportTab({ state, bridge }: ExportTabProps) {
   const exportView = state.export_view
+  const runtime = state.simulation_runtime
   const uiText = state.ui_text
   const enabledItems = exportView.items.filter((item) => item.enabled)
   const selectedCount = enabledItems.filter((item) => item.selected).length
@@ -33,7 +34,14 @@ export function ExportTab({ state, bridge }: ExportTabProps) {
             type="button"
             className="sim-compact-button sim-compact-button--accent"
             disabled={!exportView.can_export}
-            onClick={() => bridge?.requestExport()}
+            onClick={() => {
+              if (bridge && runtime.project_root && runtime.current_result_path) {
+                bridge.requestExport({
+                  projectRoot: runtime.project_root,
+                  resultPath: runtime.current_result_path,
+                })
+              }
+            }}
           >
             {getUiText(uiText, 'simulation.export.export_selected', 'Export Selected Items')}
           </button>

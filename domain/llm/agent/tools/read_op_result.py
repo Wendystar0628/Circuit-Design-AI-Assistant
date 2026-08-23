@@ -1,22 +1,25 @@
+"""Read one exact run's operating-point view derived from authoritative signals.
+
+``result.json`` signal vectors are the single persisted truth. Optional OP
+export files are human-facing derived views and are never read back as a
+second source.
+"""
+
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from domain.llm.agent.tools.simulation_artifact_reader_base import (
     READ_TOOL_SHARED_GUIDELINES,
     SimulationArtifactReaderBase,
-    sort_op_result_branch_rows,
-    sort_op_result_device_rows,
-    sort_op_result_node_rows,
 )
 from domain.llm.agent.types import BaseTool, ToolContext, ToolResult
-from domain.simulation.data.op_result_data_builder import op_result_data_builder
-from domain.simulation.data.op_result_payload import render_op_result_markdown
-from domain.simulation.data.simulation_artifact_exporter import (
-    CATEGORY_OP_RESULT,
-    simulation_artifact_exporter,
+from domain.llm.agent.utils.truncate import (
+    DEFAULT_MAX_BYTES,
+    DEFAULT_MAX_LINES,
+    truncate_head,
 )
+from domain.simulation.data.op_result_payload import render_op_result_markdown
 
 
 class ReadOpResultTool(BaseTool):
@@ -31,14 +34,9 @@ class ReadOpResultTool(BaseTool):
     @property
     def description(self) -> str:
         return (
-            "Read a simulation bundle's NgSpice .op operating-point result as "
-            "a compact structured report. It returns a self-identifying header, "
-            "a nodes table (name/voltage/formatted), a branches table "
-            "(device/current/formatted), and an optional devices table "
-            "(device/operating_region/key_parameters). Supply result_path from "
-            "an earlier run_simulation for an exact handle; supply file_path to "
-            "pick that circuit's most recent bundle; omit both to fall back to "
-            "the editor's active circuit. This tool is only for actual .op results."
+            "Read node voltages, branch currents, and device operating "
+            "information derived from authoritative SimulationData.signals "
+            "inside one exact .op result.json returned by run_simulation."
         )
 
     @property
@@ -47,25 +45,13 @@ class ReadOpResultTool(BaseTool):
 
     @property
     def prompt_snippet(self) -> Optional[str]:
-        return "Read structured .op operating-point node voltages, branch currents, and device bias info"
+        return "Read exact-run structured .op node voltages and branch currents"
 
     @property
     def prompt_guidelines(self) -> Optional[List[str]]:
         return [
             *READ_TOOL_SHARED_GUIDELINES,
-            (
-                "Use read_op_result only when the current result actually comes "
-                "from an NgSpice .op operating-point analysis."
-            ),
-            (
-                "Do not call read_op_result for AC / DC / TRAN / NOISE waveform "
-                "results; use read_metrics or read_signals instead."
-            ),
-            (
-                "If read_op_result reports that no .op result is available, tell "
-                "the user that this circuit/result did not execute a usable .op "
-                "analysis instead of forcing a read."
-            ),
+            "Use this tool only for a result whose analysis_type is .op.",
         ]
 
     async def execute(
@@ -74,97 +60,90 @@ class ReadOpResultTool(BaseTool):
         params: Dict[str, Any],
         context: ToolContext,
     ) -> ToolResult:
-        resolved = SimulationArtifactReaderBase.resolve(params, context)
-        if isinstance(resolved, ToolResult):
-            return resolved
+        bundle = SimulationArtifactReaderBase.resolve(params, context)
+        if isinstance(bundle, ToolResult):
+            return bundle
 
-        analysis_type = str(getattr(resolved.result, "analysis_type", "") or "").lower()
+        analysis_type = (
+            str(bundle.result.analysis_type or "").strip().lstrip(".").lower()
+        )
         if analysis_type != "op":
             return ToolResult(
                 content=(
-                    "Error: read_op_result only supports actual .op operating-point "
-                    f"results, but this bundle is analysis_type='{analysis_type or '<unknown>'}'. "
-                    "Use read_metrics for .MEASURE summaries and read_signals for waveform/chart data. "
-                    "If you need node voltages or branch currents, rerun the circuit with a real .op analysis first."
+                    "Error: read_op_result requires an exact .op bundle; "
+                    f"this result has analysis_type="
+                    f"'{bundle.result.analysis_type or '<unknown>'}'."
                 ),
                 is_error=True,
                 details={
-                    "result_path": resolved.result_path,
-                    "used_fallback": resolved.used_fallback,
+                    "result_path": bundle.result_path,
                     "analysis_type": analysis_type,
                 },
             )
 
-        paths = simulation_artifact_exporter.op_result_paths(resolved.bundle_dir)
-        text_content = self._try_read_text(paths.text_path)
-        if text_content is not None:
-            return ToolResult(
-                content=text_content,
-                details={
-                    "result_path": resolved.result_path,
-                    "used_fallback": resolved.used_fallback,
-                    "analysis_type": analysis_type,
-                    "source": "op_result.txt",
-                    "op_result_text_path": str(paths.text_path),
-                    "op_result_json_path": str(paths.json_path),
-                },
+        if not bundle.result.success or bundle.result.data is None:
+            return _invalid_payload(
+                bundle.result_path,
+                "the simulation did not produce successful structured data",
+            )
+        derived = bundle.result.data.op_result
+        if not isinstance(derived, dict):
+            return _invalid_payload(
+                bundle.result_path,
+                "the OP view derived from result.json data.signals must be an object",
+            )
+        if not any(derived[key] for key in ("nodes", "branches", "devices")):
+            return _invalid_payload(
+                bundle.result_path,
+                "result.json data.signals produce no valid node, branch, or device rows",
             )
 
-        payload = op_result_data_builder.get_payload(resolved.result)
-        if not payload:
-            return ToolResult(
-                content=(
-                    "Error: no structured .op operating-point result is available for this bundle. "
-                    "Tell the user that this circuit/result did not produce usable .op data, and do not force a read. "
-                    "Use read_metrics for existing .MEASURE output, or rerun the circuit with .op if operating-point "
-                    "node voltages and branch currents are needed."
+        content = "\n".join(
+            [
+                (
+                    "source: result.json:data.signals (derived OP view) | "
+                    f"result_path: {bundle.result_path}"
                 ),
-                is_error=True,
-                details={
-                    "result_path": resolved.result_path,
-                    "used_fallback": resolved.used_fallback,
-                    "analysis_type": analysis_type,
-                    "op_result_text_path": str(paths.text_path),
-                    "op_result_json_path": str(paths.json_path),
-                },
-            )
-
-        normalized_payload = {
-            **payload,
-            "nodes": sort_op_result_node_rows(list(payload.get("nodes") or [])),
-            "branches": sort_op_result_branch_rows(list(payload.get("branches") or [])),
-            "devices": sort_op_result_device_rows(list(payload.get("devices") or [])),
-        }
-        content = (
-            simulation_artifact_exporter.build_text_header_block(resolved.result, CATEGORY_OP_RESULT)
-            + render_op_result_markdown(normalized_payload)
+                f"circuit_file: {bundle.circuit_file or '<unknown>'}",
+                f"analysis_type: {bundle.result.analysis_type}",
+                f"timestamp: {bundle.result.timestamp}",
+                "",
+                render_op_result_markdown(derived),
+            ]
         )
+        truncation = truncate_head(
+            content,
+            max_lines=DEFAULT_MAX_LINES,
+            max_bytes=DEFAULT_MAX_BYTES,
+        )
+        if truncation.truncated:
+            content = (
+                truncation.content
+                + "\n\n"
+                + f"[Output truncated by {truncation.truncated_by}; pass the "
+                + "same exact result_path again with a narrower workflow if needed.]"
+            )
+
         return ToolResult(
             content=content,
             details={
-                "result_path": resolved.result_path,
-                "used_fallback": resolved.used_fallback,
+                "result_path": bundle.result_path,
                 "analysis_type": analysis_type,
-                "source": "result.data.op_result",
-                "op_result_text_path": str(paths.text_path),
-                "op_result_json_path": str(paths.json_path),
-                "row_count": int(normalized_payload.get("row_count", 0)),
-                "section_count": int(normalized_payload.get("section_count", 0)),
+                "source": "result.json:data.signals (derived OP view)",
+                "row_count": sum(
+                    len(derived[key]) for key in ("nodes", "branches", "devices")
+                ),
+                "truncated": truncation.truncated,
             },
         )
 
-    def _try_read_text(self, path: Path) -> Optional[str]:
-        if not path.is_file():
-            return None
-        try:
-            content = path.read_text(encoding="utf-8")
-        except OSError:
-            return None
-        if not content.strip():
-            return None
-        if "## nodes" not in content or "| name | voltage | formatted |" not in content:
-            return None
-        return content
+
+def _invalid_payload(result_path: str, reason: str) -> ToolResult:
+    return ToolResult(
+        content=f"Error: invalid derived OP view for '{result_path}': {reason}.",
+        is_error=True,
+        details={"result_path": result_path},
+    )
 
 
 __all__ = ["ReadOpResultTool"]

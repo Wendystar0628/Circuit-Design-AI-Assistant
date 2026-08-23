@@ -16,31 +16,38 @@ def export_widget_image(
     if owner_widget is None or target_widget is None:
         return False
 
-    owner_widget.resize(
-        max(owner_widget.width(), minimum_surface_width),
-        max(owner_widget.height(), minimum_surface_height),
-    )
-    owner_widget.ensurePolished()
-    layout = owner_widget.layout()
-    if layout is not None:
-        layout.activate()
-
-    render_width = max(int(target_widget.width()), minimum_render_width)
-    render_height = max(int(target_widget.height()), minimum_render_height)
-    if render_width <= 0 or render_height <= 0:
-        return False
-
-    pixmap = QPixmap(render_width, render_height)
-    pixmap.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(pixmap)
+    original_size = owner_widget.size()
     try:
-        target_widget.render(painter)
-    finally:
-        painter.end()
+        owner_widget.resize(
+            max(owner_widget.width(), minimum_surface_width),
+            max(owner_widget.height(), minimum_surface_height),
+        )
+        owner_widget.ensurePolished()
+        layout = owner_widget.layout()
+        if layout is not None:
+            layout.activate()
 
-    if pixmap.isNull():
-        return False
-    return pixmap.save(path)
+        render_width = max(int(target_widget.width()), minimum_render_width)
+        render_height = max(int(target_widget.height()), minimum_render_height)
+        if render_width <= 0 or render_height <= 0:
+            return False
+
+        pixmap = QPixmap(render_width, render_height)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        try:
+            target_widget.render(painter)
+        finally:
+            painter.end()
+
+        if pixmap.isNull():
+            return False
+        return pixmap.save(path)
+    finally:
+        owner_widget.resize(original_size)
+        layout = owner_widget.layout()
+        if layout is not None:
+            layout.activate()
 
 
 __all__ = ["export_widget_image"]

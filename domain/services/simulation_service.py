@@ -1,7 +1,7 @@
 """``SimulationService`` — stateless, reentrant simulation execution unit.
 
-This module is deliberately kept narrow: pick an executor, run it,
-persist the bundle, return ``(result, result_path)``. Nothing else.
+This module is deliberately kept narrow: run ngspice, persist the bundle,
+return its exact ``result_path``. Nothing else.
 
 What this module is **not**
 ---------------------------
@@ -26,38 +26,36 @@ Thread safety
 Every ``run_simulation`` call is self-contained: its inputs come via
 arguments, its outputs via the return value, and its only mutable
 side effect is the filesystem bundle it writes. The service instance
-holds only the executor registry and the artifact persistence it
-was handed at construction time; both are themselves safe to share.
+holds only the concrete ngspice executor and artifact persistence it was
+handed at construction time. The executor serializes its native session.
 That means manager workers can share one service across threads, or
 spin up per-worker instances — either works.
 
 Return contract
 ---------------
 
-``run_simulation`` returns ``(SimulationResult, result_path)``. The
-``result_path`` is the project-relative POSIX path of
-``result.json`` inside the freshly-written bundle, or the empty
-string when ``project_root`` is falsy (headless tests that skip
-persistence). No other output channel exists; callers consume the
-tuple directly.
+``run_simulation`` returns only the project-relative POSIX ``result_path`` of
+the freshly-written ``result.json``.  The persisted document is the sole
+authority: callers load it through ``SimulationResultRepository`` instead of
+trusting a second in-memory result that could drift from disk. No successful
+call skips persistence or returns an empty path.
 """
 
 from __future__ import annotations
 
 import logging
+import os
+import threading
 import time
+from dataclasses import replace
 from pathlib import Path
-from typing import Any, Dict, Mapping, Optional, Tuple
+from typing import Any, Optional
 
-from domain.simulation.spice.analysis_directive_authority import detect_last_analysis_type_from_text
 from domain.simulation.data.simulation_artifact_persistence import (
     SimulationArtifactPersistence,
     simulation_artifact_persistence,
 )
-from domain.simulation.executor.executor_registry import (
-    ExecutorRegistry,
-    executor_registry,
-)
+from domain.simulation.executor.spice_executor import SpiceExecutor
 from domain.simulation.models.simulation_error import (
     ErrorSeverity,
     SimulationError,
@@ -73,52 +71,53 @@ _logger = logging.getLogger(__name__)
 
 
 class SimulationService:
-    """Stateless simulation orchestrator: executor lookup → run → persist.
+    """Stateless simulation orchestrator: validate → run → persist.
 
     One instance can safely back every manager worker in the pool;
     there is no per-call state the object keeps between invocations.
     All inputs flow in through :meth:`run_simulation` arguments,
-    all outputs flow back through the returned tuple.
+    all outputs flow back through the returned authoritative path.
     """
 
     def __init__(
         self,
-        registry: Optional[ExecutorRegistry] = None,
+        *,
+        executor: SpiceExecutor,
         artifact_persistence: Optional[SimulationArtifactPersistence] = None,
     ) -> None:
-        self._registry = registry or executor_registry
+        if executor is None:
+            raise TypeError("executor is required")
+        self._executor = executor
         self._artifact_persistence = (
-            artifact_persistence or simulation_artifact_persistence
+            artifact_persistence
+            if artifact_persistence is not None
+            else simulation_artifact_persistence
         )
 
     def run_simulation(
         self,
+        *,
         file_path: str,
-        analysis_config: Optional[Dict[str, Any]] = None,
-        project_root: Optional[str] = None,
+        project_root: str,
+        cancel_signal: Optional[threading.Event] = None,
         version: int = 1,
         session_id: str = "",
-        metric_targets: Optional[Mapping[str, str]] = None,
-    ) -> Tuple[SimulationResult, str]:
+    ) -> str:
         """Execute one simulation and persist its bundle.
 
         Args:
-            file_path: Circuit source (absolute or project-relative).
-            analysis_config: Optional executor config; ``analysis_type``
-                is read here, everything else is forwarded untouched.
-            project_root: Absolute project directory. When empty, the
-                bundle is **not** written and ``result_path`` is ``""``
-                — only headless unit tests should rely on this.
+            file_path: Circuit source, absolute or relative to ``project_root``.
+            project_root: Non-empty project directory used for the mandatory
+                transactional result bundle.
+            cancel_signal: Manager-owned cancellation signal forwarded to the
+                executor through its explicit cancellation channel.
             version: Iteration version stamped onto the result.
             session_id: Session id stamped onto the result.
-            metric_targets: ``{metric_name: target_text}``. UI callers
-                pass ``MetricTargetService.get_targets_for_file``;
-                headless callers pass ``{}``.
 
         Returns:
-            ``(SimulationResult, result_path)``. ``result_path`` is the
-            project-relative POSIX path of ``result.json``; callers
-            must treat it as opaque and never predict the value.
+            The project-relative POSIX path of the committed ``result.json``.
+            Callers must treat it as opaque and load the authoritative result
+            through ``SimulationResultRepository``.
 
         Raises:
             Every executor failure is captured into an error-shaped
@@ -126,29 +125,31 @@ class SimulationService:
             errors, by contrast, propagate out: a "successful" return
             from this method means the bundle is on disk.
         """
+        file_path, project_root = self._canonicalize_project_paths(
+            file_path,
+            project_root,
+        )
         start_time = time.time()
-        analysis_type = self._resolve_analysis_type(analysis_config, file_path)
 
-        executor = self._registry.get_executor_for_file(file_path)
-        if executor is None:
+        executor = self._executor
+        if not executor.can_handle(file_path):
             error = SimulationError(
-                code="E011",
                 type=SimulationErrorType.PARAMETER_INVALID,
                 severity=ErrorSeverity.HIGH,
                 message=(
-                    f"No executor supports file type: "
+                    f"Unsupported circuit file type: "
                     f"{Path(file_path).suffix}"
                 ),
                 file_path=file_path,
                 recovery_suggestion=(
                     "Supported extensions: "
-                    + ", ".join(self._registry.get_all_supported_extensions())
+                    + ", ".join(executor.get_supported_extensions())
                 ),
             )
             result = create_error_result(
                 executor="unknown",
                 file_path=file_path,
-                analysis_type=analysis_type,
+                analysis_type="unknown",
                 error=error,
                 duration_seconds=time.time() - start_time,
                 version=version,
@@ -156,7 +157,10 @@ class SimulationService:
             )
         else:
             try:
-                result = executor.execute(file_path, analysis_config)
+                result = executor.execute(
+                    file_path,
+                    cancel_signal=cancel_signal,
+                )
             except Exception as exc:
                 _logger.exception(
                     "Executor '%s' raised while running %s: %s",
@@ -164,57 +168,133 @@ class SimulationService:
                     file_path,
                     exc,
                 )
+                diagnostic_message = str(exc).strip() or (
+                    f"{type(exc).__name__} raised without an error message"
+                )
                 error = SimulationError(
-                    code="E999",
                     type=SimulationErrorType.NGSPICE_CRASH,
                     severity=ErrorSeverity.CRITICAL,
-                    message=str(exc),
+                    message=diagnostic_message,
                     file_path=file_path,
                 )
                 result = create_error_result(
                     executor=executor.get_name(),
                     file_path=file_path,
-                    analysis_type=analysis_type,
+                    analysis_type="unknown",
                     error=error,
                     duration_seconds=time.time() - start_time,
                     version=version,
                     session_id=session_id,
                 )
-            else:
-                result.version = version
-                result.session_id = session_id
+        result = self._validate_executor_result(
+            result=result,
+            requested_file=file_path,
+            project_root=project_root,
+            version=version,
+            session_id=session_id,
+        )
 
-        result_path = ""
-        if project_root:
-            outcome = self._artifact_persistence.persist_bundle(
-                project_root=project_root,
-                result=result,
-                metric_targets=metric_targets,
-            )
-            result_path = outcome.result_path
-            _logger.info(
-                "Simulation bundle persisted: %s (files=%d, errors=%d)",
-                result_path,
-                len(outcome.written_files),
-                len(outcome.errors),
-            )
-        return result, result_path
+        outcome = self._artifact_persistence.persist_bundle(
+            project_root=project_root,
+            result=result,
+        )
+        _logger.info(
+            "Simulation result persisted: %s",
+            outcome.result_path,
+        )
+        return outcome.result_path
 
     @staticmethod
-    def _resolve_analysis_type(
-        analysis_config: Optional[Dict[str, Any]],
+    def _canonicalize_project_paths(
         file_path: str,
-    ) -> str:
-        """Prefer the config's ``analysis_type``; fall back to netlist scan."""
-        if analysis_config:
-            configured = analysis_config.get("analysis_type", "")
-            if configured:
-                return str(configured)
+        project_root: str,
+    ) -> tuple[str, str]:
+        if not isinstance(project_root, str) or not project_root.strip():
+            raise ValueError("project_root is required")
+        if not isinstance(file_path, str) or not file_path.strip():
+            raise ValueError("file_path is required")
+
+        project_input = Path(project_root).expanduser()
+        if not project_input.is_absolute():
+            raise ValueError("project_root must be an absolute directory")
+        project = project_input.resolve(strict=False)
+        if not project.is_dir():
+            raise ValueError("project_root must be an existing directory")
+        requested = Path(file_path).expanduser()
+        circuit = (
+            requested.resolve(strict=False)
+            if requested.is_absolute()
+            else (project / requested).resolve(strict=False)
+        )
         try:
-            content = Path(file_path).read_text(encoding="utf-8", errors="ignore")
-        except Exception:
-            return ""
-        return detect_last_analysis_type_from_text(content)
+            circuit.relative_to(project)
+        except ValueError as exc:
+            raise ValueError("file_path must stay inside project_root") from exc
+        return str(circuit), str(project)
+
+    @classmethod
+    def _validate_executor_result(
+        cls,
+        *,
+        result: Any,
+        requested_file: str,
+        project_root: str,
+        version: int,
+        session_id: str,
+    ) -> SimulationResult:
+        """Fail closed before publishing anything returned by the executor.
+
+        The executor result is still an untrusted in-memory boundary: a wrong
+        circuit must never be committed and left behind as a
+        misleading history entry.  This layer owns request identity only;
+        ``SimulationArtifactPersistence`` is the sole owner of the portable
+        on-disk representation and its strict schema round-trip.
+        """
+        if not isinstance(result, SimulationResult):
+            raise TypeError("executor must return a SimulationResult")
+
+        project = Path(project_root).resolve(strict=True)
+        requested = Path(requested_file).resolve(strict=False)
+        returned = cls._resolve_result_file(result.file_path, project)
+        if cls._path_key(returned) != cls._path_key(requested):
+            raise ValueError(
+                "executor returned a result for a different circuit file"
+            )
+
+        if isinstance(result.error, SimulationError) and result.error.file_path is not None:
+            error_file = cls._resolve_result_file(result.error.file_path, project)
+            if cls._path_key(error_file) != cls._path_key(requested):
+                raise ValueError(
+                    "executor returned an error for a different circuit file"
+                )
+
+        return replace(
+            result,
+            version=version,
+            session_id=session_id,
+        )
+
+    @staticmethod
+    def _resolve_result_file(value: Any, project_root: Path) -> Path:
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("executor result file_path must be a non-empty string")
+        raw = Path(value).expanduser()
+        resolved = (
+            raw.resolve(strict=False)
+            if raw.is_absolute()
+            else (project_root / raw).resolve(strict=False)
+        )
+        try:
+            resolved.relative_to(project_root)
+        except ValueError as exc:
+            raise ValueError(
+                "executor result file_path must stay inside project_root"
+            ) from exc
+        return resolved
+
+    @staticmethod
+    def _path_key(path: Path) -> str:
+        return os.path.normcase(str(path.resolve(strict=False)))
 
 
 __all__ = [

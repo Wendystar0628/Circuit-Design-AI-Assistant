@@ -5,6 +5,7 @@
 * Devices exercised: V, R, J (NJF bundled 2N3819).
 
 .title NJF Transfer Curve
+.include "../../resources/models/ngspice/testcircuit_discrete.lib"
 
 * --- Drain supply (constant) ---
 Vdd vdd 0 DC 10
@@ -12,8 +13,8 @@ Vdd vdd 0 DC 10
 * --- Gate sweep voltage ---
 Vgs gate 0 DC 0
 
-* --- Drain series resistor turns the JFET into a familiar self-biased stage ---
-Rd vdd drain 1k
+* --- Small drain resistor keeps VDS above the saturation boundary at VGS=0 ---
+Rd vdd drain 470
 
 * --- JFET under test (drain / gate / source) ---
 J1 drain gate 0 2N3819
@@ -21,7 +22,7 @@ J1 drain gate 0 2N3819
 * --- Analysis: sweep Vgs across the device's active region ---
 .dc Vgs -3 0 0.02
 
-.MEASURE DC id_at_vgs0    FIND I(Vdd) AT=0
-.MEASURE DC id_at_vgs_neg2 FIND I(Vdd) AT=-2
+.MEASURE DC id_at_vgs0     FIND par('-I(Vdd)') AT=0
+.MEASURE DC id_at_vgs_neg2 FIND par('-I(Vdd)') AT=-2
 
 .end

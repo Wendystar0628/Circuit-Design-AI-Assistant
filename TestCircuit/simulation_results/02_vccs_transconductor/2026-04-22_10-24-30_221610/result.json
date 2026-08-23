@@ -1,6 +1,7 @@
 {
+  "schema_version": 3,
   "executor": "spice",
-  "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\by_device\\controlled_source\\02_vccs_transconductor.cir",
+  "file_path": "by_device/controlled_source/02_vccs_transconductor.cir",
   "analysis_type": "ac",
   "success": true,
   "data": {
@@ -129,7 +130,6 @@
     ],
     "time": null,
     "sweep": null,
-    "sweep_name": null,
     "signals": {
       "I(VIN)": {
         "_complex": true,
@@ -884,54 +884,24 @@
       "V(out)": "voltage",
       "V(in)": "voltage"
     },
-    "op_result": {}
+    "noise_totals": null
   },
   "measurements": [
     {
       "name": "g_mid",
       "value": 19.98289,
-      "unit": "dB",
       "status": "OK",
       "statement": ".MEASURE AC g_mid FIND vdb(out) AT=100",
-      "description": "",
-      "display_name": "G Mid",
-      "category": "amplifier",
-      "quantity_kind": "db",
       "raw_output": "g_mid               =  1.998289e+01",
       "error_message": ""
     }
   ],
   "error": null,
   "raw_output": "stdout Note: No compatibility mode selected!\nstdout Circuit: VCCS Transconductor AC Response\nstdout Doing analysis at TEMP = 27.000000 and TNOM = 27.000000\nstderr Using SPARSE 1.3 as Direct Linear Solver\nstderr Note: vin: has no value, DC 0 assumed\n Reference value :  1.00000e+01\r\nstdout No. of Data Rows : 121\nstdout Measurements for AC Analysis\nstdout g_mid               =  1.998289e+01",
-  "timestamp": "2026-04-22T10:24:30.221610",
+  "timestamp": "2026-04-22T10:24:30.221610+08:00",
   "duration_seconds": 0.006661653518676758,
   "version": 1,
   "session_id": "",
-  "x_axis_kind": "frequency",
-  "x_axis_label": "Frequency (Hz)",
-  "x_axis_scale": "log",
-  "requested_x_range": null,
-  "actual_x_range": [
-    10.0,
-    9999999.9999999
-  ],
   "analysis_command": ".ac dec 20 10 10Meg",
-  "analysis_info": {
-    "analysis_type": "ac",
-    "analysis_command": ".ac dec 20 10 10Meg",
-    "x_axis_kind": "frequency",
-    "x_axis_label": "Frequency (Hz)",
-    "x_axis_scale": "log",
-    "requested_x_range": null,
-    "actual_x_range": [
-      10.0,
-      9999999.9999999
-    ],
-    "parameters": {
-      "sweep_type": "dec",
-      "points_per_decade": "20",
-      "start_frequency": "10",
-      "stop_frequency": "10Meg"
-    }
-  }
+  "source_digest": "363228770c6c256b8d4177e82615f863e4b6370eb2c0123d2417cc300b58a2e0"
 }

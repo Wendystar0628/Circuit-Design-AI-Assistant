@@ -1,5 +1,6 @@
 import type { SimulationMainState } from '../../types/state'
 import { getUiText } from '../../uiText'
+import { NoiseTotalsSummary } from '../shared/NoiseTotalsSummary'
 
 interface AnalysisInfoTabProps {
   state: SimulationMainState
@@ -23,6 +24,7 @@ export function AnalysisInfoTab({ state }: AnalysisInfoTabProps) {
           <div className="info-row"><div className="card-title">{getUiText(uiText, 'simulation.analysis_info.file', 'File')}</div><div className="info-row__value">{info.file_name || getUiText(uiText, 'simulation.analysis_info.not_loaded', 'Not Loaded')}</div></div>
           <div className="info-row"><div className="card-title">{getUiText(uiText, 'simulation.analysis_info.x_axis', 'X Axis')}</div><div className="info-row__value">{info.x_axis_label || getUiText(uiText, 'simulation.analysis_info.undefined', 'Undefined')}</div></div>
         </div>
+        <NoiseTotalsSummary noiseTotals={info.noise_totals} uiText={uiText} />
         <div className="content-card content-card--scrollable">
           <div className="card-title">{getUiText(uiText, 'simulation.analysis_info.parameters', 'Parameters')}</div>
           <div className="parameter-list">

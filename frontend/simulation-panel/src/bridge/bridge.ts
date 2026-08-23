@@ -40,14 +40,33 @@ export interface SchematicValueUpdateRequestInput {
 }
 
 export interface MetricTargetsUpdateRequestInput {
+  projectRoot: string
+  resultPath: string
   sourceFilePath: string
   targets: Record<string, string>
+}
+
+export interface ResultLoadRequestInput {
+  projectRoot: string
+  resultPath: string
+}
+
+export interface CancelSimulationRequestInput {
+  projectRoot: string
+  jobId: string
+}
+
+export type ResultActionRequestInput = ResultLoadRequestInput
+
+export interface ConversationAttachmentRequestInput extends ResultActionRequestInput {
+  target: 'metrics' | 'chart' | 'waveform' | 'output_log' | 'op_result'
 }
 
 export interface SimulationBridge {
   markReady(): void
   activateTab(tabId: SimulationTabId): void
-  loadResultByPath(resultPath: string): void
+  loadResultByPath(payload: ResultLoadRequestInput): void
+  cancelSimulation(payload: CancelSimulationRequestInput): void
   updateSchematicValue(payload: SchematicValueUpdateRequestInput): void
   requestRawDataViewport(payload: RawDataViewportRequestInput): void
   copyRawDataRange(payload: RawDataCopyRequestInput): void
@@ -68,24 +87,28 @@ export interface SimulationBridge {
   resetWaveformViewport(): void
   searchOutputLog(keyword: string): void
   filterOutputLog(level: string): void
+  copyOutputLog(): void
   setExportTypeSelected(exportType: string, selected: boolean): void
   setAllExportTypesSelected(selected: boolean): void
   chooseExportDirectory(): void
   clearExportDirectory(): void
-  requestExport(): void
+  requestExport(payload: ResultActionRequestInput): void
   chooseAscFilesForConversion(): void
-  addToConversation(target: string): void
+  addToConversation(payload: ConversationAttachmentRequestInput): void
   updateMetricTargets(payload: MetricTargetsUpdateRequestInput): void
-  copyTextToClipboard(text: string): void
+}
+
+export interface SimulationSnapshot {
+  state: SimulationMainState | Record<string, unknown>
+  schematicDocument: SchematicDocumentState | Record<string, unknown>
+  schematicWriteResult: SchematicWriteResultState | Record<string, unknown>
+  rawDataDocument: RawDataDocumentState | Record<string, unknown>
+  rawDataViewport: RawDataViewportState | Record<string, unknown>
+  rawDataCopyResult: RawDataCopyResultState | Record<string, unknown>
 }
 
 export interface SimulationAppApi {
-  setState(state: SimulationMainState | Record<string, unknown>): void
-  setSchematicDocument(state: SchematicDocumentState | Record<string, unknown>): void
-  finishSchematicWrite(state: SchematicWriteResultState | Record<string, unknown>): void
-  setRawDataDocument(state: RawDataDocumentState | Record<string, unknown>): void
-  setRawDataViewport(state: RawDataViewportState | Record<string, unknown>): void
-  finishRawDataCopy(state: RawDataCopyResultState | Record<string, unknown>): void
+  applySnapshot(snapshot: SimulationSnapshot): void
 }
 
 interface QtTransport {

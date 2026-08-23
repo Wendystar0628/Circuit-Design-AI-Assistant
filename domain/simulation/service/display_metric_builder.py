@@ -2,28 +2,25 @@
 
 Converts ``SimulationResult.measurements`` into a list of
 ``DisplayMetric`` rows, merging in user-authored target strings. The
-factory is deliberately **stateless** and **UI-free** so that both the
-simulation panel (via the view-model) and the headless artifact
-persistence service can produce identical metric tables from the same
-inputs.
+factory is stateless and UI-free so the panel, root-backed agent reader and
+manual exporter produce the same formatting from the same measurements.
 
 Inputs:
 
 - ``result``: a fully-populated ``SimulationResult``. Only
   ``measurements`` and ``file_path`` are consulted.
 - ``targets``: ``{metric_name: target_text}``. Typically sourced from
-  ``MetricTargetService.get_targets_for_file(...)`` on the UI side; on
-  the agent side callers pass ``{}`` (targets are project-local and
-  outside the agent job's concern).
+  ``MetricTargetService.get_targets_for_file(...)`` on the UI side. Root-backed
+  agent reads pass ``{}`` because mutable targets are not part of an immutable
+  simulation result.
 
-Formatting rules mirror the historical ViewModel logic so the on-disk
-``metrics.csv`` / ``metrics.json`` reads exactly like what the user
-sees in the panel.
+Formatting rules are shared by the UI and any derived export.
 """
 
 from __future__ import annotations
 
-import re
+import math
+from numbers import Real
 from typing import Dict, List, Mapping, Optional
 
 from domain.simulation.measure.measure_metadata import measure_metadata_resolver
@@ -32,7 +29,17 @@ from domain.simulation.models.display_metric import DisplayMetric
 from domain.simulation.models.simulation_result import SimulationResult
 
 
-_NUMERIC_PREFIX = re.compile(r"^([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?)\s*(.*)$")
+_PREFIXABLE_UNITS = {"Hz", "s", "V", "A", "W", "Ω", "F", "H", "S"}
+_ENGINEERING_SCALES = (
+    (1e9, "G"),
+    (1e6, "M"),
+    (1e3, "k"),
+    (1.0, ""),
+    (1e-3, "m"),
+    (1e-6, "μ"),
+    (1e-9, "n"),
+    (1e-12, "p"),
+)
 
 
 class DisplayMetricBuilder:
@@ -50,22 +57,41 @@ class DisplayMetricBuilder:
         for measure in measurements:
             if not isinstance(measure, MeasureResult):
                 continue
-            if measure.status != MeasureStatus.OK or measure.value is None:
-                continue
             metadata = measure_metadata_resolver.resolve(
                 measure.name,
                 statement=measure.statement,
-                description=measure.description,
-                fallback_unit=measure.unit,
             )
-            display_name = measure.display_name or metadata.display_name
+            target = resolved_targets.get(measure.name, "")
+            if measure.status is MeasureStatus.OK and measure.is_valid:
+                rows.append(
+                    self._make_success_row(
+                        name=measure.name,
+                        value=measure.value,
+                        unit=metadata.unit,
+                        display_name=metadata.display_name,
+                        target=target,
+                    )
+                )
+                continue
+
+            status = measure.status
+            error_message = measure.error_message
+            if status is MeasureStatus.OK:
+                status = MeasureStatus.PARSE_ERROR
+                error_message = (
+                    error_message
+                    or "Measurement result is not a finite numeric value"
+                )
             rows.append(
-                self._make_row(
+                DisplayMetric(
                     name=measure.name,
-                    value=measure.value,
+                    display_name=metadata.display_name,
+                    value="",
                     unit=metadata.unit,
-                    display_name=display_name,
-                    target=resolved_targets.get(measure.name, ""),
+                    status=status.value,
+                    error_message=error_message,
+                    raw_value=None,
+                    target=target,
                 )
             )
         return rows
@@ -74,7 +100,7 @@ class DisplayMetricBuilder:
     # Internals
     # ------------------------------------------------------------------
 
-    def _make_row(
+    def _make_success_row(
         self,
         *,
         name: str,
@@ -83,52 +109,39 @@ class DisplayMetricBuilder:
         display_name: str,
         target: str,
     ) -> DisplayMetric:
-        raw_value: Optional[float] = None
-        formatted_value: str = str(value) if value is not None else "N/A"
-
-        if isinstance(value, (int, float)):
-            raw_value = float(value)
-            formatted_value = self._format_with_unit(raw_value, unit)
-        elif isinstance(value, str):
-            match = _NUMERIC_PREFIX.match(value.strip())
-            if match:
-                try:
-                    raw_value = float(match.group(1))
-                    unit = match.group(2) or unit
-                    formatted_value = value
-                except ValueError:
-                    pass
+        if isinstance(value, bool) or not isinstance(value, Real):
+            raise TypeError("Successful measurement value must be numeric")
+        raw_value = float(value)
+        if not math.isfinite(raw_value):
+            raise ValueError("Successful measurement value must be finite")
 
         return DisplayMetric(
             name=name,
             display_name=display_name,
-            value=formatted_value,
+            value=self._format_with_unit(raw_value, unit),
             unit=unit,
+            status=MeasureStatus.OK.value,
+            error_message="",
             raw_value=raw_value,
             target=target,
         )
 
     def _format_with_unit(self, value: float, unit: str) -> str:
+        if not math.isfinite(value):
+            return "N/A"
+        normalized_unit = str(unit or "").strip()
+        if normalized_unit not in _PREFIXABLE_UNITS:
+            formatted = f"{value:.6g}"
+            return f"{formatted} {normalized_unit}" if normalized_unit else formatted
+
         abs_value = abs(value)
         if abs_value == 0:
-            formatted = "0"
-        elif abs_value >= 1e9:
-            formatted = f"{value / 1e9:.2f}G"
-        elif abs_value >= 1e6:
-            formatted = f"{value / 1e6:.2f}M"
-        elif abs_value >= 1e3:
-            formatted = f"{value / 1e3:.2f}k"
-        elif abs_value >= 1:
-            formatted = f"{value:.2f}"
-        elif abs_value >= 1e-3:
-            formatted = f"{value * 1e3:.2f}m"
-        elif abs_value >= 1e-6:
-            formatted = f"{value * 1e6:.2f}\u03bc"
-        elif abs_value >= 1e-9:
-            formatted = f"{value * 1e9:.2f}n"
-        else:
-            formatted = f"{value:.2e}"
-        return f"{formatted} {unit}" if unit else formatted
+            return f"0 {normalized_unit}"
+        for scale, prefix in _ENGINEERING_SCALES:
+            scaled = abs_value / scale
+            if 1 <= scaled < 1000:
+                return f"{value / scale:.3g} {prefix}{normalized_unit}"
+        return f"{value:.3e} {normalized_unit}"
 
 
 display_metric_builder = DisplayMetricBuilder()

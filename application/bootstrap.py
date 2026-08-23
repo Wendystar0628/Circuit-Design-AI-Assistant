@@ -547,27 +547,9 @@ def _delayed_init():
             _logger.info("Phase 3.5.2.1 MetricTargetService 初始化完成")
 
         # --------------------------------------------------------
-        # 3.5.3 ExecutorRegistry 初始化
-        # 依赖：Logger
-        # 职责：注册仿真执行器（SpiceExecutor、PythonExecutor）
-        # --------------------------------------------------------
-        _init_executor_registry()
-
-        # --------------------------------------------------------
-        # 3.5.3.0 SimulationResultRepository 注册
-        # 依赖：无（stateless 单例）
-        # 职责：result.json 的权威加载/枚举/按电路聚合读取入口；
-        #       agent read-tool 基座（Step 16）与 UI 侧的 attachment
-        #       协调器通过 ServiceLocator 取用，避免模块级直 import
-        #       造成的依赖失真
-        # --------------------------------------------------------
-        _init_simulation_result_repository()
-
-        # --------------------------------------------------------
-        # 3.5.3.1 SimulationJobManager 初始化
-        # 依赖：ExecutorRegistry、EventBus、SimulationArtifactPersistence
-        # 职责：作为仓库里唯一能启动仿真的入口，管理并发 job 提交、
-        #       查询、等待、取消及权威事件广播
+        # 3.5.3 SimulationJobManager 初始化
+        # 依赖：SpiceExecutor、SimulationService、EventBus
+        # 职责：显式装配唯一的 SPICE 仿真栈，并提供唯一的 job 入口
         # --------------------------------------------------------
         _init_simulation_job_manager()
 
@@ -696,111 +678,40 @@ def _delayed_init():
 
 
 
-def _init_executor_registry():
-    """
-    初始化仿真执行器注册表（Phase 3.5.4）
-    
-    注册所有仿真执行器到全局注册表：
-    - SpiceExecutor: SPICE 仿真执行器（使用 ctypes 直接调用 ngspice 共享库）
-    - PythonExecutor: Python 脚本执行器（在独立子进程中执行）
-    
-    执行器注册表是全局单例，通过 ServiceLocator 访问。
-    """
-    try:
-        from domain.simulation.executor import (
-            executor_registry,
-            SpiceExecutor,
-            PythonExecutor,
-        )
-        from shared.service_locator import ServiceLocator
-        from shared.service_names import SVC_EXECUTOR_REGISTRY
-        
-        # 注册 SpiceExecutor
-        spice_executor = SpiceExecutor()
-        executor_registry.register(spice_executor)
-        
-        # 注册 PythonExecutor
-        python_executor = PythonExecutor()
-        executor_registry.register(python_executor)
-        
-        # 将注册表注册到 ServiceLocator
-        ServiceLocator.register(SVC_EXECUTOR_REGISTRY, executor_registry)
-        
-        if _logger:
-            registry_info = executor_registry.get_registry_info()
-            _logger.info(
-                f"Phase 3.5.4 ExecutorRegistry 初始化完成，"
-                f"已注册 {registry_info['executor_count']} 个执行器: "
-                f"{[e['name'] for e in registry_info['executors']]}"
-            )
-            
-            # 检查 SpiceExecutor 是否可用
-            if spice_executor.is_available():
-                _logger.info("SpiceExecutor 初始化成功，SPICE 仿真功能可用")
-            else:
-                _logger.warning("SpiceExecutor 初始化失败，SPICE 仿真功能不可用")
-            
-    except Exception as e:
-        if _logger:
-            _logger.warning(f"Phase 3.5.4 ExecutorRegistry 初始化失败（非致命）: {e}")
-        else:
-            print(f"[Phase 3.5.4] ExecutorRegistry 初始化失败: {e}")
-
-
-def _init_simulation_result_repository():
-    """注册 SimulationResultRepository 单例到 ServiceLocator（Phase 3.5.3.0）。
-
-    Repository 本身是 stateless 的模块级单例，但 agent 工具 / UI 组件
-    不再直接 import 这个单例；它们统一通过 ``SVC_SIMULATION_RESULT_REPOSITORY``
-    从 ServiceLocator 取用，和 ``SVC_SIMULATION_JOB_MANAGER`` 的注入
-    姿态对齐。
-    """
-    try:
-        from domain.simulation.service.simulation_result_repository import (
-            simulation_result_repository,
-        )
-        from shared.service_locator import ServiceLocator
-        from shared.service_names import SVC_SIMULATION_RESULT_REPOSITORY
-
-        ServiceLocator.register(
-            SVC_SIMULATION_RESULT_REPOSITORY, simulation_result_repository
-        )
-
-        if _logger:
-            _logger.info("Phase 3.5.3.0 SimulationResultRepository 注册完成")
-    except Exception as exc:
-        if _logger:
-            _logger.warning(
-                f"Phase 3.5.3.0 SimulationResultRepository 注册失败（非致命）: {exc}"
-            )
-        else:
-            print(f"[Phase 3.5.3.0] SimulationResultRepository 注册失败: {exc}")
-
-
 def _init_simulation_job_manager():
-    """初始化 SimulationJobManager（Phase 3.5.3.1）
+    """Compose and register the one simulation stack.
 
-    注册 ``SVC_SIMULATION_JOB_MANAGER`` 作为仿真提交的唯一权威入口。
-    依赖 ExecutorRegistry（用于选择执行器）、SimulationArtifactPersistence
-    （用于落盘工件束）与 EventBus（用于权威广播 EVENT_SIM_* 事件）。
+    A missing ngspice library is represented by a real ``SpiceExecutor`` that
+    returns diagnostic failure bundles, so it is safe to keep the application
+    alive in that case. Composition failure itself is different: without the
+    manager the UI and agent tool have no simulation authority. Let that bug
+    reach the Phase-3 boundary instead of publishing a false INIT_COMPLETE.
     """
-    try:
-        from domain.services.simulation_job_manager import SimulationJobManager
-        from shared.service_locator import ServiceLocator
-        from shared.service_names import SVC_SIMULATION_JOB_MANAGER
 
-        manager = SimulationJobManager()
-        ServiceLocator.register(SVC_SIMULATION_JOB_MANAGER, manager)
+    from domain.services.simulation_job_manager import SimulationJobManager
+    from domain.services.simulation_service import SimulationService
+    from domain.simulation.executor.spice_executor import SpiceExecutor
+    from domain.simulation.service.simulation_result_repository import (
+        simulation_result_repository,
+    )
+    from shared.service_locator import ServiceLocator
+    from shared.service_names import SVC_EVENT_BUS, SVC_SIMULATION_JOB_MANAGER
 
-        if _logger:
-            _logger.info("Phase 3.5.3.1 SimulationJobManager 初始化完成")
-    except Exception as exc:
-        if _logger:
-            _logger.warning(
-                f"Phase 3.5.3.1 SimulationJobManager 初始化失败（非致命）: {exc}"
-            )
+    executor = SpiceExecutor()
+    simulation_service = SimulationService(executor=executor)
+    manager = SimulationJobManager(
+        simulation_service=simulation_service,
+        result_repository=simulation_result_repository,
+        event_bus=ServiceLocator.get_optional(SVC_EVENT_BUS),
+    )
+    ServiceLocator.register(SVC_SIMULATION_JOB_MANAGER, manager)
+
+    if _logger:
+        _logger.info("Phase 3.5.3 SimulationJobManager 初始化完成")
+        if executor.is_available():
+            _logger.info("ngspice 共享库可用，SPICE 仿真功能已就绪")
         else:
-            print(f"[Phase 3.5.3.1] SimulationJobManager 初始化失败: {exc}")
+            _logger.warning("ngspice 共享库不可用，SPICE 仿真请求将明确失败")
 
 
 def refresh_llm_runtime_services() -> bool:

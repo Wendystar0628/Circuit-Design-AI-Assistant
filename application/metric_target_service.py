@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 import threading
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
-from shared.path_utils import normalize_absolute_path
+class MetricTargetStorageError(RuntimeError):
+    """Raised when metric targets cannot be loaded or committed safely."""
 
 
 class MetricTargetService(QObject):
@@ -45,6 +47,8 @@ class MetricTargetService(QObject):
         self._logger = None
         self._subscribed = False
         self._lock = threading.RLock()
+        self._storage_error = ""
+        self._storage_error_root = ""
         self._subscribe_events()
         self.reload_from_storage(emit_signal=False)
 
@@ -96,7 +100,8 @@ class MetricTargetService(QObject):
         file. Returns an empty dict if no targets have been recorded.
         The returned dict is a defensive copy.
         """
-        key = self._resolve_relative_key(source_file_path)
+        project_root = self._get_project_root()
+        key = self._resolve_relative_key(source_file_path, project_root)
         if not key:
             return {}
         with self._lock:
@@ -115,9 +120,13 @@ class MetricTargetService(QObject):
         minimal and no ghost buckets remain for files that no longer
         have any targets.
         """
-        key = self._resolve_relative_key(source_file_path)
+        project_root = self._get_project_root()
+        key = self._resolve_relative_key(source_file_path, project_root)
         if not key:
-            return self.get_state()
+            raise ValueError(
+                "Metric targets can only be written for a file inside the "
+                "currently open project"
+            )
         cleaned: Dict[str, str] = {}
         if isinstance(targets, dict):
             for raw_name, raw_value in targets.items():
@@ -126,36 +135,44 @@ class MetricTargetService(QObject):
                 if name and value:
                     cleaned[name] = value
         with self._lock:
+            self._require_current_project(project_root)
+            if self._storage_error_root == self._normalize_root(project_root):
+                raise MetricTargetStorageError(self._storage_error)
+
+            candidate = {
+                relative_path: dict(values)
+                for relative_path, values in self._targets.items()
+            }
             if cleaned:
-                self._targets[key] = cleaned
+                candidate[key] = cleaned
             else:
-                self._targets.pop(key, None)
-            self._save_storage_locked()
+                candidate.pop(key, None)
+
+            # Disk is authoritative.  Do not publish an in-memory state that
+            # failed to persist, and never re-resolve the project root during
+            # the write (that used to allow an A request to land in B).
+            self._save_storage_locked(project_root, candidate)
+            self._require_current_project(project_root)
+            self._targets = candidate
         return self._emit_state_changed()
 
     def reload_from_storage(self, *, emit_signal: bool = True) -> Dict[str, Any]:
         with self._lock:
             self._targets = {}
+            self._storage_error = ""
+            self._storage_error_root = ""
             project_root = self._get_project_root()
             if project_root:
-                payload = self._load_storage_payload(project_root)
-                for item in payload.get("files", []):
-                    if not isinstance(item, dict):
-                        continue
-                    relative_path = str(item.get("relative_path", "") or "").strip()
-                    if not relative_path:
-                        continue
-                    raw_targets = item.get("targets")
-                    if not isinstance(raw_targets, dict):
-                        continue
-                    cleaned: Dict[str, str] = {}
-                    for raw_name, raw_value in raw_targets.items():
-                        name = str(raw_name or "").strip()
-                        value = str(raw_value or "").strip()
-                        if name and value:
-                            cleaned[name] = value
-                    if cleaned:
-                        self._targets[relative_path] = cleaned
+                try:
+                    payload = self._load_storage_payload(project_root)
+                    self._targets = self._parse_storage_payload(payload)
+                except MetricTargetStorageError as exc:
+                    # Keep the damaged file untouched and make every later
+                    # write fail closed until a successful reload occurs.
+                    self._storage_error = str(exc)
+                    self._storage_error_root = self._normalize_root(project_root)
+                    if self.logger:
+                        self.logger.error(self._storage_error)
             state = self._build_state_locked()
         if emit_signal:
             self._emit_signals_for_state(state)
@@ -191,6 +208,8 @@ class MetricTargetService(QObject):
     def _on_project_closed(self, event_data: Dict[str, Any]) -> None:
         with self._lock:
             self._targets = {}
+            self._storage_error = ""
+            self._storage_error_root = ""
             state = self._build_state_locked()
         self._emit_signals_for_state(state)
 
@@ -217,27 +236,56 @@ class MetricTargetService(QObject):
         return {
             "file_count": len(files),
             "files": files,
+            "storage_error": self._storage_error,
         }
 
-    def _save_storage_locked(self) -> None:
-        project_root = self._get_project_root()
-        if not project_root:
-            return
+    def _save_storage_locked(
+        self,
+        project_root: str,
+        targets_by_file: Dict[str, Dict[str, str]],
+    ) -> None:
+        self._require_current_project(project_root)
         storage_path = self._get_storage_path(project_root)
         storage_path.parent.mkdir(parents=True, exist_ok=True)
+        self._assert_storage_path_safe(storage_path)
         payload = {
             "files": [
                 {
                     "relative_path": relative_path,
                     "targets": dict(targets),
                 }
-                for relative_path, targets in sorted(self._targets.items())
+                for relative_path, targets in sorted(targets_by_file.items())
             ]
         }
-        storage_path.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        serialized = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+        temp_path: Optional[Path] = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                newline="\n",
+                prefix=f".{storage_path.name}.",
+                suffix=".tmp",
+                dir=storage_path.parent,
+                delete=False,
+            ) as handle:
+                temp_path = Path(handle.name)
+                handle.write(serialized)
+                handle.flush()
+                os.fsync(handle.fileno())
+            self._require_current_project(project_root)
+            os.replace(temp_path, storage_path)
+            temp_path = None
+        except Exception as exc:
+            raise MetricTargetStorageError(
+                f"Failed to persist metric targets at {storage_path}: {exc}"
+            ) from exc
+        finally:
+            if temp_path is not None:
+                try:
+                    temp_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
 
     def _load_storage_payload(self, project_root: str) -> Dict[str, Any]:
         storage_path = self._get_storage_path(project_root)
@@ -245,9 +293,52 @@ class MetricTargetService(QObject):
             return {"files": []}
         try:
             payload = json.loads(storage_path.read_text(encoding="utf-8"))
-        except Exception:
-            return {"files": []}
-        return payload if isinstance(payload, dict) else {"files": []}
+        except Exception as exc:
+            raise MetricTargetStorageError(
+                f"Metric target file is unreadable and was left untouched: "
+                f"{storage_path}: {exc}"
+            ) from exc
+        if not isinstance(payload, dict) or not isinstance(payload.get("files"), list):
+            raise MetricTargetStorageError(
+                f"Metric target file has an invalid schema and was left "
+                f"untouched: {storage_path}"
+            )
+        return payload
+
+    def _parse_storage_payload(
+        self,
+        payload: Dict[str, Any],
+    ) -> Dict[str, Dict[str, str]]:
+        parsed: Dict[str, Dict[str, str]] = {}
+        for index, item in enumerate(payload["files"]):
+            if not isinstance(item, dict):
+                raise MetricTargetStorageError(
+                    f"Metric target entry {index} is not an object"
+                )
+            relative_path = str(item.get("relative_path", "") or "").strip()
+            raw_targets = item.get("targets")
+            if (
+                not relative_path
+                or Path(relative_path).is_absolute()
+                or ".." in Path(relative_path).parts
+                or not isinstance(raw_targets, dict)
+            ):
+                raise MetricTargetStorageError(
+                    f"Metric target entry {index} has an invalid path or targets"
+                )
+            cleaned: Dict[str, str] = {}
+            for raw_name, raw_value in raw_targets.items():
+                if not isinstance(raw_name, str) or not isinstance(raw_value, str):
+                    raise MetricTargetStorageError(
+                        f"Metric target entry {index} contains a non-string value"
+                    )
+                name = raw_name.strip()
+                value = raw_value.strip()
+                if name and value:
+                    cleaned[name] = value
+            if cleaned:
+                parsed[Path(relative_path).as_posix()] = cleaned
+        return parsed
 
     def _get_storage_path(self, project_root: str) -> Path:
         return Path(project_root).resolve() / ".circuit_ai" / "metric_targets.json"
@@ -261,28 +352,52 @@ class MetricTargetService(QObject):
         except Exception:
             return ""
 
-    def _resolve_relative_key(self, source_file_path: str) -> str:
+    def _resolve_relative_key(
+        self,
+        source_file_path: str,
+        project_root: str,
+    ) -> str:
         raw = str(source_file_path or "").strip()
-        if not raw:
+        if not raw or not project_root:
             return ""
-        project_root = self._get_project_root()
-        if not project_root:
-            return ""
-        absolute = normalize_absolute_path(raw)
-        abs_obj = Path(absolute).resolve()
         root_obj = Path(project_root).resolve()
+        raw_path = Path(raw).expanduser()
+        abs_obj = (
+            raw_path.resolve()
+            if raw_path.is_absolute()
+            else (root_obj / raw_path).resolve()
+        )
         try:
             relative = abs_obj.relative_to(root_obj).as_posix()
         except Exception:
-            try:
-                relative = os.path.relpath(str(abs_obj), str(root_obj)).replace("\\", "/")
-            except Exception:
-                return ""
-        # Files outside the project root (e.g. absolute-path scratch
-        # circuits) must not bleed into the project-scoped store.
-        if relative.startswith("../") or relative == "..":
             return ""
         return relative
 
+    def _require_current_project(self, expected_root: str) -> None:
+        current = self._normalize_root(self._get_project_root())
+        expected = self._normalize_root(expected_root)
+        if not expected or current != expected:
+            raise MetricTargetStorageError(
+                "The active project changed while metric targets were being saved"
+            )
 
-__all__ = ["MetricTargetService"]
+    @staticmethod
+    def _normalize_root(project_root: str) -> str:
+        raw = str(project_root or "").strip()
+        if not raw:
+            return ""
+        return os.path.normcase(str(Path(raw).resolve()))
+
+    @staticmethod
+    def _assert_storage_path_safe(storage_path: Path) -> None:
+        for candidate in (storage_path.parent, storage_path):
+            if not candidate.exists():
+                continue
+            is_junction = getattr(candidate, "is_junction", lambda: False)
+            if candidate.is_symlink() or is_junction():
+                raise MetricTargetStorageError(
+                    f"Refusing to access metric targets through a link: {candidate}"
+                )
+
+
+__all__ = ["MetricTargetService", "MetricTargetStorageError"]

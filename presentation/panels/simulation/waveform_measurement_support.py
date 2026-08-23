@@ -5,6 +5,11 @@ import numpy as np
 from domain.simulation.data.waveform_data_service import WaveformDataService
 from domain.simulation.models.simulation_result import SimulationResult
 from presentation.panels.simulation.waveform_plot_types import PlotItem, WaveformMeasurement
+from presentation.panels.simulation.ltspice_plot_interaction import (
+    has_unambiguous_x_axis,
+    sample_phase_degrees_at_x,
+    sample_series_at_x,
+)
 
 
 class WaveformMeasurementSupport:
@@ -22,17 +27,32 @@ class WaveformMeasurementSupport:
         if x_data is None or len(x_data) == 0:
             return result
         x_array = np.asarray(x_data, dtype=float)
+        log_x = current_result.is_x_axis_log()
+        sample_x = float(x)
+        if log_x:
+            if not np.isfinite(sample_x) or sample_x <= 0:
+                return result
+            sample_x = float(np.log10(sample_x))
         for signal_name in plot_items:
             y_data = data_service.get_signal_data(current_result, signal_name)
             if y_data is None:
                 continue
-            y_array = np.asarray(y_data, dtype=float)
-            if len(y_array) == 0 or len(y_array) != len(x_array):
-                continue
-            try:
-                result[signal_name] = float(np.interp(x, x_array, y_array))
-            except Exception:
-                continue
+            if str(signal_name).endswith("_phase"):
+                sampled = sample_phase_degrees_at_x(
+                    x_array,
+                    y_data,
+                    sample_x,
+                    log_x=log_x,
+                )
+            else:
+                sampled = sample_series_at_x(
+                    x_array,
+                    y_data,
+                    sample_x,
+                    log_x=log_x,
+                )
+            if sampled is not None:
+                result[signal_name] = sampled
         return result
 
     def build_measurement(
@@ -45,6 +65,14 @@ class WaveformMeasurementSupport:
         from_view_x_value: Callable[[float], float],
     ) -> WaveformMeasurement:
         measurement = WaveformMeasurement()
+
+        if current_result is not None:
+            x_data = current_result.get_x_axis_data()
+            if x_data is None or not has_unambiguous_x_axis(
+                x_data,
+                log_x=current_result.is_x_axis_log(),
+            ):
+                return measurement
 
         if cursor_a_pos is not None:
             measurement.cursor_a_x = from_view_x_value(cursor_a_pos)

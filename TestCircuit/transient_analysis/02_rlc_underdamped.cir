@@ -1,6 +1,6 @@
 * Underdamped Series RLC Step Response
 * A lightly-damped series RLC circuit rings after a step input.
-* Component values give f0 ~ 5.03 kHz, Q ~ 10, producing visible
+* Component values give f0 ~ 5.03 kHz, Q ~ 3.16, producing visible
 * decaying sinusoidal oscillation on the capacitor node.
 * Devices exercised: V, R, L, C.
 

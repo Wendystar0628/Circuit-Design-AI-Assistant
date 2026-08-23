@@ -1,635 +1,491 @@
-"""Tests for ``SimulationJobManager`` — the single submission channel.
-
-Covers the public API contract (minimal, closed surface), the three
-lifecycle events with full identity payloads, sync/async completion
-waiters, cancellation semantics for both ``PENDING`` and ``RUNNING``
-jobs, and concurrent-job behaviour.
-
-The tests deliberately use fake executors, persistence, and event bus
-implementations so no ngspice / Qt / filesystem state is exercised —
-the manager's behaviour is purely orchestration and those dependencies
-are hidden behind narrow interfaces we can substitute.
-"""
-
 from __future__ import annotations
 
 import asyncio
+import inspect
+import json
 import threading
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+import numpy as np
 import pytest
 
-import domain.services.simulation_job_manager as simulation_job_manager_module
-from domain.simulation.data.simulation_artifact_persistence import (
-    BundlePersistenceResult,
-)
-from domain.simulation.executor.simulation_executor import SimulationExecutor
+from domain.services.simulation_job_manager import SimulationJobManager
 from domain.simulation.models.simulation_error import (
     ErrorSeverity,
     SimulationError,
     SimulationErrorType,
 )
 from domain.simulation.models.simulation_job import (
+    DuplicateSimulationJobError,
     JobOrigin,
     JobStatus,
     SimulationJob,
 )
 from domain.simulation.models.simulation_result import (
     SimulationData,
-    SimulationResult,
     create_error_result,
     create_success_result,
 )
-from domain.services.simulation_job_manager import SimulationJobManager
-from shared.event_types import (
-    EVENT_SIM_COMPLETE,
-    EVENT_SIM_ERROR,
-    EVENT_SIM_STARTED,
+from domain.simulation.service.simulation_result_repository import (
+    SimulationResultRepository,
 )
+from shared.event_types import EVENT_SIM_COMPLETE, EVENT_SIM_ERROR, EVENT_SIM_STARTED
 from shared.sim_event_payload import extract_sim_payload
 
 
-# ---------------------------------------------------------------------------
-# Fakes
-# ---------------------------------------------------------------------------
+_SOURCE_DIGEST = "0" * 64
 
 
 class _RecordingEventBus:
-    """Captures ``publish`` calls on the worker thread for assertions.
-
-    The real :class:`shared.event_bus.EventBus` requires a Qt app loop
-    to deliver handlers back to the main thread. The manager contract
-    is only that it *calls* ``publish`` — delivery is the bus's
-    problem. A thread-safe list is enough to observe that contract.
-    """
-
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self.events: List[Tuple[str, Dict[str, Any], Optional[str]]] = []
 
-    def publish(
-        self,
-        event_type: str,
-        data: Any = None,
-        source: Optional[str] = None,
-    ) -> None:
+    def publish(self, event_type, data=None, source=None):
         with self._lock:
-            self.events.append((event_type, dict(data or {}), source))
+            self.events.append((event_type, dict(data), source))
 
-    def events_of(self, event_type: str) -> List[Dict[str, Any]]:
+    def of(self, event_type: str) -> List[Dict[str, Any]]:
         with self._lock:
-            return [payload for t, payload, _ in self.events if t == event_type]
+            return [payload for kind, payload, _ in self.events if kind == event_type]
+
+    def for_job(self, job_id: str) -> List[Tuple[str, Dict[str, Any]]]:
+        with self._lock:
+            return [
+                (kind, payload)
+                for kind, payload, _ in self.events
+                if payload["job_id"] == job_id
+            ]
 
 
-class _FakeExecutor(SimulationExecutor):
-    """SimulationExecutor double whose behaviour can be scripted per test.
-
-    ``delay`` blocks the worker for the given seconds; ``raise_exc``
-    makes ``execute`` throw; ``success`` toggles the SimulationResult
-    shape. Cancellation tests use ``delay`` + a :class:`threading.Event`
-    bound to the fake to observe that the executor was actually started.
-    """
-
+class _FakeService:
     def __init__(
         self,
         *,
-        extension: str = ".fake",
         success: bool = True,
         delay: float = 0.0,
         raise_exc: Optional[Exception] = None,
+        result_path: Optional[str] = None,
+        wait_for_cancel: bool = False,
+        cancelled_outcome: bool = False,
+        write_bundle: bool = True,
     ) -> None:
-        self._extension = extension
-        self._success = success
-        self._delay = delay
-        self._raise_exc = raise_exc
-        self.started_event = threading.Event()
-        self.execute_calls = 0
+        self.success = success
+        self.delay = delay
+        self.raise_exc = raise_exc
+        self.result_path = result_path
+        self.wait_for_cancel = wait_for_cancel
+        self.cancelled_outcome = cancelled_outcome
+        self.write_bundle = write_bundle
+        self.started = threading.Event()
+        self.calls: List[Dict[str, Any]] = []
+        self._lock = threading.Lock()
 
-    def get_name(self) -> str:
-        return "fake"
-
-    def get_supported_extensions(self) -> List[str]:
-        return [self._extension]
-
-    def get_available_analyses(self) -> List[str]:
-        return ["tran"]
-
-    def execute(
-        self,
-        file_path: str,
-        analysis_config: Optional[Dict[str, Any]] = None,
-    ) -> SimulationResult:
-        self.execute_calls += 1
-        self.started_event.set()
-        if self._delay:
-            time.sleep(self._delay)
-        if self._raise_exc is not None:
-            raise self._raise_exc
-        if self._success:
-            return create_success_result(
-                executor=self.get_name(),
-                file_path=file_path,
-                analysis_type=(analysis_config or {}).get("analysis_type", "tran"),
-                data=SimulationData(),
-                duration_seconds=self._delay,
-            )
-        err = SimulationError(
-            code="E_FAKE",
-            type=SimulationErrorType.PARAMETER_INVALID,
-            severity=ErrorSeverity.HIGH,
-            message="simulated failure",
-            file_path=file_path,
-        )
-        return create_error_result(
-            executor=self.get_name(),
-            file_path=file_path,
-            analysis_type="tran",
-            error=err,
-            duration_seconds=self._delay,
-        )
-
-
-class _FakeRegistry:
-    """Minimal ExecutorRegistry stand-in backed by a single fake executor."""
-
-    def __init__(self, executor: Optional[_FakeExecutor]) -> None:
-        self._executor = executor
-
-    def get_executor_for_file(self, file_path: str):  # noqa: ANN201 - mirror API
-        if self._executor is None:
-            return None
-        if Path(file_path).suffix.lower() in (
-            e.lower() for e in self._executor.get_supported_extensions()
-        ):
-            return self._executor
-        return None
-
-    def get_all_supported_extensions(self) -> List[str]:
-        return list(self._executor.get_supported_extensions()) if self._executor else []
-
-
-class _FakePersistence:
-    """Accepts every persist_bundle call and reports a synthetic path.
-
-    Tests that need to assert persistence failure instantiate with
-    ``raise_on_persist`` or supply a callable ``on_persist`` hook.
-    """
-
-    def __init__(
+    def run_simulation(
         self,
         *,
-        raise_on_persist: Optional[Exception] = None,
-        on_persist=None,
-    ) -> None:
-        self._raise = raise_on_persist
-        self._on_persist = on_persist
-        self.calls: List[Tuple[str, SimulationResult, Dict[str, str]]] = []
+        file_path,
+        project_root,
+        cancel_signal,
+        version,
+        session_id,
+    ):
+        with self._lock:
+            self.calls.append(
+                {
+                    "file_path": file_path,
+                    "project_root": project_root,
+                    "cancel_signal": cancel_signal,
+                    "version": version,
+                    "session_id": session_id,
+                }
+            )
+        self.started.set()
+        if self.wait_for_cancel or self.cancelled_outcome:
+            if self.wait_for_cancel:
+                assert cancel_signal.wait(timeout=2.0)
+            result = create_error_result(
+                executor="spice",
+                file_path=file_path,
+                analysis_type="tran",
+                error=SimulationError(
+                    type=SimulationErrorType.CANCELLED,
+                    severity=ErrorSeverity.LOW,
+                    message="simulation cancelled",
+                    file_path=file_path,
+                ),
+                version=version,
+                session_id=session_id,
+            )
+        else:
+            if self.delay:
+                time.sleep(self.delay)
+            if self.raise_exc is not None:
+                raise self.raise_exc
+            if self.success:
+                result = create_success_result(
+                    executor="spice",
+                    file_path=file_path,
+                    analysis_type="tran",
+                    analysis_command=".tran 1e-3 1e-2",
+                    data=SimulationData(
+                        time=np.array([0.0, 1e-2]),
+                        signals={"V(out)": np.array([0.0, 0.0])},
+                        signal_types={"V(out)": "voltage"},
+                    ),
+                    source_digest=_SOURCE_DIGEST,
+                    version=version,
+                    session_id=session_id,
+                )
+            else:
+                result = create_error_result(
+                    executor="spice",
+                    file_path=file_path,
+                    analysis_type="tran",
+                    error=SimulationError(
+                        type=SimulationErrorType.CONVERGENCE_DC,
+                        severity=ErrorSeverity.MEDIUM,
+                        message="operating point did not converge",
+                        file_path=file_path,
+                    ),
+                    version=version,
+                    session_id=session_id,
+                )
+        relative = self.result_path
+        if relative is None:
+            relative = f"simulation_results/{Path(file_path).stem}/run/result.json"
+        if self.write_bundle:
+            _write_fake_bundle(project_root, relative, result)
+        return relative
 
-    def persist_bundle(
-        self,
-        project_root: str,
-        result: SimulationResult,
-        metric_targets=None,
-    ) -> BundlePersistenceResult:
-        self.calls.append((project_root, result, dict(metric_targets or {})))
-        if self._raise is not None:
-            raise self._raise
-        if self._on_persist is not None:
-            self._on_persist(project_root, result)
-        stem = Path(result.file_path).stem or "circuit"
-        export_root = Path(project_root) / "simulation_results" / stem / "ts"
-        result_rel = (
-            f"simulation_results/{stem}/ts/result.json"
-        )
-        return BundlePersistenceResult(
-            export_root=export_root,
-            result_path=result_rel,
-            written_files=[str(export_root / "result.json")],
-        )
+
+class _BlockingFirstService(_FakeService):
+    def __init__(self) -> None:
+        super().__init__()
+        self.release = threading.Event()
+
+    def run_simulation(self, **kwargs):
+        file_path = kwargs["file_path"]
+        if Path(file_path).stem == "blocker":
+            self.started.set()
+            with self._lock:
+                self.calls.append(dict(kwargs))
+            self.release.wait(timeout=3.0)
+            result = create_success_result(
+                executor="spice",
+                file_path=file_path,
+                analysis_type="tran",
+                analysis_command=".tran 1e-3 1e-2",
+                data=SimulationData(
+                    time=np.array([0.0, 1e-2]),
+                    signals={"V(out)": np.array([0.0, 0.0])},
+                    signal_types={"V(out)": "voltage"},
+                ),
+                source_digest=_SOURCE_DIGEST,
+                version=kwargs["version"],
+                session_id=kwargs["session_id"],
+            )
+            relative = "simulation_results/blocker/run/result.json"
+            _write_fake_bundle(
+                kwargs["project_root"],
+                relative,
+                result,
+            )
+            return relative
+        return super().run_simulation(**kwargs)
 
 
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
+def _write_fake_bundle(
+    project_root: str,
+    result_path: str,
+    result,
+) -> str:
+    """Write the minimal real bundle promised by the fake service contract."""
+
+    normalized = result_path.replace("\\", "/")
+    if (
+        not normalized.startswith("simulation_results/")
+        or not normalized.endswith("/result.json")
+        or "/../" in f"/{normalized}/"
+    ):
+        return result_path
+    candidate = (Path(project_root) / result_path).resolve()
+    try:
+        candidate.relative_to(Path(project_root).resolve())
+    except ValueError:
+        return result_path
+    candidate.parent.mkdir(parents=True, exist_ok=True)
+    payload = result.to_dict()
+    raw_circuit = Path(str(payload["file_path"]))
+    resolved_circuit = (
+        raw_circuit.resolve()
+        if raw_circuit.is_absolute()
+        else (Path(project_root) / raw_circuit).resolve()
+    )
+    payload["file_path"] = resolved_circuit.relative_to(
+        Path(project_root).resolve()
+    ).as_posix()
+    if isinstance(payload.get("error"), dict) and payload["error"].get("file_path") is not None:
+        payload["error"]["file_path"] = payload["file_path"]
+    candidate.write_text(json.dumps(payload), encoding="utf-8")
+    return result_path
 
 
 @pytest.fixture
-def bus() -> _RecordingEventBus:
+def bus():
     return _RecordingEventBus()
 
 
 @pytest.fixture
 def manager_factory(bus):
-    """Factory fixture so each test controls executor/persistence shape.
+    managers: List[SimulationJobManager] = []
 
-    The fixture tracks every built manager and closes it at teardown —
-    important because the thread pool otherwise lingers across tests
-    and occasionally flakes on Windows CI.
-    """
-    built: List[SimulationJobManager] = []
-
-    def _build(
-        *,
-        executor: Optional[_FakeExecutor] = None,
-        persistence: Optional[_FakePersistence] = None,
-        max_workers: int = 2,
-    ) -> SimulationJobManager:
-        registry = _FakeRegistry(executor)
-        mgr = SimulationJobManager(
-            executor_registry=registry,
-            artifact_persistence=persistence or _FakePersistence(),
+    def build(service=None, *, max_workers=2):
+        manager = SimulationJobManager(
+            simulation_service=service or _FakeService(),
+            result_repository=SimulationResultRepository(),
             event_bus=bus,
             max_workers=max_workers,
         )
-        built.append(mgr)
-        return mgr
+        managers.append(manager)
+        return manager
 
-    yield _build
-
-    for mgr in built:
-        mgr.close()
-
-
-# ---------------------------------------------------------------------------
-# Public API surface
-# ---------------------------------------------------------------------------
+    yield build
+    for manager in managers:
+        manager.close(timeout=2.0)
 
 
-def test_public_api_is_minimal(manager_factory):
-    """Guard rail: only the documented public entry points exist.
-
-    The plan locks the manager's public surface to seven names; any
-    drift (a stray ``start_task``, ``set_running``, ``is_running``)
-    should fail this test immediately.
-    """
-    manager = manager_factory(executor=_FakeExecutor())
-    expected = {
-        "submit",
-        "query",
-        "list",
-        "await_completion",
-        "await_completion_async",
-        "request_cancel",
-        "close",
-    }
-    public = {
-        name for name in dir(manager)
-        if not name.startswith("_") and callable(getattr(manager, name))
-    }
-    assert public == expected, (
-        "SimulationJobManager exposed unexpected public members: "
-        f"{sorted(public - expected)} or dropped expected ones: "
-        f"{sorted(expected - public)}"
+def _submit(manager, tmp_path, name="amp.cir", origin=JobOrigin.UI_EDITOR, **kwargs):
+    return manager.submit(
+        circuit_file=name,
+        project_root=str(tmp_path),
+        origin=origin,
+        **kwargs,
     )
 
 
-# ---------------------------------------------------------------------------
-# Submit validation
-# ---------------------------------------------------------------------------
+def test_constructor_and_submit_reject_invalid_contracts(tmp_path):
+    submit_parameters = inspect.signature(SimulationJobManager.submit).parameters
+    assert "analysis_config" not in submit_parameters
+    assert "cancel_signal" not in submit_parameters
 
+    repository = SimulationResultRepository()
+    with pytest.raises(TypeError, match="simulation_service"):
+        SimulationJobManager(
+            simulation_service=None,  # type: ignore[arg-type]
+            result_repository=repository,
+        )
+    with pytest.raises(TypeError, match="result_repository"):
+        SimulationJobManager(
+            simulation_service=_FakeService(),
+            result_repository=None,  # type: ignore[arg-type]
+        )
+    with pytest.raises(ValueError, match="max_workers"):
+        SimulationJobManager(
+            simulation_service=_FakeService(),
+            result_repository=repository,
+            max_workers=0,
+        )
 
-def test_submit_rejects_empty_circuit_file(manager_factory):
-    manager = manager_factory(executor=_FakeExecutor())
-    with pytest.raises(ValueError):
+    manager = SimulationJobManager(
+        simulation_service=_FakeService(),
+        result_repository=repository,
+    )
+    with pytest.raises(ValueError, match="project_root"):
+        manager.submit(circuit_file="a.cir", project_root="", origin=JobOrigin.UI_EDITOR)
+    with pytest.raises(ValueError, match="absolute directory"):
         manager.submit(
-            circuit_file="",
+            circuit_file="a.cir",
+            project_root="relative-project",
             origin=JobOrigin.UI_EDITOR,
-            project_root="/tmp/project",
         )
-
-
-def test_submit_rejects_empty_project_root(manager_factory):
-    manager = manager_factory(executor=_FakeExecutor())
-    with pytest.raises(ValueError):
+    project_file = tmp_path / "not-a-directory"
+    project_file.write_text("x", encoding="utf-8")
+    with pytest.raises(ValueError, match="existing directory"):
         manager.submit(
-            circuit_file="amp.fake",
+            circuit_file="a.cir",
+            project_root=str(project_file),
             origin=JobOrigin.UI_EDITOR,
-            project_root="",
         )
-
-
-def test_submit_rejects_non_enum_origin(manager_factory):
-    manager = manager_factory(executor=_FakeExecutor())
-    with pytest.raises(TypeError):
+    with pytest.raises(TypeError, match="origin"):
         manager.submit(
-            circuit_file="amp.fake",
-            origin="ui_editor",  # type: ignore[arg-type]
-            project_root="/tmp/project",
+            circuit_file="a.cir",
+            project_root=str(tmp_path),
+            origin="ui",  # type: ignore[arg-type]
         )
+    with pytest.raises(ValueError, match="inside project_root"):
+        manager.submit(
+            circuit_file=str(tmp_path.parent / "outside.cir"),
+            project_root=str(tmp_path),
+            origin=JobOrigin.UI_EDITOR,
+        )
+    manager.close()
 
 
-# ---------------------------------------------------------------------------
-# Happy path
-# ---------------------------------------------------------------------------
-
-
-def test_successful_job_flows_through_started_then_complete(
-    manager_factory, bus
+def test_success_flow_uses_canonical_identity_and_exact_event_order(
+    manager_factory, bus, tmp_path
 ):
-    """End-to-end happy path assertions.
-
-    Verifies the manager drives ``PENDING → RUNNING → COMPLETED``,
-    populates ``result_path`` + ``export_root`` on the job from the
-    persistence outcome, and emits both events with every identity
-    field required by the Step 5 payload schema.
-    """
-    executor = _FakeExecutor()
-    persistence = _FakePersistence()
-    manager = manager_factory(executor=executor, persistence=persistence)
-
-    job = manager.submit(
-        circuit_file="amp.fake",
-        origin=JobOrigin.UI_EDITOR,
-        project_root="/tmp/project",
-        analysis_config={"analysis_type": "tran"},
+    service = _FakeService()
+    manager = manager_factory(service)
+    submitted = _submit(
+        manager,
+        tmp_path,
+        version=3,
+        session_id="session-a",
     )
+    final = manager.await_completion(submitted.job_id, timeout=2.0)
 
-    final = manager.await_completion(job.job_id, timeout=2.0)
+    assert submitted.status is JobStatus.PENDING  # immutable submission snapshot
     assert final.status is JobStatus.COMPLETED
-    assert final.result_path == "simulation_results/amp/ts/result.json"
-    assert final.export_root is not None and "simulation_results" in final.export_root
+    assert final is manager.query(final.job_id)
+    assert Path(final.circuit_file).is_absolute()
+    assert Path(final.project_root).is_absolute()
+    assert Path(final.export_root or "").is_absolute()
+    assert final.session_id == "session-a"
+    assert final.version == 3
 
-    started = bus.events_of(EVENT_SIM_STARTED)
-    complete = bus.events_of(EVENT_SIM_COMPLETE)
-    assert len(started) == 1
-    assert len(complete) == 1
+    events = bus.for_job(final.job_id)
+    assert [kind for kind, _ in events] == [EVENT_SIM_STARTED, EVENT_SIM_COMPLETE]
+    assert set(events[0][1]) == {
+        "job_id",
+        "origin",
+        "circuit_file",
+        "project_root",
+        "session_id",
+    }
+    assert events[1][1]["result_path"] == final.result_path
+    assert events[1][1]["export_root"] == final.export_root
+    assert "success" not in events[1][1]
 
-    started_payload = started[0]
-    for field in ("job_id", "origin", "circuit_file", "project_root"):
-        assert started_payload[field], f"started payload missing {field!r}"
-    assert started_payload["job_id"] == job.job_id
-    assert started_payload["origin"] == JobOrigin.UI_EDITOR.value
-    assert started_payload["circuit_file"] == "amp.fake"
-    assert started_payload["project_root"] == "/tmp/project"
-    assert started_payload["analysis_type"] == "tran"
-
-    complete_payload = complete[0]
-    for field in (
-        "job_id", "origin", "circuit_file", "project_root",
-        "result_path", "export_root",
-    ):
-        assert complete_payload[field], f"complete payload missing {field!r}"
-    assert complete_payload["job_id"] == job.job_id
-    assert complete_payload["success"] is True
-    assert complete_payload["result_path"] == final.result_path
-    assert complete_payload["export_root"] == final.export_root
+    call = service.calls[0]
+    assert isinstance(call["cancel_signal"], threading.Event)
+    assert call["cancel_signal"].is_set() is False
+    assert call["version"] == 3
+    assert call["session_id"] == "session-a"
 
 
-def test_executor_failure_emits_sim_error_with_identity_fields(
-    manager_factory, bus
+def test_failure_result_keeps_diagnostic_bundle(manager_factory, bus, tmp_path):
+    manager = manager_factory(_FakeService(success=False))
+    job = _submit(manager, tmp_path, origin=JobOrigin.AGENT_TOOL)
+    final = manager.await_completion(job.job_id, timeout=2.0)
+    assert final.status is JobStatus.FAILED
+    assert final.result_path
+    assert final.export_root
+    events = bus.for_job(job.job_id)
+    assert [kind for kind, _ in events] == [EVENT_SIM_STARTED, EVENT_SIM_ERROR]
+    assert events[1][1]["error_message"] == "operating point did not converge"
+    assert events[1][1]["cancelled"] is False
+
+
+@pytest.mark.parametrize(
+    "service",
+    [
+        _FakeService(raise_exc=OSError("disk full")),
+        _FakeService(result_path="../escaped/result.json"),
+        _FakeService(result_path="simulation_results/bad:bundle/run/result.json"),
+        _FakeService(result_path=""),
+    ],
+)
+def test_service_or_bundle_contract_failure_wakes_as_failed(
+    manager_factory, bus, tmp_path, service
 ):
-    executor = _FakeExecutor(success=False)
-    manager = manager_factory(executor=executor)
-
-    job = manager.submit(
-        circuit_file="amp.fake",
-        origin=JobOrigin.AGENT_TOOL,
-        project_root="/tmp/project",
-    )
+    manager = manager_factory(service)
+    job = _submit(manager, tmp_path)
     final = manager.await_completion(job.job_id, timeout=2.0)
-
     assert final.status is JobStatus.FAILED
-    errors = bus.events_of(EVENT_SIM_ERROR)
-    assert len(errors) == 1
-    payload = errors[0]
-    assert payload["job_id"] == job.job_id
-    assert payload["origin"] == JobOrigin.AGENT_TOOL.value
-    assert payload["circuit_file"] == "amp.fake"
-    assert payload["project_root"] == "/tmp/project"
-    assert payload["cancelled"] is False
-    assert payload["error_message"]  # non-empty
-    # Failed bundles are persisted too so UI has log artefacts.
-    assert payload["result_path"]
-    assert payload["export_root"]
-    assert final.result_path == payload["result_path"]
-    assert final.export_root == payload["export_root"]
+    assert final.result_path is None
+    error_events = [event for event in bus.for_job(job.job_id) if event[0] == EVENT_SIM_ERROR]
+    assert len(error_events) == 1
+    assert "valid bundle" in error_events[0][1]["error_message"]
 
 
-def test_executor_without_matching_extension_reports_parameter_error(
-    manager_factory, bus
+def test_missing_result_file_cannot_publish_false_complete(
+    manager_factory, bus, tmp_path
 ):
-    """Registry returns None → manager synthesises a PARAMETER_INVALID error.
+    manager = manager_factory(_FakeService(write_bundle=False))
+    job = _submit(manager, tmp_path)
 
-    This is distinct from an executor crash because the user-facing
-    remediation ("use a different file type") is different.
-    """
-    executor = _FakeExecutor(extension=".cir")  # won't match .fake
-    manager = manager_factory(executor=executor)
-
-    job = manager.submit(
-        circuit_file="amp.fake",
-        origin=JobOrigin.UI_EDITOR,
-        project_root="/tmp/project",
-    )
     final = manager.await_completion(job.job_id, timeout=2.0)
+
     assert final.status is JobStatus.FAILED
-    payload = bus.events_of(EVENT_SIM_ERROR)[0]
-    assert "No executor supports" in payload["error_message"]
+    assert final.result_path is None
+    events = bus.for_job(job.job_id)
+    assert [kind for kind, _payload in events] == [
+        EVENT_SIM_STARTED,
+        EVENT_SIM_ERROR,
+    ]
+    assert "missing result.json bundle" in events[-1][1]["error_message"]
 
 
-def test_executor_exception_is_captured_as_failed_job(manager_factory, bus):
-    executor = _FakeExecutor(raise_exc=RuntimeError("segfault"))
-    manager = manager_factory(executor=executor)
-
-    job = manager.submit(
-        circuit_file="amp.fake",
-        origin=JobOrigin.AGENT_TOOL,
-        project_root="/tmp/project",
-    )
-    final = manager.await_completion(job.job_id, timeout=2.0)
-    assert final.status is JobStatus.FAILED
-    assert "segfault" in (final.error_message or "")
-
-
-def test_persistence_failure_surfaces_as_sim_error_even_on_success(
-    manager_factory, bus
+@pytest.mark.parametrize(
+    ("field", "replacement", "expected"),
+    [
+        ("file_path", "other.cir", "different circuit"),
+        ("version", 999, "different job version"),
+        ("session_id", "other-session", "different session"),
+    ],
+)
+def test_cross_job_result_identity_cannot_publish_complete(
+    manager_factory, bus, tmp_path, field, replacement, expected
 ):
-    """If the executor succeeds but persistence blows up, the job must
-    land in ``FAILED`` — a job cannot be marked complete without a
-    bundle on disk, otherwise downstream read tools chase a path that
-    doesn't exist.
-    """
-    executor = _FakeExecutor(success=True)
-    persistence = _FakePersistence(raise_on_persist=OSError("disk full"))
-    manager = manager_factory(executor=executor, persistence=persistence)
+    class CrossedResultService(_FakeService):
+        def run_simulation(self, **kwargs):
+            result_path = super().run_simulation(**kwargs)
+            result_file = Path(kwargs["project_root"]) / result_path
+            payload = json.loads(result_file.read_text(encoding="utf-8"))
+            payload[field] = replacement
+            result_file.write_text(json.dumps(payload), encoding="utf-8")
+            return result_path
 
-    job = manager.submit(
-        circuit_file="amp.fake",
-        origin=JobOrigin.AGENT_TOOL,
-        project_root="/tmp/project",
+    manager = manager_factory(CrossedResultService())
+    job = _submit(
+        manager,
+        tmp_path,
+        version=7,
+        session_id="expected-session",
     )
+
     final = manager.await_completion(job.job_id, timeout=2.0)
+
     assert final.status is JobStatus.FAILED
-    errors = bus.events_of(EVENT_SIM_ERROR)
-    assert errors and "bundle persistence failed" in errors[0]["error_message"]
+    assert expected in (final.error_message or "")
+    assert [kind for kind, _payload in bus.for_job(job.job_id)] == [
+        EVENT_SIM_STARTED,
+        EVENT_SIM_ERROR,
+    ]
 
 
-# ---------------------------------------------------------------------------
-# Query / list
-# ---------------------------------------------------------------------------
-
-
-def test_query_returns_registered_job_and_none_for_unknown(manager_factory):
-    manager = manager_factory(executor=_FakeExecutor())
-    job = manager.submit(
-        circuit_file="amp.fake",
-        origin=JobOrigin.UI_EDITOR,
-        project_root="/tmp/project",
-    )
-    manager.await_completion(job.job_id, timeout=2.0)
-
-    assert manager.query(job.job_id) is job
-    assert manager.query("nonexistent-id") is None
-
-
-def test_list_filters_by_origin_and_circuit_file(manager_factory):
-    manager = manager_factory(executor=_FakeExecutor())
-    ui_job = manager.submit(
-        circuit_file="amp.fake",
-        origin=JobOrigin.UI_EDITOR,
-        project_root="/tmp/project",
-    )
-    agent_job = manager.submit(
-        circuit_file="amp.fake",
+def test_query_list_and_history_return_current_immutable_snapshots(
+    manager_factory, tmp_path
+):
+    manager = manager_factory(_FakeService(delay=0.05), max_workers=2)
+    ui = _submit(manager, tmp_path, name="ui.cir")
+    agent = _submit(
+        manager,
+        tmp_path,
+        name="agent.cir",
         origin=JobOrigin.AGENT_TOOL,
-        project_root="/tmp/project",
     )
-    other_job = manager.submit(
-        circuit_file="filter.fake",
-        origin=JobOrigin.UI_EDITOR,
-        project_root="/tmp/project",
-    )
-    for j in (ui_job, agent_job, other_job):
-        manager.await_completion(j.job_id, timeout=2.0)
-
-    ui_jobs = manager.list(origin=JobOrigin.UI_EDITOR)
-    assert {j.job_id for j in ui_jobs} == {ui_job.job_id, other_job.job_id}
-
-    amp_jobs = manager.list(circuit_file="amp.fake")
-    assert {j.job_id for j in amp_jobs} == {ui_job.job_id, agent_job.job_id}
-
-    amp_ui_jobs = manager.list(
-        origin=JobOrigin.UI_EDITOR,
-        circuit_file="amp.fake",
-    )
-    assert [j.job_id for j in amp_ui_jobs] == [ui_job.job_id]
-
-
-def test_list_can_exclude_terminal_jobs(manager_factory):
-    executor = _FakeExecutor(delay=0.2)
-    manager = manager_factory(executor=executor, max_workers=2)
-    job = manager.submit(
-        circuit_file="amp.fake",
-        origin=JobOrigin.UI_EDITOR,
-        project_root="/tmp/project",
-    )
-    # Before completion both filters return the job.
-    assert manager.list(include_terminal=False) == [job]
-    manager.await_completion(job.job_id, timeout=2.0)
-    # After completion include_terminal=False hides it.
+    assert {item.job_id for item in manager.list(include_terminal=False)} == {
+        ui.job_id,
+        agent.job_id,
+    }
+    manager.await_completion(ui.job_id, timeout=2.0)
+    manager.await_completion(agent.job_id, timeout=2.0)
     assert manager.list(include_terminal=False) == []
-    assert manager.list(include_terminal=True) == [job]
+    assert {item.job_id for item in manager.list(origin=JobOrigin.UI_EDITOR)} == {
+        ui.job_id
+    }
+    assert manager.query("missing") is None
 
 
-# ---------------------------------------------------------------------------
-# await_completion (sync)
-# ---------------------------------------------------------------------------
-
-
-def test_await_completion_blocks_until_terminal(manager_factory):
-    executor = _FakeExecutor(delay=0.2)
-    manager = manager_factory(executor=executor)
-    job = manager.submit(
-        circuit_file="amp.fake",
-        origin=JobOrigin.UI_EDITOR,
-        project_root="/tmp/project",
-    )
-    assert not job.is_terminal
-    start = time.monotonic()
-    final = manager.await_completion(job.job_id, timeout=2.0)
-    elapsed = time.monotonic() - start
-    assert final.status is JobStatus.COMPLETED
-    assert elapsed >= 0.15  # at least roughly the executor delay
-
-
-def test_await_completion_raises_timeout(manager_factory):
-    executor = _FakeExecutor(delay=1.0)
-    manager = manager_factory(executor=executor)
-    job = manager.submit(
-        circuit_file="amp.fake",
-        origin=JobOrigin.UI_EDITOR,
-        project_root="/tmp/project",
-    )
+def test_sync_timeout_and_multiple_async_waiters(manager_factory, tmp_path):
+    manager = manager_factory(_FakeService(delay=0.15))
+    job = _submit(manager, tmp_path)
     with pytest.raises(TimeoutError):
-        manager.await_completion(job.job_id, timeout=0.05)
-    # Clean up: actually wait for the job so the fake thread doesn't
-    # leak into the next test.
-    manager.await_completion(job.job_id, timeout=3.0)
-
-
-def test_await_completion_raises_for_unknown_job(manager_factory):
-    manager = manager_factory(executor=_FakeExecutor())
-    with pytest.raises(ValueError):
-        manager.await_completion("job_missing")
-
-
-# ---------------------------------------------------------------------------
-# await_completion_async
-# ---------------------------------------------------------------------------
-
-
-def test_await_completion_async_wakes_up_async_caller(manager_factory):
-    """The async path must wake up inside the caller's own event loop.
-
-    Worker threads flip the ``asyncio.Future`` via
-    ``loop.call_soon_threadsafe`` — this test makes sure a coroutine
-    registered before completion actually resumes after it.
-    """
-    executor = _FakeExecutor(delay=0.1)
-    manager = manager_factory(executor=executor)
-    job = manager.submit(
-        circuit_file="amp.fake",
-        origin=JobOrigin.UI_EDITOR,
-        project_root="/tmp/project",
-    )
-
-    async def wait() -> SimulationJob:
-        return await manager.await_completion_async(job.job_id)
-
-    final = asyncio.run(wait())
-    assert final.status is JobStatus.COMPLETED
-    assert final.job_id == job.job_id
-
-
-def test_await_completion_async_returns_immediately_for_terminal_job(
-    manager_factory,
-):
-    manager = manager_factory(executor=_FakeExecutor())
-    job = manager.submit(
-        circuit_file="amp.fake",
-        origin=JobOrigin.UI_EDITOR,
-        project_root="/tmp/project",
-    )
-    manager.await_completion(job.job_id, timeout=2.0)
-    assert job.is_terminal
-
-    async def wait() -> SimulationJob:
-        return await manager.await_completion_async(job.job_id)
-
-    final = asyncio.run(wait())
-    assert final is job
-
-
-def test_two_async_waiters_both_resolve(manager_factory):
-    executor = _FakeExecutor(delay=0.1)
-    manager = manager_factory(executor=executor)
-    job = manager.submit(
-        circuit_file="amp.fake",
-        origin=JobOrigin.UI_EDITOR,
-        project_root="/tmp/project",
-    )
+        manager.await_completion(job.job_id, timeout=0.01)
 
     async def wait_both():
         return await asyncio.gather(
@@ -638,352 +494,262 @@ def test_two_async_waiters_both_resolve(manager_factory):
         )
 
     first, second = asyncio.run(wait_both())
-    assert first.job_id == second.job_id == job.job_id
+    assert first == second
     assert first.status is JobStatus.COMPLETED
 
 
-# ---------------------------------------------------------------------------
-# Cancellation
-# ---------------------------------------------------------------------------
+def test_pending_cancel_is_immediate_exactly_once_and_never_executes(
+    manager_factory, bus, tmp_path
+):
+    service = _BlockingFirstService()
+    manager = manager_factory(service, max_workers=1)
+    blocker = _submit(manager, tmp_path, name="blocker.cir")
+    assert service.started.wait(timeout=1.0)
+    queued = _submit(manager, tmp_path, name="queued.cir")
 
-
-def test_cancelling_unknown_job_returns_false(manager_factory):
-    manager = manager_factory(executor=_FakeExecutor())
-    assert manager.request_cancel("nope") is False
-
-
-def test_cancelling_pending_job_prevents_execution(manager_factory, bus):
-    """PENDING → CANCELLED fast-path: no executor call, SIM_ERROR with
-    ``cancelled=True`` payload emitted before the worker would have
-    picked the job up.
-
-    The test uses ``max_workers=1`` + a blocker job so the second
-    submission is guaranteed to sit in the pool queue when
-    ``request_cancel`` runs.
-    """
-    blocker_release = threading.Event()
-
-    class _BlockerExecutor(_FakeExecutor):
-        def execute(self, file_path, analysis_config=None):
-            self.execute_calls += 1
-            self.started_event.set()
-            blocker_release.wait(timeout=2.0)
-            return create_success_result(
-                executor=self.get_name(),
-                file_path=file_path,
-                analysis_type="tran",
-                data=SimulationData(),
-            )
-
-    blocker = _BlockerExecutor()
-    manager = manager_factory(executor=blocker, max_workers=1)
-    blocker_job = manager.submit(
-        circuit_file="blocker.fake",
-        origin=JobOrigin.UI_EDITOR,
-        project_root="/tmp/project",
-    )
-    # Wait until the blocker actually entered execute() — guarantees
-    # the single pool thread is busy.
-    assert blocker.started_event.wait(timeout=2.0)
-
-    queued_job = manager.submit(
-        circuit_file="queued.fake",
-        origin=JobOrigin.UI_EDITOR,
-        project_root="/tmp/project",
-    )
-
-    # At this point queued_job is PENDING in the pool queue.
-    assert manager.request_cancel(queued_job.job_id) is True
-
-    # Release the blocker so the pool wraps up.
-    blocker_release.set()
-    manager.await_completion(blocker_job.job_id, timeout=3.0)
-
-    final = manager.query(queued_job.job_id)
-    assert final is not None and final.status is JobStatus.CANCELLED
-
-    errors = bus.events_of(EVENT_SIM_ERROR)
-    cancellation = [e for e in errors if e["job_id"] == queued_job.job_id]
-    assert len(cancellation) == 1
-    payload = cancellation[0]
-    assert payload["cancelled"] is True
-    assert payload["origin"] == JobOrigin.UI_EDITOR.value
-    assert payload["circuit_file"] == "queued.fake"
-
-    # The queued job's executor was never invoked; only the blocker ran.
-    assert blocker.execute_calls == 1
-    started_for_queued = [
-        e for e in bus.events_of(EVENT_SIM_STARTED)
-        if e["job_id"] == queued_job.job_id
-    ]
-    assert started_for_queued == []
-
-
-def test_cancelling_running_job_finalises_as_cancelled(manager_factory, bus):
-    """RUNNING jobs accept the cancel intent; the terminal status
-    flips once the executor returns. MVP policy: no forced subprocess
-    kill — the executor runs to natural completion but the outcome is
-    reported as cancelled.
-    """
-    executor = _FakeExecutor(delay=0.2)
-    manager = manager_factory(executor=executor)
-    job = manager.submit(
-        circuit_file="amp.fake",
-        origin=JobOrigin.UI_EDITOR,
-        project_root="/tmp/project",
-    )
-    # Wait until execute() actually started so we know we're RUNNING,
-    # not PENDING.
-    assert executor.started_event.wait(timeout=2.0)
-    assert manager.request_cancel(job.job_id) is True
-
-    final = manager.await_completion(job.job_id, timeout=3.0)
+    assert manager.request_cancel(queued.job_id) is True
+    final = manager.await_completion(queued.job_id, timeout=1.0)
     assert final.status is JobStatus.CANCELLED
-    # Cancellation happened after execution, so the persisted diagnostic
-    # bundle remains reachable from the terminal job itself.
-    assert final.result_path
-    assert final.export_root
+    assert [kind for kind, _ in bus.for_job(queued.job_id)] == [EVENT_SIM_ERROR]
+    assert bus.for_job(queued.job_id)[0][1]["cancelled"] is True
+    assert all(Path(call["file_path"]).stem != "queued" for call in service.calls)
 
-    cancellation = [
-        e for e in bus.events_of(EVENT_SIM_ERROR) if e["job_id"] == job.job_id
+    service.release.set()
+    manager.await_completion(blocker.job_id, timeout=2.0)
+
+
+def test_running_cancel_signals_executor_and_preserves_cancel_bundle(
+    manager_factory, bus, tmp_path
+):
+    service = _FakeService(wait_for_cancel=True)
+    manager = manager_factory(service)
+    job = _submit(manager, tmp_path)
+    assert service.started.wait(timeout=1.0)
+    assert manager.request_cancel(job.job_id) is True
+    final = manager.await_completion(job.job_id, timeout=2.0)
+
+    assert final.status is JobStatus.CANCELLED
+    assert final.result_path and final.export_root
+    assert [kind for kind, _ in bus.for_job(job.job_id)] == [
+        EVENT_SIM_STARTED,
+        EVENT_SIM_ERROR,
     ]
-    assert cancellation and cancellation[0]["cancelled"] is True
-    assert cancellation[0]["result_path"] == final.result_path
-    assert cancellation[0]["export_root"] == final.export_root
-
-
-def test_request_cancel_on_terminal_job_returns_false(manager_factory):
-    manager = manager_factory(executor=_FakeExecutor())
-    job = manager.submit(
-        circuit_file="amp.fake",
-        origin=JobOrigin.UI_EDITOR,
-        project_root="/tmp/project",
-    )
-    manager.await_completion(job.job_id, timeout=2.0)
+    assert bus.for_job(job.job_id)[1][1]["cancelled"] is True
     assert manager.request_cancel(job.job_id) is False
 
 
-def test_cancel_between_service_return_and_terminal_commit_wins_atomically(
-    manager_factory, bus, monkeypatch
+def test_persisted_cancelled_outcome_is_authoritative_without_prior_intent(
+    manager_factory,
+    bus,
+    tmp_path,
 ):
-    """Regression for the old read-cancel / mark-complete race window."""
-    service_returned = threading.Event()
-    allow_terminal_commit = threading.Event()
-    original_derive_export_root = simulation_job_manager_module._derive_export_root
-
-    def pause_before_terminal_commit(result_path: str) -> str:
-        service_returned.set()
-        assert allow_terminal_commit.wait(timeout=2.0)
-        return original_derive_export_root(result_path)
-
-    monkeypatch.setattr(
-        simulation_job_manager_module,
-        "_derive_export_root",
-        pause_before_terminal_commit,
-    )
-    manager = manager_factory(executor=_FakeExecutor(success=True))
-    job = manager.submit(
-        circuit_file="amp.fake",
-        origin=JobOrigin.UI_EDITOR,
-        project_root="/tmp/project",
-    )
-
-    assert service_returned.wait(timeout=2.0)
-    # This returns before the worker is allowed to enter terminal commit.  The
-    # registered intent must therefore win over the successful service result.
-    assert manager.request_cancel(job.job_id) is True
-    allow_terminal_commit.set()
+    service = _FakeService(cancelled_outcome=True)
+    manager = manager_factory(service)
+    job = _submit(manager, tmp_path)
 
     final = manager.await_completion(job.job_id, timeout=2.0)
+
     assert final.status is JobStatus.CANCELLED
-    assert final.result_path
-    assert final.export_root
-    assert [
-        payload for payload in bus.events_of(EVENT_SIM_COMPLETE)
-        if payload["job_id"] == job.job_id
-    ] == []
-    cancellation = [
-        payload for payload in bus.events_of(EVENT_SIM_ERROR)
-        if payload["job_id"] == job.job_id
+    assert final.cancel_requested is False
+    assert final.result_path and final.export_root
+    assert [kind for kind, _payload in bus.for_job(job.job_id)] == [
+        EVENT_SIM_STARTED,
+        EVENT_SIM_ERROR,
     ]
-    assert len(cancellation) == 1
-    assert cancellation[0]["cancelled"] is True
+    assert bus.for_job(job.job_id)[1][1]["cancelled"] is True
 
 
-# ---------------------------------------------------------------------------
-# Concurrency
-# ---------------------------------------------------------------------------
-
-
-def test_two_jobs_run_in_parallel(manager_factory):
-    """Manager's thread pool must genuinely run jobs concurrently.
-
-    With two workers and two jobs that each sleep 0.3s, wall-clock
-    should be roughly 0.3s rather than 0.6s. A small margin accounts
-    for scheduling overhead on busy CI hosts.
-    """
-    executor = _FakeExecutor(delay=0.3)
-    manager = manager_factory(executor=executor, max_workers=2)
-    start = time.monotonic()
-    job_a = manager.submit(
-        circuit_file="amp.fake",
-        origin=JobOrigin.UI_EDITOR,
-        project_root="/tmp/project",
-    )
-    job_b = manager.submit(
-        circuit_file="filter.fake",
-        origin=JobOrigin.AGENT_TOOL,
-        project_root="/tmp/project",
-    )
-    manager.await_completion(job_a.job_id, timeout=3.0)
-    manager.await_completion(job_b.job_id, timeout=3.0)
-    elapsed = time.monotonic() - start
-    assert elapsed < 0.55, f"expected parallel execution, got {elapsed:.2f}s"
-
-
-# ---------------------------------------------------------------------------
-# Shutdown contract
-# ---------------------------------------------------------------------------
-
-
-def test_close_is_idempotent_cancels_queue_wakes_waiter_and_rejects_submit(
-    manager_factory, bus
+def test_late_cancel_cannot_override_an_already_persisted_success_bundle(
+    manager_factory,
+    bus,
+    tmp_path,
 ):
-    """Closing is a real lifecycle transition, not just pool cleanup."""
-    release_running = threading.Event()
+    class PersistThenBlockService(_FakeService):
+        def __init__(self) -> None:
+            super().__init__()
+            self.persisted = threading.Event()
+            self.release_return = threading.Event()
 
-    class _BlockingExecutor(_FakeExecutor):
-        def execute(self, file_path, analysis_config=None):
-            self.execute_calls += 1
-            self.started_event.set()
-            release_running.wait(timeout=3.0)
-            return create_success_result(
-                executor=self.get_name(),
+        def run_simulation(self, **kwargs):
+            result_path = super().run_simulation(**kwargs)
+            self.persisted.set()
+            assert self.release_return.wait(timeout=2.0)
+            return result_path
+
+    service = PersistThenBlockService()
+    manager = manager_factory(service)
+    job = _submit(manager, tmp_path)
+    assert service.persisted.wait(timeout=1.0)
+    try:
+        assert manager.request_cancel(job.job_id) is True
+        assert service.calls[0]["cancel_signal"].is_set() is True
+    finally:
+        service.release_return.set()
+
+    final = manager.await_completion(job.job_id, timeout=2.0)
+
+    assert final.status is JobStatus.COMPLETED
+    assert final.cancel_requested is True
+    assert final.result_path and final.export_root
+    assert [kind for kind, _payload in bus.for_job(job.job_id)] == [
+        EVENT_SIM_STARTED,
+        EVENT_SIM_COMPLETE,
+    ]
+
+
+def test_agent_same_circuit_dedup_is_atomic_under_concurrent_submit(
+    manager_factory, tmp_path
+):
+    service = _FakeService(wait_for_cancel=True)
+    manager = manager_factory(service, max_workers=2)
+    gate = threading.Barrier(3)
+    jobs: List[SimulationJob] = []
+    errors: List[DuplicateSimulationJobError] = []
+
+    def submit() -> None:
+        gate.wait()
+        try:
+            jobs.append(
+                _submit(manager, tmp_path, origin=JobOrigin.AGENT_TOOL)
+            )
+        except DuplicateSimulationJobError as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=submit), threading.Thread(target=submit)]
+    for thread in threads:
+        thread.start()
+    gate.wait()
+    for thread in threads:
+        thread.join(timeout=2.0)
+
+    assert len(jobs) == len(errors) == 1
+    assert errors[0].existing_job_id == jobs[0].job_id
+    assert errors[0].status in (JobStatus.PENDING, JobStatus.RUNNING)
+    manager.request_cancel(jobs[0].job_id)
+    manager.await_completion(jobs[0].job_id, timeout=2.0)
+
+    # Terminal jobs release the key; a new agent run is a fresh identity.
+    again = _submit(manager, tmp_path, origin=JobOrigin.AGENT_TOOL)
+    assert again.job_id != jobs[0].job_id
+    manager.request_cancel(again.job_id)
+    manager.await_completion(again.job_id, timeout=2.0)
+
+
+def test_ui_submissions_are_not_deduplicated(manager_factory, tmp_path):
+    manager = manager_factory(_FakeService(delay=0.05), max_workers=2)
+    first = _submit(manager, tmp_path)
+    second = _submit(manager, tmp_path)
+    assert first.job_id != second.job_id
+    manager.await_completion(first.job_id, timeout=2.0)
+    manager.await_completion(second.job_id, timeout=2.0)
+
+
+def test_worker_limit_allows_independent_jobs_to_run_concurrently(
+    manager_factory, tmp_path
+):
+    class ParallelService:
+        def __init__(self) -> None:
+            self._lock = threading.Lock()
+            self.entered = 0
+            self.both_entered = threading.Event()
+            self.release = threading.Event()
+
+        def run_simulation(self, **kwargs):
+            with self._lock:
+                self.entered += 1
+                if self.entered == 2:
+                    self.both_entered.set()
+            assert self.release.wait(timeout=2.0)
+            file_path = kwargs["file_path"]
+            result = create_success_result(
+                executor="spice",
                 file_path=file_path,
                 analysis_type="tran",
-                data=SimulationData(),
+                analysis_command=".tran 1e-3 1e-2",
+                data=SimulationData(
+                    time=np.array([0.0, 1e-2]),
+                    signals={"V(out)": np.array([0.0, 0.0])},
+                    signal_types={"V(out)": "voltage"},
+                ),
+                source_digest=_SOURCE_DIGEST,
+                version=kwargs["version"],
+                session_id=kwargs["session_id"],
             )
+            relative = f"simulation_results/{Path(file_path).stem}/run/result.json"
+            _write_fake_bundle(kwargs["project_root"], relative, result)
+            return relative
 
-    executor = _BlockingExecutor()
-    manager = manager_factory(executor=executor, max_workers=1)
-    running = manager.submit(
-        circuit_file="running.fake",
-        origin=JobOrigin.UI_EDITOR,
-        project_root="/tmp/project",
-    )
-    assert executor.started_event.wait(timeout=2.0)
-    queued = manager.submit(
-        circuit_file="queued.fake",
+    service = ParallelService()
+    manager = manager_factory(service, max_workers=2)
+    first = _submit(manager, tmp_path, name="first.cir")
+    second = _submit(manager, tmp_path, name="second.cir")
+    assert service.both_entered.wait(timeout=1.0), "jobs were serialized by the manager"
+    service.release.set()
+    manager.await_completion(first.job_id, timeout=2.0)
+    manager.await_completion(second.job_id, timeout=2.0)
+
+
+def test_close_cancels_running_and_queued_wakes_waiters_and_rejects_submit(
+    manager_factory, bus, tmp_path
+):
+    service = _FakeService(wait_for_cancel=True)
+    manager = manager_factory(service, max_workers=1)
+    running = _submit(manager, tmp_path, name="running.cir")
+    assert service.started.wait(timeout=1.0)
+    queued = _submit(
+        manager,
+        tmp_path,
+        name="queued.cir",
         origin=JobOrigin.AGENT_TOOL,
-        project_root="/tmp/project",
     )
 
-    waiter_finished = threading.Event()
     waiter_result: List[SimulationJob] = []
-
-    def wait_for_queued() -> None:
-        waiter_result.append(manager.await_completion(queued.job_id, timeout=2.0))
-        waiter_finished.set()
-
-    waiter = threading.Thread(target=wait_for_queued, daemon=True)
-    waiter.start()
-    assert manager.close(timeout=0.01) is False
-    assert manager.close() is False  # idempotent, still reports unsettled work
-
-    assert waiter_finished.wait(timeout=1.0)
-    assert waiter_result[0].status is JobStatus.CANCELLED
-    assert executor.execute_calls == 1
-    queued_errors = [
-        payload for payload in bus.events_of(EVENT_SIM_ERROR)
-        if payload["job_id"] == queued.job_id
-    ]
-    assert len(queued_errors) == 1
-    assert queued_errors[0]["cancelled"] is True
-
-    with pytest.raises(RuntimeError, match="closed"):
-        manager.submit(
-            circuit_file="too-late.fake",
-            origin=JobOrigin.UI_EDITOR,
-            project_root="/tmp/project",
+    waiter = threading.Thread(
+        target=lambda: waiter_result.append(
+            manager.await_completion(queued.job_id, timeout=2.0)
         )
-
-    # Running work is not killed mid-executor; it observes close's cancel
-    # request after persistence and keeps its diagnostic bundle paths.
-    release_running.set()
-    final_running = manager.await_completion(running.job_id, timeout=3.0)
-    assert final_running.status is JobStatus.CANCELLED
-    assert final_running.result_path
-    assert final_running.export_root
-    assert manager.close(timeout=1.0) is True
-    # The manager was already closed when the running worker committed.  Its
-    # state/waiters settle, but no lifecycle event is sent into torn-down UI
-    # services.
-    assert [
-        payload for payload in bus.events_of(EVENT_SIM_ERROR)
-        if payload["job_id"] == running.job_id
-    ] == []
+    )
+    waiter.start()
+    manager.close(timeout=2.0)
     waiter.join(timeout=1.0)
 
-
-# ---------------------------------------------------------------------------
-# Step-5 round-trip: every emitted payload satisfies the authoritative schema
-# ---------------------------------------------------------------------------
-
-
-def _wrap_envelope(event_type: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-    """Reproduce the envelope shape that :class:`shared.event_bus.EventBus`
-    builds around every published payload, so the helper sees what a
-    real subscriber would see at runtime."""
-    return {
-        "type": event_type,
-        "data": payload,
-        "timestamp": 0.0,
-        "source": "manager",
-    }
+    assert waiter_result[0].status is JobStatus.CANCELLED
+    assert manager.await_completion(running.job_id, timeout=2.0).status is JobStatus.CANCELLED
+    assert [kind for kind, _ in bus.for_job(queued.job_id)] == [EVENT_SIM_ERROR]
+    # Running terminal events after close are suppressed at the UI boundary.
+    assert [kind for kind, _ in bus.for_job(running.job_id)] == [EVENT_SIM_STARTED]
+    with pytest.raises(RuntimeError, match="closed"):
+        _submit(manager, tmp_path, name="late.cir")
+    assert manager.close(timeout=1.0) is True
 
 
-def test_every_emitted_payload_passes_extract_sim_payload(
-    manager_factory, bus
+def test_unexpected_worker_bug_is_terminal_and_wakes_waiters(
+    manager_factory, bus, tmp_path, monkeypatch
 ):
-    """End-to-end Step-5 contract: each payload published by the
-    manager survives the same ``extract_sim_payload`` validator the
-    subscribers run, with no missing identity field, on success
-    *and* failure paths.
+    manager = manager_factory(_FakeService())
 
-    If a future producer change forgets a field, this test fails
-    before any subscriber ever sees the bad payload."""
-    success_executor = _FakeExecutor(success=True)
-    failure_executor = _FakeExecutor(success=False)
+    def explode(*args, **kwargs):
+        raise RuntimeError("event construction bug")
 
-    success_manager = manager_factory(executor=success_executor)
-    success_job = success_manager.submit(
-        circuit_file="amp.fake",
-        origin=JobOrigin.UI_EDITOR,
-        project_root="/tmp/project",
-    )
-    success_manager.await_completion(success_job.job_id, timeout=2.0)
+    monkeypatch.setattr(manager, "_publish_started", explode)
+    job = _submit(manager, tmp_path)
+    final = manager.await_completion(job.job_id, timeout=2.0)
+    assert final.status is JobStatus.FAILED
+    assert "event construction bug" in (final.error_message or "")
+    assert [kind for kind, _ in bus.for_job(job.job_id)] == [EVENT_SIM_ERROR]
 
-    failure_manager = manager_factory(executor=failure_executor)
-    failure_job = failure_manager.submit(
-        circuit_file="amp.fake",
-        origin=JobOrigin.AGENT_TOOL,
-        project_root="/tmp/project",
-    )
-    failure_manager.await_completion(failure_job.job_id, timeout=2.0)
 
-    event_payloads_per_type = {
-        EVENT_SIM_STARTED: bus.events_of(EVENT_SIM_STARTED),
-        EVENT_SIM_COMPLETE: bus.events_of(EVENT_SIM_COMPLETE),
-        EVENT_SIM_ERROR: bus.events_of(EVENT_SIM_ERROR),
-    }
+def test_every_emitted_payload_passes_strict_schema(manager_factory, bus, tmp_path):
+    success = manager_factory(_FakeService())
+    failure = manager_factory(_FakeService(success=False))
+    first = _submit(success, tmp_path, name="ok.cir")
+    second = _submit(failure, tmp_path, name="bad.cir")
+    success.await_completion(first.job_id, timeout=2.0)
+    failure.await_completion(second.job_id, timeout=2.0)
 
-    # Every lifecycle bucket must have at least one payload, otherwise
-    # this test would silently regress to a no-op.
-    for event_type, payloads in event_payloads_per_type.items():
-        assert payloads, f"manager never emitted {event_type}; round-trip is vacuous"
-
-    for event_type, payloads in event_payloads_per_type.items():
-        for payload in payloads:
-            envelope = _wrap_envelope(event_type, payload)
-            extracted = extract_sim_payload(event_type, envelope)
-            assert extracted is payload
+    for event_type, payload, source in bus.events:
+        extracted = extract_sim_payload(
+            event_type,
+            {"type": event_type, "data": payload, "source": source, "timestamp": 0.0},
+        )
+        assert extracted == payload

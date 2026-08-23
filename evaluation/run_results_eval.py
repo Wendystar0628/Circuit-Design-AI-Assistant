@@ -55,7 +55,7 @@ def run_all(
         "thesis_metrics": {
             "testcircuit_total": testcircuit_payload["summary"]["total_circuits"],
             "testcircuit_success_rate_pct": testcircuit_payload["summary"]["success_rate_pct"],
-            "testcircuit_bundle_complete_rate_pct": testcircuit_payload["summary"]["bundle_complete_rate_pct"],
+            "testcircuit_result_valid_rate_pct": testcircuit_payload["summary"]["result_valid_rate_pct"],
             "testcircuit_metric_capture_rate_pct": testcircuit_payload["summary"]["metric_capture_rate_pct"],
             "testcircuit_mean_duration_ms": (testcircuit_payload["summary"].get("duration_ms") or {}).get("mean"),
             "testcircuit_p95_duration_ms": (testcircuit_payload["summary"].get("duration_ms") or {}).get("p95"),

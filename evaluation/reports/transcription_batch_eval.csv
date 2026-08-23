@@ -1,9 +1,0 @@
-﻿name,asc_path,expected_component_count,transcribed_component_count,cpr_pct,syntax_pass,warning_count,validation_error_count,degraded,error_message
-amplifier circuit,E:/Individual Project/circuit_design_ai/circuit_geo_data/amplifier circuit.asc,6,11,100.0,True,1,0,True,
-BJT,E:/Individual Project/circuit_design_ai/circuit_geo_data/BJT.asc,3,3,100.0,True,0,0,False,
-common_emitter_amplifier,E:/Individual Project/circuit_design_ai/circuit_geo_data/common_emitter_amplifier.asc,12,12,100.0,True,0,0,False,
-differential_amplifier,E:/Individual Project/circuit_design_ai/circuit_geo_data/differential_amplifier.asc,10,10,100.0,True,2,0,True,
-inverting amplifier,E:/Individual Project/circuit_design_ai/circuit_geo_data/inverting amplifier.asc,7,12,100.0,True,1,0,True,
-multistage_amplifier,E:/Individual Project/circuit_design_ai/circuit_geo_data/multistage_amplifier.asc,14,14,100.0,True,2,0,True,
-NMOS,E:/Individual Project/circuit_design_ai/circuit_geo_data/NMOS.asc,3,3,100.0,True,1,0,True,
-non-inverting amplifier,E:/Individual Project/circuit_design_ai/circuit_geo_data/non-inverting amplifier.asc,7,12,100.0,True,1,0,True,

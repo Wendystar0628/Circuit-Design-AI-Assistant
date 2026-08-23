@@ -33,7 +33,7 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout,
     QSplitter
 )
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt
 
 from presentation.web_menu_manager import MenuManager
 from presentation.simulation_command_controller import SimulationCommandController
@@ -294,6 +294,9 @@ class MainWindow(QMainWindow):
         # 初始化动作处理器
         self._action_handlers = ActionHandlers(self, self._panels)
         self._simulation_command_controller = SimulationCommandController(self)
+        self._simulation_command_controller.bind_simulation_tab(
+            self._panels.get("simulation")
+        )
         callbacks = self._action_handlers.get_callbacks()
         callbacks["on_run_simulation"] = self._simulation_command_controller.run_simulation
         

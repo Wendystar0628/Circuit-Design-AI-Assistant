@@ -7,6 +7,7 @@
 * Devices exercised: V, I (current source), Q (NPN bundled 2N3904).
 
 .title NPN BJT Output Characteristics
+.include "../../resources/models/ngspice/testcircuit_discrete.lib"
 
 * --- Base bias current (stepped by nested .dc) ---
 Ib 0 base DC 10u
@@ -20,7 +21,8 @@ Q1 col base 0 2N3904
 * --- Analysis: primary sweep Vce, nested step Ib ---
 .dc Vce 0 10 0.05 Ib 10u 50u 10u
 
-.MEASURE DC ic_at_vce5  FIND I(Vce) AT=5
-.MEASURE DC ic_at_vce10 FIND I(Vce) AT=10
+* A nested DC sweep contains one VCE segment per base-current value.
+* Inspect the separate sweep segments rather than publishing a single
+* ambiguous .measure value that would silently describe only one Ib step.
 
 .end

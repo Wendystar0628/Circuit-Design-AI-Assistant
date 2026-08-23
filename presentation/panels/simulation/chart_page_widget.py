@@ -1,3 +1,4 @@
+from dataclasses import replace
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 import numpy as np
@@ -5,6 +6,7 @@ import pyqtgraph as pg
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QSplitter, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget
 
+from domain.simulation.data.downsampler import align_xy
 from presentation.panels.simulation.chart_axis_planner import ChartAxisPlan, apply_axis_plan, build_chart_axis_plan, resolve_axis_key, resolve_axis_label
 from presentation.panels.simulation.chart_measurement_point import MeasurementPointSample, MeasurementPointValue, clamp_to_bounds, midpoint_of_bounds, serialize_measurement_point_sample
 from presentation.panels.simulation.chart_export_utils import build_chart_export_payload, serialize_chart_series_for_web
@@ -14,7 +16,11 @@ from presentation.panels.simulation.ltspice_plot_interaction import (
     apply_dynamic_tick_spacing,
     clamp_range,
     finite_range,
+    has_unambiguous_x_axis,
     merge_ranges,
+    optimize_plot_data_item,
+    sample_series_at_x,
+    to_axis_values,
 )
 from resources.theme import (
     COLOR_BG_PRIMARY,
@@ -232,11 +238,11 @@ class ChartPage(QWidget):
         self._series_items = {}
         self._visible_series_names = set()
         for series in spec.series:
-            x_data = np.asarray(series.x_data, dtype=float)
-            y_data = np.asarray(series.y_data, dtype=float)
-            if len(x_data) == 0 or len(y_data) == 0 or len(x_data) != len(y_data):
+            x_data, y_data = align_xy(series.x_data, series.y_data)
+            if len(x_data) == 0 or not np.any(np.isfinite(x_data) & np.isfinite(y_data)):
                 continue
-            valid_series.append(series)
+            normalized = replace(series, x_data=x_data, y_data=y_data)
+            valid_series.append(normalized)
             item = QTreeWidgetItem(self._signal_tree, [series.name])
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             is_default_visible = len(valid_series) == 1
@@ -278,8 +284,8 @@ class ChartPage(QWidget):
         y_max = self._to_axis_y(float(viewport.get("left_y_max")), axis_key="left")
         if None in {x_min, x_max, y_min, y_max}:
             return False
-        x_range = clamp_range((x_min, x_max), self._x_domain, positive_only=self._spec.log_x)
-        y_range = clamp_range((y_min, y_max), self._y_domain, positive_only=self._axis_log_enabled("left"))
+        x_range = clamp_range((x_min, x_max), self._x_domain)
+        y_range = clamp_range((y_min, y_max), self._y_domain)
         if x_range is None or y_range is None:
             return False
         right_y_range = None
@@ -291,7 +297,6 @@ class ChartPage(QWidget):
             right_y_range = clamp_range(
                 (right_y_min, right_y_max),
                 self._right_y_domain,
-                positive_only=self._axis_log_enabled("right"),
             )
             if right_y_range is None:
                 return False
@@ -303,7 +308,7 @@ class ChartPage(QWidget):
         return True
 
     def supports_measurement_point(self) -> bool:
-        return bool(self._spec is not None and self._spec.series)
+        return self._supports_scalar_x_measurement()
 
     def is_measurement_point_enabled(self) -> bool:
         return bool(self._measurement_point_enabled)
@@ -327,6 +332,12 @@ class ChartPage(QWidget):
             next_visible_series_names.add(series_name)
         else:
             next_visible_series_names.discard(series_name)
+        if len({
+            str(series.axis_family or "other").lower()
+            for series in self._spec.series
+            if series.name in next_visible_series_names
+        }) > 2:
+            return False
         if next_visible_series_names == self._visible_series_names:
             return True
         self._visible_series_names = next_visible_series_names
@@ -349,7 +360,7 @@ class ChartPage(QWidget):
         return True
 
     def set_measurement_point_enabled(self, enabled: bool):
-        self._measurement_point_enabled = bool(enabled)
+        self._measurement_point_enabled = bool(enabled) and self._supports_scalar_x_measurement()
         if not self._measurement_point_enabled:
             self._measurement_point_x = None
 
@@ -364,7 +375,7 @@ class ChartPage(QWidget):
         return self._measurement_point_x is not None
 
     def set_measurement_enabled(self, enabled: bool):
-        self._measurement_enabled = bool(enabled)
+        self._measurement_enabled = bool(enabled) and self._supports_scalar_x_measurement()
         if self._measurement_enabled:
             self._ensure_measurement_positions()
             return
@@ -375,7 +386,11 @@ class ChartPage(QWidget):
 
     def set_measurement_cursor(self, cursor_id: str, x_value: float) -> bool:
         x_view_range = self._current_x_view_range()
-        if not self._measurement_enabled or x_view_range is None:
+        if (
+            not self._measurement_enabled
+            or not self._supports_scalar_x_measurement()
+            or x_view_range is None
+        ):
             return False
         axis_x = self._to_axis_x(x_value)
         if axis_x is None:
@@ -391,13 +406,33 @@ class ChartPage(QWidget):
         return export_widget_image(self, self._plot_widget, path)
 
     def build_export_payload(self) -> Optional[Dict[str, Any]]:
-        if self._spec is None or not self._spec.series:
+        visible_series = self._planned_visible_series()
+        if self._spec is None or not visible_series:
             return None
-        return build_chart_export_payload(self._spec, self._spec.series)
+        export_spec = replace(
+            self._spec,
+            y_label=self._active_axis_plan.left_axis.label,
+            secondary_y_label=(
+                self._active_axis_plan.right_axis.label
+                if self._active_axis_plan.right_axis is not None
+                else ""
+            ),
+            log_y=self._active_axis_plan.left_axis.log_enabled,
+            right_log_y=(
+                self._active_axis_plan.right_axis.log_enabled
+                if self._active_axis_plan.right_axis is not None
+                else False
+            ),
+        )
+        return build_chart_export_payload(export_spec, visible_series)
 
     def get_web_snapshot(self) -> Dict[str, Any]:
         spec = self._spec
         visible_series = self._planned_visible_series()
+        viewport = self._build_viewport_snapshot()
+        viewport_x_range = None
+        if viewport.get("active") and viewport.get("x_min") is not None and viewport.get("x_max") is not None:
+            viewport_x_range = (float(viewport["x_min"]), float(viewport["x_max"]))
         available_series = []
         if spec is not None:
             planned_series = apply_axis_plan(spec.series, self._active_axis_plan)
@@ -424,9 +459,12 @@ class ChartPage(QWidget):
             "log_y": bool(self._active_axis_plan.left_axis.log_enabled) if spec is not None else False,
             "right_log_y": bool(self._active_axis_plan.right_axis.log_enabled) if spec is not None and self._active_axis_plan.right_axis is not None else False,
             "available_series": available_series,
-            "visible_series": [serialize_chart_series_for_web(series) for series in visible_series],
+            "visible_series": [
+                serialize_chart_series_for_web(series, x_range=viewport_x_range)
+                for series in visible_series
+            ],
             "visible_series_count": len(visible_series),
-            "viewport": self._build_viewport_snapshot(),
+            "viewport": viewport,
             "measurement_point": self._build_measurement_point_snapshot(),
             "measurement_enabled": self.is_measurement_enabled(),
             "measurement": self._build_measurement_snapshot(),
@@ -540,8 +578,8 @@ class ChartPage(QWidget):
         if not self._viewport_active or self._view_x_range is None or self._view_y_range is None or self._spec is None:
             self._apply_full_viewport()
             return
-        clamped_x_range = clamp_range(self._view_x_range, self._x_domain, positive_only=self._spec.log_x)
-        clamped_y_range = clamp_range(self._view_y_range, self._y_domain, positive_only=self._axis_log_enabled("left"))
+        clamped_x_range = clamp_range(self._view_x_range, self._x_domain)
+        clamped_y_range = clamp_range(self._view_y_range, self._y_domain)
         if clamped_x_range is None or clamped_y_range is None:
             self._viewport_active = False
             self._view_x_range = None
@@ -556,7 +594,6 @@ class ChartPage(QWidget):
                 right_y_range = clamp_range(
                     self._view_right_y_range,
                     self._right_y_domain,
-                    positive_only=self._axis_log_enabled("right"),
                 )
             if right_y_range is None:
                 right_y_range = self._right_y_domain
@@ -589,13 +626,14 @@ class ChartPage(QWidget):
             return {}
         sampled: Dict[str, float] = {}
         for series in self._visible_series():
-            x_data = np.asarray(series.x_data, dtype=float)
-            if self._spec.log_x:
-                x_data = np.log10(np.maximum(x_data, 1e-30))
-            y_data = np.asarray(series.y_data, dtype=float)
-            if len(x_data) == 0 or len(y_data) == 0:
-                continue
-            sampled[series.name] = float(np.interp(x_position, x_data, y_data))
+            value = sample_series_at_x(
+                series.x_data,
+                series.y_data,
+                x_position,
+                log_x=self._spec.log_x,
+            )
+            if value is not None:
+                sampled[series.name] = value
         return sampled
 
     def _to_display_x(self, x_position: Optional[float]) -> Optional[float]:
@@ -668,6 +706,15 @@ class ChartPage(QWidget):
     def _planned_visible_series(self) -> List[ChartSeries]:
         return apply_axis_plan(self._visible_series(), self._active_axis_plan)
 
+    def _supports_scalar_x_measurement(self) -> bool:
+        if self._spec is None:
+            return False
+        visible_series = self._planned_visible_series()
+        return bool(visible_series) and all(
+            has_unambiguous_x_axis(series.x_data, log_x=self._spec.log_x)
+            for series in visible_series
+        )
+
     def _build_active_axis_plan(self) -> ChartAxisPlan:
         if self._spec is None or not self._spec.series:
             return build_chart_axis_plan([])
@@ -709,18 +756,25 @@ class ChartPage(QWidget):
         for series in visible_series:
             pen = pg.mkPen(series.color, width=1.6, style=Qt.PenStyle.SolidLine)
             axis_key = resolve_axis_key(series, self._active_axis_plan)
+            x_data = np.asarray(series.x_data, dtype=float)
             y_data = np.asarray(series.y_data, dtype=float)
-            if axis_key == "right" and self._axis_log_enabled("right"):
-                y_data = self._to_view_axis_data(y_data, log_enabled=True)
             item = pg.PlotDataItem(
-                np.asarray(series.x_data, dtype=float),
+                x_data,
                 y_data,
                 pen=pen,
+                connect="finite",
+            )
+            item.setLogMode(
+                bool(self._spec.log_x) if self._spec is not None else False,
+                self._axis_log_enabled(axis_key),
             )
             if axis_key == "right" and self._right_vb is not None:
                 self._right_vb.addItem(item)
             else:
                 plot_item.addItem(item)
+            # clipToView needs an attached ViewBox.  Calling it before addItem
+            # can make pyqtgraph cache the outer PlotWidget as the item view.
+            optimize_plot_data_item(item, x_data)
             self._plot_items[series.name] = item
             self._rendered_axis_keys[series.name] = axis_key
             self._legend.addItem(item, series.name)
@@ -755,11 +809,9 @@ class ChartPage(QWidget):
             axis_key = resolve_axis_key(series, self._active_axis_plan)
             x_range = finite_range(
                 self._to_view_axis_data(series.x_data, log_enabled=self._spec.log_x),
-                positive_only=self._spec.log_x,
             )
             y_range = finite_range(
                 self._to_view_axis_data(series.y_data, log_enabled=self._axis_log_enabled(axis_key)),
-                positive_only=self._axis_log_enabled(axis_key),
             )
             if x_range is not None:
                 x_ranges.append(x_range)
@@ -864,13 +916,7 @@ class ChartPage(QWidget):
         self._rebuild_plot()
 
     def _to_view_axis_data(self, values: np.ndarray, *, log_enabled: bool) -> np.ndarray:
-        array = np.asarray(values, dtype=float)
-        if not log_enabled:
-            return array
-        transformed = np.full(array.shape, np.nan, dtype=float)
-        mask = np.isfinite(array) & (array > 0)
-        transformed[mask] = np.log10(array[mask])
-        return transformed
+        return to_axis_values(values, log_enabled=log_enabled)
 
 
 __all__ = ["ChartPage"]

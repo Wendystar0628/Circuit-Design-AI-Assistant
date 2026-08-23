@@ -1,28 +1,23 @@
 from __future__ import annotations
 
 import logging
-import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from typing import Dict, List, Optional, Sequence, Set, Tuple
 
-from domain.simulation.spice.analysis_directive_authority import normalize_analysis_directive
+from domain.simulation.spice.include_parser import IncludeParser
 from domain.simulation.spice.ltspice_symbol_catalog import (
     LtspicePinDefinition,
     LtspiceSymbolCatalog,
     LtspiceSymbolDefinition,
-    classify_ltspice_symbol_family,
     normalize_ltspice_symbol_key,
 )
 from domain.simulation.spice.parser import SpiceParser
+from domain.simulation.spice.numeric import format_spice_number, parse_spice_number
 from domain.simulation.spice.runtime_compatibility import (
-    NetlistRuntimeCompatibilityNormalizer,
-    RuntimeFallbackLibraryBuilder,
     analyze_spice_library_file,
-    load_runtime_compatible_bundled_subcircuit_path_index,
 )
-from resources.resource_loader import get_spice_cmp_dir
 
 
 @dataclass(frozen=True)
@@ -135,21 +130,6 @@ class _DisjointSet:
 
 
 class LtspiceAscToCirTranscriber:
-    _EARLY_DIRECTIVE_PREFIXES = (
-        ".include",
-        ".lib",
-        ".param",
-        ".options",
-        ".func",
-        ".global",
-        ".ic",
-        ".nodeset",
-        ".temp",
-        ".model",
-        ".subckt",
-        ".ends",
-    )
-
     def __init__(
         self,
         *,
@@ -159,9 +139,7 @@ class LtspiceAscToCirTranscriber:
         self._symbol_catalog = symbol_catalog or LtspiceSymbolCatalog()
         self._logger = logger or logging.getLogger(__name__)
         self._parser = SpiceParser()
-        self._bundled_subckts = set(load_runtime_compatible_bundled_subcircuit_path_index().keys())
-        self._bundled_models = _load_bundled_model_names()
-        self._runtime_normalizer = NetlistRuntimeCompatibilityNormalizer()
+        self._include_parser = IncludeParser()
 
     def convert_files(self, asc_paths: Sequence[str], output_dir: str) -> AscBatchConversionExecution:
         output_root = Path(str(output_dir or "")).expanduser().resolve()
@@ -203,45 +181,47 @@ class LtspiceAscToCirTranscriber:
         warnings: List[str] = []
         resolved_symbols = self._resolve_symbols(document, warnings)
         point_to_net = self._resolve_point_nets(document, resolved_symbols)
-        fallback_builder = RuntimeFallbackLibraryBuilder()
-        early_directives, late_directives, directive_warnings = self._rewrite_directives(
+        rewritten_directives, directive_warnings = self._rewrite_directives(
             document.directives,
             source_path=source_path,
-            output_dir=Path(output_dir).expanduser().resolve(),
         )
         warnings.extend(directive_warnings)
-        external_models, external_subckts = self._scan_external_definitions([*early_directives, *late_directives])
-        available_models = set(self._bundled_models) | external_models
-        available_subckts = set(self._bundled_subckts) | external_subckts
+        external_models, external_subckts, external_vdmos_models = self._scan_external_definitions(rewritten_directives)
+        # Conversion output must be self-describing.  A name merely existing
+        # somewhere in the application's bundled catalog does not make it
+        # available to ngspice; only explicit inline/include definitions count.
+        available_models = external_models
+        available_subckts = external_subckts
+        vdmos_models = external_vdmos_models
         component_lines: List[str] = []
         degraded = False
         for symbol in resolved_symbols:
             line, symbol_warnings, symbol_degraded = self._emit_component_line(
                 symbol,
                 point_to_net=point_to_net,
-                fallback_builder=fallback_builder,
                 available_models=available_models,
                 available_subckts=available_subckts,
+                vdmos_models=vdmos_models,
             )
             if line:
                 component_lines.append(line)
             if symbol_warnings:
                 warnings.extend(symbol_warnings)
             degraded = degraded or symbol_degraded
-        fallback_lines = fallback_builder.render()
         title = _sanitize_title(source_path.stem or source_path.name)
         netlist_lines = [f".title {title}"]
-        netlist_lines.extend(early_directives)
-        netlist_lines.extend(fallback_lines)
+        # Keep every ASC text directive in source order.  Splitting directives
+        # into "early" and "late" groups used to move .ends ahead of the
+        # subcircuit body, silently changing a valid embedded definition into
+        # unrelated top-level components.  ngspice preprocesses model,
+        # parameter and analysis cards without requiring that reordering.
+        netlist_lines.extend(rewritten_directives)
         netlist_lines.extend(component_lines)
-        netlist_lines.extend(late_directives)
         netlist_lines.append(".end")
         netlist_text = "\n".join(line for line in netlist_lines if str(line or "").strip()) + "\n"
-        normalized_runtime = self._runtime_normalizer.normalize(netlist_text, source_file=str(source_path.with_suffix(".cir")))
-        netlist_text = normalized_runtime.netlist_text.rstrip() + "\n"
-        warnings.extend(normalized_runtime.warnings)
-        degraded = degraded or normalized_runtime.degraded
         validation_errors = self._validate_netlist(netlist_text, str(source_path.with_suffix(".cir")))
+        if validation_errors:
+            raise ValueError("ASC 转换结果未通过 SPICE 语义校验: " + "; ".join(validation_errors))
         return TranscribedAscNetlist(
             source_path=str(source_path),
             netlist_text=netlist_text,
@@ -318,53 +298,29 @@ class LtspiceAscToCirTranscriber:
         )
 
     def _resolve_symbols(self, document: _AscDocument, warnings: List[str]) -> Tuple[_ResolvedSymbolInstance, ...]:
-        base_points: Set[_Point] = {flag.point for flag in document.flags}
-        for wire in document.wires:
-            base_points.add(wire.start)
-            base_points.add(wire.end)
         resolved: List[_ResolvedSymbolInstance] = []
         for symbol in document.symbols:
             definition = self._resolve_symbol_definition(symbol.symbol_name)
-            family = definition.family if definition is not None else classify_ltspice_symbol_family(symbol.symbol_name, "")
+            if definition is None:
+                raise ValueError(
+                    f"{symbol.symbol_name}: 缺少精确 .asy 符号定义，禁止猜测引脚或替换成通用元件"
+                )
+            if not definition.pins:
+                raise ValueError(f"{symbol.symbol_name}: .asy 符号未提供 SpiceOrder 引脚")
             pins: List[_PlacedPin] = []
-            if definition is not None and definition.pins:
-                for pin in definition.pins:
-                    pins.append(_PlacedPin(
-                        name=pin.name,
-                        spice_order=pin.spice_order,
-                        point=_transform_pin(pin, symbol.origin, symbol.orientation),
-                    ))
+            for pin in definition.pins:
+                pins.append(_PlacedPin(
+                    name=pin.name,
+                    spice_order=pin.spice_order,
+                    point=_transform_pin(pin, symbol.origin, symbol.orientation),
+                ))
             resolved.append(_ResolvedSymbolInstance(
                 source=symbol,
                 definition=definition,
-                family=family,
+                family=definition.family,
                 pins=tuple(sorted(pins, key=lambda item: item.spice_order)),
             ))
-            for pin in pins:
-                base_points.add(pin.point)
-        final_resolved: List[_ResolvedSymbolInstance] = []
-        available_points = tuple(base_points)
-        for symbol in resolved:
-            if symbol.pins:
-                final_resolved.append(symbol)
-                continue
-            inferred_points = self._infer_generic_pins(symbol.source.origin, available_points)
-            if inferred_points:
-                warnings.append(f"{symbol.source.symbol_name}: 缺少 .asy 定义，已按周边连线推断引脚。")
-            else:
-                inferred_points = (symbol.source.origin,)
-                warnings.append(f"{symbol.source.symbol_name}: 无法恢复引脚几何，已使用单端兜底。")
-            inferred_pins = tuple(
-                _PlacedPin(name=f"P{index}", spice_order=index, point=point)
-                for index, point in enumerate(inferred_points, start=1)
-            )
-            final_resolved.append(_ResolvedSymbolInstance(
-                source=symbol.source,
-                definition=None,
-                family=symbol.family,
-                pins=inferred_pins,
-            ))
-        return tuple(final_resolved)
+        return tuple(resolved)
 
     def _resolve_point_nets(
         self,
@@ -422,54 +378,73 @@ class LtspiceAscToCirTranscriber:
         directives: Sequence[_DirectiveRecord],
         *,
         source_path: Path,
-        output_dir: Path,
-    ) -> Tuple[List[str], List[str], Tuple[str, ...]]:
-        early: List[str] = []
-        late: List[str] = []
+    ) -> Tuple[List[str], Tuple[str, ...]]:
+        rewritten_directives: List[str] = []
         warnings: List[str] = []
         for record in directives:
-            rewritten, directive_warnings = self._rewrite_single_directive(record.text, source_path=source_path, output_dir=output_dir)
+            rewritten, directive_warnings = self._rewrite_single_directive(record.text, source_path=source_path)
             warnings.extend(directive_warnings)
             if not rewritten or rewritten.lower() == ".end":
                 continue
-            if rewritten.lower().startswith(self._EARLY_DIRECTIVE_PREFIXES):
-                early.append(rewritten)
-            else:
-                late.append(rewritten)
-        return early, late, tuple(warnings)
+            rewritten_directives.append(rewritten)
+        return rewritten_directives, tuple(warnings)
 
-    def _rewrite_single_directive(self, directive: str, *, source_path: Path, output_dir: Path) -> Tuple[str, Tuple[str, ...]]:
+    def _rewrite_single_directive(self, directive: str, *, source_path: Path) -> Tuple[str, Tuple[str, ...]]:
         text = str(directive or "").strip()
         if not text:
             return "", ()
-        normalized_analysis = normalize_analysis_directive(text)
-        if normalized_analysis is not None:
-            return normalized_analysis, ()
-        match = re.match(r"^(\.(?:include|lib))\s+((?:\"[^\"]+\")|(?:'[^']+')|\S+)(.*)$", text, re.IGNORECASE)
-        if match is None:
+        command = text.split(None, 1)[0].lower()
+        if command == ".tran":
+            converted = _convert_ltspice_transient_shorthand(text)
+            if converted:
+                return converted, (
+                    "LTspice 单参数 .tran 已转为 ngspice 显式 tstep/tstop；"
+                    "tstep 取 tstop/1000，请按波形带宽复核采样密度。",
+                )
+        if command in {".op", ".tran", ".ac", ".dc", ".noise"}:
             return text, ()
-        command = match.group(1)
-        raw_path = match.group(2).strip().strip('"').strip("'")
-        suffix = match.group(3).rstrip()
-        include_path = Path(raw_path)
+        if command not in {".include", ".inc", ".incpslt", ".lib"}:
+            return text, ()
+        parsed = self._include_parser.parse_line(text, 1)
+        # A one-argument .lib names an in-file library section rather than a
+        # file dependency; preserve it verbatim.  Malformed include cards are
+        # rejected now instead of being copied into an inevitably failing deck.
+        if parsed is None:
+            if command == ".lib":
+                return text, ()
+            raise ValueError(f"无效的 SPICE 库引用: {text}")
+        include_path = Path(parsed.raw_path)
         if not include_path.is_absolute():
             include_path = (source_path.parent / include_path).resolve()
         compatibility = analyze_spice_library_file(include_path)
+        if not include_path.is_file():
+            raise ValueError(f"SPICE 库文件不存在: {include_path.as_posix()}")
         if not compatibility.is_compatible:
             reason_text = ", ".join(compatibility.incompatible_reasons) or "包含当前项目不支持的 LTspice 专用语法"
-            return "", (f"已跳过不兼容库 {include_path.as_posix()}：{reason_text}。",)
+            raise ValueError(
+                f"SPICE 库 {include_path.as_posix()} 无法由当前 ngspice 可靠执行: {reason_text}"
+            )
         rewritten_path = include_path.as_posix()
-        return f"{command} \"{rewritten_path}\"{suffix}", ()
+        if parsed.statement_type == "lib":
+            return f'.lib "{rewritten_path}" {parsed.library_section}', ()
+        if parsed.statement_type == "incpslt":
+            return f'.incpslt "{rewritten_path}"', ()
+        return f'.include "{rewritten_path}"', ()
 
-    def _scan_external_definitions(self, directives: Sequence[str]) -> Tuple[Set[str], Set[str]]:
-        model_names: Set[str] = set()
+    def _scan_external_definitions(self, directives: Sequence[str]) -> Tuple[Set[str], Set[str], Set[str]]:
+        inline_models, inline_vdmos_models = _scan_model_catalog("\n".join(directives))
+        model_names: Set[str] = set(inline_models)
         subckt_names: Set[str] = set()
+        vdmos_models: Set[str] = set(inline_vdmos_models)
         visited_files: Set[str] = set()
         for directive in directives:
-            match = re.match(r"^\.(?:include|lib)\s+((?:\"[^\"]+\")|(?:'[^']+')|\S+)", str(directive or "").strip(), re.IGNORECASE)
-            if match is None:
+            subckt_match = re.match(r"^\s*\.subckt\s+([^\s(]+)", str(directive or ""), re.IGNORECASE)
+            if subckt_match is not None:
+                subckt_names.add(subckt_match.group(1).strip().lower())
+            parsed = self._include_parser.parse_line(str(directive or ""), 1)
+            if parsed is None:
                 continue
-            target_path = Path(match.group(1).strip().strip('"').strip("'"))
+            target_path = Path(parsed.raw_path)
             if not target_path.is_absolute() or not target_path.is_file():
                 continue
             normalized_path = str(target_path.resolve()).lower()
@@ -481,126 +456,141 @@ class LtspiceAscToCirTranscriber:
                 continue
             model_names.update(compatibility.model_names)
             subckt_names.update(compatibility.subckt_names)
-        return model_names, subckt_names
+            file_model_names, file_vdmos_models = _scan_model_catalog(_read_optional_text(target_path))
+            model_names.update(file_model_names)
+            vdmos_models.update(file_vdmos_models)
+        return model_names, subckt_names, vdmos_models
 
     def _emit_component_line(
         self,
         symbol: _ResolvedSymbolInstance,
         *,
         point_to_net: Dict[_Point, str],
-        fallback_builder: RuntimeFallbackLibraryBuilder,
         available_models: Set[str],
         available_subckts: Set[str],
+        vdmos_models: Set[str],
     ) -> Tuple[str, Tuple[str, ...], bool]:
         attrs = _merged_symbol_attrs(symbol)
         prefix = str(attrs.get("prefix") or (symbol.definition.prefix if symbol.definition is not None else "") or "X")
         family = symbol.family
         pins = list(symbol.pins)
-        nodes = [point_to_net.get(pin.point, "0") for pin in pins]
+        nodes = [point_to_net[pin.point] for pin in pins]
         name = _build_instance_name(attrs.get("instname", ""), prefix=prefix, family=family)
         warnings: List[str] = []
-        degraded = False
         lead = prefix[:1].upper() if prefix else "X"
         value_text = _normalize_value_text(attrs.get("value", ""))
         value2_text = str(attrs.get("value2", "")).strip()
         spice_model_text = str(attrs.get("spicemodel", "")).strip()
         spice_line_text = str(attrs.get("spiceline", "")).strip()
         spice_line2_text = str(attrs.get("spiceline2", "")).strip()
-        pin_roles = _infer_pin_roles(pins)
+        extra_parameters = " ".join(
+            value for value in (value2_text, spice_line_text, spice_line2_text) if value
+        )
 
-        if lead in {"R", "C", "L"} and len(nodes) >= 2:
-            default_values = {"R": "1k", "C": "1u", "L": "1m"}
-            raw_value = value_text or default_values[lead]
-            return f"{name} {nodes[0]} {nodes[1]} {raw_value}", tuple(warnings), degraded
-
-        if lead in {"V", "I"} and len(nodes) >= 2:
-            raw_value = value_text or "0"
-            return f"{name} {nodes[0]} {nodes[1]} {raw_value}", tuple(warnings), degraded
-
-        if lead == "B" and len(nodes) >= 2:
+        if lead in {"R", "C", "L"}:
+            if len(nodes) != 2:
+                raise ValueError(f"{symbol.source.symbol_name}/{name}: {lead} 器件必须有两个 SpiceOrder 引脚")
             if not value_text:
-                value_text = "I=0" if family in {"behavioral", "current_source"} or symbol.source.symbol_name.lower().endswith("bi") else "V=0"
-                degraded = True
-                warnings.append(f"{symbol.source.symbol_name}: 行为源表达式缺失，已降级为零输出。")
-            return f"{name} {nodes[0]} {nodes[1]} {value_text}", tuple(warnings), degraded
+                raise ValueError(f"{symbol.source.symbol_name}/{name}: 缺少元件值，禁止填入伪默认值")
+            suffix = f" {extra_parameters}" if extra_parameters else ""
+            return f"{name} {nodes[0]} {nodes[1]} {value_text}{suffix}", tuple(warnings), False
 
-        if lead in {"E", "G"} and len(nodes) >= 4:
-            raw_value = value_text or "1"
+        if lead in {"V", "I"}:
+            if len(nodes) != 2:
+                raise ValueError(f"{symbol.source.symbol_name}/{name}: 独立源必须有正、负两个 SpiceOrder 引脚")
+            source_specification = " ".join(
+                value for value in (value_text, value2_text, spice_line_text, spice_line2_text) if value
+            )
+            if not source_specification:
+                raise ValueError(f"{symbol.source.symbol_name}/{name}: 独立源没有 DC、AC 或时域激励定义")
+            return f"{name} {nodes[0]} {nodes[1]} {source_specification}", tuple(warnings), False
+
+        if lead == "B":
+            if len(nodes) != 2:
+                raise ValueError(f"{symbol.source.symbol_name}/{name}: 行为源必须有两个 SpiceOrder 引脚")
+            expression = " ".join(
+                value for value in (value_text, value2_text, spice_line_text, spice_line2_text) if value
+            )
+            if not expression:
+                raise ValueError(f"{symbol.source.symbol_name}/{name}: 行为源表达式缺失")
+            return f"{name} {nodes[0]} {nodes[1]} {expression}", tuple(warnings), False
+
+        if lead in {"E", "G"}:
+            if len(nodes) != 4:
+                raise ValueError(f"{symbol.source.symbol_name}/{name}: 线性受控源必须有四个 SpiceOrder 引脚")
+            control_specification = " ".join(
+                value for value in (value_text, value2_text, spice_line_text, spice_line2_text) if value
+            )
+            if not control_specification:
+                raise ValueError(f"{symbol.source.symbol_name}/{name}: 受控源增益或表达式缺失")
+            return (
+                f"{name} {nodes[0]} {nodes[1]} {nodes[2]} {nodes[3]} {control_specification}",
+                tuple(warnings),
+                False,
+            )
+
+        if lead in {"F", "H"}:
+            if len(nodes) != 2:
+                raise ValueError(f"{symbol.source.symbol_name}/{name}: 电流控制源必须有两个输出 SpiceOrder 引脚")
+            control_blob = " ".join(value for value in (value_text, value2_text, spice_line_text, spice_line2_text) if value)
+            if len(control_blob.split()) < 2:
+                raise ValueError(f"{symbol.source.symbol_name}/{name}: 电流控制源缺少控制电压源名或增益")
+            return f"{name} {nodes[0]} {nodes[1]} {control_blob}", tuple(warnings), False
+
+        if lead == "S":
+            if len(nodes) != 4:
+                raise ValueError(f"{symbol.source.symbol_name}/{name}: 电压控制开关必须有四个 SpiceOrder 引脚")
             if not value_text:
-                degraded = True
-                warnings.append(f"{symbol.source.symbol_name}: 受控源增益缺失，已使用默认值 1。")
-            return f"{name} {nodes[0]} {nodes[1]} {nodes[2]} {nodes[3]} {raw_value}", tuple(warnings), degraded
+                raise ValueError(f"{symbol.source.symbol_name}/{name}: 开关模型名缺失")
+            if value_text.lower() not in available_models:
+                raise ValueError(f"{symbol.source.symbol_name}/{name}: 开关模型 {value_text} 未定义")
+            suffix = f" {extra_parameters}" if extra_parameters else ""
+            return f"{name} {nodes[0]} {nodes[1]} {nodes[2]} {nodes[3]} {value_text}{suffix}", tuple(warnings), False
 
-        if lead in {"F", "H"} and len(nodes) >= 2:
-            if value_text:
-                return f"{name} {nodes[0]} {nodes[1]} {value_text}", tuple(warnings), degraded
-            degraded = True
-            warnings.append(f"{symbol.source.symbol_name}: 电流控制源控制信息缺失，已降级为零输出行为源。")
-            fallback_name = _build_instance_name(attrs.get("instname", ""), prefix="B", family=family)
-            expr = "I=0" if lead == "F" else "V=0"
-            return f"{fallback_name} {nodes[0]} {nodes[1]} {expr}", tuple(warnings), degraded
-
-        if lead == "S" and len(nodes) >= 4:
-            model_name = value_text or "CAI_SW_DEFAULT"
-            if not value_text or model_name.lower() not in available_models:
-                model_name = fallback_builder.ensure_model(
-                    model_name,
-                    ".model {name} SW(Ron=1 Roff=1e12 Vt=0.5 Vh=0.1)".format(name=_sanitize_spice_identifier(model_name, default="CAI_SW_DEFAULT")),
-                    "sw",
-                )
-                degraded = degraded or not value_text
-            return f"{name} {nodes[0]} {nodes[1]} {nodes[2]} {nodes[3]} {model_name}", tuple(warnings), degraded
-
-        if lead == "W" and len(nodes) >= 2:
-            value_tokens = value_text.split()
+        if lead == "W":
+            if len(nodes) != 2:
+                raise ValueError(f"{symbol.source.symbol_name}/{name}: 电流控制开关必须有两个 SpiceOrder 引脚")
+            control_blob = " ".join(value for value in (value_text, value2_text, spice_line_text, spice_line2_text) if value)
+            value_tokens = control_blob.split()
             if len(value_tokens) >= 2:
                 model_name = value_tokens[-1]
-                control_blob = " ".join(value_tokens[:-1])
                 if model_name.lower() not in available_models:
-                    model_name = fallback_builder.ensure_model(
-                        model_name,
-                        ".model {name} SW(Ron=1 Roff=1e12 Vt=0.5 Vh=0.1)".format(name=_sanitize_spice_identifier(model_name, default="CAI_CSW_DEFAULT")),
-                        "csw",
-                    )
-                    degraded = True
-                return f"{name} {nodes[0]} {nodes[1]} {control_blob} {model_name}", tuple(warnings), degraded
-            degraded = True
-            warnings.append(f"{symbol.source.symbol_name}: 电流控制开关控制信息缺失，已降级为高阻电阻。")
-            fallback_name = _build_instance_name(attrs.get("instname", ""), prefix="R", family=family)
-            return f"{fallback_name} {nodes[0]} {nodes[1]} 1e12", tuple(warnings), degraded
+                    raise ValueError(f"{symbol.source.symbol_name}/{name}: 电流控制开关模型 {model_name} 未定义")
+                return f"{name} {nodes[0]} {nodes[1]} {' '.join(value_tokens)}", tuple(warnings), False
+            raise ValueError(f"{symbol.source.symbol_name}/{name}: 电流控制开关缺少控制源或模型")
 
-        if lead == "D" and len(nodes) >= 2:
-            requested_name = value_text or _default_model_name(symbol, lead)
-            model_name = requested_name
-            if model_name.lower() not in available_models:
-                model_name = fallback_builder.ensure_model(
-                    requested_name,
-                    _generic_model_text(_diode_model_kind(symbol), requested_name),
-                    _diode_model_kind(symbol),
-                )
-                degraded = degraded or not value_text
-            return f"{name} {nodes[0]} {nodes[1]} {model_name}", tuple(warnings), degraded
+        if lead == "D":
+            if len(nodes) != 2:
+                raise ValueError(f"{symbol.source.symbol_name}/{name}: 二极管必须有两个 SpiceOrder 引脚")
+            if not value_text:
+                raise ValueError(f"{symbol.source.symbol_name}/{name}: 二极管模型名缺失")
+            if value_text.lower() not in available_models:
+                raise ValueError(f"{symbol.source.symbol_name}/{name}: 二极管模型 {value_text} 未定义")
+            suffix = f" {extra_parameters}" if extra_parameters else ""
+            return f"{name} {nodes[0]} {nodes[1]} {value_text}{suffix}", tuple(warnings), False
 
-        if lead in {"Q", "M", "J"} and len(nodes) >= 3:
-            requested_name = value_text or _default_model_name(symbol, lead)
-            model_name = requested_name
-            model_kind = _primitive_model_kind(symbol, lead)
-            if model_name.lower() not in available_models:
-                model_name = fallback_builder.ensure_model(
-                    requested_name,
-                    _generic_model_text(model_kind, requested_name),
-                    model_kind,
+        if lead in {"Q", "M", "J"}:
+            valid_pin_counts = {"Q": {3, 4}, "M": {3, 4}, "J": {3}}[lead]
+            if len(nodes) not in valid_pin_counts:
+                raise ValueError(
+                    f"{symbol.source.symbol_name}/{name}: {lead} 器件的 SpiceOrder 引脚数 {len(nodes)} 不合法"
                 )
-                degraded = degraded or not value_text
+            if not value_text:
+                raise ValueError(f"{symbol.source.symbol_name}/{name}: 半导体模型名缺失")
+            if value_text.lower() not in available_models:
+                raise ValueError(f"{symbol.source.symbol_name}/{name}: 半导体模型 {value_text} 未定义")
             if lead == "M":
                 limited_nodes = list(nodes[:4])
-                if len(limited_nodes) == 3:
+                if len(limited_nodes) == 3 and value_text.lower() not in vdmos_models:
                     limited_nodes.append(limited_nodes[2])
-                    degraded = True
-                    warnings.append(f"{symbol.source.symbol_name}: MOS 缺少 body 节点，已将 body 绑定到 source 以兼容当前运行时。")
+                    warnings.append(
+                        f"{symbol.source.symbol_name}/{name}: 三端标准 MOS 符号显式连接 body=source；"
+                        "VDMOS 模型则保留 ngspice 原生三端形式。"
+                    )
             else:
                 limited_nodes = nodes[:4]
-            return f"{name} {' '.join(limited_nodes)} {model_name}", tuple(warnings), degraded
+            suffix = f" {extra_parameters}" if extra_parameters else ""
+            return f"{name} {' '.join(limited_nodes)} {value_text}{suffix}", tuple(warnings), False
 
         model_name_candidates = [
             candidate
@@ -611,24 +601,22 @@ class LtspiceAscToCirTranscriber:
             )
             if candidate
         ]
-        requested_model_name = model_name_candidates[0] if model_name_candidates else _default_subckt_name(symbol)
-        subckt_name = requested_model_name
-        if subckt_name.lower() not in available_subckts:
-            subckt_name = fallback_builder.ensure_subckt(
-                requested_model_name,
-                pin_count=max(1, len(nodes)),
-                family=family,
-                plus_index=pin_roles.get("plus"),
-                minus_index=pin_roles.get("minus"),
-                output_index=pin_roles.get("output"),
+        requested_model_name = model_name_candidates[0] if model_name_candidates else ""
+        if not requested_model_name:
+            raise ValueError(f"{symbol.source.symbol_name}/{name}: 子电路名缺失")
+        if requested_model_name.lower() not in available_subckts:
+            raise ValueError(
+                f"{symbol.source.symbol_name}/{name}: 子电路 {requested_model_name} 不存在或不能由当前 ngspice 可靠执行"
             )
-            degraded = True
-            warnings.append(f"{symbol.source.symbol_name}: 子电路模型缺失，已生成可运行兜底子电路。")
         param_blobs = [blob for blob in (value2_text, spice_line_text, spice_line2_text) if _looks_like_param_blob(blob)]
         if not nodes:
-            nodes = ["0"]
-            degraded = True
-        return f"{name} {' '.join(nodes)} {subckt_name}{(' ' + ' '.join(param_blobs)) if param_blobs else ''}", tuple(warnings), degraded
+            raise ValueError(f"{symbol.source.symbol_name}/{name}: 子电路实例没有引脚")
+        return (
+            f"{name} {' '.join(nodes)} {requested_model_name}"
+            f"{(' ' + ' '.join(param_blobs)) if param_blobs else ''}",
+            tuple(warnings),
+            False,
+        )
 
     def _validate_netlist(self, netlist_text: str, source_file: str) -> List[str]:
         try:
@@ -638,51 +626,7 @@ class LtspiceAscToCirTranscriber:
         return [str(item.message or "") for item in getattr(document, "parse_errors", []) if str(item.message or "")]
 
     def _resolve_symbol_definition(self, symbol_name: str) -> Optional[LtspiceSymbolDefinition]:
-        normalized = normalize_ltspice_symbol_key(symbol_name)
-        definition = self._symbol_catalog.lookup(normalized)
-        if definition is not None:
-            return definition
-        basename = normalized.rsplit("/", 1)[-1]
-        alias_candidates = [basename]
-        if normalized.startswith("opamps/"):
-            alias_candidates.extend(["opamps/lt1001", "opamps/opamp2", "opamps/opamp"])
-        if normalized.startswith("comparators/"):
-            alias_candidates.append("comparators/lt1011")
-        if any(token in basename for token in ("npn", "pnp", "nmos", "pmos", "njf", "pjf", "diode", "zener", "schottky", "battery", "voltage", "current", "res", "cap", "ind", "opamp", "ne555")):
-            alias_candidates.extend([
-                "npn" if "npn" in basename else "pnp" if "pnp" in basename else "nmos" if "nmos" in basename else "pmos" if "pmos" in basename else "njf" if "njf" in basename else "pjf" if "pjf" in basename else "diode" if "diode" in basename else "zener" if "zener" in basename else "schottky" if "schottky" in basename else "battery" if "battery" in basename else "voltage" if "voltage" in basename else "current" if "current" in basename else "res" if "res" in basename else "cap" if "cap" in basename else "ind" if "ind" in basename else "opamps/lt1001" if "opamp" in basename else "misc/ne555",
-            ])
-        for candidate in alias_candidates:
-            definition = self._symbol_catalog.lookup(candidate)
-            if definition is not None:
-                return definition
-        return None
-
-    def _infer_generic_pins(self, origin: _Point, points: Sequence[_Point]) -> Tuple[_Point, ...]:
-        nearby = [
-            point for point in points
-            if abs(point.x - origin.x) <= 160 and abs(point.y - origin.y) <= 160 and point != origin
-        ]
-        if not nearby:
-            return ()
-        def _sort_key(point: _Point) -> Tuple[int, int, int]:
-            dx = point.x - origin.x
-            dy = point.y - origin.y
-            if abs(dx) >= abs(dy):
-                side = 0 if dx < 0 else 2
-                detail = point.y
-            else:
-                side = 1 if dy < 0 else 3
-                detail = point.x
-            return side, detail, abs(dx) + abs(dy)
-        unique_points: List[_Point] = []
-        seen: Set[_Point] = set()
-        for point in sorted(nearby, key=_sort_key):
-            if point in seen:
-                continue
-            seen.add(point)
-            unique_points.append(point)
-        return tuple(unique_points)
+        return self._symbol_catalog.lookup(normalize_ltspice_symbol_key(symbol_name))
 
 
 
@@ -785,6 +729,69 @@ def _normalize_value_text(value: str) -> str:
     return text
 
 
+def _convert_ltspice_transient_shorthand(directive_text: str) -> str:
+    """Translate LTspice-only ``.tran tstop [UIC]`` at the ASC boundary."""
+
+    pieces = _strip_ltspice_inline_comment(
+        str(directive_text or "").strip()
+    ).split()
+    if not pieces or pieces[0].casefold() != ".tran":
+        return ""
+    has_uic = len(pieces) >= 2 and pieces[-1].casefold() == "uic"
+    body = pieces[1:-1] if has_uic else pieces[1:]
+    if len(body) != 1:
+        return ""
+    stop_token = body[0]
+    stop_value = parse_spice_number(stop_token)
+    if stop_value is None or stop_value <= 0:
+        return ""
+    converted = (
+        f".tran {format_spice_number(stop_value / 1000.0)} {stop_token}"
+    )
+    return f"{converted} uic" if has_uic else converted
+
+
+def _strip_ltspice_inline_comment(text: str) -> str:
+    quote = ""
+    brace_depth = 0
+    paren_depth = 0
+    for index, character in enumerate(str(text or "")):
+        if quote:
+            if character == quote:
+                quote = ""
+            continue
+        if character in {"'", '"'}:
+            quote = character
+            continue
+        if character == "{":
+            brace_depth += 1
+            continue
+        if character == "}" and brace_depth:
+            brace_depth -= 1
+            continue
+        if character == "(":
+            paren_depth += 1
+            continue
+        if character == ")" and paren_depth:
+            paren_depth -= 1
+            continue
+        if (
+            character == "/"
+            and index + 1 < len(text)
+            and text[index + 1] == "/"
+            and brace_depth == 0
+            and paren_depth == 0
+        ):
+            return text[:index]
+        if (
+            character in {";", "$"}
+            and brace_depth == 0
+            and paren_depth == 0
+        ):
+            return text[:index]
+    return text
+
+
 
 def _looks_like_file_token(value: str) -> bool:
     text = str(value or "").strip().lower()
@@ -802,88 +809,6 @@ def _looks_like_model_token(value: str) -> bool:
     if not text or _looks_like_file_token(text) or _looks_like_param_blob(text):
         return False
     return True
-
-
-
-def _infer_pin_roles(pins: Sequence[_PlacedPin]) -> Dict[str, Optional[int]]:
-    plus_index: Optional[int] = None
-    minus_index: Optional[int] = None
-    output_index: Optional[int] = None
-    for pin in pins:
-        name = str(pin.name or "").strip().lower()
-        if plus_index is None and name in {"in+", "+", "noninvin", "noninv", "inp", "vin+", "nc+"}:
-            plus_index = pin.spice_order
-        if minus_index is None and name in {"in-", "-", "invin", "inv", "inn", "vin-", "nc-"}:
-            minus_index = pin.spice_order
-        if output_index is None and name in {"out", "output", "vout", "o"}:
-            output_index = pin.spice_order
-    return {
-        "plus": plus_index,
-        "minus": minus_index,
-        "output": output_index,
-    }
-
-
-
-def _default_model_name(symbol: _ResolvedSymbolInstance, lead: str) -> str:
-    lead_upper = lead.upper()
-    if lead_upper == "D":
-        return "CAI_DIODE_DEFAULT"
-    if lead_upper == "Q":
-        return "CAI_PNP_DEFAULT" if "pnp" in symbol.source.symbol_name.lower() else "CAI_NPN_DEFAULT"
-    if lead_upper == "M":
-        return "CAI_PMOS_DEFAULT" if "pmos" in symbol.source.symbol_name.lower() else "CAI_NMOS_DEFAULT"
-    if lead_upper == "J":
-        return "CAI_PJF_DEFAULT" if "pjf" in symbol.source.symbol_name.lower() else "CAI_NJF_DEFAULT"
-    return f"CAI_{lead_upper}_DEFAULT"
-
-
-
-def _default_subckt_name(symbol: _ResolvedSymbolInstance) -> str:
-    symbol_key = normalize_ltspice_symbol_key(symbol.source.symbol_name)
-    basename = symbol_key.rsplit("/", 1)[-1] if symbol_key else "subckt"
-    return _sanitize_spice_identifier(basename or "subckt", default="CAI_SUBCKT_FALLBACK")
-
-
-
-def _primitive_model_kind(symbol: _ResolvedSymbolInstance, lead: str) -> str:
-    name = symbol.source.symbol_name.lower()
-    if lead.upper() == "Q":
-        return "pnp" if "pnp" in name else "npn"
-    if lead.upper() == "M":
-        return "pmos" if "pmos" in name else "nmos"
-    if lead.upper() == "J":
-        return "pjf" if "pjf" in name else "njf"
-    return lead.lower()
-
-
-
-def _diode_model_kind(symbol: _ResolvedSymbolInstance) -> str:
-    name = symbol.source.symbol_name.lower()
-    if "zener" in name:
-        return "zener"
-    if "schottky" in name:
-        return "schottky"
-    return "diode"
-
-
-
-def _generic_model_text(model_kind: str, requested_name: str) -> str:
-    name = _sanitize_spice_identifier(requested_name, default=f"CAI_{model_kind.upper()}_DEFAULT")
-    mapping = {
-        "diode": f".model {name} D(Is=1e-14 N=1 Rs=0.1)",
-        "zener": f".model {name} D(Is=1e-14 N=1 Rs=0.1 Bv=5.1 Ibv=1m)",
-        "schottky": f".model {name} D(Is=1e-8 N=1.05 Rs=0.05)",
-        "npn": f".model {name} NPN(Is=1e-14 Bf=100 Vaf=100)",
-        "pnp": f".model {name} PNP(Is=1e-14 Bf=100 Vaf=100)",
-        "nmos": f".model {name} NMOS(Level=1 Vto=1 Kp=1m Lambda=0.01)",
-        "pmos": f".model {name} PMOS(Level=1 Vto=-1 Kp=1m Lambda=0.01)",
-        "njf": f".model {name} NJF(Beta=1m Vto=-2 Lambda=0.01)",
-        "pjf": f".model {name} PJF(Beta=1m Vto=2 Lambda=0.01)",
-        "sw": f".model {name} SW(Ron=1 Roff=1e12 Vt=0.5 Vh=0.1)",
-        "csw": f".model {name} SW(Ron=1 Roff=1e12 Vt=0.5 Vh=0.1)",
-    }
-    return mapping.get(model_kind, f".model {name} D(Is=1e-14 N=1 Rs=0.1)")
 
 
 
@@ -909,26 +834,44 @@ def _read_optional_text(file_path: Path) -> str:
     return ""
 
 
-def _load_bundled_model_names() -> Set[str]:
+def _scan_model_catalog(content: str) -> Tuple[Set[str], Set[str]]:
     model_names: Set[str] = set()
-    cmp_dir = get_spice_cmp_dir()
-    if not cmp_dir.exists():
-        return model_names
-    pattern = re.compile(r"^\s*\.model\s+([^\s]+)", re.IGNORECASE)
-    for file_path in cmp_dir.iterdir():
-        if not file_path.is_file():
+    vdmos_models: Set[str] = set()
+    inherited_models: List[Tuple[str, str]] = []
+    pattern = re.compile(r"^\s*\.model\s+([^\s]+)\s+(.+)$", re.IGNORECASE)
+    for line in str(content or "").splitlines():
+        match = pattern.match(line)
+        if match is None:
             continue
-        for encoding in ("utf-8", "latin1"):
-            try:
-                content = file_path.read_text(encoding=encoding, errors="ignore")
-                break
-            except Exception:
-                content = ""
-        for line in content.splitlines():
-            match = pattern.match(line)
-            if match is not None:
-                model_names.add(match.group(1).strip().lower())
-    return model_names
+        model_name = match.group(1).strip().lower()
+        model_names.add(model_name)
+        definition_tokens = match.group(2).strip().split()
+        if not definition_tokens:
+            continue
+        type_index = 0
+        if definition_tokens[0].lower().startswith("ako:"):
+            base_model = definition_tokens[0].split(":", 1)[1].strip().lower()
+            if len(definition_tokens) == 1 or definition_tokens[1].startswith("("):
+                inherited_models.append((model_name, base_model))
+                continue
+            type_index = 1
+        model_type = definition_tokens[type_index].split("(", 1)[0].strip().lower()
+        if model_type == "vdmos":
+            vdmos_models.add(model_name)
+    unresolved = inherited_models
+    while unresolved:
+        remaining: List[Tuple[str, str]] = []
+        changed = False
+        for model_name, base_model in unresolved:
+            if base_model not in vdmos_models:
+                remaining.append((model_name, base_model))
+                continue
+            vdmos_models.add(model_name)
+            changed = True
+        if not changed:
+            break
+        unresolved = remaining
+    return model_names, vdmos_models
 
 
 __all__ = [

@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { SimulationBridge } from '../../bridge/bridge'
 import type { MetricItemState, SimulationMainState } from '../../types/state'
 import { getUiText } from '../../uiText'
+import { NoiseTotalsSummary } from '../shared/NoiseTotalsSummary'
 
 interface MetricsTabProps {
   state: SimulationMainState
@@ -13,9 +14,14 @@ interface MetricsTabProps {
 // metrics view so edits get reset whenever the metric list changes
 // identity (new simulation run, target refreshed from service, etc.)
 // but not when a re-render delivers the very same payload.
-function buildMetricsSignature(items: MetricItemState[], sourceFilePath: string): string {
+function buildMetricsSignature(
+  items: MetricItemState[],
+  sourceFilePath: string,
+  projectRoot: string,
+  resultPath: string,
+): string {
   const parts = items.map((item) => `${item.name}\u0001${item.target}`)
-  return `${sourceFilePath}\u0002${parts.join('\u0003')}`
+  return `${projectRoot}\u0002${resultPath}\u0002${sourceFilePath}\u0002${parts.join('\u0003')}`
 }
 
 function buildInitialDrafts(items: MetricItemState[]): Record<string, string> {
@@ -39,10 +45,15 @@ function areDraftsDirty(items: MetricItemState[], drafts: Record<string, string>
 export function MetricsTab({ state, bridge }: MetricsTabProps) {
   const metrics = state.metrics_view.items
   const sourceFilePath = state.metrics_view.source_file_path
+  const projectRoot = state.simulation_runtime.project_root
+  const resultPath = state.simulation_runtime.current_result_path
   const canAddToConversation = state.metrics_view.can_add_to_conversation
   const uiText = state.ui_text
 
-  const signature = useMemo(() => buildMetricsSignature(metrics, sourceFilePath), [metrics, sourceFilePath])
+  const signature = useMemo(
+    () => buildMetricsSignature(metrics, sourceFilePath, projectRoot, resultPath),
+    [metrics, projectRoot, resultPath, sourceFilePath],
+  )
   const [drafts, setDrafts] = useState<Record<string, string>>(() => buildInitialDrafts(metrics))
 
   // Re-seed the edit buffer whenever the authoritative metrics
@@ -57,7 +68,13 @@ export function MetricsTab({ state, bridge }: MetricsTabProps) {
   }, [signature])
 
   const isDirty = useMemo(() => areDraftsDirty(metrics, drafts), [metrics, drafts])
-  const canConfirm = isDirty && bridge !== null && sourceFilePath.length > 0
+  const canConfirm = (
+    isDirty
+    && bridge !== null
+    && projectRoot.length > 0
+    && resultPath.length > 0
+    && sourceFilePath.length > 0
+  )
 
   const handleDraftChange = (name: string, nextValue: string) => {
     setDrafts((current) => ({ ...current, [name]: nextValue }))
@@ -80,6 +97,8 @@ export function MetricsTab({ state, bridge }: MetricsTabProps) {
       }
     }
     bridge.updateMetricTargets({
+      projectRoot,
+      resultPath,
       sourceFilePath,
       targets: payloadTargets,
     })
@@ -89,7 +108,11 @@ export function MetricsTab({ state, bridge }: MetricsTabProps) {
     if (!canAddToConversation) {
       return
     }
-    bridge?.addToConversation('metrics')
+    bridge?.addToConversation({
+      projectRoot,
+      resultPath,
+      target: 'metrics',
+    })
   }
 
   return (
@@ -112,6 +135,7 @@ export function MetricsTab({ state, bridge }: MetricsTabProps) {
           {getUiText(uiText, 'common.add_to_conversation', 'Add to Conversation')}
         </button>
       </div>
+      <NoiseTotalsSummary noiseTotals={state.metrics_view.noise_totals} uiText={uiText} />
       {metrics.length ? (
         <div className="metrics-matrix-scroll">
           <table className="metrics-matrix">
@@ -135,7 +159,18 @@ export function MetricsTab({ state, bridge }: MetricsTabProps) {
                 </th>
                 {metrics.map((metric) => (
                   <td key={metric.name} className="metrics-matrix__current">
-                    {metric.value || '--'}
+                    {metric.status === 'OK' ? (
+                      metric.value || '--'
+                    ) : (
+                      <div className="metrics-matrix__failure">
+                        <span className="metrics-matrix__status-badge">
+                          {metric.status}
+                        </span>
+                        <span className="metrics-matrix__error-message">
+                          {metric.error_message}
+                        </span>
+                      </div>
+                    )}
                   </td>
                 ))}
               </tr>
@@ -162,7 +197,7 @@ export function MetricsTab({ state, bridge }: MetricsTabProps) {
         </div>
       ) : (
         <div className="metrics-matrix-empty">
-          <div className="metrics-matrix-empty__title">{getUiText(uiText, 'simulation.metrics.empty_title', 'No Metrics')}</div>
+          <div className="metrics-matrix-empty__title">{getUiText(uiText, 'simulation.metrics.empty_title', 'No .MEASURE Results')}</div>
           <div className="metrics-matrix-empty__hint">
             {getUiText(uiText, 'simulation.metrics.empty_hint', 'Add `.MEASURE` statements to the SPICE file and run a simulation to generate metrics.')}
           </div>

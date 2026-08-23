@@ -3,8 +3,8 @@ import { formatCompactNumber, normalizeZero } from './chartValueFormatting'
 export interface SeriesSvgChartDatum {
   name: string
   color: string
-  x: number[]
-  y: number[]
+  x: Array<number | null>
+  y: Array<number | null>
   axis_key?: string
   line_style?: string
   component?: string
@@ -36,7 +36,7 @@ export interface SeriesSvgChartRenderedSeries {
   axisKey: 'left' | 'right'
   lineStyle: 'solid' | 'dash'
   component: string
-  polylinePoints: string
+  polylineSegments: string[]
   strokeDasharray?: string
 }
 
@@ -81,7 +81,7 @@ interface NormalizedSeries {
   axisKey: 'left' | 'right'
   lineStyle: 'solid' | 'dash'
   component: string
-  points: PointPair[]
+  segments: PointPair[][]
 }
 
 interface BuildSeriesSvgChartModelOptions {
@@ -130,8 +130,8 @@ function niceTickSpacing(span: number, targetTicks: number): number {
   return 10 * magnitude
 }
 
-function toAxisValue(value: number, logEnabled: boolean): number | null {
-  if (!Number.isFinite(value)) {
+function toAxisValue(value: number | null | undefined, logEnabled: boolean): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
     return null
   }
   if (!logEnabled) {
@@ -182,18 +182,29 @@ function clampRequestedDomain(requested: AxisDomain | null, allowed: AxisDomain 
   return { min, max }
 }
 
-function buildPointPairs(series: SeriesSvgChartDatum, logX: boolean, logY: boolean): PointPair[] {
+function buildPointSegments(series: SeriesSvgChartDatum, logX: boolean, logY: boolean): PointPair[][] {
   const totalPoints = Math.min(series.x.length, series.y.length)
-  const points: PointPair[] = []
+  const segments: PointPair[][] = []
+  let currentSegment: PointPair[] = []
+
+  const closeSegment = () => {
+    if (currentSegment.length) {
+      segments.push(currentSegment)
+      currentSegment = []
+    }
+  }
+
   for (let index = 0; index < totalPoints; index += 1) {
-    const x = toAxisValue(series.x[index] ?? Number.NaN, logX)
-    const y = toAxisValue(series.y[index] ?? Number.NaN, logY)
+    const x = toAxisValue(series.x[index], logX)
+    const y = toAxisValue(series.y[index], logY)
     if (x === null || y === null) {
+      closeSegment()
       continue
     }
-    points.push({ x, y })
+    currentSegment.push({ x, y })
   }
-  return points
+  closeSegment()
+  return segments
 }
 
 function resolveDomain(values: number[], paddingRatio: number, minimumPadding: number): AxisDomain | null {
@@ -331,16 +342,16 @@ export function buildSeriesSvgChartModel({
   const normalizedSeries: NormalizedSeries[] = series.map((item) => {
     const axisKey = normalizeAxisKey(item.axis_key)
     const lineStyle = normalizeLineStyle(item.line_style)
-    const points = buildPointPairs(item, logX, isAxisLogEnabled(axisKey, logY, rightLogY))
+    const segments = buildPointSegments(item, logX, isAxisLogEnabled(axisKey, logY, rightLogY))
     return {
       name: item.name,
       color: item.color || '#2563eb',
       axisKey,
       lineStyle,
       component: item.component || '',
-      points,
+      segments,
     }
-  }).filter((item) => item.points.length > 0)
+  }).filter((item) => item.segments.length > 0)
 
   if (!normalizedSeries.length) {
     return null
@@ -348,11 +359,11 @@ export function buildSeriesSvgChartModel({
 
   const hasRightAxis = normalizedSeries.some((item) => item.axisKey === 'right')
   const viewport = resolveViewport(width, height, hasRightAxis)
-  const xValues = normalizedSeries.flatMap((item) => item.points.map((point) => point.x))
+  const xValues = normalizedSeries.flatMap((item) => item.segments.flatMap((segment) => segment.map((point) => point.x)))
   const leftSeries = normalizedSeries.filter((item) => item.axisKey === 'left')
   const rightSeries = normalizedSeries.filter((item) => item.axisKey === 'right')
-  const leftValues = (leftSeries.length ? leftSeries : normalizedSeries).flatMap((item) => item.points.map((point) => point.y))
-  const rightValues = rightSeries.flatMap((item) => item.points.map((point) => point.y))
+  const leftValues = (leftSeries.length ? leftSeries : normalizedSeries).flatMap((item) => item.segments.flatMap((segment) => segment.map((point) => point.y)))
+  const rightValues = rightSeries.flatMap((item) => item.segments.flatMap((segment) => segment.map((point) => point.y)))
 
   const xDomain = resolveDomain(xValues, 0.02, logX ? 0.05 : 0)
   const leftDomain = resolveDomain(leftValues, 0.08, 0)
@@ -385,7 +396,7 @@ export function buildSeriesSvgChartModel({
       axisKey: item.axisKey,
       lineStyle: item.lineStyle,
       component: item.component,
-      polylinePoints: buildPath(item.points, effectiveXDomain, yDomain, viewport),
+      polylineSegments: item.segments.map((segment) => buildPath(segment, effectiveXDomain, yDomain, viewport)),
       strokeDasharray: strokeDasharrayForStyle(item.lineStyle),
     }
   })

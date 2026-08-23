@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 # 公开工厂函数
 # ============================================================
 
+
 def create_default_tools() -> ToolRegistry:
     """
     创建并注册所有默认工具到新 ToolRegistry 实例
@@ -39,7 +40,7 @@ def create_default_tools() -> ToolRegistry:
         文件操作：read_file, patch_file, rewrite_file
         搜索导航：grep_search, find_files, list_directory
         知识检索：rag_search, web_search
-        仿真闭环：run_simulation
+        仿真闭环：run_simulation + exact-result readers
 
     Returns:
         已完成注册的 ToolRegistry 实例
@@ -79,15 +80,13 @@ def create_default_tools() -> ToolRegistry:
     # presentation/* 层，UI 刷新由 EventBus 订阅自然完成。
     registry.register(RunSimulationTool())
 
-    # ---- Artifact 读取工具：共享 Step 16 的解析链基座 ----
-    # 每个工具各自专注一类 artifact 的格式化（metrics 表、信号摘要
-    # 等），寻址逻辑集中在 SimulationArtifactReaderBase——见
-    # ``tools/simulation_artifact_reader_base.py``。
-    #
-    # ``read_signals`` 是 agent 面对仿真信号的**唯一**入口，覆盖
-    # raw_data 全量转储 + 具名 chart 两类 CSV。``waveforms/waveform.csv``
-    # 因为列由 UI 勾选过滤产生，刻意不暴露给 agent——详见
-    # ``tools/read_signals.py`` 顶部的架构说明。
+    # ---- Exact-handle result readers ----
+    # Every reader requires the project-relative result_path returned by
+    # run_simulation. There is no editor/current/latest fallback. Every value
+    # comes from the loaded SimulationResult: measurements, raw_output, data
+    # signal arrays, or the distinct data.noise_totals RMS scalars. The OP view
+    # is derived from those authoritative signals. Export sidecars, UI charts,
+    # PNGs, and displayed-series state are not agent data sources.
     registry.register(ReadMetricsTool())
     registry.register(ReadOutputLogTool())
     registry.register(ReadOpResultTool())

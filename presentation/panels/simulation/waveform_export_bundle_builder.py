@@ -1,50 +1,87 @@
 import json
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Mapping, Sequence
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
 
+import numpy as np
+
+from domain.simulation.data.downsampler import align_xy
+from domain.simulation.data.signal_semantics import (
+    insert_nested_dc_breaks,
+    parse_nested_dc_sweep,
+)
 from domain.simulation.data.simulation_artifact_exporter import simulation_artifact_exporter
+from domain.simulation.data.waveform_data_service import WaveformDataService
 from domain.simulation.models.simulation_result import SimulationResult
+from presentation.panels.simulation.chart_export_utils import (
+    add_nested_dc_secondary_column,
+    build_chart_data_rows,
+)
+from presentation.panels.simulation.chart_view_types import ChartSeries
 
 
 class WaveformExportBundleBuilder:
-    def build_export_rows(
+    def build_full_resolution_series(
         self,
+        result: SimulationResult,
+        data_service: WaveformDataService,
         plot_items: Mapping[str, Any],
         signal_names: Sequence[str],
+    ) -> List[ChartSeries]:
+        x_data = result.get_x_axis_data()
+        if x_data is None:
+            return []
+        nested_sweep = parse_nested_dc_sweep(result.analysis_type, result.analysis_command)
+        series: List[ChartSeries] = []
+        for signal_name in signal_names:
+            y_data = data_service.get_signal_data(result, signal_name)
+            plot_item = plot_items.get(signal_name)
+            if y_data is None or plot_item is None:
+                continue
+            x_series, y_series = align_xy(x_data, y_data)
+            if nested_sweep is not None:
+                x_series, y_series = insert_nested_dc_breaks(
+                    x_series,
+                    y_series,
+                    nested_sweep,
+                )
+            series.append(
+                ChartSeries(
+                    name=signal_name,
+                    x_data=x_series,
+                    y_data=y_series,
+                    color=plot_item.color,
+                    axis_key=plot_item.axis,
+                    axis_family=getattr(plot_item, "axis_family", "other"),
+                )
+            )
+        return series
+
+    def build_export_rows(
+        self,
+        series: Sequence[ChartSeries],
         x_label: str,
     ) -> List[Dict[str, float]]:
-        if not signal_names:
-            return []
+        return build_chart_data_rows(x_label, series)
 
-        primary_signal = plot_items.get(signal_names[0])
-        if primary_signal is None or primary_signal.waveform_data is None:
-            return []
+    def add_nested_dc_secondary_column(
+        self,
+        rows: List[Dict[str, Any]],
+        x_label: str,
+        result: SimulationResult,
+    ) -> Optional[str]:
+        return add_nested_dc_secondary_column(rows, x_label, result)
 
-        primary_x = primary_signal.waveform_data.x_data
-        rows: List[Dict[str, float]] = []
-        for index, x_value in enumerate(primary_x):
-            row: Dict[str, float] = {x_label: float(x_value)}
-            for signal_name in signal_names:
-                plot_item = plot_items.get(signal_name)
-                waveform_data = plot_item.waveform_data if plot_item is not None else None
-                if waveform_data is None or index >= len(waveform_data.y_data):
-                    continue
-                row[signal_name] = float(waveform_data.y_data[index])
-            rows.append(row)
-        return rows
-
-    def build_signal_payloads(self, plot_items: Mapping[str, Any]) -> List[Dict[str, Any]]:
+    def build_signal_payloads(self, series: Sequence[ChartSeries]) -> List[Dict[str, Any]]:
         payloads: List[Dict[str, Any]] = []
-        for signal_name, plot_item in plot_items.items():
-            waveform_data = plot_item.waveform_data
-            if waveform_data is None:
-                continue
+        for item in series:
+            x_data, y_data = align_xy(item.x_data, item.y_data)
             payloads.append({
-                "name": signal_name,
-                "axis_key": plot_item.axis,
-                "x": [float(value) for value in waveform_data.x_data],
-                "y": [float(value) for value in waveform_data.y_data],
-                "point_count": len(waveform_data.y_data),
+                "name": item.name,
+                "axis_key": item.axis_key,
+                "axis_family": item.axis_family,
+                "x": [float(value) if np.isfinite(value) else None for value in x_data],
+                "y": [float(value) if np.isfinite(value) else None for value in y_data],
+                "point_count": len(y_data),
             })
         return payloads
 
@@ -76,12 +113,8 @@ class WaveformExportBundleBuilder:
         target_dir = Path(output_dir)
         target_dir.mkdir(parents=True, exist_ok=True)
 
-        # Canonical waveform filenames live in
-        # ``simulation_artifact_exporter.waveforms_paths`` (Step 15
-        # layout schema). ``target_dir`` is the canonical
-        # ``<export_root>/waveforms/`` directory; we read the filename
-        # portion from the schema rather than hard-coding
-        # ``waveform.png``/``.csv``/``.json`` here.
+        # The exporter owns the external artifact layout.  This builder only
+        # supplies waveform content inside the canonical waveforms directory.
         canonical_waveform_paths = simulation_artifact_exporter.waveforms_paths(target_dir.parent)
 
         exported_files: List[str] = []

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+import math
+from typing import Any, Dict, Optional
 
 from PyQt6.QtCore import QObject, QJsonValue, pyqtSignal, pyqtSlot
 
@@ -10,7 +11,8 @@ from presentation.panels.simulation.simulation_frontend_state_serializer import 
 class SimulationWebBridge(QObject):
     ready = pyqtSignal()
     activate_tab_requested = pyqtSignal(str)
-    load_result_by_path_requested = pyqtSignal(str)
+    load_result_by_path_requested = pyqtSignal(dict)
+    cancel_simulation_requested = pyqtSignal(dict)
     schematic_value_update_requested = pyqtSignal(dict)
     raw_data_viewport_requested = pyqtSignal(dict)
     raw_data_copy_requested = pyqtSignal(dict)
@@ -31,15 +33,15 @@ class SimulationWebBridge(QObject):
     waveform_viewport_reset_requested = pyqtSignal()
     output_log_search_requested = pyqtSignal(str)
     output_log_filter_requested = pyqtSignal(str)
+    output_log_copy_requested = pyqtSignal()
     export_type_selection_changed = pyqtSignal(str, bool)
     export_all_selection_requested = pyqtSignal(bool)
     export_directory_pick_requested = pyqtSignal()
     export_directory_clear_requested = pyqtSignal()
-    export_requested = pyqtSignal()
+    export_requested = pyqtSignal(dict)
     asc_conversion_pick_requested = pyqtSignal()
-    add_to_conversation_requested = pyqtSignal(str)
+    add_to_conversation_requested = pyqtSignal(dict)
     update_metric_targets_requested = pyqtSignal(dict)
-    text_clipboard_copy_requested = pyqtSignal(str)
 
     @pyqtSlot()
     def markReady(self) -> None:
@@ -49,9 +51,19 @@ class SimulationWebBridge(QObject):
     def activateTab(self, tab_id: str) -> None:
         self.activate_tab_requested.emit(self._normalize_tab_id(tab_id))
 
-    @pyqtSlot(str)
-    def loadResultByPath(self, result_path: str) -> None:
-        self.load_result_by_path_requested.emit(str(result_path or ""))
+    @pyqtSlot(QJsonValue)
+    @pyqtSlot(dict)
+    def loadResultByPath(self, payload: Any) -> None:
+        normalized = self._normalize_result_identity_payload(payload)
+        if normalized is not None:
+            self.load_result_by_path_requested.emit(normalized)
+
+    @pyqtSlot(QJsonValue)
+    @pyqtSlot(dict)
+    def cancelSimulation(self, payload: Any) -> None:
+        normalized = self._normalize_cancel_identity_payload(payload)
+        if normalized is not None:
+            self.cancel_simulation_requested.emit(normalized)
 
     @pyqtSlot(QJsonValue)
     @pyqtSlot(dict)
@@ -89,7 +101,9 @@ class SimulationWebBridge(QObject):
 
     @pyqtSlot(str, float)
     def moveChartMeasurementCursor(self, cursor_id: str, position: float) -> None:
-        self.chart_measurement_cursor_move_requested.emit(self._normalize_cursor_id(cursor_id), float(position or 0.0))
+        normalized = self._finite_float(position)
+        if normalized is not None:
+            self.chart_measurement_cursor_move_requested.emit(self._normalize_cursor_id(cursor_id), normalized)
 
     @pyqtSlot(bool)
     def setChartMeasurementPointEnabled(self, enabled: bool) -> None:
@@ -101,7 +115,9 @@ class SimulationWebBridge(QObject):
 
     @pyqtSlot(float)
     def moveChartMeasurementPoint(self, position: float) -> None:
-        self.chart_measurement_point_move_requested.emit(float(position or 0.0))
+        normalized = self._finite_float(position)
+        if normalized is not None:
+            self.chart_measurement_point_move_requested.emit(normalized)
 
     @pyqtSlot(QJsonValue)
     @pyqtSlot(dict)
@@ -128,7 +144,9 @@ class SimulationWebBridge(QObject):
 
     @pyqtSlot(str, float)
     def moveCursor(self, cursor_id: str, position: float) -> None:
-        self.cursor_move_requested.emit(self._normalize_cursor_id(cursor_id), float(position or 0.0))
+        normalized = self._finite_float(position)
+        if normalized is not None:
+            self.cursor_move_requested.emit(self._normalize_cursor_id(cursor_id), normalized)
 
     @pyqtSlot(QJsonValue)
     @pyqtSlot(dict)
@@ -149,6 +167,10 @@ class SimulationWebBridge(QObject):
     def filterOutputLog(self, level: str) -> None:
         self.output_log_filter_requested.emit(str(level or ""))
 
+    @pyqtSlot()
+    def copyOutputLog(self) -> None:
+        self.output_log_copy_requested.emit()
+
     @pyqtSlot(str, bool)
     def setExportTypeSelected(self, export_type: str, selected: bool) -> None:
         self.export_type_selection_changed.emit(str(export_type or ""), bool(selected))
@@ -165,17 +187,29 @@ class SimulationWebBridge(QObject):
     def clearExportDirectory(self) -> None:
         self.export_directory_clear_requested.emit()
 
-    @pyqtSlot()
-    def requestExport(self) -> None:
-        self.export_requested.emit()
+    @pyqtSlot(QJsonValue)
+    @pyqtSlot(dict)
+    def requestExport(self, payload: Any) -> None:
+        normalized = self._normalize_result_identity_payload(payload)
+        if normalized is not None:
+            self.export_requested.emit(normalized)
 
     @pyqtSlot()
     def chooseAscFilesForConversion(self) -> None:
         self.asc_conversion_pick_requested.emit()
 
-    @pyqtSlot(str)
-    def addToConversation(self, target: str) -> None:
-        self.add_to_conversation_requested.emit(self._normalize_attachment_target(target))
+    @pyqtSlot(QJsonValue)
+    @pyqtSlot(dict)
+    def addToConversation(self, payload: Any) -> None:
+        normalized = self._normalize_result_identity_payload(payload)
+        if normalized is None:
+            return
+        raw_payload = payload.toVariant() if isinstance(payload, QJsonValue) else payload
+        target = self._normalize_attachment_target(raw_payload.get("target"))
+        if target is None:
+            return
+        normalized["target"] = target
+        self.add_to_conversation_requested.emit(normalized)
 
     @pyqtSlot(QJsonValue)
     @pyqtSlot(dict)
@@ -183,15 +217,6 @@ class SimulationWebBridge(QObject):
         normalized = self._normalize_metric_targets_payload(payload)
         if normalized is not None:
             self.update_metric_targets_requested.emit(normalized)
-
-    @pyqtSlot(str)
-    def copyTextToClipboard(self, text: str) -> None:
-        # Generic text-to-clipboard pipe. The frontend cannot rely on
-        # navigator.clipboard / document.execCommand inside QtWebEngine
-        # (sandbox / non-secure-context), so every copy-to-clipboard
-        # button in the simulation panel funnels through this slot and
-        # the host sets the system clipboard via QClipboard.
-        self.text_clipboard_copy_requested.emit(str(text or ""))
 
     def _normalize_tab_id(self, tab_id: str) -> str:
         """Normalise a JS-supplied tab id, falling back to ``metrics``.
@@ -211,27 +236,68 @@ class SimulationWebBridge(QObject):
         normalized = str(cursor_id or "a").strip().lower()
         return normalized if normalized in {"a", "b"} else "a"
 
-    def _normalize_attachment_target(self, target: str) -> str:
-        normalized = str(target or "metrics").strip().lower()
+    def _normalize_attachment_target(self, target: Any) -> Optional[str]:
+        if not isinstance(target, str):
+            return None
+        normalized = target.strip().lower()
         allowed = {"metrics", "chart", "waveform", "output_log", "op_result"}
-        return normalized if normalized in allowed else "metrics"
+        return normalized if normalized in allowed else None
+
+    def _normalize_result_identity_payload(self, payload: Any) -> Optional[Dict[str, str]]:
+        normalized = self._normalize_string_fields(
+            payload,
+            {"projectRoot": "project_root", "resultPath": "result_path"},
+        )
+        return normalized
+
+    def _normalize_cancel_identity_payload(self, payload: Any) -> Optional[Dict[str, str]]:
+        normalized = self._normalize_string_fields(
+            payload,
+            {"projectRoot": "project_root", "jobId": "job_id"},
+        )
+        return normalized
+
+    @staticmethod
+    def _normalize_string_fields(
+        payload: Any,
+        field_map: Dict[str, str],
+    ) -> Optional[Dict[str, str]]:
+        if isinstance(payload, QJsonValue):
+            payload = payload.toVariant()
+        if not isinstance(payload, dict):
+            return None
+        normalized: Dict[str, str] = {}
+        for wire_name, internal_name in field_map.items():
+            value = payload.get(wire_name)
+            if not isinstance(value, str) or not value.strip():
+                return None
+            normalized[internal_name] = value
+        return normalized
 
     def _normalize_metric_targets_payload(self, payload: Any) -> Optional[Dict[str, Any]]:
         if isinstance(payload, QJsonValue):
             payload = payload.toVariant()
         if not isinstance(payload, dict):
             return None
+        identity = self._normalize_result_identity_payload(payload)
+        if identity is None:
+            return None
+        source_file_path = payload.get("sourceFilePath")
+        if not isinstance(source_file_path, str) or not source_file_path.strip():
+            return None
         raw_targets = payload.get("targets")
         if not isinstance(raw_targets, dict):
             return None
         cleaned: Dict[str, str] = {}
         for raw_name, raw_value in raw_targets.items():
-            name = str(raw_name or "").strip()
-            value = str(raw_value or "").strip()
-            if name:
-                cleaned[name] = value
+            if not isinstance(raw_name, str) or not raw_name.strip():
+                return None
+            if not isinstance(raw_value, str):
+                return None
+            cleaned[raw_name.strip()] = raw_value.strip()
         return {
-            "source_file_path": str(payload.get("sourceFilePath") or ""),
+            **identity,
+            "source_file_path": source_file_path,
             "targets": cleaned,
         }
 
@@ -290,14 +356,33 @@ class SimulationWebBridge(QObject):
             return None
         right_y_min = payload.get("rightYMin")
         right_y_max = payload.get("rightYMax")
+        resolved_right_y_min = self._finite_float(right_y_min) if right_y_min is not None else None
+        resolved_right_y_max = self._finite_float(right_y_max) if right_y_max is not None else None
+        required = (x_min, x_max, left_y_min, left_y_max)
+        if not all(math.isfinite(value) for value in required):
+            return None
+        if x_min >= x_max or left_y_min >= left_y_max:
+            return None
+        if (resolved_right_y_min is None) != (resolved_right_y_max is None):
+            return None
+        if resolved_right_y_min is not None and resolved_right_y_min >= resolved_right_y_max:
+            return None
         return {
             "x_min": x_min,
             "x_max": x_max,
             "left_y_min": left_y_min,
             "left_y_max": left_y_max,
-            "right_y_min": float(right_y_min) if right_y_min is not None else None,
-            "right_y_max": float(right_y_max) if right_y_max is not None else None,
+            "right_y_min": resolved_right_y_min,
+            "right_y_max": resolved_right_y_max,
         }
+
+    @staticmethod
+    def _finite_float(value: Any) -> Optional[float]:
+        try:
+            normalized = float(value)
+        except (TypeError, ValueError):
+            return None
+        return normalized if math.isfinite(normalized) else None
 
 
 __all__ = ["SimulationWebBridge"]

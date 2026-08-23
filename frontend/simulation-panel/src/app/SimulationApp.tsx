@@ -36,6 +36,15 @@ export function SimulationApp({ state, schematicDocument, schematicWriteResult, 
       state={state}
       bridgeConnected={bridgeConnected}
       onTabSelect={onTabSelect}
+      onCancelSimulation={() => {
+        const runtime = state.simulation_runtime
+        if (bridge && runtime.project_root && runtime.current_job_id) {
+          bridge.cancelSimulation({
+            projectRoot: runtime.project_root,
+            jobId: runtime.current_job_id,
+          })
+        }
+      }}
     >
       {activeTab === 'raw_data' || activeTab === 'schematic' ? null : (
         <div className="tab-surface-shell">

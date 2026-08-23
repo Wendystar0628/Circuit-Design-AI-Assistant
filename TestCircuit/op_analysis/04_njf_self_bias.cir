@@ -6,6 +6,7 @@
 * Devices exercised: V, R, J (NJF bundled 2N3819).
 
 .title NJF Self-Bias
+.include "../../resources/models/ngspice/testcircuit_discrete.lib"
 
 * --- Supply ---
 Vdd vdd 0 DC 12

@@ -11,10 +11,12 @@ Agent 工具实现模块
 - list_directory : 列出目录内容
 - rag_search     : 项目索引库检索
 - web_search     : Web 检索
-- run_simulation : 对项目内任意电路发起一次仿真并返回紧凑摘要
-- read_metrics   : 读取一次仿真的 .MEASURE 指标表（Step 17）
-- read_signals   : 读取一次仿真任一信号 CSV（raw_data / 具名 chart）
-                   的紧凑统计 + 锚点（Step 18，agent 唯一信号入口）
+- run_simulation : 对显式项目电路发起仿真并返回 exact result_path
+- read_metrics   : 按 exact result_path 读取结构化 .MEASURE 值与单位
+- read_output_log: 按 exact result_path 读取结构化诊断或原始仿真输出
+- read_op_result : 按 exact result_path 读取结构化 .op 工作点数据
+- read_signals   : 按 exact result_path 读取权威 SimulationResult.data 的
+                   描述性统计与锚点；不读取 UI chart/PNG/显示选择派生物
 """
 
 from domain.llm.agent.tools.read_file import ReadFileTool

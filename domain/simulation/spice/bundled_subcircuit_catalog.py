@@ -43,7 +43,15 @@ def load_bundled_subcircuit_catalog() -> Tuple[BundledSubcircuitHeader, ...]:
                 match = _SUBCKT_HEADER_PATTERN.match(line)
                 if match is None:
                     continue
-                ports = tuple(token for token in match.group(2).split() if token)
+                header_tail = match.group(2)
+                continuation_index = index + 1
+                while continuation_index < len(lines):
+                    continuation = lines[continuation_index].lstrip()
+                    if not continuation.startswith("+"):
+                        break
+                    header_tail += " " + continuation[1:].strip()
+                    continuation_index += 1
+                ports = _parse_subcircuit_ports(header_tail)
                 headers.append(
                     BundledSubcircuitHeader(
                         name=match.group(1).strip().lower(),
@@ -76,6 +84,16 @@ def _read_bundled_text_lines(file_path: Path) -> Tuple[str, ...]:
         except Exception:
             continue
     return ()
+
+
+def _parse_subcircuit_ports(header_tail: str) -> Tuple[str, ...]:
+    ports = []
+    for token in str(header_tail or "").split():
+        normalized = token.strip().lower()
+        if normalized == "params:" or normalized.startswith("params:") or "=" in token:
+            break
+        ports.append(token)
+    return tuple(ports)
 
 
 __all__ = [

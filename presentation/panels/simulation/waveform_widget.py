@@ -41,12 +41,15 @@ from PyQt6.QtWidgets import (
 import numpy as np
 import pyqtgraph as pg
 
+from domain.simulation.data.downsampler import align_xy, downsample_preserving_gaps
 from domain.simulation.data.waveform_data_service import (
     WaveformDataService,
     waveform_data_service,
 )
 from domain.simulation.models.simulation_result import SimulationResult
 from presentation.panels.simulation.qt_surface_export import export_widget_image
+from presentation.panels.simulation.chart_axis_planner import ChartAxisPlan, build_chart_axis_plan
+from presentation.panels.simulation.chart_view_types import ChartSeries
 from presentation.panels.simulation.waveform_export_bundle_builder import waveform_export_bundle_builder
 from presentation.panels.simulation.waveform_measurement_support import waveform_measurement_support
 from presentation.panels.simulation.waveform_plot_types import (
@@ -59,6 +62,8 @@ from presentation.panels.simulation.waveform_plot_types import (
 from presentation.panels.simulation.waveform_viewport_manager import WaveformViewportManager
 from presentation.panels.simulation.ltspice_plot_interaction import (
     clamp_range,
+    has_unambiguous_x_axis,
+    optimize_plot_data_item,
 )
 
 from resources.theme import COLOR_BG_PRIMARY
@@ -102,7 +107,7 @@ class WaveformWidget(QWidget):
         
         # 当前仿真结果
         self._current_result: Optional[SimulationResult] = None
-        self._current_result_signature: Optional[Tuple[str, str, str]] = None
+        self._current_result_signature: Optional[Tuple[str, str, str, int, str]] = None
         
         # 绘图项字典：signal_name -> PlotItem
         self._plot_items: Dict[str, PlotItem] = {}
@@ -129,6 +134,7 @@ class WaveformWidget(QWidget):
         # 信号类型缓存
         self._signal_types: Dict[str, str] = {}
         self._measurement_cache: Optional[WaveformMeasurement] = None
+        self._axis_plan: ChartAxisPlan = build_chart_axis_plan([])
         
         # 初始化 UI
         self._setup_ui()
@@ -181,6 +187,7 @@ class WaveformWidget(QWidget):
         
         # 创建图例
         self._legend = plot_item.addLegend()
+        self._apply_axis_labels()
     
     def _sync_right_viewbox(self):
         """同步右侧 ViewBox 的几何与主视图一致"""
@@ -267,32 +274,36 @@ class WaveformWidget(QWidget):
         color = SIGNAL_COLORS[self._color_index % len(SIGNAL_COLORS)]
         self._color_index += 1
         
-        # 判断信号类型，决定绘制到左轴还是右轴
-        sig_type = WaveformDataService.get_signal_type(resolved_signal_name, self._signal_types)
-        use_right = (sig_type == "current")
+        axis_family = self._resolve_axis_family(resolved_signal_name)
+        prospective_families = {
+            item.axis_family for item in self._plot_items.values()
+        } | {axis_family}
+        if len(prospective_families) > 2:
+            self._logger.warning(
+                "Cannot display more than two physical quantity families on a dual-axis plot"
+            )
+            return False
         
         pen = pg.mkPen(color=color, width=1.2, style=Qt.PenStyle.SolidLine)
         plot_data_item = pg.PlotDataItem(
             waveform_data.x_data,
             waveform_data.y_data,
             pen=pen,
-            name=resolved_signal_name
+            name=resolved_signal_name,
+            connect="finite",
         )
-        
-        if use_right and self._right_vb is not None:
-            self._right_vb.addItem(plot_data_item)
-            axis_label = "right"
-        else:
-            self._plot_widget.getPlotItem().addItem(plot_data_item)
-            axis_label = "left"
+        plot_data_item.setLogMode(self._is_log_x_enabled(), False)
         
         # 保存绘图项
         self._plot_items[resolved_signal_name] = PlotItem(
             plot_data_item=plot_data_item,
             color=color,
             waveform_data=waveform_data,
-            axis=axis_label
+            axis="",
+            axis_family=axis_family,
         )
+        self._apply_axis_plan()
+        axis_label = self._plot_items[resolved_signal_name].axis
 
         self._measurement_cache = None
         self._refresh_legend()
@@ -338,6 +349,7 @@ class WaveformWidget(QWidget):
             self._plot_widget.getPlotItem().removeItem(plot_item.plot_data_item)
 
         self._measurement_cache = None
+        self._apply_axis_plan()
         self._refresh_legend()
         if not self._plot_items:
             self._color_index = 0
@@ -377,14 +389,18 @@ class WaveformWidget(QWidget):
         Args:
             x_position: X 轴位置
         """
+        if not self._supports_scalar_x_measurement():
+            self.set_cursor_a_visible(False)
+            return False
         view_x_position = self._to_view_x_value(x_position)
         if view_x_position is None:
-            return
+            return False
         self._cursor_a_visible = True
         self._set_cursor_a_view_position(view_x_position)
+        return True
 
     def set_cursor_a_visible(self, visible: bool):
-        self._cursor_a_visible = bool(visible)
+        self._cursor_a_visible = bool(visible) and self._supports_scalar_x_measurement()
         if self._cursor_a_visible:
             if self._cursor_a_pos is None:
                 x_view_range = self._current_x_view_range()
@@ -404,14 +420,18 @@ class WaveformWidget(QWidget):
         Args:
             x_position: X 轴位置
         """
+        if not self._supports_scalar_x_measurement():
+            self.set_cursor_b_visible(False)
+            return False
         view_x_position = self._to_view_x_value(x_position)
         if view_x_position is None:
-            return
+            return False
         self._cursor_b_visible = True
         self._set_cursor_b_view_position(view_x_position)
+        return True
 
     def set_cursor_b_visible(self, visible: bool):
-        self._cursor_b_visible = bool(visible)
+        self._cursor_b_visible = bool(visible) and self._supports_scalar_x_measurement()
         if self._cursor_b_visible:
             if self._cursor_b_pos is None:
                 x_view_range = self._current_x_view_range()
@@ -443,6 +463,17 @@ class WaveformWidget(QWidget):
             )
         return self._measurement_cache
 
+    def _supports_scalar_x_measurement(self) -> bool:
+        if self._current_result is None:
+            return False
+        x_data = self._current_result.get_x_axis_data()
+        if x_data is None:
+            return False
+        return has_unambiguous_x_axis(
+            x_data,
+            log_x=self._current_result.is_x_axis_log(),
+        )
+
     def export_image(self, path: str) -> bool:
         if self._current_result is None or not self._plot_items:
             return False
@@ -454,13 +485,27 @@ class WaveformWidget(QWidget):
 
         measurement = self.get_measurement()
         signal_names = self.get_displayed_signal_names()
-        headers = [self._get_x_axis_label(), *signal_names]
-        rows = waveform_export_bundle_builder.build_export_rows(
+        x_label = self._get_x_axis_label()
+        full_resolution_series = waveform_export_bundle_builder.build_full_resolution_series(
+            self._current_result,
+            self._data_service,
             self._plot_items,
             signal_names,
-            self._get_x_axis_label(),
         )
-        signal_payloads = waveform_export_bundle_builder.build_signal_payloads(self._plot_items)
+        rows = waveform_export_bundle_builder.build_export_rows(
+            full_resolution_series,
+            x_label,
+        )
+        secondary_sweep_label = waveform_export_bundle_builder.add_nested_dc_secondary_column(
+            rows,
+            x_label,
+            self._current_result,
+        )
+        headers = [x_label]
+        if secondary_sweep_label is not None:
+            headers.append(secondary_sweep_label)
+        headers.extend(signal_names)
+        signal_payloads = waveform_export_bundle_builder.build_signal_payloads(full_resolution_series)
         return waveform_export_bundle_builder.export_bundle(
             output_dir,
             self._current_result,
@@ -490,26 +535,24 @@ class WaveformWidget(QWidget):
             waveform_data = plot_item.waveform_data
             if waveform_data is None:
                 continue
-            x_data = waveform_data.x_data
-            y_data = waveform_data.y_data
-            total_points = min(len(x_data), len(y_data))
+            x_data, y_data = align_xy(waveform_data.x_data, waveform_data.y_data)
+            total_points = len(x_data)
             if total_points <= 0:
-                x_values: List[float] = []
-                y_values: List[float] = []
+                x_values: List[Optional[float]] = []
+                y_values: List[Optional[float]] = []
             else:
                 if max_points > 0 and total_points > max_points:
-                    sample_indexes = np.linspace(0, total_points - 1, num=max_points, dtype=int)
-                    x_sample = x_data[sample_indexes]
-                    y_sample = y_data[sample_indexes]
+                    x_sample, y_sample = downsample_preserving_gaps(x_data, y_data, max_points)
                 else:
                     x_sample = x_data[:total_points]
                     y_sample = y_data[:total_points]
-                x_values = [float(value) for value in x_sample]
-                y_values = [float(value) for value in y_sample]
+                x_values = [float(value) if np.isfinite(value) else None for value in x_sample]
+                y_values = [float(value) if np.isfinite(value) else None for value in y_sample]
             visible_series.append({
                 "name": signal_name,
                 "color": plot_item.color,
                 "axis_key": plot_item.axis,
+                "axis_family": plot_item.axis_family,
                 "x": x_values,
                 "y": y_values,
                 "point_count": total_points,
@@ -533,6 +576,12 @@ class WaveformWidget(QWidget):
             "y_label": self._get_left_axis_label(),
             "secondary_y_label": self._get_right_axis_label(),
             "log_x": self._is_log_x_enabled(),
+            "log_y": self._axis_plan.left_axis.log_enabled,
+            "right_log_y": (
+                self._axis_plan.right_axis.log_enabled
+                if self._axis_plan.right_axis is not None
+                else False
+            ),
             "viewport": self._build_viewport_snapshot(),
             "cursor_a_visible": self._cursor_a_visible,
             "cursor_b_visible": self._cursor_b_visible,
@@ -556,10 +605,10 @@ class WaveformWidget(QWidget):
         return self._current_result.get_x_axis_label()
 
     def _get_left_axis_label(self) -> str:
-        return "Voltage (V)"
+        return self._axis_plan.left_axis.label
 
     def _get_right_axis_label(self) -> str:
-        return "Current (A)" if any(item.axis == "right" for item in self._plot_items.values()) else ""
+        return self._axis_plan.right_axis.label if self._axis_plan.right_axis is not None else ""
 
     def _build_viewport_snapshot(self) -> Dict[str, Any]:
         if not self._viewport_active or self._view_x_range is None or self._view_left_y_range is None:
@@ -576,10 +625,10 @@ class WaveformWidget(QWidget):
             "active": True,
             "x_min": self._from_view_x_value(self._view_x_range[0]),
             "x_max": self._from_view_x_value(self._view_x_range[1]),
-            "left_y_min": float(self._view_left_y_range[0]),
-            "left_y_max": float(self._view_left_y_range[1]),
-            "right_y_min": float(self._view_right_y_range[0]) if self._view_right_y_range is not None else None,
-            "right_y_max": float(self._view_right_y_range[1]) if self._view_right_y_range is not None else None,
+            "left_y_min": self._from_view_y_value(self._view_left_y_range[0], "left"),
+            "left_y_max": self._from_view_y_value(self._view_left_y_range[1], "left"),
+            "right_y_min": self._from_view_y_value(self._view_right_y_range[0], "right") if self._view_right_y_range is not None else None,
+            "right_y_max": self._from_view_y_value(self._view_right_y_range[1], "right") if self._view_right_y_range is not None else None,
         }
 
     def fit_to_view(self):
@@ -609,21 +658,25 @@ class WaveformWidget(QWidget):
         clamped_x_range = clamp_range(
             (view_x_min, view_x_max),
             self._x_domain,
-            positive_only=self._is_log_x_enabled(),
         )
         base_left_domain = self._left_y_domain or self._right_y_domain
         if clamped_x_range is None or base_left_domain is None:
             return False
-        left_y_range = clamp_range(
-            (float(viewport.get("left_y_min")), float(viewport.get("left_y_max"))),
-            base_left_domain,
-        )
+        left_y_min = self._to_view_y_value(float(viewport.get("left_y_min")), "left")
+        left_y_max = self._to_view_y_value(float(viewport.get("left_y_max")), "left")
+        if left_y_min is None or left_y_max is None:
+            return False
+        left_y_range = clamp_range((left_y_min, left_y_max), base_left_domain)
         if left_y_range is None:
             return False
         right_y_range = None
         if self._right_y_domain is not None and viewport.get("right_y_min") is not None and viewport.get("right_y_max") is not None:
+            right_y_min = self._to_view_y_value(float(viewport.get("right_y_min")), "right")
+            right_y_max = self._to_view_y_value(float(viewport.get("right_y_max")), "right")
+            if right_y_min is None or right_y_max is None:
+                return False
             right_y_range = clamp_range(
-                (float(viewport.get("right_y_min")), float(viewport.get("right_y_max"))),
+                (right_y_min, right_y_max),
                 self._right_y_domain,
             )
         self._viewport_manager.reload_viewport_data(
@@ -639,13 +692,15 @@ class WaveformWidget(QWidget):
         self._measurement_cache = None
         return True
 
-    def _get_result_signature(self, result: Optional[SimulationResult]) -> Optional[Tuple[str, str, str]]:
+    def _get_result_signature(self, result: Optional[SimulationResult]) -> Optional[Tuple[str, str, str, int, str]]:
         if result is None:
             return None
         return (
             getattr(result, 'file_path', '') or '',
             getattr(result, 'timestamp', '') or '',
             getattr(result, 'analysis_type', '') or '',
+            int(getattr(result, 'version', 0) or 0),
+            getattr(result, 'session_id', '') or '',
         )
 
     def _set_result_context(self, result: SimulationResult):
@@ -660,10 +715,12 @@ class WaveformWidget(QWidget):
         self._view_left_y_range = None
         self._view_right_y_range = None
         self._viewport_active = False
+        self._axis_plan = build_chart_axis_plan([])
         x_label = result.get_x_axis_label()
         plot_item = self._plot_widget.getPlotItem()
         plot_item.setLabel('bottom', x_label)
         plot_item.setLogMode(x=result.is_x_axis_log(), y=False)
+        self._apply_axis_labels()
 
     def _clear_displayed_waveforms(self, preserve_result_context: bool):
         for plot_item in list(self._plot_items.values()):
@@ -687,12 +744,14 @@ class WaveformWidget(QWidget):
         self._cursor_b_visible = False
         self._cursor_a_pos = None
         self._cursor_b_pos = None
+        self._axis_plan = build_chart_axis_plan([])
 
         if not preserve_result_context or self._current_result is None:
             self._current_result = None
             self._current_result_signature = None
             self._signal_types = {}
             self._plot_widget.getPlotItem().setLogMode(x=False, y=False)
+        self._apply_axis_labels()
 
     def _is_log_x_enabled(self) -> bool:
         return self._current_result is not None and self._current_result.is_x_axis_log()
@@ -720,6 +779,105 @@ class WaveformWidget(QWidget):
             return None
         return float(np.log10(value))
 
+    def _to_view_y_value(self, value: float, axis_key: str) -> Optional[float]:
+        if not np.isfinite(value):
+            return None
+        if not self._axis_log_enabled(axis_key):
+            return float(value)
+        if value <= 0:
+            return None
+        return float(np.log10(value))
+
+    def _from_view_y_value(self, value: float, axis_key: str) -> float:
+        if not self._axis_log_enabled(axis_key):
+            return float(value)
+        return float(10 ** value)
+
+    def _resolve_axis_family(self, signal_name: str) -> str:
+        if str(signal_name).endswith("_phase"):
+            return "phase_deg"
+        signal_type = WaveformDataService.get_signal_type(signal_name, self._signal_types)
+        if self._current_result is not None and str(self._current_result.analysis_type).lower() == "noise":
+            if signal_type == "voltage":
+                return "noise_voltage_density"
+            if signal_type == "current":
+                return "noise_current_density"
+            return "noise_other_density"
+        if signal_type in {"voltage", "current"}:
+            return signal_type
+        return "other"
+
+    def _build_axis_plan(self) -> ChartAxisPlan:
+        series = [
+            ChartSeries(
+                name=signal_name,
+                x_data=np.empty(0, dtype=float),
+                y_data=np.empty(0, dtype=float),
+                color=plot_item.color,
+                axis_family=plot_item.axis_family,
+            )
+            for signal_name, plot_item in self._plot_items.items()
+        ]
+        return build_chart_axis_plan(series)
+
+    def _apply_axis_plan(self) -> None:
+        self._axis_plan = self._build_axis_plan()
+        main_plot = self._plot_widget.getPlotItem()
+        for signal_name, plot_item in self._plot_items.items():
+            target_axis = self._axis_plan.series_axis_keys.get(signal_name, "left")
+            if target_axis == "right" and self._right_vb is None:
+                target_axis = "left"
+
+            # Leave already-correct items attached.  Reparenting every curve on
+            # each add made pyqtgraph evaluate clipToView while the curve had no
+            # ViewBox, which can poison its cached view reference.
+            if plot_item.axis == target_axis and plot_item.plot_data_item.scene() is not None:
+                plot_item.plot_data_item.setLogMode(
+                    self._is_log_x_enabled(),
+                    self._axis_log_enabled(target_axis),
+                )
+                continue
+
+            if plot_item.axis in {"left", "right"}:
+                # Disable clipping while the item still has a valid ViewBox;
+                # it is re-enabled only after attachment to the target axis.
+                plot_item.plot_data_item.setClipToView(False)
+            if plot_item.axis == "right" and self._right_vb is not None:
+                self._right_vb.removeItem(plot_item.plot_data_item)
+            elif plot_item.axis == "left":
+                main_plot.removeItem(plot_item.plot_data_item)
+
+            plot_item.plot_data_item.setLogMode(
+                self._is_log_x_enabled(),
+                self._axis_log_enabled(target_axis),
+            )
+            if target_axis == "right" and self._right_vb is not None:
+                self._right_vb.addItem(plot_item.plot_data_item)
+            else:
+                main_plot.addItem(plot_item.plot_data_item)
+                target_axis = "left"
+            optimize_plot_data_item(plot_item.plot_data_item, plot_item.waveform_data.x_data)
+            plot_item.axis = target_axis
+        self._apply_axis_labels()
+
+    def _apply_axis_labels(self) -> None:
+        plot_item = self._plot_widget.getPlotItem()
+        plot_item.setLabel("left", self._axis_plan.left_axis.label)
+        plot_item.getAxis("left").setLogMode(self._axis_plan.left_axis.log_enabled)
+        if self._axis_plan.right_axis is None:
+            plot_item.setLabel("right", "")
+            plot_item.getAxis("right").setLogMode(False)
+            plot_item.hideAxis("right")
+        else:
+            plot_item.showAxis("right")
+            plot_item.setLabel("right", self._axis_plan.right_axis.label)
+            plot_item.getAxis("right").setLogMode(self._axis_plan.right_axis.log_enabled)
+
+    def _axis_log_enabled(self, axis_key: str) -> bool:
+        if axis_key == "right" and self._axis_plan.right_axis is not None:
+            return bool(self._axis_plan.right_axis.log_enabled)
+        return bool(self._axis_plan.left_axis.log_enabled)
+
     def _refresh_legend(self):
         if self._legend is None:
             return
@@ -738,6 +896,31 @@ class WaveformWidget(QWidget):
             self._plot_items,
             self._to_view_x_data,
         )
+        if self._axis_log_enabled("left"):
+            self._left_y_domain = self._build_log_y_domain("left")
+        if self._axis_log_enabled("right"):
+            self._right_y_domain = self._build_log_y_domain("right")
+
+    def _build_log_y_domain(self, axis_key: str) -> Optional[Tuple[float, float]]:
+        if self._current_result is None:
+            return None
+        ranges: List[Tuple[float, float]] = []
+        for signal_name, plot_item in self._plot_items.items():
+            if plot_item.axis != axis_key:
+                continue
+            values = self._data_service.get_signal_data(self._current_result, signal_name)
+            if values is None:
+                continue
+            try:
+                array = np.asarray(values, dtype=float)
+            except (TypeError, ValueError, OverflowError):
+                continue
+            positive = array[np.isfinite(array) & (array > 0)]
+            if positive.size:
+                ranges.append((float(np.log10(np.min(positive))), float(np.log10(np.max(positive)))))
+        if not ranges:
+            return None
+        return min(item[0] for item in ranges), max(item[1] for item in ranges)
 
     def _apply_domain_limits(self):
         self._viewport_manager.apply_domain_limits(
@@ -764,6 +947,8 @@ class WaveformWidget(QWidget):
             left_y_range,
             right_y_range,
             log_x_enabled=self._is_log_x_enabled(),
+            left_log_y_enabled=self._axis_log_enabled("left"),
+            right_log_y_enabled=self._axis_log_enabled("right"),
         )
 
     def _apply_full_viewport(self):
@@ -781,7 +966,6 @@ class WaveformWidget(QWidget):
         clamped_x_range = clamp_range(
             self._view_x_range,
             self._x_domain,
-            positive_only=self._is_log_x_enabled(),
         )
         base_left_domain = self._left_y_domain or self._right_y_domain
         if clamped_x_range is None or base_left_domain is None:

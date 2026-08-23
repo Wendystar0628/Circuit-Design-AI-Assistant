@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Dict, Iterable, Optional, Sequence, Tuple
 
 from domain.simulation.spice.bundled_opamp_registry import load_bundled_opamp_descriptors
@@ -15,14 +16,14 @@ _EXPLICIT_PORT_ROLE_MAP: Dict[str, str] = {
     "non_inverting": "input_plus",
     "noninverting": "input_plus",
     "vp": "input_plus",
-    "v+": "input_plus",
+    "v+": "power_positive",
     "minus": "input_minus",
     "inn": "input_minus",
     "in-": "input_minus",
     "inv": "input_minus",
     "inverting": "input_minus",
     "vn": "input_minus",
-    "v-": "input_minus",
+    "v-": "power_negative",
     "out": "output",
     "output": "output",
     "vo": "output",
@@ -40,23 +41,38 @@ _EXPLICIT_PORT_ROLE_MAP: Dict[str, str] = {
 
 
 class SpicePrimitiveResolver:
-    def apply(self, document) -> None:
+    def apply(
+        self,
+        document,
+        *,
+        excluded_subcircuit_names: Iterable[str] = (),
+    ) -> None:
+        excluded_names = {
+            str(name or "").strip().lower()
+            for name in excluded_subcircuit_names
+            if str(name or "").strip()
+        }
         inline_descriptors: Dict[str, PrimitiveDescriptor] = {}
         for subckt in document.subcircuits:
+            subckt_key = str(subckt.name or "").strip().lower()
+            if subckt_key in excluded_names:
+                continue
             descriptor = self.resolve_subcircuit(subckt.name, subckt.port_names)
             if descriptor is None:
                 continue
             subckt.primitive_kind = descriptor.primitive_kind
-            inline_descriptors[subckt.name.strip().lower()] = descriptor
+            inline_descriptors[subckt_key] = descriptor
 
         bundled_descriptors = load_bundled_opamp_descriptors()
         for component in self._iter_components(document):
-            if component.kind not in {"X", "U"}:
+            if component.kind != "X":
                 continue
             subckt_name = str(component.model_name or "").strip()
             if not subckt_name:
                 continue
             key = subckt_name.lower()
+            if key in excluded_names:
+                continue
             descriptor = inline_descriptors.get(key)
             if descriptor is None:
                 descriptor = bundled_descriptors.get(key)
@@ -69,6 +85,10 @@ class SpicePrimitiveResolver:
         name: str,
         ports: Sequence[str],
     ) -> Optional[PrimitiveDescriptor]:
+        normalized_name = re.sub(r"[^a-z0-9]+", "_", str(name or "").strip().lower()).strip("_")
+        name_tokens = set(normalized_name.split("_"))
+        if "opamp" not in name_tokens and "opamp" not in normalized_name and not normalized_name.startswith("idealop"):
+            return None
         return self._descriptor_from_explicit_ports(ports)
 
     def _apply_descriptor(self, component, descriptor: PrimitiveDescriptor, subckt_name: str) -> None:

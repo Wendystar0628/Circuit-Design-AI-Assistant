@@ -1,14 +1,17 @@
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from PyQt6.QtCore import QObject
 from PyQt6.QtWidgets import QMainWindow, QMessageBox
 
 from shared.event_types import (
+    EVENT_STATE_PROJECT_CLOSED,
+    EVENT_STATE_PROJECT_OPENED,
     EVENT_SIM_COMPLETE,
     EVENT_SIM_ERROR,
     EVENT_SIM_STARTED,
 )
+from shared.path_utils import normalize_identity_path
 from shared.service_locator import ServiceLocator
 from shared.service_names import (
     SVC_EVENT_BUS,
@@ -20,21 +23,15 @@ from shared.workspace_file_types import is_simulatable_circuit_extension
 
 
 class SimulationCommandController(QObject):
-    """UI-editor Run button: submits jobs to ``SimulationJobManager``
-    and observes the lifecycle of *its own* submissions.
+    """Submit editor runs and own their exact presentation identity.
 
-    Submission model
-    ----------------
-
-    The controller no longer owns a thread; it is purely a submitter.
-    Every Run-button click goes through ``manager.submit(origin=
-    JobOrigin.UI_EDITOR, ...)`` and the returned ``job_id`` is
-    recorded in :attr:`_submitted_jobs`. That set is the only
-    authority the controller uses to decide "is one of *my* jobs
-    in flight?" — it never asks "is *any* simulation running?".
-    Agent-origin jobs and other UI-origin jobs (in a future
-    multi-window world) flow through the same EventBus events but
-    are filtered out at the handler entry point.
+    Every Run-button click goes through ``SimulationJobManager``.  The
+    returned job id is registered together with the project captured at
+    submission time, then handed directly to the bound ``SimulationTab``.
+    That explicit hand-off is the only way a job may claim the visible run
+    state.  A later ``EVENT_SIM_STARTED`` is merely a lifecycle update; it
+    cannot make an arbitrary ``ui_editor`` job visible after a project was
+    closed and reopened at the same path.
 
     UX policy
     ---------
@@ -48,16 +45,9 @@ class SimulationCommandController(QObject):
     only changing the gate inside :meth:`run_simulation`; nothing
     else in this file assumes "at most one job".
 
-    Decoupling from ``SimulationTab``
-    ---------------------------------
-
-    The controller and the result tab are intentionally **not**
-    connected by signals or direct method calls. Both subscribe to
-    ``EVENT_SIM_*`` and each filters by an identity field that
-    matches its concern: the controller filters by its own
-    submitted ``job_id`` set; the tab filters by ``origin``
-    (Step 5 wired the tab to the authoritative payload helper).
-    This keeps either side replaceable without touching the other.
+    Agent-origin jobs and jobs submitted by another UI owner still flow
+    through the shared EventBus, but neither the controller nor its bound
+    tab accepts them as presentation state.
     """
 
     def __init__(self, main_window: QMainWindow):
@@ -65,20 +55,18 @@ class SimulationCommandController(QObject):
         self._main_window = main_window
         self._menu_manager = None
         self._code_editor = None
+        self._simulation_tab = None
         self._logger = None
         self._current_file_path = ""
         self._current_file_name = ""
         self._current_file_dirty = False
 
-        # job_ids of submissions that originated from this controller.
-        # Lifecycle:
-        #   - added in run_simulation() right after manager.submit returns
-        #   - removed in _on_sim_complete_event / _on_sim_error_event
-        # The set is the single source of truth for "is this event mine?"
-        # Snapshotting (tuple(self._submitted_jobs)) before iteration is
-        # how we tolerate a worker thread pushing an event into the
-        # set's owner thread mid-iteration.
-        self._submitted_jobs: Set[str] = set()
+        # A job id alone is not a sufficient UI identity: after switching
+        # workspaces, an old job may still finish and publish its terminal
+        # event.  Bind each submission to the canonical project identity
+        # captured at submit time so an old event can neither disable the
+        # new workspace's Run action nor pop a modal over it.
+        self._submitted_jobs: Dict[str, str] = {}
 
         # (event_type, handler) pairs we registered with the EventBus,
         # tracked so shutdown() can unsubscribe symmetrically.
@@ -121,6 +109,10 @@ class SimulationCommandController(QObject):
             self._current_file_name = ""
             self._current_file_dirty = False
             self.refresh_ui_state()
+
+    def bind_simulation_tab(self, simulation_tab) -> None:
+        """Bind the sole visible result surface owned by this controller."""
+        self._simulation_tab = simulation_tab
 
     def retranslate_ui(self) -> None:
         self.refresh_ui_state()
@@ -213,18 +205,49 @@ class SimulationCommandController(QObject):
                 "SimulationJobManager is not registered in ServiceLocator; "
                 "this is a bootstrap-time bug (expected SVC_SIMULATION_JOB_MANAGER)."
             )
+        if self._simulation_tab is None:
+            raise RuntimeError(
+                "SimulationCommandController has no bound SimulationTab; "
+                "submitting would create an unowned UI job."
+            )
 
         # Local import: avoids dragging the domain layer into module
         # import time (which would break the strict layer ordering
         # the rest of the codebase enforces).
         from domain.simulation.models.simulation_job import JobOrigin
 
-        job = manager.submit(
-            circuit_file=file_path,
-            origin=JobOrigin.UI_EDITOR,
-            project_root=project_root,
+        try:
+            job = manager.submit(
+                circuit_file=file_path,
+                origin=JobOrigin.UI_EDITOR,
+                project_root=project_root,
+            )
+        except Exception as exc:
+            if self.logger:
+                self.logger.exception("Failed to submit UI simulation")
+            QMessageBox.warning(
+                self._main_window,
+                self._get_text("dialog.error.title", "Error"),
+                self._get_text(
+                    "simulation.submit_failed",
+                    "无法启动仿真：{message}",
+                ).format(message=str(exc)),
+            )
+            self.refresh_ui_state()
+            return
+        self._submitted_jobs[job.job_id] = normalize_identity_path(job.project_root)
+        claimed = self._simulation_tab.claim_ui_job(
+            job_id=job.job_id,
+            project_root=job.project_root,
+            circuit_file=job.circuit_file,
         )
-        self._submitted_jobs.add(job.job_id)
+        if not claimed:
+            manager.request_cancel(job.job_id)
+            self._submitted_jobs.pop(job.job_id, None)
+            raise RuntimeError(
+                "SimulationTab rejected the submitted job identity; "
+                "the job was cancelled to avoid an unowned UI run."
+            )
         if self.logger:
             self.logger.info(
                 f"SimulationCommandController submitted job_id={job.job_id} "
@@ -249,6 +272,8 @@ class SimulationCommandController(QObject):
         if bus is None:
             return
         for event_type, handler in (
+            (EVENT_STATE_PROJECT_OPENED, self._on_project_context_changed),
+            (EVENT_STATE_PROJECT_CLOSED, self._on_project_context_changed),
             (EVENT_SIM_STARTED, self._on_sim_started_event),
             (EVENT_SIM_COMPLETE, self._on_sim_complete_event),
             (EVENT_SIM_ERROR, self._on_sim_error_event),
@@ -274,7 +299,7 @@ class SimulationCommandController(QObject):
 
     def _on_sim_started_event(self, event_data: dict) -> None:
         payload = extract_sim_payload(EVENT_SIM_STARTED, event_data)
-        if payload["job_id"] not in self._submitted_jobs:
+        if not self._event_matches_current_submission(payload):
             # Not one of ours — agent backend or a future second UI
             # submission channel. Ignore so we never flip our button
             # state on someone else's run.
@@ -287,9 +312,9 @@ class SimulationCommandController(QObject):
     def _on_sim_complete_event(self, event_data: dict) -> None:
         payload = extract_sim_payload(EVENT_SIM_COMPLETE, event_data)
         job_id = payload["job_id"]
-        if job_id not in self._submitted_jobs:
+        if not self._event_matches_current_submission(payload):
             return
-        self._submitted_jobs.discard(job_id)
+        self._submitted_jobs.pop(job_id, None)
         if self.logger:
             self.logger.info(
                 f"SimulationCommandController: job_id={job_id} completed "
@@ -300,9 +325,9 @@ class SimulationCommandController(QObject):
     def _on_sim_error_event(self, event_data: dict) -> None:
         payload = extract_sim_payload(EVENT_SIM_ERROR, event_data)
         job_id = payload["job_id"]
-        if job_id not in self._submitted_jobs:
+        if not self._event_matches_current_submission(payload):
             return
-        self._submitted_jobs.discard(job_id)
+        self._submitted_jobs.pop(job_id, None)
         cancelled = bool(payload["cancelled"])
         error_message = payload["error_message"] or "unknown"
         if self.logger:
@@ -325,6 +350,30 @@ class SimulationCommandController(QObject):
             )
         self.refresh_ui_state()
 
+    def _on_project_context_changed(self, event_data: dict) -> None:
+        """Release UI ownership of jobs from the previous workspace.
+
+        The manager still owns and settles those jobs.  The controller only
+        drops its presentation binding; carrying it into the next project
+        would make unrelated work disable the new project's Run button.
+        """
+        del event_data
+        self._submitted_jobs.clear()
+        self.refresh_ui_state()
+
+    def _event_matches_current_submission(self, payload: Dict[str, Any]) -> bool:
+        job_id = str(payload.get("job_id") or "")
+        submitted_project = self._submitted_jobs.get(job_id)
+        if not submitted_project:
+            return False
+        payload_project = normalize_identity_path(str(payload.get("project_root") or ""))
+        current_project = normalize_identity_path(self._get_project_root() or "")
+        return bool(
+            current_project
+            and payload_project == submitted_project
+            and current_project == submitted_project
+        )
+
     def _has_active_submission(self) -> bool:
         """True iff any controller-submitted job is still non-terminal.
 
@@ -340,10 +389,18 @@ class SimulationCommandController(QObject):
         manager = ServiceLocator.get_optional(SVC_SIMULATION_JOB_MANAGER)
         if manager is None:
             return False
-        for job_id in tuple(self._submitted_jobs):
+        stale_job_ids = []
+        current_project = normalize_identity_path(self._get_project_root() or "")
+        for job_id, submitted_project in tuple(self._submitted_jobs.items()):
+            if not current_project or submitted_project != current_project:
+                stale_job_ids.append(job_id)
+                continue
             job = manager.query(job_id)
             if job is not None and not job.is_terminal:
                 return True
+            stale_job_ids.append(job_id)
+        for job_id in stale_job_ids:
+            self._submitted_jobs.pop(job_id, None)
         return False
 
     def _build_ui_state(self) -> Dict[str, Any]:

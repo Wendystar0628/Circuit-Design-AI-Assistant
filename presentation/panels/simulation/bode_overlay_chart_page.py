@@ -1,3 +1,4 @@
+from dataclasses import replace
 from typing import Dict, List, Optional, Set, Tuple
 
 import numpy as np
@@ -5,12 +6,23 @@ import pyqtgraph as pg
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QSplitter, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget
 
+from domain.simulation.data.downsampler import align_xy
 from presentation.panels.simulation.chart_measurement_point import MeasurementPointSample, MeasurementPointValue, clamp_to_bounds, midpoint_of_bounds, serialize_measurement_point_sample
 from presentation.panels.simulation.chart_export_utils import build_chart_export_payload, serialize_chart_series_for_web
 from presentation.panels.simulation.chart_view_types import ChartSeries, ChartSpec
 from presentation.panels.simulation.qt_surface_export import export_widget_image
-from presentation.panels.simulation.ltspice_plot_interaction import apply_dynamic_tick_spacing, clamp_range, finite_range, merge_ranges, nice_tick_spacing
-from resources.theme import COLOR_BG_PRIMARY, COLOR_BG_SECONDARY, COLOR_BG_TERTIARY, COLOR_BORDER, COLOR_TEXT_PRIMARY, COLOR_TEXT_SECONDARY, FONT_SIZE_SMALL, SPACING_NORMAL, SPACING_SMALL
+from presentation.panels.simulation.ltspice_plot_interaction import (
+    apply_dynamic_tick_spacing,
+    clamp_range,
+    finite_range,
+    merge_ranges,
+    optimize_plot_data_item,
+    sample_phase_degrees_at_x,
+    sample_series_at_x,
+    to_axis_values,
+    unwrap_phase_degrees,
+)
+from resources.theme import COLOR_BG_PRIMARY, COLOR_BG_SECONDARY, COLOR_BG_TERTIARY, COLOR_BORDER, COLOR_TEXT_PRIMARY, COLOR_TEXT_SECONDARY, FONT_SIZE_SMALL, SPACING_SMALL
 
 
 class BodeOverlayChartPage(QWidget):
@@ -21,7 +33,9 @@ class BodeOverlayChartPage(QWidget):
         self._series_groups: Dict[str, Dict[str, ChartSeries]] = {}
         self._visible_group_keys_state: Set[str] = set()
         self._plot_items: Dict[str, pg.PlotDataItem] = {}
+        self._rendered_axis_keys: Dict[str, str] = {}
         self._group_colors: Dict[str, str] = {}
+        self._right_vb: Optional[pg.ViewBox] = None
         self._updating_tree = False
         self._measurement_enabled = False
         self._measurement_point_enabled = False
@@ -84,13 +98,7 @@ class BodeOverlayChartPage(QWidget):
         self._plot_widget = pg.PlotWidget()
         self._plot_widget.setBackground(COLOR_BG_PRIMARY)
         self._plot_item = self._plot_widget.getPlotItem()
-        self._plot_item.showGrid(x=True, y=True, alpha=0.25)
-        self._plot_item.disableAutoRange()
-        self._plot_item.showAxis("right")
-        self._plot_item.getAxis("right").setWidth(72)
-        self._plot_item.vb.setMenuEnabled(False)
-        self._plot_item.vb.setMouseEnabled(x=False, y=False)
-        self._legend = self._plot_item.addLegend()
+        self._configure_plot_surface()
         right_layout.addWidget(self._plot_widget, 1)
 
         self._main_splitter.addWidget(right_panel)
@@ -140,8 +148,7 @@ class BodeOverlayChartPage(QWidget):
             }}
         """)
 
-    def clear(self):
-        self._plot_widget.clear()
+    def _configure_plot_surface(self) -> None:
         self._plot_item = self._plot_widget.getPlotItem()
         self._plot_item.showGrid(x=True, y=True, alpha=0.25)
         self._plot_item.disableAutoRange()
@@ -149,7 +156,32 @@ class BodeOverlayChartPage(QWidget):
         self._plot_item.getAxis("right").setWidth(72)
         self._plot_item.vb.setMenuEnabled(False)
         self._plot_item.vb.setMouseEnabled(x=False, y=False)
+        if self._right_vb is not None:
+            try:
+                self._plot_item.scene().removeItem(self._right_vb)
+            except Exception:
+                pass
+        self._right_vb = pg.ViewBox()
+        self._plot_item.scene().addItem(self._right_vb)
+        self._plot_item.getAxis("right").linkToView(self._right_vb)
+        self._right_vb.setXLink(self._plot_item)
+        self._right_vb.setMenuEnabled(False)
+        self._right_vb.setMouseEnabled(x=False, y=False)
+        try:
+            self._plot_item.vb.sigResized.disconnect(self._sync_right_viewbox)
+        except Exception:
+            pass
+        self._plot_item.vb.sigResized.connect(self._sync_right_viewbox)
         self._legend = self._plot_item.addLegend()
+        self._sync_right_viewbox()
+
+    def _sync_right_viewbox(self) -> None:
+        if self._right_vb is not None:
+            self._right_vb.setGeometry(self._plot_item.vb.sceneBoundingRect())
+
+    def clear(self):
+        self._plot_widget.clear()
+        self._configure_plot_surface()
         self._measurement_enabled = False
         self._measurement_point_enabled = False
         self._measurement_point_target_id = ""
@@ -160,6 +192,7 @@ class BodeOverlayChartPage(QWidget):
         self._series_groups = {}
         self._visible_group_keys_state = set()
         self._plot_items = {}
+        self._rendered_axis_keys = {}
         self._group_colors = {}
         self._x_domain = None
         self._mag_domain = None
@@ -185,10 +218,11 @@ class BodeOverlayChartPage(QWidget):
         self._series_items = {}
         self._visible_group_keys_state = set()
         for series in spec.series:
-            x_data = np.asarray(series.x_data, dtype=float)
-            y_data = np.asarray(series.y_data, dtype=float)
-            if len(x_data) == 0 or len(y_data) == 0 or len(x_data) != len(y_data):
+            x_data, y_data = align_xy(series.x_data, series.y_data)
+            if len(x_data) == 0 or not np.any(np.isfinite(x_data) & np.isfinite(y_data)):
                 continue
+            if str(series.component or "").lower() == "phase":
+                y_data = unwrap_phase_degrees(y_data)
             group_key = series.group_key or series.name
             normalized = ChartSeries(
                 name=series.name,
@@ -196,6 +230,7 @@ class BodeOverlayChartPage(QWidget):
                 y_data=y_data,
                 color=series.color,
                 axis_key=series.axis_key,
+                axis_family=series.axis_family,
                 line_style=series.line_style,
                 group_key=group_key,
                 component=series.component,
@@ -268,7 +303,7 @@ class BodeOverlayChartPage(QWidget):
         phase_max = viewport.get("right_y_max")
         if None in {x_min, x_max, phase_min, phase_max}:
             return False
-        x_range = clamp_range((x_min, x_max), self._x_domain, positive_only=self._is_log_x())
+        x_range = clamp_range((x_min, x_max), self._x_domain)
         mag_range = clamp_range((mag_min, mag_max), self._mag_domain, positive_only=False)
         phase_range = clamp_range((float(phase_min), float(phase_max)), self._phase_domain, positive_only=False)
         if x_range is None or mag_range is None or phase_range is None:
@@ -350,13 +385,27 @@ class BodeOverlayChartPage(QWidget):
         return export_widget_image(self, self._plot_widget, path)
 
     def build_export_payload(self) -> Optional[Dict[str, object]]:
-        if self._spec is None or not self._spec.series:
+        visible_series = self._visible_series()
+        if self._spec is None or not visible_series:
             return None
-        return build_chart_export_payload(self._spec, self._spec.series)
+        return build_chart_export_payload(
+            replace(
+                self._spec,
+                y_label="Magnitude (dB re 1 unit)",
+                secondary_y_label="Phase (°)",
+                log_y=False,
+                right_log_y=False,
+            ),
+            visible_series,
+        )
 
     def get_web_snapshot(self) -> Dict[str, object]:
         spec = self._spec
         visible_series = self._visible_series()
+        viewport = self._build_viewport_snapshot()
+        viewport_x_range = None
+        if viewport.get("active") and viewport.get("x_min") is not None and viewport.get("x_max") is not None:
+            viewport_x_range = (float(viewport["x_min"]), float(viewport["x_max"]))
         available_series = []
         if spec is not None:
             for group_key, bucket in self._series_groups.items():
@@ -383,9 +432,12 @@ class BodeOverlayChartPage(QWidget):
             "log_y": bool(spec.log_y) if spec is not None else False,
             "right_log_y": bool(spec.right_log_y) if spec is not None else False,
             "available_series": available_series,
-            "visible_series": [serialize_chart_series_for_web(series) for series in visible_series],
+            "visible_series": [
+                serialize_chart_series_for_web(series, x_range=viewport_x_range)
+                for series in visible_series
+            ],
             "visible_series_count": len(visible_series),
-            "viewport": self._build_viewport_snapshot(),
+            "viewport": viewport,
             "measurement_point": self._build_measurement_point_snapshot(),
             "measurement_enabled": bool(self._measurement_enabled),
             "measurement": self._build_measurement_snapshot(),
@@ -512,13 +564,7 @@ class BodeOverlayChartPage(QWidget):
         return bool(self._spec.log_x) if self._spec is not None else False
 
     def _to_view_axis_data(self, values: np.ndarray, *, log_enabled: bool) -> np.ndarray:
-        array = np.asarray(values, dtype=float)
-        if not log_enabled:
-            return array
-        transformed = np.full(array.shape, np.nan, dtype=float)
-        mask = np.isfinite(array) & (array > 0)
-        transformed[mask] = np.log10(array[mask])
-        return transformed
+        return to_axis_values(values, log_enabled=log_enabled)
 
     def _to_display_x(self, x_position: Optional[float]) -> Optional[float]:
         if x_position is None:
@@ -545,7 +591,7 @@ class BodeOverlayChartPage(QWidget):
             mag_series = pair.get("magnitude")
             phase_series = pair.get("phase")
             if mag_series is not None:
-                x_range = finite_range(self._to_view_axis_data(mag_series.x_data, log_enabled=self._is_log_x()), positive_only=self._is_log_x())
+                x_range = finite_range(self._to_view_axis_data(mag_series.x_data, log_enabled=self._is_log_x()))
                 mag_range = finite_range(np.asarray(mag_series.y_data, dtype=float))
                 if x_range is not None:
                     x_ranges.append(x_range)
@@ -562,33 +608,19 @@ class BodeOverlayChartPage(QWidget):
         self._mag_domain = merge_ranges(mag_ranges)
         self._phase_domain = merge_ranges(phase_ranges)
 
-    def _phase_to_display_value(self, phase_value: float) -> float:
-        if self._mag_view_range is None or self._phase_view_range is None:
-            return float(phase_value)
-        mag_min, mag_max = self._mag_view_range
-        phase_min, phase_max = self._phase_view_range
-        phase_span = phase_max - phase_min
-        mag_span = mag_max - mag_min
-        if abs(phase_span) <= 1e-30 or abs(mag_span) <= 1e-30:
-            return mag_min
-        normalized = (phase_value - phase_min) / phase_span
-        return mag_min + normalized * mag_span
-
-    def _map_phase_array_to_display(self, phase_values: np.ndarray) -> np.ndarray:
-        phase_array = np.asarray(phase_values, dtype=float)
-        if phase_array.size == 0:
-            return phase_array
-        return np.asarray([self._phase_to_display_value(value) for value in phase_array], dtype=float)
-
     def _pen_style_for_series(self, series: ChartSeries) -> Qt.PenStyle:
         if series.line_style == "dash":
             return Qt.PenStyle.DashLine
         return Qt.PenStyle.SolidLine
 
     def _rebuild_plot(self):
-        for item in list(self._plot_items.values()):
-            self._plot_item.removeItem(item)
+        for series_name, item in list(self._plot_items.items()):
+            if self._rendered_axis_keys.get(series_name) == "right" and self._right_vb is not None:
+                self._right_vb.removeItem(item)
+            else:
+                self._plot_item.removeItem(item)
         self._plot_items.clear()
+        self._rendered_axis_keys.clear()
         try:
             self._legend.clear()
         except Exception:
@@ -611,15 +643,26 @@ class BodeOverlayChartPage(QWidget):
             phase_series = pair.get("phase")
             if mag_series is not None:
                 mag_pen = pg.mkPen(mag_series.color, width=1.6, style=self._pen_style_for_series(mag_series))
-                mag_item = pg.PlotDataItem(np.asarray(mag_series.x_data, dtype=float), np.asarray(mag_series.y_data, dtype=float), pen=mag_pen)
+                mag_x = np.asarray(mag_series.x_data, dtype=float)
+                mag_item = pg.PlotDataItem(mag_x, np.asarray(mag_series.y_data, dtype=float), pen=mag_pen, connect="finite")
+                mag_item.setLogMode(self._is_log_x(), False)
                 self._plot_item.addItem(mag_item)
+                optimize_plot_data_item(mag_item, mag_x)
                 self._plot_items[mag_series.name] = mag_item
+                self._rendered_axis_keys[mag_series.name] = "left"
                 self._legend.addItem(mag_item, group_key)
             if phase_series is not None:
                 phase_pen = pg.mkPen(phase_series.color, width=1.4, style=self._pen_style_for_series(phase_series))
-                phase_item = pg.PlotDataItem(np.asarray(phase_series.x_data, dtype=float), self._map_phase_array_to_display(np.asarray(phase_series.y_data, dtype=float)), pen=phase_pen)
-                self._plot_item.addItem(phase_item)
+                phase_x = np.asarray(phase_series.x_data, dtype=float)
+                phase_item = pg.PlotDataItem(phase_x, np.asarray(phase_series.y_data, dtype=float), pen=phase_pen, connect="finite")
+                phase_item.setLogMode(self._is_log_x(), False)
+                if self._right_vb is not None:
+                    self._right_vb.addItem(phase_item)
+                else:
+                    self._plot_item.addItem(phase_item)
+                optimize_plot_data_item(phase_item, phase_x)
                 self._plot_items[phase_series.name] = phase_item
+                self._rendered_axis_keys[phase_series.name] = "right"
 
         self._apply_stored_or_full_viewport()
         if self._measurement_enabled:
@@ -631,23 +674,15 @@ class BodeOverlayChartPage(QWidget):
             view_box.setLimits(xMin=self._x_domain[0], xMax=self._x_domain[1])
         if self._mag_domain is not None:
             view_box.setLimits(yMin=self._mag_domain[0], yMax=self._mag_domain[1])
+        if self._right_vb is not None and self._phase_domain is not None:
+            self._right_vb.setLimits(yMin=self._phase_domain[0], yMax=self._phase_domain[1])
 
     def _update_right_axis_ticks(self):
         axis = self._plot_item.getAxis("right")
-        if self._phase_view_range is None or self._mag_view_range is None:
+        if self._phase_view_range is None:
             axis.setTicks([])
             return
-        phase_min, phase_max = self._phase_view_range
-        step = nice_tick_spacing(max(phase_max - phase_min, 1e-9), target_ticks=8)
-        start = np.floor(phase_min / step) * step
-        stop = np.ceil(phase_max / step) * step
-        ticks = []
-        value = start
-        while value <= stop + step * 0.5:
-            display = self._phase_to_display_value(value)
-            ticks.append((display, f"{value:.6g}"))
-            value += step
-        axis.setTicks([ticks, []])
+        apply_dynamic_tick_spacing(axis, self._phase_view_range, log_enabled=False, target_ticks=8)
 
     def _apply_viewport(
         self,
@@ -663,10 +698,11 @@ class BodeOverlayChartPage(QWidget):
         self._apply_domain_limits()
         self._plot_item.setXRange(x_range[0], x_range[1], padding=0.0)
         self._plot_item.setYRange(mag_range[0], mag_range[1], padding=0.0)
+        if self._right_vb is not None:
+            self._right_vb.setYRange(phase_range[0], phase_range[1], padding=0.0)
         apply_dynamic_tick_spacing(self._plot_item.getAxis("bottom"), x_range, log_enabled=self._is_log_x())
         apply_dynamic_tick_spacing(self._plot_item.getAxis("left"), mag_range, log_enabled=False)
         self._update_right_axis_ticks()
-        self._refresh_phase_curves()
 
     def _apply_full_viewport(self):
         if self._x_domain is None or self._mag_domain is None or self._phase_domain is None:
@@ -680,7 +716,7 @@ class BodeOverlayChartPage(QWidget):
         if not self._viewport_active or self._view_x_range is None or self._mag_view_range is None or self._phase_view_range is None:
             self._apply_full_viewport()
             return
-        clamped_x_range = clamp_range(self._view_x_range, self._x_domain, positive_only=self._is_log_x())
+        clamped_x_range = clamp_range(self._view_x_range, self._x_domain)
         clamped_mag_range = clamp_range(self._mag_view_range, self._mag_domain, positive_only=False)
         clamped_phase_range = clamp_range(self._phase_view_range, self._phase_domain, positive_only=False)
         if clamped_x_range is None or clamped_mag_range is None or clamped_phase_range is None:
@@ -692,22 +728,21 @@ class BodeOverlayChartPage(QWidget):
             return
         self._apply_viewport(clamped_x_range, clamped_mag_range, clamped_phase_range)
 
-    def _refresh_phase_curves(self):
-        for pair in self._series_groups.values():
-            phase_series = pair.get("phase")
-            if phase_series is None:
-                continue
-            item = self._plot_items.get(phase_series.name)
-            if item is None:
-                continue
-            item.setData(np.asarray(phase_series.x_data, dtype=float), self._map_phase_array_to_display(np.asarray(phase_series.y_data, dtype=float)))
-
     def _sample_raw_series(self, series: ChartSeries, x_position: float) -> Optional[float]:
-        x_data = self._to_view_axis_data(series.x_data, log_enabled=self._is_log_x())
-        y_data = np.asarray(series.y_data, dtype=float)
-        if len(x_data) == 0 or len(y_data) == 0:
-            return None
-        return float(np.interp(x_position, x_data, y_data))
+        is_phase = str(series.component or "").lower() == "phase"
+        if is_phase:
+            return sample_phase_degrees_at_x(
+                series.x_data,
+                series.y_data,
+                x_position,
+                log_x=self._is_log_x(),
+            )
+        return sample_series_at_x(
+            series.x_data,
+            series.y_data,
+            x_position,
+            log_x=self._is_log_x(),
+        )
 
     def _sample_measurement_values(self, x_position: float) -> Dict[str, float]:
         values: Dict[str, float] = {}
@@ -779,15 +814,29 @@ class BodeOverlayChartPage(QWidget):
         )
 
     def _sample_group_delay(self, phase_series: ChartSeries, frequency_hz: float) -> Optional[float]:
-        x_data = np.asarray(phase_series.x_data, dtype=float)
-        phase_deg = np.asarray(phase_series.y_data, dtype=float)
-        if len(x_data) < 2 or len(phase_deg) < 2:
+        x_data, phase_deg = align_xy(phase_series.x_data, phase_series.y_data)
+        if len(x_data) < 2 or not np.isfinite(frequency_hz) or frequency_hz <= 0:
             return None
-        if not np.all(np.isfinite(x_data)) or not np.all(np.isfinite(phase_deg)):
+        valid = np.isfinite(x_data) & np.isfinite(phase_deg) & (x_data > 0)
+        padded = np.concatenate(([False], valid, [False]))
+        transitions = np.diff(padded.astype(np.int8))
+        selected_segment = None
+        for start, stop in zip(
+            np.flatnonzero(transitions == 1),
+            np.flatnonzero(transitions == -1),
+        ):
+            if stop - start < 2:
+                continue
+            segment_x = x_data[start:stop]
+            if float(np.min(segment_x)) <= frequency_hz <= float(np.max(segment_x)):
+                selected_segment = (segment_x, phase_deg[start:stop])
+                break
+        if selected_segment is None:
             return None
-        order = np.argsort(x_data)
-        sorted_x = x_data[order]
-        sorted_phase = phase_deg[order]
+        segment_x, segment_phase = selected_segment
+        order = np.argsort(segment_x)
+        sorted_x = segment_x[order]
+        sorted_phase = segment_phase[order]
         unique_x, unique_indices = np.unique(sorted_x, return_index=True)
         unique_phase = sorted_phase[unique_indices]
         if len(unique_x) < 2:

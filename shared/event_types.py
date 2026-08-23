@@ -36,9 +36,6 @@ EVENT_INIT_COMPLETE = "init_complete"
 # 用户发送消息
 EVENT_UI_SEND_MESSAGE = "ui_send_message"
 
-# 用户请求仿真
-EVENT_UI_REQUEST_SIMULATION = "ui_request_simulation"
-
 # 请求将文件添加到对话附件区
 EVENT_UI_ATTACH_FILES_TO_CONVERSATION = "ui_attach_files_to_conversation"
 
@@ -158,10 +155,11 @@ EVENT_WEB_SEARCH_ERROR = "web_search_error"
 # 字段说明（所有字段均为**必填**，缺字段视作 producer bug）：
 #
 # - job_id       : str — 全局唯一仿真 job 标识；订阅者 routing key
-# - origin       : str — 触发来源（"ui" / "agent" / ...）；用于 UI
+# - origin       : str — 触发来源（"ui_editor" / "agent_tool"）；用于 UI
 #                        区分人类触发与 agent 后台触发的结果
 # - circuit_file : str — 仿真输入电路文件绝对路径
 # - project_root : str — 项目根目录绝对路径
+# - session_id   : str — 会话标识；无会话绑定时为空字符串
 #
 # 订阅者入口**第一步**必须是"从 envelope 解包 payload、校验必填
 # 字段、读取 job_id"；任何"缺 job_id 就回退到老路径"的分支都是
@@ -169,10 +167,9 @@ EVENT_WEB_SEARCH_ERROR = "web_search_error"
 # 统一做这件事，不要在每个订阅者里手搓 envelope 解包。
 # ============================================================
 
-# 仿真开始 —— 一次 job 进入 RUNNING 时发布
-# payload 在上述通用身份字段之上额外携带：
-#   - analysis_type : str  — 解析后的分析类型（"tran"/"ac"/"dc"/"op"/"noise"...）
-#   - config        : dict — 原始 analysis_config（副本，订阅者可自由读取）
+# 仿真开始 —— 一次 job 进入 RUNNING 时发布；payload 仅含上述通用身份
+# 字段。分析类型以执行后持久化的 result.json 为唯一权威，STARTED 阶段
+# 不发布猜测值或第二份配置快照。
 EVENT_SIM_STARTED = "sim_started"
 
 # 仿真完成 —— 一次 job 进入 SUCCEEDED 时发布
@@ -180,8 +177,6 @@ EVENT_SIM_STARTED = "sim_started"
 #   - result_path      : str   — 项目根相对的 result.json 路径（必填，
 #                                 作为结果 bundle 的唯一锚点）
 #   - export_root      : str   — bundle 目录绝对路径
-#   - success          : bool  — 结果 success 标志（恒为 True，冗余但
-#                                 用于下游契约对称）
 #   - duration_seconds : float — 本次仿真总耗时（秒）
 EVENT_SIM_COMPLETE = "sim_complete"
 
@@ -196,128 +191,6 @@ EVENT_SIM_COMPLETE = "sim_complete"
 #   - cancelled        : bool  — 是否因取消导致（True 表示 CANCELLED）
 #   - duration_seconds : float — 失败前耗时（秒）
 EVENT_SIM_ERROR = "sim_error"
-
-# 仿真暂停
-# 携带数据：
-#   - progress: float - 暂停时的进度
-#   - state_snapshot: str - 状态快照路径（用于恢复）
-EVENT_SIM_PAUSED = "sim_paused"
-
-# 仿真恢复
-# 携带数据：
-#   - resumed_from: float - 恢复时的进度
-EVENT_SIM_RESUMED = "sim_resumed"
-
-# 仿真配置变更
-# 携带数据：
-#   - config_key: str - 变更的配置项
-#   - old_value: Any - 旧值
-#   - new_value: Any - 新值
-EVENT_SIM_CONFIG_CHANGED = "sim_config_changed"
-
-# 主电路变更
-# 携带数据：
-#   - old_path: str - 旧主电路路径（可选）
-#   - new_path: str - 新主电路路径
-#   - detection_method: str - 检测方式（"auto", "user_selected"）
-EVENT_MAIN_CIRCUIT_CHANGED = "main_circuit_changed"
-
-# 电路分析完成
-# 携带数据：
-#   - circuit_file: str - 电路文件路径
-#   - analysis_type: str - 分析类型
-#   - components: dict - 元件统计
-EVENT_CIRCUIT_ANALYSIS_COMPLETE = "circuit_analysis_complete"
-
-# 仿真执行失败（错误已收集，准备下一轮修复）
-# 携带数据：
-#   - error_type: str - 错误类型
-#   - error_message: str - 错误信息
-#   - file: str - 错误文件（可选）
-#   - line: int - 错误行号（可选）
-EVENT_SIMULATION_ERROR_COLLECTED = "simulation_error_collected"
-
-# 仿真执行器注册
-# 携带数据：
-#   - name: str - 执行器名称
-#   - extensions: list - 支持的文件扩展名列表
-EVENT_EXECUTOR_REGISTERED = "executor_registered"
-
-# 仿真执行器注销
-# 携带数据：
-#   - name: str - 执行器名称
-EVENT_EXECUTOR_UNREGISTERED = "executor_unregistered"
-
-# 波形数据请求
-# 携带数据：
-#   - signal_name: str - 信号名称
-#   - x_min: float - X 轴最小值
-#   - x_max: float - X 轴最大值
-#   - viewport_width: int - 视口宽度（像素）
-EVENT_WAVEFORM_DATA_REQUESTED = "waveform_data_requested"
-
-# 波形数据就绪
-# 携带数据：
-#   - signal_name: str - 信号名称
-#   - point_count: int - 数据点数量
-#   - resolution_level: int - 分辨率层级
-#   - is_full_resolution: bool - 是否为原始分辨率
-EVENT_WAVEFORM_DATA_READY = "waveform_data_ready"
-
-# 分辨率金字塔构建完成
-# 携带数据：
-#   - signal_name: str - 信号名称
-#   - original_points: int - 原始数据点数
-#   - levels: list - 生成的分辨率层级列表
-#   - build_time_ms: float - 构建耗时（毫秒）
-EVENT_PYRAMID_BUILD_COMPLETE = "pyramid_build_complete"
-
-# ============================================================
-# 分析选择事件
-# ============================================================
-
-# ============================================================
-# 电路图事件
-# ============================================================
-
-# 电路图加载完成
-# 携带数据：
-#   - source_file: str - 源网表文件路径
-#   - element_count: int - 元件数量
-#   - connection_count: int - 连接数量
-#   - layout_algorithm: str - 使用的布局算法
-EVENT_SCHEMATIC_LOADED = "schematic_loaded"
-
-# 电路图元件选中
-# 携带数据：
-#   - element_id: str - 元件 ID
-#   - element_type: str - 元件类型（"R", "C", "L", "M", "X" 等）
-#   - element_name: str - 元件名称
-#   - properties: dict - 元件属性
-#   - source_line: int - 网表中的行号
-EVENT_SCHEMATIC_ELEMENT_SELECTED = "schematic_element_selected"
-
-# 电路图元件悬停
-# 携带数据：
-#   - element_id: str - 元件 ID
-#   - element_type: str - 元件类型
-#   - element_name: str - 元件名称
-#   - position: tuple - 鼠标位置 (x, y)
-EVENT_SCHEMATIC_ELEMENT_HOVERED = "schematic_element_hovered"
-
-# 跳转到源码
-# 携带数据：
-#   - file_path: str - 文件路径
-#   - line_number: int - 行号
-#   - element_name: str - 元件名称
-EVENT_SCHEMATIC_JUMP_TO_SOURCE = "schematic_jump_to_source"
-
-# 电路图缩放变更
-# 携带数据：
-#   - zoom_level: float - 缩放级别
-#   - center_x: float - 视图中心 X
-#   - center_y: float - 视图中心 Y
-EVENT_SCHEMATIC_ZOOM_CHANGED = "schematic_zoom_changed"
 
 # ============================================================
 # RAG 事件
@@ -493,57 +366,6 @@ EVENT_ITERATION_USER_STOPPED = "iteration_user_stopped"
 EVENT_ACTIVE_FILE_CHANGED = "active_file_changed"
 
 # ============================================================
-# 参数调整事件
-# ============================================================
-
-# 参数提取完成
-# 携带数据：
-#   - file_path: str - 电路文件路径
-#   - parameter_count: int - 提取的参数数量
-#   - parameters: list - 参数列表
-EVENT_PARAMETERS_EXTRACTED = "tuning.parameters_extracted"
-
-# 参数值变更
-# 携带数据：
-#   - param_name: str - 参数名称
-#   - old_value: float - 旧值
-#   - new_value: float - 新值
-#   - source: str - 变更来源（"slider", "input", "reset"）
-EVENT_PARAMETER_VALUE_CHANGED = "tuning.parameter_value_changed"
-
-# 参数应用到电路文件
-# 携带数据：
-#   - file_path: str - 电路文件路径
-#   - parameters: dict - 应用的参数字典 {name: value}
-#   - success: bool - 是否成功
-EVENT_PARAMETERS_APPLIED = "tuning.parameters_applied"
-
-# 调参应用完成（由 TuningService 发布）
-# 携带数据：
-#   - file_path: str - 电路文件路径
-#   - changes: dict - 应用的参数变更 {name: value}
-#   - modified_lines: list - 修改的行号列表
-#   - backup_path: str - 备份文件路径
-EVENT_TUNING_APPLIED = "tuning.applied"
-
-# 文件已恢复（由 TuningService 发布）
-# 携带数据：
-#   - file_path: str - 电路文件路径
-#   - backup_path: str - 备份文件路径
-EVENT_TUNING_RESTORED = "tuning.restored"
-
-# 请求自动仿真（参数变更后触发）
-# 携带数据：
-#   - changed_params: dict - 变更的参数字典
-#   - trigger_source: str - 触发来源（"auto_sim", "manual"）
-EVENT_TUNING_REQUEST_SIMULATION = "tuning.request_simulation"
-
-# 自动仿真模式变更
-# 携带数据：
-#   - enabled: bool - 是否启用自动仿真
-EVENT_AUTO_SIMULATION_CHANGED = "tuning.auto_simulation_changed"
-
-# ============================================================
 # Agent 循环事件
 # ============================================================
 
@@ -567,7 +389,6 @@ __all__ = [
     "EVENT_INIT_COMPLETE",
     # UI 交互事件
     "EVENT_UI_SEND_MESSAGE",
-    "EVENT_UI_REQUEST_SIMULATION",
     "EVENT_UI_ATTACH_FILES_TO_CONVERSATION",
     "EVENT_UI_ACTIVATE_CONVERSATION_TAB",
     # 面板管理事件
@@ -590,23 +411,6 @@ __all__ = [
     "EVENT_SIM_STARTED",
     "EVENT_SIM_COMPLETE",
     "EVENT_SIM_ERROR",
-    "EVENT_SIM_PAUSED",
-    "EVENT_SIM_RESUMED",
-    "EVENT_SIM_CONFIG_CHANGED",
-    "EVENT_MAIN_CIRCUIT_CHANGED",
-    "EVENT_CIRCUIT_ANALYSIS_COMPLETE",
-    "EVENT_SIMULATION_ERROR_COLLECTED",
-    "EVENT_EXECUTOR_REGISTERED",
-    "EVENT_EXECUTOR_UNREGISTERED",
-    "EVENT_WAVEFORM_DATA_REQUESTED",
-    "EVENT_WAVEFORM_DATA_READY",
-    "EVENT_PYRAMID_BUILD_COMPLETE",
-    # 电路图事件
-    "EVENT_SCHEMATIC_LOADED",
-    "EVENT_SCHEMATIC_ELEMENT_SELECTED",
-    "EVENT_SCHEMATIC_ELEMENT_HOVERED",
-    "EVENT_SCHEMATIC_JUMP_TO_SOURCE",
-    "EVENT_SCHEMATIC_ZOOM_CHANGED",
     # RAG 事件
     "EVENT_RAG_INIT_COMPLETE",
     "EVENT_RAG_INDEX_STARTED",
@@ -634,14 +438,6 @@ __all__ = [
     "EVENT_ITERATION_USER_CONFIRMED",
     "EVENT_ITERATION_USER_STOPPED",
     "EVENT_ACTIVE_FILE_CHANGED",
-    # 参数调整事件
-    "EVENT_PARAMETERS_EXTRACTED",
-    "EVENT_PARAMETER_VALUE_CHANGED",
-    "EVENT_PARAMETERS_APPLIED",
-    "EVENT_TUNING_APPLIED",
-    "EVENT_TUNING_RESTORED",
-    "EVENT_TUNING_REQUEST_SIMULATION",
-    "EVENT_AUTO_SIMULATION_CHANGED",
     # 关键事件列表
     "CRITICAL_EVENTS",
 ]

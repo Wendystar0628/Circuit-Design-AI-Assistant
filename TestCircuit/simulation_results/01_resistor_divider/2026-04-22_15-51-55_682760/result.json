@@ -1,6 +1,7 @@
 {
+  "schema_version": 3,
   "executor": "spice",
-  "file_path": "E:\\Individual Project\\circuit_design_ai\\TestCircuit\\dc_analysis\\01_resistor_divider.cir",
+  "file_path": "dc_analysis/01_resistor_divider.cir",
   "analysis_type": "dc",
   "success": true,
   "data": {
@@ -109,7 +110,6 @@
       9.89999999999998,
       9.99999999999998
     ],
-    "sweep_name": "v-sweep",
     "signals": {
       "I(VIN)": [
         0.0,
@@ -426,46 +426,15 @@
       "V(tap)": "voltage",
       "V(in)": "voltage"
     },
-    "op_result": {}
+    "noise_totals": null
   },
-  "measurements": [],
+  "measurements": null,
   "error": null,
   "raw_output": "stdout Note: No compatibility mode selected!\nstdout Circuit: Resistor Divider DC Sweep\nstdout Doing analysis at TEMP = 27.000000 and TNOM = 27.000000\nstderr Using SPARSE 1.3 as Direct Linear Solver\nstdout No. of Data Rows : 101",
-  "timestamp": "2026-04-22T15:51:55.682760",
+  "timestamp": "2026-04-22T15:51:55.682760+08:00",
   "duration_seconds": 0.0020067691802978516,
   "version": 1,
   "session_id": "",
-  "x_axis_kind": "sweep",
-  "x_axis_label": "Vin",
-  "x_axis_scale": "linear",
-  "requested_x_range": [
-    0.0,
-    10.0
-  ],
-  "actual_x_range": [
-    0.0,
-    9.99999999999998
-  ],
   "analysis_command": ".dc Vin 0 10 0.1",
-  "analysis_info": {
-    "analysis_type": "dc",
-    "analysis_command": ".dc Vin 0 10 0.1",
-    "x_axis_kind": "sweep",
-    "x_axis_label": "Vin",
-    "x_axis_scale": "linear",
-    "requested_x_range": [
-      0.0,
-      10.0
-    ],
-    "actual_x_range": [
-      0.0,
-      9.99999999999998
-    ],
-    "parameters": {
-      "source_name": "Vin",
-      "start_value": "0",
-      "stop_value": "10",
-      "step": "0.1"
-    }
-  }
+  "source_digest": "365ec3d0cdd9ea29c22843a1ef0db69b1ee4b42e6e93072d8f7dfd32e5b6f8fa"
 }

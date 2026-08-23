@@ -71,11 +71,12 @@ export interface SimulationRuntimeState {
   error_message: string
   project_root: string
   has_project: boolean
+  current_job_id: string
   current_result_path: string
   is_empty: boolean
   has_result: boolean
   has_error: boolean
-  awaiting_confirmation: boolean
+  can_cancel: boolean
   current_result: SimulationResultSummary
 }
 
@@ -90,12 +91,28 @@ export interface MetricItemState {
   display_name: string
   value: string
   unit: string
+  status: string
+  error_message: string
   raw_value: number | null
   target: string
 }
 
+export interface NoiseTotalItemState {
+  key: 'output_rms' | 'input_referred_rms'
+  value: number
+  unit: 'V' | 'A'
+}
+
+export interface NoiseTotalsState {
+  applicable: boolean
+  available: boolean
+  source: string
+  items: NoiseTotalItemState[]
+}
+
 export interface MetricsViewState {
   items: MetricItemState[]
+  noise_totals: NoiseTotalsState
   source_file_path: string
   can_add_to_conversation: boolean
 }
@@ -151,8 +168,8 @@ export interface ChartSeriesSnapshotState {
   line_style: string
   group_key: string
   component: string
-  x: number[]
-  y: number[]
+  x: Array<number | null>
+  y: Array<number | null>
   point_count: number
   sampled_point_count: number
 }
@@ -160,8 +177,8 @@ export interface ChartSeriesSnapshotState {
 export interface ChartMeasurementState {
   cursor_a_x: number | null
   cursor_b_x: number | null
-  values_a: Record<string, number>
-  values_b: Record<string, number>
+  values_a: Record<string, number | null>
+  values_b: Record<string, number | null>
 }
 
 export interface ChartMeasurementPointValueState {
@@ -193,6 +210,8 @@ export interface WaveformViewState {
   y_label: string
   secondary_y_label: string
   log_x: boolean
+  log_y: boolean
+  right_log_y: boolean
   viewport: SimulationSurfaceViewportState
   cursor_a_visible: boolean
   cursor_b_visible: boolean
@@ -208,8 +227,8 @@ export interface WaveformSeriesSnapshotState {
   name: string
   color: string
   axis_key: string
-  x: number[]
-  y: number[]
+  x: Array<number | null>
+  y: Array<number | null>
   point_count: number
   sampled_point_count: number
 }
@@ -217,8 +236,8 @@ export interface WaveformSeriesSnapshotState {
 export interface WaveformMeasurementState {
   cursor_a_x: number | null
   cursor_b_x: number | null
-  values_a: Record<string, number>
-  values_b: Record<string, number>
+  values_a: Record<string, number | null>
+  values_b: Record<string, number | null>
 }
 
 export interface AnalysisInfoViewState {
@@ -232,6 +251,7 @@ export interface AnalysisInfoViewState {
   requested_x_range: number[] | null
   actual_x_range: number[] | null
   parameters: Record<string, unknown>
+  noise_totals: NoiseTotalsState
 }
 
 export interface RawDataColumnState {
@@ -250,6 +270,7 @@ export interface RawDataDocumentState {
   row_height_px: number
   column_header_height_px: number
   columns: RawDataColumnState[]
+  noise_totals: NoiseTotalsState
 }
 
 export interface RawDataViewportRowState {
@@ -382,6 +403,9 @@ export interface OutputLogViewState {
   search_keyword: string
   lines: OutputLogLineState[]
   selected_line_number: number | null
+  total_line_count: number
+  visible_line_count: number
+  is_truncated: boolean
 }
 
 export interface OutputLogLineState {
@@ -407,6 +431,7 @@ export interface ExportViewState {
 
 export interface AscConversionViewState {
   can_choose_files: boolean
+  is_running: boolean
   selected_files_summary: string
 }
 
@@ -425,18 +450,9 @@ export interface LoadableResultState {
 /**
  * One card in the circuit-selection grid.
  *
- * ``latest_result`` intentionally reuses the exact {@link
- * LoadableResultState} shape emitted by the backend's single persisted-
- * result load target serializer. Defining a second, card-local "latest
- * result" shape would re-introduce the drift this tab collapse is
- * explicitly removing.
- *
- * Currency is a *circuit-level* predicate: ``is_current`` is true
- * iff this card's ``circuit_file`` matches the panel's currently-
- * displayed circuit. It is **not** derived from ``latest_result``'s
- * own ``is_current`` — per-run currency is meaningless inside a
- * card whose identity is the circuit, and the backend always zeroes
- * out the embedded row's ``is_current`` for that reason.
+ * ``results`` is newest-first and every entry reuses the exact generic
+ * persisted-result load-target schema. ``is_current`` on the card marks the
+ * circuit; ``is_current`` on a result marks the exact loaded run.
  */
 export interface CircuitSelectionItemState {
   circuit_file: string
@@ -444,7 +460,7 @@ export interface CircuitSelectionItemState {
   circuit_display_name: string
   run_count: number
   is_current: boolean
-  latest_result: LoadableResultState
+  results: LoadableResultState[]
 }
 
 export interface CircuitSelectionViewState {
@@ -547,6 +563,13 @@ const EMPTY_WAVEFORM_MEASUREMENT: WaveformMeasurementState = {
   values_b: {},
 }
 
+export const EMPTY_NOISE_TOTALS: NoiseTotalsState = {
+  applicable: false,
+  available: false,
+  source: '',
+  items: [],
+}
+
 export const EMPTY_RAW_DATA_DOCUMENT: RawDataDocumentState = {
   dataset_id: '',
   version: 0,
@@ -557,6 +580,7 @@ export const EMPTY_RAW_DATA_DOCUMENT: RawDataDocumentState = {
   row_height_px: 0,
   column_header_height_px: 0,
   columns: [],
+  noise_totals: EMPTY_NOISE_TOTALS,
 }
 
 export const EMPTY_RAW_DATA_VIEWPORT: RawDataViewportState = {
@@ -610,11 +634,12 @@ export const EMPTY_SIMULATION_STATE: SimulationMainState = {
     error_message: '',
     project_root: '',
     has_project: false,
+    current_job_id: '',
     current_result_path: '',
     is_empty: true,
     has_result: false,
     has_error: false,
-    awaiting_confirmation: false,
+    can_cancel: false,
     current_result: EMPTY_RESULT,
   },
   surface_tabs: {
@@ -624,6 +649,7 @@ export const EMPTY_SIMULATION_STATE: SimulationMainState = {
   },
   metrics_view: {
     items: [],
+    noise_totals: EMPTY_NOISE_TOTALS,
     source_file_path: '',
     can_add_to_conversation: false,
   },
@@ -662,6 +688,8 @@ export const EMPTY_SIMULATION_STATE: SimulationMainState = {
     y_label: '',
     secondary_y_label: '',
     log_x: false,
+    log_y: false,
+    right_log_y: false,
     viewport: EMPTY_SURFACE_VIEWPORT,
     cursor_a_visible: false,
     cursor_b_visible: false,
@@ -678,6 +706,7 @@ export const EMPTY_SIMULATION_STATE: SimulationMainState = {
     requested_x_range: null,
     actual_x_range: null,
     parameters: {},
+    noise_totals: EMPTY_NOISE_TOTALS,
   },
   output_log_view: {
     has_log: false,
@@ -686,6 +715,9 @@ export const EMPTY_SIMULATION_STATE: SimulationMainState = {
     search_keyword: '',
     lines: [],
     selected_line_number: null,
+    total_line_count: 0,
+    visible_line_count: 0,
+    is_truncated: false,
   },
   export_view: {
     has_result: false,
@@ -696,6 +728,7 @@ export const EMPTY_SIMULATION_STATE: SimulationMainState = {
   },
   asc_conversion_view: {
     can_choose_files: false,
+    is_running: false,
     selected_files_summary: '',
   },
   circuit_selection_view: {
@@ -741,24 +774,44 @@ function asStringArray(value: unknown): string[] {
   return value.map((item) => String(item ?? '')).filter(Boolean)
 }
 
+function asCellStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return []
+  }
+  // Empty cells carry column position. Filtering them shifts every value to
+  // the left and corrupts the raw-data table.
+  return value.map((item) => String(item ?? ''))
+}
+
+function isSimulationTabId(value: string): value is SimulationTabId {
+  return (SIMULATION_TAB_IDS as readonly string[]).includes(value)
+}
+
 function asRange(value: unknown): number[] | null {
   if (!Array.isArray(value) || value.length !== 2) {
     return null
   }
   const [start, end] = value
-  return [asNumber(start), asNumber(end)]
+  const normalizedStart = asNullableNumber(start)
+  const normalizedEnd = asNullableNumber(end)
+  return normalizedStart === null || normalizedEnd === null
+    ? null
+    : [normalizedStart, normalizedEnd]
 }
 
-function asNumberArray(value: unknown): number[] {
+function asNullableNumberArray(value: unknown): Array<number | null> {
   if (!Array.isArray(value)) {
     return []
   }
-  return value.map((item) => asNumber(item))
+  // Sample index is part of the series identity. Invalid/missing samples are
+  // gaps, never numeric zero and never removable rows: either conversion
+  // would fabricate a circuit response that the simulator did not produce.
+  return value.map((item) => asNullableNumber(item))
 }
 
-function asNumberRecord(value: unknown): Record<string, number> {
+function asNullableNumberRecord(value: unknown): Record<string, number | null> {
   const record = asRecord(value)
-  return Object.fromEntries(Object.entries(record).map(([key, item]) => [key, asNumber(item)]))
+  return Object.fromEntries(Object.entries(record).map(([key, item]) => [key, asNullableNumber(item)]))
 }
 
 function asStringRecord(value: unknown): Record<string, string> {
@@ -941,8 +994,8 @@ function normalizeChartSeriesSnapshots(value: unknown): ChartSeriesSnapshotState
       line_style: asString(record.line_style),
       group_key: asString(record.group_key),
       component: asString(record.component),
-      x: asNumberArray(record.x),
-      y: asNumberArray(record.y),
+      x: asNullableNumberArray(record.x),
+      y: asNullableNumberArray(record.y),
       point_count: asNumber(record.point_count),
       sampled_point_count: asNumber(record.sampled_point_count),
     }
@@ -954,8 +1007,8 @@ function normalizeChartMeasurement(value: unknown): ChartMeasurementState {
   return {
     cursor_a_x: asNullableNumber(record.cursor_a_x),
     cursor_b_x: asNullableNumber(record.cursor_b_x),
-    values_a: asNumberRecord(record.values_a),
-    values_b: asNumberRecord(record.values_b),
+    values_a: asNullableNumberRecord(record.values_a),
+    values_b: asNullableNumberRecord(record.values_b),
   }
 }
 
@@ -1005,8 +1058,8 @@ function normalizeWaveformSeriesSnapshots(value: unknown): WaveformSeriesSnapsho
       name: asString(record.name),
       color: asString(record.color),
       axis_key: asString(record.axis_key),
-      x: asNumberArray(record.x),
-      y: asNumberArray(record.y),
+      x: asNullableNumberArray(record.x),
+      y: asNullableNumberArray(record.y),
       point_count: asNumber(record.point_count),
       sampled_point_count: asNumber(record.sampled_point_count),
     }
@@ -1018,8 +1071,8 @@ function normalizeWaveformMeasurement(value: unknown): WaveformMeasurementState 
   return {
     cursor_a_x: asNullableNumber(record.cursor_a_x),
     cursor_b_x: asNullableNumber(record.cursor_b_x),
-    values_a: asNumberRecord(record.values_a),
-    values_b: asNumberRecord(record.values_b),
+    values_a: asNullableNumberRecord(record.values_a),
+    values_b: asNullableNumberRecord(record.values_b),
   }
 }
 
@@ -1045,7 +1098,7 @@ function normalizeRawDataViewportRows(value: unknown): RawDataViewportRowState[]
     const record = asRecord(item)
     return {
       row_index: asNumber(record.row_index),
-      values: asStringArray(record.values),
+      values: asCellStringArray(record.values),
     }
   })
 }
@@ -1075,10 +1128,41 @@ function normalizeMetricItems(value: unknown): MetricItemState[] {
       display_name: asString(record.display_name),
       value: asString(record.value),
       unit: asString(record.unit),
+      status: asString(record.status),
+      error_message: asString(record.error_message),
       raw_value: asNullableNumber(record.raw_value),
       target: asString(record.target),
     }
   })
+}
+
+function normalizeNoiseTotals(value: unknown): NoiseTotalsState {
+  const record = asRecord(value)
+  const rawItems = Array.isArray(record.items) ? record.items : []
+  return {
+    applicable: asBoolean(record.applicable),
+    available: asBoolean(record.available),
+    source: asString(record.source),
+    items: rawItems.map((item) => {
+      const itemRecord = asRecord(item)
+      const key = asString(itemRecord.key)
+      const unit = asString(itemRecord.unit)
+      if (key !== 'output_rms' && key !== 'input_referred_rms') {
+        throw new Error(`Invalid integrated-noise key: ${key}`)
+      }
+      if (unit !== 'V' && unit !== 'A') {
+        throw new Error(`Invalid integrated-noise unit: ${unit}`)
+      }
+      if (key === 'output_rms' && unit !== 'V') {
+        throw new Error(`Invalid integrated-noise unit: ${unit}`)
+      }
+      return {
+        key,
+        value: asNumber(itemRecord.value),
+        unit,
+      }
+    }),
+  }
 }
 
 function normalizeExportItems(value: unknown): ExportItemState[] {
@@ -1123,7 +1207,9 @@ function normalizeCircuitSelectionItems(value: unknown): CircuitSelectionItemSta
       circuit_display_name: asString(record.circuit_display_name),
       run_count: asNumber(record.run_count),
       is_current: asBoolean(record.is_current),
-      latest_result: normalizeLoadableResult(record.latest_result),
+      results: Array.isArray(record.results)
+        ? record.results.map(normalizeLoadableResult)
+        : [],
     }
   })
 }
@@ -1167,6 +1253,16 @@ export function normalizeSimulationState(input: unknown): SimulationMainState {
   const opResultView = asRecord(root.op_result_view)
   const runtime = simulationRuntime
   const currentResult = asRecord(simulationRuntime.current_result)
+  const normalizedAvailableTabs = Array.from(new Set(
+    asStringArray(surfaceTabs.available_tabs).filter(isSimulationTabId),
+  ))
+  const availableTabs = normalizedAvailableTabs.length
+    ? normalizedAvailableTabs
+    : DEFAULT_AVAILABLE_TABS
+  const requestedActiveTab = asString(surfaceTabs.active_tab)
+  const activeTab = isSimulationTabId(requestedActiveTab) && availableTabs.includes(requestedActiveTab)
+    ? requestedActiveTab
+    : (availableTabs.includes('metrics') ? 'metrics' : (availableTabs[0] ?? 'metrics'))
 
   return {
     simulation_runtime: {
@@ -1175,11 +1271,12 @@ export function normalizeSimulationState(input: unknown): SimulationMainState {
       error_message: asString(runtime.error_message),
       project_root: asString(runtime.project_root),
       has_project: asBoolean(runtime.has_project),
+      current_job_id: asString(runtime.current_job_id),
       current_result_path: asString(runtime.current_result_path),
       is_empty: asBoolean(runtime.is_empty),
       has_result: asBoolean(runtime.has_result),
       has_error: asBoolean(runtime.has_error),
-      awaiting_confirmation: asBoolean(runtime.awaiting_confirmation),
+      can_cancel: asBoolean(runtime.can_cancel),
       current_result: {
         has_result: asBoolean(currentResult.has_result),
         result_path: asString(currentResult.result_path),
@@ -1202,12 +1299,13 @@ export function normalizeSimulationState(input: unknown): SimulationMainState {
       },
     },
     surface_tabs: {
-      active_tab: (asString(surfaceTabs.active_tab) as SimulationTabId) || EMPTY_SIMULATION_STATE.surface_tabs.active_tab,
-      available_tabs: asStringArray(surfaceTabs.available_tabs) as SimulationTabId[],
+      active_tab: activeTab,
+      available_tabs: availableTabs,
       has_op_result: asBoolean(surfaceTabs.has_op_result),
     },
     metrics_view: {
       items: normalizeMetricItems(metricsView.items),
+      noise_totals: normalizeNoiseTotals(metricsView.noise_totals),
       source_file_path: asString(metricsView.source_file_path),
       can_add_to_conversation: asBoolean(metricsView.can_add_to_conversation),
     },
@@ -1246,6 +1344,8 @@ export function normalizeSimulationState(input: unknown): SimulationMainState {
       y_label: asString(waveformView.y_label),
       secondary_y_label: asString(waveformView.secondary_y_label),
       log_x: asBoolean(waveformView.log_x),
+      log_y: asBoolean(waveformView.log_y),
+      right_log_y: asBoolean(waveformView.right_log_y),
       viewport: normalizeSurfaceViewport(waveformView.viewport),
       cursor_a_visible: asBoolean(waveformView.cursor_a_visible),
       cursor_b_visible: asBoolean(waveformView.cursor_b_visible),
@@ -1262,6 +1362,7 @@ export function normalizeSimulationState(input: unknown): SimulationMainState {
       requested_x_range: asRange(analysisInfoView.requested_x_range),
       actual_x_range: asRange(analysisInfoView.actual_x_range),
       parameters: asRecord(analysisInfoView.parameters),
+      noise_totals: normalizeNoiseTotals(analysisInfoView.noise_totals),
     },
     output_log_view: {
       has_log: asBoolean(outputLogView.has_log),
@@ -1270,6 +1371,9 @@ export function normalizeSimulationState(input: unknown): SimulationMainState {
       search_keyword: asString(outputLogView.search_keyword),
       lines: normalizeOutputLogLines(outputLogView.lines),
       selected_line_number: asNullableNumber(outputLogView.selected_line_number),
+      total_line_count: asNumber(outputLogView.total_line_count),
+      visible_line_count: asNumber(outputLogView.visible_line_count),
+      is_truncated: asBoolean(outputLogView.is_truncated),
     },
     export_view: {
       has_result: asBoolean(exportView.has_result),
@@ -1280,6 +1384,7 @@ export function normalizeSimulationState(input: unknown): SimulationMainState {
     },
     asc_conversion_view: {
       can_choose_files: asBoolean(ascConversionView.can_choose_files),
+      is_running: asBoolean(ascConversionView.is_running),
       selected_files_summary: asString(ascConversionView.selected_files_summary),
     },
     circuit_selection_view: {
@@ -1311,6 +1416,7 @@ export function normalizeRawDataDocument(input: unknown): RawDataDocumentState {
     row_height_px: asNumber(rawDataDocument.row_height_px),
     column_header_height_px: asNumber(rawDataDocument.column_header_height_px),
     columns: normalizeRawDataColumns(rawDataDocument.columns),
+    noise_totals: normalizeNoiseTotals(rawDataDocument.noise_totals),
   }
 }
 

@@ -25,16 +25,13 @@ export function OutputLogTab({ state, bridge }: OutputLogTabProps) {
   }, [logView.current_filter])
 
   const handleCopyLog = () => {
-    // The copy pipeline is unified: ship plain text through the
-    // Qt WebChannel bridge so the host process writes it to the
-    // system clipboard via QClipboard. The frontend never touches
-    // navigator.clipboard / document.execCommand because they are
-    // not reliable inside the embedded QtWebEngine.
-    if (!bridge || !logView.lines.length) {
+    // Ask the backend to copy the complete filtered log. The rendered
+    // WebChannel window is intentionally capped, so assembling text from
+    // `lines` here used to copy only the first/selected 1000 rows.
+    if (!bridge || logView.total_line_count <= 0) {
       return
     }
-    const text = logView.lines.map((line) => line.content).join('\n')
-    bridge.copyTextToClipboard(text)
+    bridge.copyOutputLog()
     setCopyStatus('copied')
     window.setTimeout(() => setCopyStatus('idle'), 1500)
   }
@@ -66,13 +63,21 @@ export function OutputLogTab({ state, bridge }: OutputLogTabProps) {
           <button type="button" className="sim-compact-button" onClick={() => bridge?.filterOutputLog(filterLevel)}>
             {getUiText(uiText, 'simulation.output_log.apply_filter', 'Apply Filter')}
           </button>
-          <button type="button" className="sim-compact-button sim-compact-button--accent" disabled={!logView.can_add_to_conversation} onClick={() => bridge?.addToConversation('output_log')}>
+          <button type="button" className="sim-compact-button sim-compact-button--accent" disabled={!logView.can_add_to_conversation} onClick={() => bridge?.addToConversation({ projectRoot: state.simulation_runtime.project_root, resultPath: state.simulation_runtime.current_result_path, target: 'output_log' })}>
             {getUiText(uiText, 'common.add_to_conversation', 'Add to Conversation')}
           </button>
-          <button type="button" className="sim-compact-button" disabled={!logView.lines.length} onClick={handleCopyLog}>
+          <button type="button" className="sim-compact-button" disabled={logView.total_line_count <= 0} onClick={handleCopyLog}>
             {copyLabel}
           </button>
         </div>
+        {logView.is_truncated ? (
+          <div className="muted-text">
+            {getUiText(uiText, 'simulation.output_log.truncated', 'Showing {visible} of {total} filtered lines. Copy includes all filtered lines.', {
+              visible: logView.visible_line_count,
+              total: logView.total_line_count,
+            })}
+          </div>
+        ) : null}
         <div className="log-stage log-stage--lines">
           {logView.lines.length ? logView.lines.map((line) => (
             <div

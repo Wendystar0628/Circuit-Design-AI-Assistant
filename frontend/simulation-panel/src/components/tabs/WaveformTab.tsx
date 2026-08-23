@@ -105,7 +105,11 @@ export function WaveformTab({ state, bridge }: WaveformTabProps) {
         type="button"
         className="sim-compact-button sim-compact-button--accent"
         disabled={!waveform.can_add_to_conversation}
-        onClick={() => bridge?.addToConversation('waveform')}
+        onClick={() => bridge?.addToConversation({
+          projectRoot: state.simulation_runtime.project_root,
+          resultPath: state.simulation_runtime.current_result_path,
+          target: 'waveform',
+        })}
       >
         {getUiText(uiText, 'common.add_to_conversation', 'Add to Conversation')}
       </button>
@@ -213,6 +217,8 @@ export function WaveformTab({ state, bridge }: WaveformTabProps) {
               yLabel={waveform.y_label || 'Waveform'}
               secondaryYLabel={waveform.secondary_y_label}
               logX={waveform.log_x}
+              logY={waveform.log_y}
+              rightLogY={waveform.right_log_y}
               emptyMessage={waveform.has_waveform
                 ? getUiText(uiText, 'simulation.waveform.empty_hidden', 'No waveform is currently displayed. Select signals from the left sidebar.')
                 : getUiText(uiText, 'simulation.waveform.empty_no_waveform', 'No waveform is available for the current result.')}

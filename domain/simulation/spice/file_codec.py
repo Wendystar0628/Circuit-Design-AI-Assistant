@@ -15,8 +15,7 @@ class SpiceSourceFile:
 def read_spice_source_file(file_path: str) -> SpiceSourceFile:
     path = Path(file_path)
     raw_bytes = path.read_bytes()
-    encoding = _detect_encoding(raw_bytes)
-    source_text = raw_bytes.decode(encoding)
+    source_text, encoding = decode_spice_source_bytes(raw_bytes)
     return SpiceSourceFile(
         file_path=str(path),
         source_text=source_text,
@@ -28,6 +27,20 @@ def read_spice_source_file(file_path: str) -> SpiceSourceFile:
 def write_spice_source_file(snapshot: SpiceSourceFile, source_text: str) -> None:
     path = Path(snapshot.file_path)
     path.write_bytes(str(source_text).encode(snapshot.encoding))
+
+
+def decode_spice_source_bytes(raw_bytes: bytes) -> tuple[str, str]:
+    """Decode one already-read SPICE source snapshot.
+
+    Scientific provenance must use ``source_closure`` rather than hashing one
+    file here: the effective circuit includes every recursive include/lib
+    dependency. The encoding order matches the schematic/source editor,
+    including common Chinese Windows netlists.
+    """
+    if not isinstance(raw_bytes, bytes):
+        raise TypeError("raw_bytes must be bytes")
+    encoding = _detect_encoding(raw_bytes)
+    return raw_bytes.decode(encoding), encoding
 
 
 def _detect_encoding(raw_bytes: bytes) -> str:
@@ -50,4 +63,9 @@ def _detect_newline(raw_bytes: bytes) -> str:
     return "\n"
 
 
-__all__ = ["SpiceSourceFile", "read_spice_source_file", "write_spice_source_file"]
+__all__ = [
+    "SpiceSourceFile",
+    "decode_spice_source_bytes",
+    "read_spice_source_file",
+    "write_spice_source_file",
+]

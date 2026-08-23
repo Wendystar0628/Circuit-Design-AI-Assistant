@@ -31,7 +31,9 @@ export function AscConversionTab({ state, bridge }: AscConversionTabProps) {
             disabled={!ascConversionView.can_choose_files}
             onClick={() => bridge?.chooseAscFilesForConversion()}
           >
-            {getUiText(uiText, 'simulation.asc.choose_and_convert', 'Choose and Convert')}
+            {ascConversionView.is_running
+              ? getUiText(uiText, 'simulation.asc.converting', 'Converting...')
+              : getUiText(uiText, 'simulation.asc.choose_and_convert', 'Choose and Convert')}
           </button>
         </div>
       </div>

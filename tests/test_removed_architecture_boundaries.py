@@ -7,11 +7,26 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 REMOVED_MODULES = (
     "domain/llm/external_service_manager.py",
+    "domain/simulation/data/resolution_pyramid.py",
+    "domain/simulation/executor/circuit_analyzer.py",
+    "domain/simulation/executor/executor_registry.py",
+    "domain/simulation/executor/python_executor.py",
+    "domain/simulation/executor/simulation_executor.py",
+    "domain/simulation/measure/measure_injector.py",
+    "domain/simulation/models/simulation_config.py",
+    "domain/simulation/service/parameter_extractor.py",
+    "domain/simulation/service/bundled_spice_library_injector.py",
     "domain/simulation/service/simulation_result_watcher.py",
+    "domain/simulation/service/tuning_service.py",
+    "domain/simulation/spice/analysis_directive_authority.py",
     "shared/worker_manager.py",
     "shared/worker_types.py",
     "shared/async_task_registry.py",
     "infrastructure/persistence/async_file_ops.py",
+    "presentation/panels/bottom_panel.py",
+    "presentation/panels/simulation/analysis_info_panel.py",
+    "presentation/panels/simulation/chart_signal_tree.py",
+    "presentation/panels/simulation/tuning_panel.py",
 )
 
 REMOVED_PACKAGES = (
@@ -106,7 +121,19 @@ def test_bootstrap_and_packaging_do_not_reference_removed_modules():
         "domain.dependency",
         "domain.design",
         "domain.simulation.service.simulation_result_watcher",
+        "domain.simulation.data.resolution_pyramid",
+        "domain.simulation.executor.circuit_analyzer",
+        "domain.simulation.executor.executor_registry",
+        "domain.simulation.executor.python_executor",
+        "domain.simulation.executor.simulation_executor",
+        "domain.simulation.service.parameter_extractor",
+        "domain.simulation.service.bundled_spice_library_injector",
+        "domain.simulation.service.tuning_service",
         "infrastructure.persistence.async_file_ops",
+        "presentation.panels.bottom_panel",
+        "presentation.panels.simulation.analysis_info_panel",
+        "presentation.panels.simulation.chart_signal_tree",
+        "presentation.panels.simulation.tuning_panel",
         "shared.async_task_registry",
         "shared.tracing",
         "shared.worker_manager",
@@ -120,3 +147,59 @@ def test_removed_thread_bridge_is_not_exported():
         encoding="utf-8"
     )
     assert "run_coroutine_threadsafe" not in async_runtime
+
+
+def test_removed_spice_compatibility_layers_are_not_reintroduced():
+    runtime_compatibility = (
+        PROJECT_ROOT / "domain/simulation/spice/runtime_compatibility.py"
+    ).read_text(encoding="utf-8")
+    source_closure = (
+        PROJECT_ROOT / "domain/simulation/spice/source_closure.py"
+    ).read_text(encoding="utf-8")
+
+    for symbol in (
+        "NetlistRuntimeCompatibilityNormalizer",
+        "RuntimeNormalizedNetlist",
+        "rewrite_library_directives_for_runtime",
+    ):
+        assert symbol not in runtime_compatibility
+    for symbol in (
+        "compute_spice_source_closure",
+        "SpiceSourceClosureIdentity",
+    ):
+        assert symbol not in source_closure
+
+
+def test_removed_measurement_convenience_api_is_not_reintroduced():
+    measure_metadata = (
+        PROJECT_ROOT / "domain/simulation/measure/measure_metadata.py"
+    ).read_text(encoding="utf-8")
+    simulation_result = (
+        PROJECT_ROOT / "domain/simulation/models/simulation_result.py"
+    ).read_text(encoding="utf-8")
+
+    for definition in (
+        "def extract_numeric_metric_values",
+        "def resolve_result_metric_values",
+        "def get_result_metric_value",
+    ):
+        assert definition not in measure_metadata
+    for definition in ("def metric_values", "def get_metric"):
+        assert definition not in simulation_result
+
+
+def test_regenerable_evaluation_and_transcription_outputs_are_ignored():
+    gitignore = (PROJECT_ROOT / ".gitignore").read_text(encoding="utf-8")
+    assert "evaluation/reports/" in gitignore
+    assert "TestCircuit/transcribed_circuits/" in gitignore
+
+
+def test_qt_tests_use_one_nonempty_process_argv_fixture():
+    empty_application_argv = "QApplication(" + "[]" + ")"
+    for test_path in (PROJECT_ROOT / "tests").rglob("*.py"):
+        assert empty_application_argv not in test_path.read_text(encoding="utf-8"), test_path
+
+    shared_fixture = (PROJECT_ROOT / "tests/conftest.py").read_text(
+        encoding="utf-8"
+    )
+    assert 'QApplication(["circuit-design-ai-tests"])' in shared_fixture

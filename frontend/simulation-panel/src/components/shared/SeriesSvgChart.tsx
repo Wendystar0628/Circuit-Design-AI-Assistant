@@ -506,18 +506,20 @@ export function SeriesSvgChart({
             <line x1={plotLeft} x2={plotLeft} y1={plotTop} y2={plotBottom} className="svg-chart__axis" />
             {hasRightAxis ? <line x1={plotRight} x2={plotRight} y1={plotTop} y2={plotBottom} className="svg-chart__axis" /> : null}
             <g clipPath={`url(#${plotClipPathId})`}>
-              {renderedSeries.map((item) => (
-                <polyline
-                  key={item.name}
-                  fill="none"
-                  stroke={item.color}
-                  strokeWidth={item.lineStyle === 'dash' ? '1.7' : '2'}
-                  strokeDasharray={item.strokeDasharray}
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  points={item.polylinePoints}
-                  className="svg-chart__series"
-                />
+              {renderedSeries.flatMap((item, seriesIndex) => (
+                item.polylineSegments.map((points, segmentIndex) => (
+                  <polyline
+                    key={`${seriesIndex}-${item.name}-${segmentIndex}`}
+                    fill="none"
+                    stroke={item.color}
+                    strokeWidth={item.lineStyle === 'dash' ? '1.7' : '2'}
+                    strokeDasharray={item.strokeDasharray}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    points={points}
+                    className="svg-chart__series"
+                  />
+                ))
               ))}
             </g>
             <rect

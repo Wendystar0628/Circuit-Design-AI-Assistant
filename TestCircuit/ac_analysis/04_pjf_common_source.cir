@@ -5,6 +5,7 @@
 * Devices exercised: V, R, C, J (PJF bundled 2N5460).
 
 .title PJF Common-Source AC Response
+.include "../../resources/models/ngspice/testcircuit_discrete.lib"
 
 * --- Negative supply and AC test source ---
 Vss vss 0 DC -12
@@ -14,11 +15,11 @@ Vin in  0 AC 1
 Rg 0 gate 1Meg
 
 * --- Self-bias source resistor (bypassed by Cs) ---
-Rs src vss 2.2k
-Cs src vss 22u
+Rs src 0 2.2k
+Cs src 0 22u
 
-* --- Drain load resistor (from drain up to ground reference) ---
-Rd drain 0 4.7k
+* --- Drain load resistor to the negative supply ---
+Rd vss drain 4.7k
 
 * --- AC coupling ---
 Cin  in    gate  1u

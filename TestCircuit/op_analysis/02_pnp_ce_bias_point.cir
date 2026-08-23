@@ -5,6 +5,7 @@
 * Devices exercised: V, R, Q (PNP bundled 2N3906).
 
 .title PNP Common-Emitter Bias Point
+.include "../../resources/models/ngspice/testcircuit_discrete.lib"
 
 * --- Negative supply ---
 Vss vss 0 DC -12

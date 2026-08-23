@@ -3,14 +3,14 @@
 * every CMOS op-amp: two NMOS input devices (M1, M2) form a
 * differential pair, two PMOS devices (M3, M4) act as an active
 * current-mirror load so the differential drain current is
-* reflected to a single-ended output, and a tail current source I1
-* sets the bias. The AC differential gain is approximately gm1 *
-* (ro2 || ro4); plotting the output vs Vin-diff across frequency
+* reflected to a single-ended output. A fifth NMOS, M5, is biased
+* as the tail-current device. The AC differential gain is approximately
+* gm1 * (ro2 || ro4); plotting the output vs Vin-diff across frequency
 * produces the standard single-pole OTA response.
-* Devices exercised: V, I (current source), M (NMOS BSS123 x2 +
-*                    PMOS BSS84 x2), R, C.
+* Devices exercised: V, M (NMOS BSS123 x3 + PMOS BSS84 x2), R, C.
 
 .title 5-Transistor CMOS OTA
+.include "../../resources/models/ngspice/testcircuit_discrete.lib"
 
 * --- Supplies ---
 Vdd vdd 0 DC 5
@@ -21,8 +21,9 @@ Vcm  cm  0  DC 0
 Vinp inp cm AC 0.5
 Vinn inn cm AC -0.5
 
-* --- Tail current source pulling to Vss ---
-Itail tail vss DC 100u
+* --- Fifth transistor: tail-current device biased near 100 uA ---
+Vbias bias vss DC 1.41
+M5 tail bias vss vss BSS123
 
 * --- Input NMOS differential pair (drains go to the current-mirror load) ---
 M1 d1 inp tail tail BSS123

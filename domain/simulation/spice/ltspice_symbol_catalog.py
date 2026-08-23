@@ -42,6 +42,11 @@ class LtspiceSymbolCatalog:
         definition = self._symbols_by_key.get(normalized)
         if definition is not None:
             return definition
+        # A qualified ASC symbol path is authoritative.  Falling back from
+        # ``Vendor/Foo`` to any unrelated ``Foo.asy`` silently assigns the
+        # wrong SpiceOrder pins, which changes circuit connectivity.
+        if "/" in normalized:
+            return None
         return self._symbols_by_basename.get(normalized.rsplit("/", 1)[-1])
 
     def all_symbols(self) -> Sequence[LtspiceSymbolDefinition]:
@@ -54,6 +59,7 @@ class LtspiceSymbolCatalog:
             return
         symbols_by_key: Dict[str, LtspiceSymbolDefinition] = {}
         symbols_by_basename: Dict[str, LtspiceSymbolDefinition] = {}
+        ambiguous_basenames = set()
         if self._sym_dir.exists():
             for file_path in sorted(self._sym_dir.rglob("*")):
                 if not file_path.is_file() or file_path.suffix.lower() != ".asy":
@@ -62,7 +68,14 @@ class LtspiceSymbolCatalog:
                 if definition is None:
                     continue
                 symbols_by_key.setdefault(definition.key, definition)
-                symbols_by_basename.setdefault(definition.basename, definition)
+                if definition.basename in ambiguous_basenames:
+                    continue
+                existing = symbols_by_basename.get(definition.basename)
+                if existing is not None and existing.key != definition.key:
+                    symbols_by_basename.pop(definition.basename, None)
+                    ambiguous_basenames.add(definition.basename)
+                    continue
+                symbols_by_basename[definition.basename] = definition
         self._symbols_by_key = symbols_by_key
         self._symbols_by_basename = symbols_by_basename
 

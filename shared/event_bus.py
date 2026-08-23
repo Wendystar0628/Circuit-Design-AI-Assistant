@@ -30,6 +30,7 @@
     event_bus.publish(EVENT_INIT_COMPLETE, {"timestamp": time.time()})
 """
 
+import copy
 import time
 import threading
 from typing import Any, Callable, Dict, List, Optional
@@ -37,7 +38,12 @@ from typing import Any, Callable, Dict, List, Optional
 from PyQt6.QtCore import QObject, QMetaObject, Qt, Q_ARG, pyqtSlot, QTimer
 from PyQt6.QtWidgets import QApplication
 
-from shared.event_types import CRITICAL_EVENTS
+from shared.event_types import (
+    CRITICAL_EVENTS,
+    EVENT_SIM_COMPLETE,
+    EVENT_SIM_ERROR,
+    EVENT_SIM_STARTED,
+)
 
 
 # 事件处理器类型
@@ -45,6 +51,9 @@ EventHandler = Callable[[Dict[str, Any]], None]
 
 # 默认节流间隔（毫秒）
 DEFAULT_THROTTLE_MS = 50
+_ISOLATED_EVENT_TYPES = frozenset(
+    {EVENT_SIM_STARTED, EVENT_SIM_COMPLETE, EVENT_SIM_ERROR}
+)
 
 
 class EventBusReceiver(QObject):
@@ -291,7 +300,12 @@ class EventBus:
         is_critical = event_type in CRITICAL_EVENTS
         
         for handler in handlers:
-            self._receiver._execute_handler(handler, event_data, event_type)
+            delivered = (
+                copy.deepcopy(event_data)
+                if event_type in _ISOLATED_EVENT_TYPES
+                else event_data
+            )
+            self._receiver._execute_handler(handler, delivered, event_type)
 
         # 关键事件发布完成后检查
         if is_critical and self._debug and self.logger:
@@ -303,7 +317,12 @@ class EventBus:
         """通过 Qt 事件循环分发到主线程"""
         # 将事件加入队列
         for handler in handlers:
-            self._receiver.queue_event(handler, event_data, event_type)
+            delivered = (
+                copy.deepcopy(event_data)
+                if event_type in _ISOLATED_EVENT_TYPES
+                else event_data
+            )
+            self._receiver.queue_event(handler, delivered, event_type)
 
         # 触发主线程处理
         QMetaObject.invokeMethod(

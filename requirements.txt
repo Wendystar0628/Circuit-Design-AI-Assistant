@@ -1,8 +1,10 @@
 # Circuit Design AI - Dependencies
 # ================================
 
-# GUI Framework
-PyQt6>=6.5.0
+# GUI Framework. Qt Core and WebEngine must use the same runtime build;
+# mixing minor versions causes an ABI-level crash when a WebEngine page opens.
+PyQt6==6.10.1
+PyQt6-Qt6==6.10.1
 
 # Circuit Simulation
 # NOTE: PySpice removed due to compatibility issues with ngspice 42
@@ -42,8 +44,9 @@ rapidfuzz>=3.0.0
 # Markdown Rendering (chat panel)
 markdown>=3.5.0
 
-# WebEngine for LaTeX rendering (KaTeX)
-PyQt6-WebEngine>=6.5.0
+# WebEngine for the React/KaTeX surfaces
+PyQt6-WebEngine==6.10.0
+PyQt6-WebEngine-Qt6==6.10.1
 
 # Utilities
 numpy>=1.24.0

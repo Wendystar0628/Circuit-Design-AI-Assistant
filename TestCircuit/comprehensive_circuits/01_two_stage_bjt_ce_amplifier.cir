@@ -2,14 +2,15 @@
 * A classic low-frequency audio amplifier: two voltage-divider-biased
 * NPN common-emitter stages coupled by a blocking capacitor Cc, each
 * with a bypassed emitter to maximize gain. Input and output are AC
-* coupled so the amplifier works into a floating source / floating
-* load. Target midband gain is the product of the two stage gains
+* coupled so the source and load are isolated from the stage DC bias.
+* Target midband gain is the product of the two stage gains
 * (~ -gm*Rc per stage), and the overall bandwidth is bounded by the
 * coupling-cap low-frequency poles and the device-capacitance high
 * poles. .ac sweep reveals the full gain-vs-frequency curve.
-* Devices exercised: V, R (x11), C (x5), Q (NPN bundled 2N3904, x2).
+* Devices exercised: V, R (x9), C (x5), Q (NPN bundled 2N3904, x2).
 
 .title Two-Stage NPN CE Cascade Amplifier
+.include "../../resources/models/ngspice/testcircuit_discrete.lib"
 
 * --- Supply and AC test source ---
 Vdd vdd 0 DC 12

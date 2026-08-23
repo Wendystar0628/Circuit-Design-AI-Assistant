@@ -5,6 +5,7 @@
 * Devices exercised: V, R, D (bundled 1N4148).
 
 .title Diode I-V Curve
+.include "../../resources/models/ngspice/testcircuit_discrete.lib"
 
 * --- Source ---
 Vin in 0 DC 0

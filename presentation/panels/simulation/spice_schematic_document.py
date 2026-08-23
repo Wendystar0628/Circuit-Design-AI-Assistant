@@ -8,10 +8,14 @@ from typing import Any, Dict, Optional, Set
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 
-from domain.simulation.spice.file_codec import read_spice_source_file
 from domain.simulation.spice.models import SpiceDocument
 from domain.simulation.spice.parser import SpiceParser
 from domain.simulation.spice.schematic_builder import SpiceSchematicBuilder
+from domain.simulation.spice.source_closure import (
+    SpiceSourceClosureGraph,
+    SpiceSourceClosureError,
+    collect_spice_source_closure,
+)
 from domain.simulation.spice.source_patcher import SpiceSourcePatcher
 from presentation.panels.simulation.simulation_frontend_state_serializer import SimulationFrontendStateSerializer
 from shared.event_types import EVENT_FILE_CHANGED
@@ -25,6 +29,7 @@ _DEBOUNCE_INTERVAL_MS = 250
 class SpiceSchematicDocument(QObject):
     schematic_document_changed = pyqtSignal(dict)
     schematic_write_result_changed = pyqtSignal(dict)
+    source_provenance_invalidated = pyqtSignal(str)
 
     def __init__(self, parent: Optional[QObject] = None):
         super().__init__(parent)
@@ -35,6 +40,7 @@ class SpiceSchematicDocument(QObject):
         self._source_patcher = SpiceSourcePatcher()
 
         self._current_file_path = ""
+        self._expected_source_digest = ""
         self._latest_spice_document: Optional[SpiceDocument] = None
         self._latest_source_text = ""
         self._latest_dependency_snapshots: Dict[str, str] = {}
@@ -57,29 +63,43 @@ class SpiceSchematicDocument(QObject):
     def get_authoritative_schematic_write_result(self) -> Dict[str, Any]:
         return copy.deepcopy(self._authoritative_schematic_write_result)
 
-    def load_from_result_file(self, file_path: str) -> None:
+    def load_from_result_file(self, file_path: str, source_digest: str) -> bool:
         next_file_path = str(file_path or "")
-        if next_file_path == self._current_file_path and next_file_path:
-            return
-
+        same_source = (
+            bool(next_file_path)
+            and self._normalize_watch_key(next_file_path)
+            == self._normalize_watch_key(self._current_file_path)
+        )
+        previous_watch_keys = set(self._watched_file_keys) if same_source else set()
+        expected_digest = str(source_digest or "").strip().lower()
+        if len(expected_digest) != 64 or any(
+            character not in "0123456789abcdef" for character in expected_digest
+        ):
+            self.load_unavailable_source(
+                next_file_path,
+                "仿真结果缺少有效的源电路摘要，历史结果原理图不可用",
+            )
+            return False
         self._current_file_path = next_file_path
+        self._expected_source_digest = expected_digest
         self._latest_spice_document = None
         self._latest_source_text = ""
         self._latest_dependency_snapshots = {}
-        self._watched_file_keys.clear()
+        self._watched_file_keys = previous_watch_keys
         self._pending_refresh_reason = ""
         self._refresh_timer.stop()
 
         if not self._current_file_path:
             self.clear()
-            return
+            return False
 
         self._subscribe_file_events()
         self._emit_schematic_write_result()
-        self._refresh_document(reason="result_switched")
+        return self._refresh_document(reason="result_switched")
 
     def clear(self) -> None:
         self._current_file_path = ""
+        self._expected_source_digest = ""
         self._latest_spice_document = None
         self._latest_source_text = ""
         self._latest_dependency_snapshots = {}
@@ -93,6 +113,38 @@ class SpiceSchematicDocument(QObject):
             )
         )
         self._emit_schematic_write_result()
+
+    def load_unavailable_source(self, source_identity: str, reason: str) -> None:
+        """Expose an unresolvable persisted source without reading the CWD.
+
+        ``SimulationResult.file_path`` is an identity, not an arbitrary path
+        the presentation layer may open.  The result repository resolves and
+        confines it to the active project first; when that fails this method
+        produces an explicit read-only error document instead of interpreting
+        a relative value against the process working directory.
+        """
+        unavailable_identity = str(source_identity or "")
+        self._current_file_path = ""
+        self._expected_source_digest = ""
+        self._latest_spice_document = None
+        self._latest_source_text = ""
+        self._latest_dependency_snapshots = {}
+        self._watched_file_keys.clear()
+        self._pending_refresh_reason = ""
+        self._refresh_timer.stop()
+        self._unsubscribe_file_events()
+        payload = self._builder.build_empty_document(unavailable_identity)
+        payload["parse_errors"] = [
+            self._make_parse_error(
+                str(reason or "历史结果原理图不可用"),
+                unavailable_identity,
+            )
+        ]
+        self._set_schematic_document(
+            self._state_serializer.serialize_schematic_document(payload)
+        )
+        self._emit_schematic_write_result()
+        self.source_provenance_invalidated.emit(str(reason or "历史结果原理图不可用"))
 
     def request_value_update(self, payload: Dict[str, Any]) -> None:
         if not isinstance(payload, dict):
@@ -156,7 +208,7 @@ class SpiceSchematicDocument(QObject):
             error_message=patch_result.error_message,
         )
 
-    def _refresh_document(self, *, reason: str) -> None:
+    def _refresh_document(self, *, reason: str) -> bool:
         if not self._current_file_path:
             self._latest_spice_document = None
             self._latest_source_text = ""
@@ -167,44 +219,102 @@ class SpiceSchematicDocument(QObject):
                     self._builder.build_empty_document()
                 )
             )
-            return
+            return False
 
         try:
-            source_file = read_spice_source_file(self._current_file_path)
-            parsed_document = self._parser.parse_content(source_file.source_text, self._current_file_path)
-            dependency_snapshots, dependency_parse_errors = self._build_dependency_snapshots(self._current_file_path, parsed_document)
+            source_closure = collect_spice_source_closure(self._current_file_path)
+            self._watched_file_keys = {
+                normalized_key
+                for path in source_closure.source_keys
+                if (normalized_key := self._normalize_watch_key(path))
+            }
+            if source_closure.digest != self._expected_source_digest:
+                invalidation_reason = (
+                    "源电路已修改；当前波形仍属于修改前的历史结果。请重新运行仿真。"
+                    if reason == "write_success"
+                    else "源电路已改变，或其依赖已改变，历史结果原理图不可用"
+                )
+                return self._invalidate_historical_source(
+                    document_message=(
+                        "源电路已改变，或其依赖已改变，历史结果原理图不可用"
+                    ),
+                    status_reason=invalidation_reason,
+                )
+            main_blob = source_closure.main_blob
+            parsed_document = self._parser.parse_source_graph(source_closure)
+            dependency_snapshots = (
+                self._build_edit_revision_dependency_snapshots(source_closure)
+            )
             self._latest_spice_document = parsed_document
-            self._latest_source_text = source_file.source_text
+            self._latest_source_text = main_blob.source_text
             self._latest_dependency_snapshots = dependency_snapshots
-            self._watched_file_keys = self._resolve_watched_file_keys(self._current_file_path, parsed_document)
             payload = self._builder.build_document(
                 parsed_document,
-                source_text=source_file.source_text,
+                source_text=main_blob.source_text,
                 dependency_snapshots=dependency_snapshots,
             )
-            if dependency_parse_errors:
-                payload["parse_errors"] = [
-                    *(payload.get("parse_errors") or []),
-                    *dependency_parse_errors,
-                ]
-            self._set_schematic_document(self._state_serializer.serialize_schematic_document(payload))
-        except FileNotFoundError:
-            self._latest_spice_document = None
-            self._latest_source_text = ""
-            self._latest_dependency_snapshots = {}
-            self._watched_file_keys = {self._normalize_watch_key(self._current_file_path)} if self._current_file_path else set()
-            payload = self._builder.build_empty_document(self._current_file_path)
-            payload["parse_errors"] = [self._make_parse_error("未找到源电路文件", self._current_file_path)]
-            self._set_schematic_document(self._state_serializer.serialize_schematic_document(payload))
+            self._set_schematic_document(
+                self._state_serializer.serialize_schematic_document(payload)
+            )
+            return True
+        except SpiceSourceClosureError as exc:
+            self._logger.warning(
+                "Historical schematic source closure is unavailable (%s): %s",
+                reason,
+                exc,
+            )
+            return self._invalidate_historical_source(
+                document_message=f"源电路或其依赖不可用：{exc}",
+                status_reason="源电路或其依赖不可用，历史结果原理图不可用",
+            )
         except Exception as exc:
-            self._logger.warning(f"Failed to refresh schematic document ({reason}): {exc}")
+            self._logger.warning(
+                "Failed to build schematic document (%s): %s",
+                reason,
+                exc,
+            )
             self._latest_spice_document = None
             self._latest_source_text = ""
             self._latest_dependency_snapshots = {}
-            self._watched_file_keys = {self._normalize_watch_key(self._current_file_path)} if self._current_file_path else set()
+            if not self._watched_file_keys and self._current_file_path:
+                self._watched_file_keys = {
+                    self._normalize_watch_key(self._current_file_path)
+                }
             payload = self._builder.build_empty_document(self._current_file_path)
-            payload["parse_errors"] = [self._make_parse_error(f"电路文档构建失败: {exc}", self._current_file_path)]
-            self._set_schematic_document(self._state_serializer.serialize_schematic_document(payload))
+            payload["parse_errors"] = [
+                self._make_parse_error(
+                    f"电路文档构建失败: {exc}",
+                    self._current_file_path,
+                )
+            ]
+            self._set_schematic_document(
+                self._state_serializer.serialize_schematic_document(payload)
+            )
+            return False
+
+    def _invalidate_historical_source(
+        self,
+        *,
+        document_message: str,
+        status_reason: str,
+    ) -> bool:
+        """Make a persisted schematic read-only after provenance rejection."""
+        self._latest_spice_document = None
+        self._latest_source_text = ""
+        self._latest_dependency_snapshots = {}
+        if not self._watched_file_keys and self._current_file_path:
+            self._watched_file_keys = {
+                self._normalize_watch_key(self._current_file_path)
+            }
+        payload = self._builder.build_empty_document(self._current_file_path)
+        payload["parse_errors"] = [
+            self._make_parse_error(document_message, self._current_file_path)
+        ]
+        self._set_schematic_document(
+            self._state_serializer.serialize_schematic_document(payload)
+        )
+        self.source_provenance_invalidated.emit(status_reason)
+        return False
 
     def _set_schematic_document(self, next_document: Dict[str, Any]) -> None:
         if next_document == self._authoritative_schematic_document:
@@ -328,52 +438,40 @@ class SpiceSchematicDocument(QObject):
         self._refresh_document(reason=self._pending_refresh_reason or "debounced_file_changed")
         self._pending_refresh_reason = ""
 
-    def _build_dependency_snapshots(self, source_file_path: str, spice_document: SpiceDocument) -> tuple[Dict[str, str], list[Dict[str, Any]]]:
-        snapshots: Dict[str, str] = {}
-        parse_errors: list[Dict[str, Any]] = []
-        source_dir = Path(source_file_path).parent
-        for include in spice_document.includes:
-            include_path = str(include.path or "").strip()
-            if not include_path:
-                continue
-            resolved_path = self._resolve_include_path(source_dir, include_path)
-            normalized_key = self._normalize_watch_key(resolved_path)
-            if not normalized_key or normalized_key in snapshots:
-                continue
-            try:
-                include_source_file = read_spice_source_file(resolved_path)
-                snapshots[normalized_key] = self._make_dependency_snapshot_value(include_source_file.source_text)
-            except FileNotFoundError:
-                snapshots[normalized_key] = "missing"
-                parse_errors.append(self._make_parse_error(f"未找到 include 文件: {resolved_path}", resolved_path))
-            except PermissionError:
-                snapshots[normalized_key] = "permission_error"
-                parse_errors.append(self._make_parse_error(f"include 文件不可读: {resolved_path}", resolved_path))
-            except OSError as exc:
-                snapshots[normalized_key] = f"os_error:{type(exc).__name__}:{exc}"
-                parse_errors.append(self._make_parse_error(f"读取 include 文件失败: {exc}", resolved_path))
-        return snapshots, parse_errors
+    def _build_edit_revision_dependency_snapshots(
+        self,
+        source_closure: SpiceSourceClosureGraph,
+    ) -> Dict[str, str]:
+        """Build edit-conflict tokens from the already-verified closure.
 
-    def _make_dependency_snapshot_value(self, source_text: str) -> str:
+        These SHA-1 tokens only detect a stale schematic edit revision. They
+        are not scientific provenance; persisted-result identity is exclusively
+        ``source_closure.digest``.
+        """
+        snapshots: Dict[str, str] = {}
+        for view in source_closure.active_views:
+            if view.is_main_deck:
+                continue
+            normalized_key = self._normalize_watch_key(view.key)
+            if not normalized_key:
+                continue
+            snapshot_key = normalized_key
+            if view.library_section:
+                snapshot_key = f"{normalized_key}#lib:{view.library_section}"
+            if snapshot_key in snapshots:
+                continue
+            active_text = "\n".join(
+                f"{line.line_number}:{line.text}"
+                for line in view.lines
+            )
+            snapshots[snapshot_key] = (
+                self._make_edit_revision_dependency_snapshot_value(active_text)
+            )
+        return snapshots
+
+    def _make_edit_revision_dependency_snapshot_value(self, source_text: str) -> str:
         digest = hashlib.sha1(str(source_text or "").encode("utf-8")).hexdigest()
         return f"content:{digest}"
-
-    def _resolve_watched_file_keys(self, source_file_path: str, spice_document: SpiceDocument) -> Set[str]:
-        watched_keys = {self._normalize_watch_key(source_file_path)}
-        source_path = Path(source_file_path)
-        source_dir = source_path.parent
-        for include in spice_document.includes:
-            include_path = str(include.path or "").strip()
-            if not include_path:
-                continue
-            watched_keys.add(self._normalize_watch_key(self._resolve_include_path(source_dir, include_path)))
-        return watched_keys
-
-    def _resolve_include_path(self, source_dir: Path, include_path: str) -> str:
-        candidate = Path(include_path)
-        if not candidate.is_absolute():
-            candidate = source_dir / candidate
-        return str(candidate.resolve())
 
     def _normalize_watch_key(self, path: str) -> str:
         if not path:

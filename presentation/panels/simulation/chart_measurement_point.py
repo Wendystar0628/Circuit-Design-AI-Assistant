@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
+import numpy as np
+
 
 @dataclass(frozen=True)
 class MeasurementPointValue:
@@ -22,6 +24,8 @@ def normalize_bounds(bounds: Optional[Tuple[float, float]]) -> Optional[Tuple[fl
         return None
     minimum = float(bounds[0])
     maximum = float(bounds[1])
+    if not np.isfinite(minimum) or not np.isfinite(maximum):
+        return None
     if minimum <= maximum:
         return minimum, maximum
     return maximum, minimum
@@ -36,6 +40,8 @@ def midpoint_of_bounds(bounds: Optional[Tuple[float, float]]) -> Optional[float]
 
 def clamp_to_bounds(value: Optional[float], bounds: Optional[Tuple[float, float]]) -> Optional[float]:
     if value is None:
+        return None
+    if not np.isfinite(value):
         return None
     normalized = normalize_bounds(bounds)
     if normalized is None:

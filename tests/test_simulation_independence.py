@@ -3,7 +3,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from PyQt6.QtWidgets import QApplication
 
 from domain.llm.session_state_manager import SessionStateManager
 from domain.services.snapshot_service import (
@@ -21,14 +20,6 @@ from shared.event_types import (
 )
 from shared.service_locator import ServiceLocator
 from shared.service_names import SVC_EVENT_BUS
-
-
-@pytest.fixture(scope="session")
-def qapp():
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
 
 
 class _FakeEventBus:
@@ -70,14 +61,12 @@ def test_simulation_view_model_does_not_subscribe_to_global_lifecycle_events(qap
     """The tab is the only SIM lifecycle owner and performs identity routing."""
     event_bus = _FakeEventBus()
     ServiceLocator.register(SVC_EVENT_BUS, event_bus)
-    view_model = SimulationViewModel()
     try:
-        view_model.initialize()
+        SimulationViewModel()
         subscribed_events = [event_type for event_type, _ in event_bus.subscriptions]
         assert EVENT_SIM_STARTED not in subscribed_events
         assert EVENT_SIM_ERROR not in subscribed_events
     finally:
-        view_model.dispose()
         ServiceLocator.unregister(SVC_EVENT_BUS)
 
 
@@ -101,22 +90,29 @@ def test_simulation_tab_updates_view_model_only_after_job_identity_filtering():
         _displayed_job_id=None,
         _displayed_circuit_file=None,
         _displayed_result_path=None,
-        _awaiting_confirmation=False,
         _runtime_status_message="",
+        _panel_error_message="",
         _logger=logging.getLogger("test.simulation_tab_owner"),
         _get_text=lambda _key, fallback: fallback,
-        _update_frontend_payloads=lambda: frontend_updates.append(True),
+        _update_frontend_payloads=lambda **_kwargs: frontend_updates.append(True),
         _refresh_circuit_result_index=lambda: None,
+        _payload_belongs_to_current_project=lambda payload: payload.get("project_root") == "/project",
+        _load_error_result_bundle=lambda _payload, _message: False,
+        _set_active_frontend_tab=lambda _tab_id: True,
+        _backend_runtime=SimpleNamespace(
+            clear=lambda: None,
+            export_panel=SimpleNamespace(set_metrics=lambda _metrics: None),
+        ),
     )
 
     agent_started = {
         "type": EVENT_SIM_STARTED,
         "data": {
-            "job_id": "agent-job",
+            "job_id": "job_agent",
             "origin": "agent_tool",
-            "circuit_file": "agent.cir",
+            "circuit_file": "/project/agent.cir",
             "project_root": "/project",
-            "analysis_type": "tran",
+            "session_id": "session-test",
         },
     }
     SimulationTab._on_simulation_started(fake_tab, agent_started)
@@ -126,11 +122,11 @@ def test_simulation_tab_updates_view_model_only_after_job_identity_filtering():
     inactive_project_started = {
         "type": EVENT_SIM_STARTED,
         "data": {
-            "job_id": "old-ui-job",
+            "job_id": "job_old_ui",
             "origin": "ui_editor",
-            "circuit_file": "old.cir",
+            "circuit_file": "/other-project/old.cir",
             "project_root": "/other-project",
-            "analysis_type": "tran",
+            "session_id": "session-test",
         },
     }
     SimulationTab._on_simulation_started(fake_tab, inactive_project_started)
@@ -140,28 +136,43 @@ def test_simulation_tab_updates_view_model_only_after_job_identity_filtering():
     ui_started = {
         "type": EVENT_SIM_STARTED,
         "data": {
-            "job_id": "ui-job",
+            "job_id": "job_ui",
             "origin": "ui_editor",
-            "circuit_file": "ui.cir",
+            "circuit_file": "/project/ui.cir",
             "project_root": "/project",
-            "analysis_type": "tran",
+            "session_id": "session-test",
         },
     }
+    # STARTED cannot claim presentation ownership on its own, even when the
+    # project path matches. This is what protects close/reopen of the same path
+    # from an old queued job.
+    SimulationTab._on_simulation_started(fake_tab, ui_started)
+    assert view_model.running_calls == 0
+    assert fake_tab._displayed_job_id is None
+
+    assert SimulationTab.claim_ui_job(
+        fake_tab,
+        job_id="job_ui",
+        project_root="/project",
+        circuit_file="/project/ui.cir",
+    ) is True
     SimulationTab._on_simulation_started(fake_tab, ui_started)
     assert view_model.running_calls == 1
-    assert fake_tab._displayed_job_id == "ui-job"
+    assert fake_tab._displayed_job_id == "job_ui"
 
     unrelated_error = {
         "type": EVENT_SIM_ERROR,
         "data": {
-            "job_id": "agent-job",
+            "job_id": "job_agent",
             "origin": "agent_tool",
-            "circuit_file": "agent.cir",
+            "circuit_file": "/project/agent.cir",
             "project_root": "/project",
             "error_message": "agent failed",
             "result_path": "",
             "cancelled": False,
             "duration_seconds": 0.1,
+            "session_id": "session-test",
+            "export_root": "",
         },
     }
     SimulationTab._on_simulation_error(fake_tab, unrelated_error)
@@ -170,18 +181,49 @@ def test_simulation_tab_updates_view_model_only_after_job_identity_filtering():
     own_error = {
         "type": EVENT_SIM_ERROR,
         "data": {
-            "job_id": "ui-job",
+            "job_id": "job_ui",
             "origin": "ui_editor",
-            "circuit_file": "ui.cir",
+            "circuit_file": "/project/ui.cir",
             "project_root": "/project",
             "error_message": "ui failed",
             "result_path": "",
             "cancelled": False,
             "duration_seconds": 0.2,
+            "session_id": "session-test",
+            "export_root": "",
         },
     }
     SimulationTab._on_simulation_error(fake_tab, own_error)
     assert view_model.errors == ["ui failed"]
+
+
+def test_same_path_reopen_rejects_started_job_from_previous_generation():
+    fake_tab = SimpleNamespace(
+        _project_root="/project",
+        # Project close/open cleared the old explicit controller claim.
+        _displayed_job_id=None,
+        _displayed_circuit_file=None,
+        _logger=logging.getLogger("test.same-path-reopen"),
+        _payload_belongs_to_current_project=lambda payload: payload.get("project_root") == "/project",
+        _update_frontend_payloads=lambda **_kwargs: pytest.fail(
+            "unowned STARTED must not republish or claim state"
+        ),
+    )
+    old_queued_started = {
+        "type": EVENT_SIM_STARTED,
+        "data": {
+            "job_id": "job_from_closed_generation",
+            "origin": "ui_editor",
+            "circuit_file": "/project/old.cir",
+            "project_root": "/project",
+            "session_id": "old-session",
+        },
+    }
+
+    SimulationTab._on_simulation_started(fake_tab, old_queued_started)
+
+    assert fake_tab._displayed_job_id is None
+    assert fake_tab._displayed_circuit_file is None
 
 
 def test_session_state_manager_session_changed_event_omits_sim_result_path():

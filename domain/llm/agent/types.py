@@ -159,8 +159,9 @@ class ToolContext:
             - 所有文件操作的基准目录
             - 安全校验：禁止操作此目录之外的文件
         current_file: 当前编辑器活动电路文件的绝对路径（可选）
-            - agent 不显式传 ``file_path`` 时的回落项
-            - 同时写入系统提示词供 LLM 感知当前上下文
+            - 只写入系统提示词供 LLM 感知编辑器上下文
+            - ``run_simulation`` 仍要求模型显式传入 ``file_path``，
+              不会用该字段猜测要执行的电路
         allowed_extensions: 允许操作的文件扩展名列表（可选）
             - 不设置时允许所有扩展名
         max_file_size_bytes: 读取文件的最大字节数限制（默认 200KB）
@@ -170,14 +171,12 @@ class ToolContext:
         sim_job_manager: 仿真 Job 管理器（仿真系列 tool 依赖，
             SimulationJobManager 是并发 job 提交与生命周期的唯一
             权威入口）
-        sim_result_repository: 仿真结果仓储（Step 16 read-tool 基座
-            依赖）。``result.json`` 的加载 / 枚举 / 按电路聚合的
-            唯一读入口；``attach_metrics`` / ``attach_output_log`` /
-            ``attach_op_result`` / ``attach_chart_image`` 四个 read
-            工具都通过它完成 ``circuit_file``/``result_path``→
-            ``SimulationResult``→ bundle 目录的解析链。缺失时这些
-            工具以 ``is_error`` 失败，禁止回落到 ServiceLocator 或
-            模块级单例。
+        sim_result_repository: 仿真结果仓储。所有仿真 read tool
+            只能通过 ``run_simulation`` 返回的 exact ``result_path``
+            加载权威 ``SimulationResult``；派生导出 sidecar 不属于
+            Agent 的应用读取入口。
+            缺失时工具以 ``is_error`` 失败；禁止猜测 latest
+            result，也禁止回落到 ServiceLocator 或隐式单例。
         pending_workspace_edit_service: 待写工作区编辑服务
             （PatchFileTool / RewriteFileTool 依赖，落盘前先写入
             pending 队列由用户审核）

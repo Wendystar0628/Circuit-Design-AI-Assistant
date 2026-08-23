@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import Dict, Iterable, Optional
 
 from domain.simulation.spice.file_codec import SpiceSourceFile, read_spice_source_file, write_spice_source_file
 from domain.simulation.spice.models import SpiceComponent, SpiceDocument, SpiceEditableField
+from domain.simulation.spice.numeric import is_spice_number
 from domain.simulation.spice.schematic_builder import make_schematic_document_id, make_schematic_revision
 
 
@@ -119,6 +121,18 @@ class SpiceSourcePatcher:
                 field_key=field_key,
                 result_type="error",
                 error_message="未找到目标元件",
+            )
+
+        if not self._is_same_source_file(component.source_file, file_path):
+            return self._reject(
+                source_file=source_file,
+                document_id=current_document_id,
+                revision=current_revision,
+                request_id=request_id,
+                component_id=component_id,
+                field_key=field_key,
+                result_type="error",
+                error_message="依赖源文件中的元件不能写回主电路文件",
             )
 
         field = self._find_field(component.editable_fields, field_key)
@@ -263,9 +277,17 @@ class SpiceSourcePatcher:
         return None
 
     def _is_safe_single_token_text(self, text: str) -> bool:
-        if not text:
+        return is_spice_number(text)
+
+    @staticmethod
+    def _is_same_source_file(first: str, second: str) -> bool:
+        first_value = str(first or "").strip()
+        second_value = str(second or "").strip()
+        if not first_value or not second_value:
             return False
-        return not any(character.isspace() for character in text)
+        first_path = os.path.normcase(os.path.abspath(first_value))
+        second_path = os.path.normcase(os.path.abspath(second_value))
+        return first_path == second_path
 
     def _reject_without_source_file(
         self,

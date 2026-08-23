@@ -1,9 +1,0 @@
-# artifact_type: metrics
-# circuit_file: 02_vccs_transconductor.cir
-# file_path: E:\Individual Project\circuit_design_ai\TestCircuit\by_device\controlled_source\02_vccs_transconductor.cir
-# analysis_type: ac
-# executor: spice
-# timestamp: 2026-04-22T15:51:53.842817
-
-display_name,name,value,unit,raw_value,target
-G Mid,g_mid,19.98 dB,dB,19.98289,

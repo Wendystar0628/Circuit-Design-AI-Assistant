@@ -1,6 +1,7 @@
 {
+  "schema_version": 3,
   "executor": "spice",
-  "file_path": "E:\\Individual Project\\circuit_design_ai\\TestWork\\transient_analysis\\01_rc_step_response.cir",
+  "file_path": "transient_analysis/01_rc_step_response.cir",
   "analysis_type": "tran",
   "success": true,
   "data": {
@@ -1027,7 +1028,6 @@
       0.01
     ],
     "sweep": null,
-    "sweep_name": null,
     "signals": {
       "I(VIN)": [
         0.0,
@@ -4098,67 +4098,32 @@
       "V(cap)": "voltage",
       "V(in)": "voltage"
     },
-    "op_result": {}
+    "noise_totals": null
   },
   "measurements": [
     {
       "name": "v_final",
       "value": 4.999318,
-      "unit": "V",
       "status": "OK",
       "statement": ".MEASURE TRAN v_final FIND V(cap) AT=9m",
-      "description": "",
-      "display_name": "V Final",
-      "category": "general",
-      "quantity_kind": "voltage",
       "raw_output": "v_final             =  4.999318e+00",
       "error_message": ""
     },
     {
       "name": "t_rise_90",
       "value": 0.00240306,
-      "unit": "s",
       "status": "OK",
       "statement": ".MEASURE TRAN t_rise_90 WHEN V(cap)=4.5 RISE=1",
-      "description": "",
-      "display_name": "T Rise 90",
-      "category": "transient",
-      "quantity_kind": "time",
       "raw_output": "t_rise_90           =   2.40306e-03",
       "error_message": ""
     }
   ],
   "error": null,
   "raw_output": "stdout Note: No compatibility mode selected!\nstdout Circuit: RC Step Response\nstdout Doing analysis at TEMP = 27.000000 and TNOM = 27.000000\nstderr Using SPARSE 1.3 as Direct Linear Solver\nstdout Initial Transient Solution\nstdout --------------------------\nstdout Node                                   Voltage\nstdout ----                                   -------\nstdout in                                           0\nstdout cap                                          0\nstdout vin#branch                                   0\n Reference value :  0.00000e+00\r\nstdout No. of Data Rows : 1019\nstdout Measurements for Transient Analysis\nstdout v_final             =  4.999318e+00\nstdout t_rise_90           =   2.40306e-03",
-  "timestamp": "2026-04-22T10:27:19.752816",
+  "timestamp": "2026-04-22T10:27:19.752816+08:00",
   "duration_seconds": 0.008515596389770508,
   "version": 1,
   "session_id": "",
-  "x_axis_kind": "time",
-  "x_axis_label": "Time (s)",
-  "x_axis_scale": "linear",
-  "requested_x_range": null,
-  "actual_x_range": [
-    0.0,
-    0.01
-  ],
   "analysis_command": ".tran 10u 10m",
-  "analysis_info": {
-    "analysis_type": "tran",
-    "analysis_command": ".tran 10u 10m",
-    "x_axis_kind": "time",
-    "x_axis_label": "Time (s)",
-    "x_axis_scale": "linear",
-    "requested_x_range": null,
-    "actual_x_range": [
-      0.0,
-      0.01
-    ],
-    "parameters": {
-      "step_time": "10u",
-      "stop_time": "10m",
-      "start_time": "",
-      "max_step": ""
-    }
-  }
+  "source_digest": "213f989f7dffd60669ba5b078f669fcea23bebe0a3b2a393ba3e6ce4a68c6064"
 }

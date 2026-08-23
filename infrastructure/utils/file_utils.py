@@ -275,60 +275,6 @@ def is_python_file(path: Union[str, Path]) -> bool:
     return ext in PYTHON_EXTENSIONS
 
 
-def is_simulatable_file(
-    path: Union[str, Path],
-    executor_registry=None,
-    supported_extensions: Optional[set] = None
-) -> bool:
-    """
-    判断是否为可仿真文件
-    
-    根据已注册执行器支持的扩展名判断。
-    优先使用 executor_registry，其次使用 supported_extensions，
-    最后使用默认的 SPICE 和 Python 扩展名。
-    
-    Args:
-        path: 文件路径
-        executor_registry: 执行器注册表实例（可选，用于获取支持的扩展名）
-        supported_extensions: 支持的扩展名集合（可选，直接指定）
-        
-    Returns:
-        bool: 是否为可仿真文件
-        
-    使用示例：
-        # 方式1：使用执行器注册表
-        from domain.simulation import ExecutorRegistry
-        registry = ExecutorRegistry()
-        is_sim = is_simulatable_file("test.cir", executor_registry=registry)
-        
-        # 方式2：直接指定扩展名
-        is_sim = is_simulatable_file("test.cir", supported_extensions={".cir", ".py"})
-        
-        # 方式3：使用默认扩展名
-        is_sim = is_simulatable_file("test.cir")
-    """
-    ext = get_file_extension(path)
-    
-    # 优先从 executor_registry 获取
-    if executor_registry is not None:
-        try:
-            # 尝试调用 get_supported_extensions 方法
-            if hasattr(executor_registry, 'get_supported_extensions'):
-                registry_extensions = executor_registry.get_supported_extensions()
-                if registry_extensions:
-                    return ext in registry_extensions
-        except Exception:
-            pass
-    
-    # 其次使用直接指定的扩展名
-    if supported_extensions is not None:
-        return ext in supported_extensions
-    
-    # 默认支持 SPICE 文件和 Python 脚本
-    default_extensions = SPICE_EXTENSIONS | PYTHON_EXTENSIONS
-    return ext in default_extensions
-
-
 def is_image_file(path: Union[str, Path]) -> bool:
     """
     判断是否为图片文件
@@ -667,7 +613,6 @@ __all__ = [
     "is_spice_lib_file",
     "is_any_spice_file",
     "is_python_file",
-    "is_simulatable_file",
     "is_image_file",
     "is_text_file",
     "is_markdown_file",

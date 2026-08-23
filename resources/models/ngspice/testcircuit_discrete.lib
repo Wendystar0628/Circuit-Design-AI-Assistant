@@ -1,0 +1,35 @@
+* Explicit ngspice model library for the checked-in TestCircuit corpus.
+* Electrical parameters are copied from resources/models/cmp/standard.*.
+* LTspice catalog-only metadata (manufacturer and absolute-rating fields) is
+* omitted because ngspice treats its unquoted values as expressions. LTspice
+* JFET extension parameters that ngspice explicitly ignores are also omitted;
+* every remaining parameter participates in the bundled ngspice simulation.
+
+.model 2N3904 NPN(IS=1E-14 VAF=100
++ Bf=300 IKF=0.4 XTB=1.5 BR=4
++ CJC=4E-12 CJE=8E-12 RB=20 RC=0.1 RE=0.1
++ TR=250E-9 TF=350E-12 ITF=1 VTF=2 XTF=3)
+
+.model 2N3906 PNP(IS=1E-14 VAF=100
++ BF=200 IKF=0.4 XTB=1.5 BR=4
++ CJC=4.5E-12 CJE=10E-12 RB=20 RC=0.1 RE=0.1
++ TR=250E-9 TF=350E-12 ITF=1 VTF=2 XTF=3)
+
+.model 1N4148 D(Is=2.52n Rs=.568 N=1.752 Cjo=4p M=.4 tt=20n)
+
+.model 2N3819 NJF(Beta=1.304m Betatce=-.5 Rd=1 Rs=1 Lambda=2.25m
++ Vto=-3 Vtotc=-2.5m Is=33.57f Xti=3
++ Cgd=1.6p M=.3622 Pb=1 Fc=.5 Cgs=2.414p
++ Kf=9.882E-18 Af=1)
+
+.model 2N5460 PJF(Is=1.5p Vto=-3.4 Vtotc=-3m
++ Beta=1.0m Lambda=10m Betatce=-.5 Rd=10 Rs=10 Cgs=5p Cgd=5p
++ Kf=3e-17)
+
+.model BSS123 VDMOS(Rg=3 Rd=2.4 Rs=1.8 Vto=1.6 Kp=1 Cgdmax=.1n
++ Cgdmin=.01n Cgs=.1n Cjo=.03n Is=2.8p Rb=3 ksubthres=.1
++ mfg=Fairchild Vds=100 Ron=6 Qg=1.4n)
+
+.model BSS84 VDMOS(pchan Rg=3 Vto=-2.1 Rd=2.4 Rs=1.8 Rb=3 Kp=.2
++ Cgdmax=.04n Cgdmin=.001n Cgs=.02n Cjo=.01n Is=2p ksubthres=.1
++ mfg=NXP Vds=-50 Ron=6000m Qg=1n)

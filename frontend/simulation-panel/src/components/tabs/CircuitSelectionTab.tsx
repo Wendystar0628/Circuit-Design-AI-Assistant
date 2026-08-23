@@ -2,6 +2,7 @@ import type { SimulationBridge } from '../../bridge/bridge'
 import { useElementSize } from '../../hooks/useElementSize'
 import type {
   CircuitSelectionItemState,
+  LoadableResultState,
   SimulationMainState,
 } from '../../types/state'
 import { getUiText } from '../../uiText'
@@ -42,7 +43,7 @@ function resolveCircuitSelectionColumnCount(width: number): number {
  * of the generic ``surface-state-card--empty`` for empty states. No
  * local CSS, no inline ``style``, no bridge method is
  * introduced by this tab: the card click calls the single generic
- * ``bridge.loadResultByPath(result_path)`` entry point, and the
+ * ``bridge.loadResultByPath({projectRoot, resultPath})`` entry point, and the
  * backend's post-load snapshot is what flips ``is_current`` on the
  * right card — the tab itself keeps no selection state.
  */
@@ -80,12 +81,15 @@ export function CircuitSelectionTab({ state, bridge }: CircuitSelectionTabProps)
                 key={item.circuit_absolute_path || item.circuit_file}
                 item={item}
                 uiText={uiText}
-                onSelect={() => {
-                  const target = item.latest_result
-                  if (!bridge || !target.can_load || !target.result_path) {
+                blockedByLiveJob={Boolean(runtime.current_job_id)}
+                onSelect={(target) => {
+                  if (!bridge || runtime.current_job_id || !target.can_load || !target.result_path) {
                     return
                   }
-                  bridge.loadResultByPath(target.result_path)
+                  bridge.loadResultByPath({
+                    projectRoot: runtime.project_root,
+                    resultPath: target.result_path,
+                  })
                 }}
               />
             ))}
@@ -99,22 +103,25 @@ export function CircuitSelectionTab({ state, bridge }: CircuitSelectionTabProps)
 interface CircuitSelectionCardProps {
   item: CircuitSelectionItemState
   uiText: Record<string, string>
-  onSelect: () => void
+  blockedByLiveJob: boolean
+  onSelect: (target: LoadableResultState) => void
 }
 
 /**
  * One circuit card.
  *
- * The meta line is assembled from the embedded ``latest_result``
- * ({@link LoadableResultState}) — the backend emits one generic
- * persisted-result load target shape and the card reuses it directly.
- * ``disabled`` mirrors the backend's ``latest_result.can_load``
- * predicate: a card whose newest bundle cannot be loaded (empty /
- * malformed ``result_path``) should not be clickable, without the tab
- * re-deriving that rule itself.
+ * The card shows newest-run metadata and exposes every persisted run in a
+ * compact selector. Selecting an option immediately requests that exact
+ * result identity; no second history surface or hidden local cache exists.
  */
-function CircuitSelectionCard({ item, uiText, onSelect }: CircuitSelectionCardProps) {
-  const latest = item.latest_result
+function CircuitSelectionCard({ item, uiText, blockedByLiveJob, onSelect }: CircuitSelectionCardProps) {
+  const latest = item.results[0]
+  if (!latest) {
+    return null
+  }
+  const currentResult = item.results.find((result) => result.is_current)
+  const hasLoadableResult = item.results.some((result) => result.can_load)
+  const isDisabled = blockedByLiveJob || !hasLoadableResult
   const metaParts = [
     latest.analysis_type,
     latest.timestamp,
@@ -122,21 +129,18 @@ function CircuitSelectionCard({ item, uiText, onSelect }: CircuitSelectionCardPr
   const badges = [
     !latest.success ? { label: getUiText(uiText, 'simulation.circuit_selection.latest_failed', 'Latest Failed'), modifier: ' circuit-selection-card__badge--error' } : null,
     item.is_current ? { label: getUiText(uiText, 'common.current', 'Current'), modifier: ' circuit-selection-card__badge--current' } : null,
-    !latest.can_load ? { label: getUiText(uiText, 'simulation.circuit_selection.not_loadable', 'Not Loadable'), modifier: '' } : null,
+    !hasLoadableResult ? { label: getUiText(uiText, 'simulation.circuit_selection.not_loadable', 'Not Loadable'), modifier: '' } : null,
   ].filter((badge): badge is { label: string; modifier: string } => badge !== null)
   const className = [
     'circuit-selection-card',
     item.is_current ? 'circuit-selection-card--active' : '',
-    !latest.can_load ? 'circuit-selection-card--disabled' : '',
+    isDisabled ? 'circuit-selection-card--disabled' : '',
   ].filter(Boolean).join(' ')
   const displayName = item.circuit_display_name || latest.file_name || getUiText(uiText, 'simulation.circuit_selection.unnamed_circuit', 'Unnamed Circuit')
 
   return (
-    <button
-      type="button"
+    <div
       className={className}
-      disabled={!latest.can_load}
-      onClick={onSelect}
       title={item.circuit_absolute_path || item.circuit_file}
       {...(item.is_current ? { 'aria-current': 'true' as const } : null)}
     >
@@ -162,7 +166,42 @@ function CircuitSelectionCard({ item, uiText, onSelect }: CircuitSelectionCardPr
             </span>
           ))}
         </div>
+        <label className="field-row field-row--grow">
+          <span className="field-row__label">
+            {getUiText(uiText, 'simulation.circuit_selection.result_label', 'Result')}
+          </span>
+          <select
+            className="field-select"
+            value={currentResult?.result_path ?? ''}
+            disabled={isDisabled}
+            onChange={(event: { target: { value: string } }) => {
+              const target = item.results.find((result) => result.result_path === event.target.value)
+              if (target) {
+                onSelect(target)
+              }
+            }}
+          >
+            <option value="" disabled>
+              {getUiText(uiText, 'simulation.circuit_selection.choose_result', 'Choose result')}
+            </option>
+            {item.results.map((result) => (
+              <option
+                key={result.id || result.result_path}
+                value={result.result_path}
+                disabled={!result.can_load}
+              >
+                {[
+                  result.timestamp || result.id,
+                  result.analysis_type,
+                  result.success
+                    ? getUiText(uiText, 'simulation.circuit_selection.run_succeeded', 'Succeeded')
+                    : getUiText(uiText, 'simulation.circuit_selection.run_failed', 'Failed'),
+                ].filter(Boolean).join(' · ')}
+              </option>
+            ))}
+          </select>
+        </label>
       </div>
-    </button>
+    </div>
   )
 }

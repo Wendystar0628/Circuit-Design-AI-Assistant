@@ -83,7 +83,11 @@ export function ChartTab({ state, bridge }: ChartTabProps) {
         type="button"
         className="sim-compact-button sim-compact-button--accent"
         disabled={!chart.can_add_to_conversation}
-        onClick={() => bridge?.addToConversation('chart')}
+        onClick={() => bridge?.addToConversation({
+          projectRoot: state.simulation_runtime.project_root,
+          resultPath: state.simulation_runtime.current_result_path,
+          target: 'chart',
+        })}
       >
         {getUiText(uiText, 'common.add_to_conversation', 'Add to Conversation')}
       </button>

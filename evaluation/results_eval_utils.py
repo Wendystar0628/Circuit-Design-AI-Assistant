@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import csv
+import io
 import json
 import math
+import os
 import re
+import tempfile
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence
+
+from domain.simulation.models.simulation_result import SimulationResult
 
 
 _COMPONENT_LINE_RE = re.compile(r"^\s*[A-Z]", re.IGNORECASE)
@@ -13,39 +18,89 @@ _DIRECTIVE_LINE_RE = re.compile(r"^\s*\.", re.IGNORECASE)
 _COMMENT_LINE_RE = re.compile(r"^\s*\*")
 _BLANK_LINE_RE = re.compile(r"^\s*$")
 _SYMBOL_LINE_RE = re.compile(r"^\s*SYMBOL\b", re.IGNORECASE)
-_MEASURE_LINE_RE = re.compile(r"^\s*\.measure\b", re.IGNORECASE | re.MULTILINE)
+_MEASURE_LINE_RE = re.compile(
+    r"^\s*\.meas(?:ure)?\b",
+    re.IGNORECASE | re.MULTILINE,
+)
 
 
 def load_json(file_path: str | Path) -> Dict[str, Any]:
     path = Path(file_path)
-    return json.loads(path.read_text(encoding="utf-8"))
+    return json.loads(
+        path.read_text(encoding="utf-8"),
+        parse_constant=_reject_nonstandard_json_constant,
+    )
+
+
+def _reject_nonstandard_json_constant(token: str) -> None:
+    raise ValueError(f"Non-standard JSON numeric constant is forbidden: {token}")
 
 
 def write_json(file_path: str | Path, payload: Dict[str, Any]) -> Path:
     path = Path(file_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    _atomic_write_text(
+        path,
+        json.dumps(
+            payload,
+            indent=2,
+            ensure_ascii=False,
+            allow_nan=False,
+        ),
+        encoding="utf-8",
+    )
     return path
 
 
 def write_csv(file_path: str | Path, rows: Sequence[Dict[str, Any]]) -> Path:
     path = Path(file_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
     fieldnames: List[str] = []
     for row in rows:
         for key in row.keys():
             if key not in fieldnames:
                 fieldnames.append(key)
-    with path.open("w", newline="", encoding="utf-8-sig") as fh:
-        writer = csv.DictWriter(fh, fieldnames=fieldnames)
-        writer.writeheader()
-        for row in rows:
-            writer.writerow(row)
+    buffer = io.StringIO(newline="")
+    writer = csv.DictWriter(buffer, fieldnames=fieldnames)
+    writer.writeheader()
+    for row in rows:
+        writer.writerow(row)
+    _atomic_write_text(path, buffer.getvalue(), encoding="utf-8-sig")
     return path
 
 
+def _atomic_write_text(path: Path, content: str, *, encoding: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        dir=str(path.parent),
+    )
+    try:
+        with os.fdopen(
+            descriptor,
+            "w",
+            encoding=encoding,
+            newline="",
+        ) as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_name, path)
+    except Exception:
+        try:
+            os.unlink(temporary_name)
+        except FileNotFoundError:
+            pass
+        raise
+
+
 def percentile(values: Sequence[float], p: float) -> Optional[float]:
-    numeric = sorted(float(v) for v in values if v is not None)
+    numeric = sorted(
+        number
+        for value in values
+        if value is not None
+        for number in (float(value),)
+        if math.isfinite(number)
+    )
     if not numeric:
         return None
     if len(numeric) == 1:
@@ -64,7 +119,13 @@ def percentile(values: Sequence[float], p: float) -> Optional[float]:
 
 
 def describe_numeric(values: Sequence[float]) -> Dict[str, Optional[float]]:
-    numeric = [float(v) for v in values if v is not None]
+    numeric = [
+        number
+        for value in values
+        if value is not None
+        for number in (float(value),)
+        if math.isfinite(number)
+    ]
     if not numeric:
         return {
             "count": 0,
@@ -114,46 +175,24 @@ def count_measure_directives(netlist_text: str) -> int:
     return len(_MEASURE_LINE_RE.findall(str(netlist_text or "")))
 
 
-def count_x_axis_points(result_payload: Dict[str, Any]) -> int:
-    data = result_payload.get("data") or {}
-    for axis_name in ("frequency", "time", "sweep"):
-        values = data.get(axis_name)
-        if isinstance(values, list):
+def load_simulation_result(file_path: str | Path) -> SimulationResult:
+    """Strictly load the authoritative document of one result bundle."""
+    payload = load_json(file_path)
+    return SimulationResult.from_dict(payload)
+
+
+def count_x_axis_points(result: SimulationResult) -> int:
+    data = result.data
+    if data is None:
+        return 0
+    for values in (data.frequency, data.time, data.sweep):
+        if values is not None:
             return len(values)
     return 0
 
 
-def count_signal_entries(result_payload: Dict[str, Any]) -> int:
-    data = result_payload.get("data") or {}
-    signals = data.get("signals") or {}
-    return len(signals) if isinstance(signals, dict) else 0
-
-
-def metric_rows_to_dict(metrics_payload: Dict[str, Any]) -> Dict[str, Any]:
-    rows = ((metrics_payload.get("data") or {}).get("rows") or [])
-    metrics: Dict[str, Any] = {}
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        name = str(row.get("name") or row.get("display_name") or "").strip()
-        if not name:
-            continue
-        metrics[name] = row.get("raw_value", row.get("value"))
-    return metrics
-
-
-def bundle_has_expected_files(bundle_dir: str | Path, expects_metrics: bool) -> bool:
-    root = Path(bundle_dir)
-    required_files = [
-        root / "result.json",
-        root / "export_manifest.json",
-        root / "analysis_info" / "analysis_info.json",
-        root / "output_log" / "output_log.json",
-        root / "raw_data" / "raw_data.json",
-    ]
-    if expects_metrics:
-        required_files.append(root / "metrics" / "metrics.json")
-    return all(path.is_file() for path in required_files)
+def count_signal_entries(result: SimulationResult) -> int:
+    return len(result.data.signals) if result.data is not None else 0
 
 
 def iter_circuit_files(test_root: str | Path) -> List[Path]:
@@ -192,12 +231,11 @@ def subgroup_from_relative_path(relative_path: str | Path) -> str:
 
 def normalize_for_csv(value: Any) -> Any:
     if isinstance(value, (dict, list, tuple)):
-        return json.dumps(value, ensure_ascii=False)
+        return json.dumps(value, ensure_ascii=False, allow_nan=False)
     return value
 
 
 __all__ = [
-    "bundle_has_expected_files",
     "count_components_in_cir_text",
     "count_measure_directives",
     "count_signal_entries",
@@ -209,7 +247,7 @@ __all__ = [
     "iter_asc_files",
     "iter_circuit_files",
     "load_json",
-    "metric_rows_to_dict",
+    "load_simulation_result",
     "normalize_for_csv",
     "percentile",
     "subgroup_from_relative_path",

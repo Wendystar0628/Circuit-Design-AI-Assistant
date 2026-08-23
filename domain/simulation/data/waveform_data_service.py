@@ -1,72 +1,38 @@
-# Waveform Data Service - Unified Waveform Data Access Layer
+"""Authoritative waveform access and viewport decimation.
+
+The service deliberately has no cache or resolution pyramid.  A viewport is
+first cut from the finite raw simulator samples and is then decimated once.
+This makes zoom detail independent from an earlier whole-trace preview and
+keeps the implementation stateless.
 """
-波形数据服务
 
-职责：
-- 作为波形数据访问的统一入口
-- 协调降采样和多分辨率金字塔
-- 管理信号级缓存
-- 为 UI 层提供标准化的数据接口
-
-设计原则：
-- 延迟加载：金字塔数据按需构建
-- 缓存复用：相同信号的金字塔数据缓存复用
-- 视口优化：根据显示区域返回最优分辨率数据
-
-使用示例：
-    from domain.simulation.data.waveform_data_service import WaveformDataService
-    
-    service = WaveformDataService()
-    
-    # 获取初始显示数据（低分辨率）
-    data = service.get_initial_data(result, "V(out)", target_points=500)
-    
-    # 获取视口范围数据（缩放时调用）
-    data = service.get_viewport_data(result, "V(out)", x_min=0.0, x_max=0.001, target_points=1000)
-    
-    # 构建原始数据表格快照
-    table_snapshot = service.build_table_snapshot(result)
-"""
+from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
-from collections import OrderedDict
 
 import numpy as np
 
-from domain.simulation.data.resolution_pyramid import (
-    PyramidData,
-    build_pyramid,
-    select_optimal_level,
-    get_level_data,
-    DEFAULT_PYRAMID_LEVELS,
+from domain.simulation.data.downsampler import (
+    align_xy,
+    crop_to_viewport,
+    downsample_preserving_gaps,
 )
 from domain.simulation.data.signal_semantics import (
+    VIRTUAL_COMPLEX_COMPONENT_SUFFIXES,
+    insert_nested_dc_breaks,
+    nested_dc_reset_indexes,
+    nested_dc_secondary_values,
     normalize_simulation_signal_name,
+    parse_nested_dc_sweep,
     resolve_signal_type,
+    split_virtual_complex_component_name,
 )
-from domain.simulation.models.simulation_result import SimulationResult, SimulationData
+from domain.simulation.models.simulation_result import SimulationData, SimulationResult
 
-
-# ============================================================
-# 数据类定义
-# ============================================================
 
 @dataclass
 class WaveformData:
-    """
-    波形数据容器
-    
-    Attributes:
-        signal_name: 信号名称（如 "V(out)"）
-        x_data: X 轴数据（时间或频率）
-        y_data: Y 轴数据（信号值）
-        point_count: 数据点数量
-        x_range: X 轴范围 (min, max)
-        y_range: Y 轴范围 (min, max)
-        is_downsampled: 是否经过降采样
-        original_points: 原始数据点数（降采样前）
-    """
     signal_name: str
     x_data: np.ndarray
     y_data: np.ndarray
@@ -75,16 +41,17 @@ class WaveformData:
     y_range: Tuple[float, float] = field(init=False)
     is_downsampled: bool = False
     original_points: int = 0
-    
-    def __post_init__(self):
+
+    def __post_init__(self) -> None:
+        self.x_data, self.y_data = align_xy(self.x_data, self.y_data)
+        invalid_x = ~np.isfinite(self.x_data)
+        self.x_data[invalid_x] = np.nan
+        self.y_data[invalid_x] = np.nan
         self.point_count = len(self.x_data)
-        if self.point_count > 0:
-            self.x_range = (float(np.min(self.x_data)), float(np.max(self.x_data)))
-            self.y_range = (float(np.min(self.y_data)), float(np.max(self.y_data)))
-        else:
-            self.x_range = (0.0, 0.0)
-            self.y_range = (0.0, 0.0)
-        if self.original_points == 0:
+        finite_pairs = np.isfinite(self.x_data) & np.isfinite(self.y_data)
+        self.x_range = _finite_bounds(self.x_data[finite_pairs])
+        self.y_range = _finite_bounds(self.y_data[finite_pairs])
+        if self.original_points <= 0:
             self.original_points = self.point_count
 
 
@@ -105,125 +72,37 @@ class TableSnapshot:
         return int(len(self.x_values))
 
 
-TABLE_COMPLEX_SUFFIXES = ("_mag", "_phase", "_real", "_imag")
-TABLE_COMPLEX_SUFFIX_PRIORITY = {
-    suffix: index for index, suffix in enumerate(TABLE_COMPLEX_SUFFIXES)
+_VIRTUAL_COMPONENT_PRIORITY = {
+    suffix: index
+    for index, suffix in enumerate(VIRTUAL_COMPLEX_COMPONENT_SUFFIXES)
 }
 
 
-# ============================================================
-# LRU 缓存实现
-# ============================================================
-
-class LRUCache:
-    """
-    简单的 LRU 缓存实现
-    
-    用于缓存信号的金字塔数据，避免重复构建。
-    """
-    
-    def __init__(self, max_size: int = 32):
-        """
-        初始化缓存
-        
-        Args:
-            max_size: 最大缓存条目数
-        """
-        self._max_size = max_size
-        self._cache: OrderedDict[str, PyramidData] = OrderedDict()
-    
-    def get(self, key: str) -> Optional[PyramidData]:
-        """获取缓存项，命中时移动到末尾"""
-        if key in self._cache:
-            self._cache.move_to_end(key)
-            return self._cache[key]
-        return None
-    
-    def put(self, key: str, value: PyramidData) -> None:
-        """添加缓存项，超出容量时淘汰最旧的"""
-        if key in self._cache:
-            self._cache.move_to_end(key)
-        else:
-            if len(self._cache) >= self._max_size:
-                self._cache.popitem(last=False)
-        self._cache[key] = value
-    
-    def clear(self) -> None:
-        """清空缓存"""
-        self._cache.clear()
-    
-    def size(self) -> int:
-        """获取当前缓存大小"""
-        return len(self._cache)
-
-
-# ============================================================
-# WaveformDataService - 波形数据服务
-# ============================================================
-
 class WaveformDataService:
-    """
-    波形数据服务
-    
-    提供波形数据访问的统一入口，协调降采样、缓存和多分辨率金字塔。
-    
-    特性：
-    - 延迟构建：金字塔数据在首次访问时构建
-    - LRU 缓存：相同信号的金字塔数据缓存复用
-    - 视口优化：根据显示区域和目标点数返回最优分辨率
-    """
-    
-    def __init__(self, cache_size: int = 32):
-        """
-        初始化服务
-        
-        Args:
-            cache_size: 金字塔缓存大小（信号数量）
-        """
-        self._pyramid_cache = LRUCache(max_size=cache_size)
-    
+    """Stateless access to validated simulator vectors."""
+
     def get_initial_data(
         self,
         result: SimulationResult,
         signal_name: str,
         target_points: int = 500,
     ) -> Optional[WaveformData]:
-        """
-        获取初始显示数据
-        
-        用于首次加载时显示低分辨率预览。
-        
-        Args:
-            result: 仿真结果对象
-            signal_name: 信号名称
-            target_points: 目标点数（默认 500）
-            
-        Returns:
-            WaveformData: 波形数据，若信号不存在返回 None
-        """
-        if not result.success or result.data is None:
+        if target_points < 2:
             return None
-
-        resolved_signal_name = self.resolve_signal_name(result, signal_name)
-        if resolved_signal_name is None:
+        prepared = self._prepare_result_series(result, signal_name)
+        if prepared is None:
             return None
-        
-        x_data = result.get_x_axis_data()
-        y_data = self._get_signal_data(result.data, resolved_signal_name)
-        
-        if x_data is None or y_data is None:
+        resolved_name, x_data, y_data = prepared
+        original_points = len(x_data)
+        x_out, y_out = downsample_preserving_gaps(x_data, y_data, target_points)
+        if len(x_out) == 0:
             return None
-        
-        pyramid = self._get_or_build_pyramid(result, resolved_signal_name, x_data, y_data)
-        level_idx = select_optimal_level(pyramid, target_points)
-        x_out, y_out = get_level_data(pyramid, level_idx)
-        
         return WaveformData(
-            signal_name=resolved_signal_name,
+            signal_name=resolved_name,
             x_data=x_out,
             y_data=y_out,
-            is_downsampled=len(x_out) < pyramid.original_points,
-            original_points=pyramid.original_points,
+            is_downsampled=len(x_out) < original_points,
+            original_points=original_points,
         )
 
     def get_viewport_data(
@@ -234,68 +113,27 @@ class WaveformDataService:
         x_max: float,
         target_points: int = 1000,
     ) -> Optional[WaveformData]:
-        """
-        获取视口范围数据
-        
-        用于缩放时获取指定范围的数据。
-        
-        Args:
-            result: 仿真结果对象
-            signal_name: 信号名称
-            x_min: X 轴最小值
-            x_max: X 轴最大值
-            target_points: 目标点数
-            
-        Returns:
-            WaveformData: 视口范围内的波形数据
-        """
-        if not result.success or result.data is None:
+        if target_points < 2 or not np.isfinite(x_min) or not np.isfinite(x_max):
             return None
+        prepared = self._prepare_result_series(result, signal_name)
+        if prepared is None:
+            return None
+        resolved_name, x_data, y_data = prepared
+        original_points = len(x_data)
+        lower, upper = sorted((float(x_min), float(x_max)))
 
-        resolved_signal_name = self.resolve_signal_name(result, signal_name)
-        if resolved_signal_name is None:
+        viewport_x, viewport_y = crop_to_viewport(x_data, y_data, lower, upper)
+        if len(viewport_x) == 0:
             return None
-        
-        x_data = result.get_x_axis_data()
-        y_data = self._get_signal_data(result.data, resolved_signal_name)
-        
-        if x_data is None or y_data is None:
-            return None
-        
-        # 获取金字塔
-        pyramid = self._get_or_build_pyramid(result, resolved_signal_name, x_data, y_data)
-        
-        # 计算视口范围内的数据点比例
-        total_range = pyramid.x_range[1] - pyramid.x_range[0]
-        if total_range <= 0:
-            return None
-        
-        viewport_range = x_max - x_min
-        viewport_ratio = viewport_range / total_range
-        
-        # 根据视口比例调整所需点数
-        # 视口越小，需要的原始点数越少，可以使用更低分辨率
-        estimated_points_in_viewport = int(pyramid.original_points * viewport_ratio)
-        required_points = min(target_points, max(estimated_points_in_viewport, target_points))
-        
-        # 选择最优层级
-        level_idx = select_optimal_level(pyramid, required_points)
-        x_level, y_level = get_level_data(pyramid, level_idx)
-        
-        # 裁剪到视口范围
-        mask = (x_level >= x_min) & (x_level <= x_max)
-        x_out = x_level[mask]
-        y_out = y_level[mask]
-        
+        x_out, y_out = downsample_preserving_gaps(viewport_x, viewport_y, target_points)
         if len(x_out) == 0:
             return None
-        
         return WaveformData(
-            signal_name=resolved_signal_name,
+            signal_name=resolved_name,
             x_data=x_out,
             y_data=y_out,
-            is_downsampled=len(x_out) < pyramid.original_points,
-            original_points=pyramid.original_points,
+            is_downsampled=len(x_out) < len(viewport_x),
+            original_points=original_points,
         )
 
     def get_signal_range(
@@ -303,25 +141,15 @@ class WaveformDataService:
         result: SimulationResult,
         signal_name: str,
     ) -> Optional[Tuple[float, float]]:
-        if not result.success or result.data is None:
+        prepared = self._prepare_result_series(result, signal_name)
+        if prepared is None:
             return None
-
-        resolved_signal_name = self.resolve_signal_name(result, signal_name)
-        if resolved_signal_name is None:
-            return None
-
-        signal_data = self._get_signal_data(result.data, resolved_signal_name)
-        if signal_data is None:
-            return None
-
-        values = np.asarray(signal_data, dtype=float)
-        if values.size == 0:
-            return None
-
+        _, x_values, values = prepared
+        finite_pairs = np.isfinite(x_values) & np.isfinite(values)
+        values = values[finite_pairs]
         finite_values = values[np.isfinite(values)]
         if finite_values.size == 0:
             return None
-
         return float(np.min(finite_values)), float(np.max(finite_values))
 
     def get_signal_data(
@@ -329,31 +157,24 @@ class WaveformDataService:
         result: SimulationResult,
         signal_name: str,
     ) -> Optional[np.ndarray]:
-        if not result.success or result.data is None:
+        if result is None or not result.success or result.data is None:
             return None
-
         resolved_signal_name = self.resolve_signal_name(result, signal_name)
         if resolved_signal_name is None:
             return None
-
         signal_data = self._get_signal_data(result.data, resolved_signal_name)
-        if signal_data is None:
-            return None
+        return np.asarray(signal_data) if signal_data is not None else None
 
-        return np.asarray(signal_data)
-    
     def get_resolved_signal_names(
         self,
         result: SimulationResult,
         signal_names: Optional[List[str]] = None,
     ) -> List[str]:
-        if not result.success or result.data is None:
+        if result is None or not result.success or result.data is None:
             return []
 
         data = result.data
-        available_signals = data.get_signal_names()
-        requested_signals = signal_names or available_signals
-
+        requested_signals = signal_names if signal_names is not None else data.get_signal_names()
         resolved: List[str] = []
         seen = set()
         for signal_name in requested_signals:
@@ -361,93 +182,46 @@ class WaveformDataService:
                 if resolved_name not in seen:
                     resolved.append(resolved_name)
                     seen.add(resolved_name)
-
-        if signal_names is None:
-            for signal_name in available_signals:
-                for resolved_name in self._expand_signal_name(data, signal_name):
-                    if resolved_name not in seen:
-                        resolved.append(resolved_name)
-                        seen.add(resolved_name)
-
-        return sorted(
-            resolved,
-            key=lambda name: self._get_signal_sort_key(data, name),
-        )
+        return sorted(resolved, key=lambda name: self._get_signal_sort_key(data, name))
 
     def resolve_signal_name(
         self,
         result: SimulationResult,
         signal_name: str,
     ) -> Optional[str]:
-        if not result.success or result.data is None:
+        if result is None or not result.success or result.data is None:
             return None
-
         resolved_names = self._expand_signal_name(result.data, signal_name)
         if not resolved_names:
             return None
-
-        return sorted(
-            resolved_names,
-            key=lambda name: self._get_signal_sort_key(result.data, name),
-        )[0]
+        return min(resolved_names, key=lambda name: self._get_signal_sort_key(result.data, name))
 
     def get_classified_signals(self, result: SimulationResult) -> Dict[str, List[str]]:
-        """
-        获取分类后的信号列表
-        
-        将信号按类型分组，优先使用 SimulationData.signal_types 中的类型信息，
-        回退时通过信号名称前缀推断。
-        
-        Args:
-            result: 仿真结果对象
-            
-        Returns:
-            Dict[str, List[str]]: {"电压": [...], "电流": [...], "其他": [...]}
-        """
         classified: Dict[str, List[str]] = {
             "voltage": [],
             "current": [],
             "other": [],
         }
-        
-        if not result.success or result.data is None:
+        if result is None or not result.success or result.data is None:
             return classified
-        
-        signal_types = getattr(result.data, 'signal_types', {})
-        
+        signal_types = getattr(result.data, "signal_types", {})
         for name in self.get_resolved_signal_names(result):
-            sig_type = self.get_signal_type(name, signal_types)
-            classified[sig_type].append(name)
-        
+            classified[self.get_signal_type(name, signal_types)].append(name)
         return classified
-    
+
     @staticmethod
     def get_signal_type(
         name: str,
         signal_types: Optional[Dict[str, str]] = None,
     ) -> str:
-        """
-        判断单个信号的类型
-        
-        优先使用 signal_types 字典，回退时根据名称前缀推断。
-        
-        Args:
-            name: 信号名称
-            signal_types: 信号类型字典（可选）
-            
-        Returns:
-            str: "voltage" / "current" / "other"
-        """
         return resolve_signal_type(name, signal_types)
-    
+
     @staticmethod
     def is_voltage_signal(name: str, signal_types: Optional[Dict[str, str]] = None) -> bool:
-        """判断是否为电压信号"""
         return WaveformDataService.get_signal_type(name, signal_types) == "voltage"
-    
+
     @staticmethod
     def is_current_signal(name: str, signal_types: Optional[Dict[str, str]] = None) -> bool:
-        """判断是否为电流信号"""
         return WaveformDataService.get_signal_type(name, signal_types) == "current"
 
     def build_table_snapshot(
@@ -455,28 +229,52 @@ class WaveformDataService:
         result: SimulationResult,
         signal_names: Optional[List[str]] = None,
     ) -> Optional[TableSnapshot]:
-        if not result.success or result.data is None:
+        if result is None or not result.success or result.data is None:
             return None
-
         x_data, x_label = self._get_table_x_axis(result)
         if x_data is None:
             return None
 
-        x_values = np.asarray(x_data, dtype=float).copy()
+        try:
+            raw_x_values = np.asarray(x_data, dtype=float)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        if raw_x_values.ndim != 1 or not np.all(np.isfinite(raw_x_values)):
+            return None
+        x_values = raw_x_values.copy()
+
         resolved_signal_names = self.get_resolved_signal_names(result, signal_names)
         signal_columns: Dict[str, np.ndarray] = {}
         total_rows = len(x_values)
-
+        nested_sweep = parse_nested_dc_sweep(result.analysis_type, result.analysis_command)
+        if nested_sweep is not None:
+            secondary_values = nested_dc_secondary_values(raw_x_values, nested_sweep)
+            if np.any(np.isfinite(secondary_values)):
+                secondary_name = nested_sweep.secondary_column_label
+                signal_columns[secondary_name] = secondary_values.copy()
+                resolved_signal_names = [secondary_name, *resolved_signal_names]
         for signal_name in resolved_signal_names:
+            if signal_name in signal_columns:
+                continue
             signal_data = self._get_signal_data(result.data, signal_name)
             column = np.full(total_rows, np.nan, dtype=float)
             if signal_data is not None:
-                limit = min(len(signal_data), total_rows)
-                for row in range(limit):
+                for row in range(total_rows):
+                    if row >= len(signal_data):
+                        continue
                     scalar_value = self._to_table_scalar_value(signal_data[row])
-                    if scalar_value is not None:
+                    if scalar_value is not None and np.isfinite(scalar_value):
                         column[row] = scalar_value
             signal_columns[signal_name] = column
+
+        if nested_sweep is not None:
+            reset_indexes = nested_dc_reset_indexes(raw_x_values, nested_sweep)
+            if reset_indexes.size:
+                x_values = np.insert(x_values, reset_indexes, np.nan)
+                signal_columns = {
+                    name: np.insert(column, reset_indexes, np.nan)
+                    for name, column in signal_columns.items()
+                }
 
         return TableSnapshot(
             result_path=result.file_path,
@@ -490,42 +288,55 @@ class WaveformDataService:
             signal_columns=signal_columns,
         )
 
-    # ============================================================
-    # 内部辅助方法
-    # ============================================================
-
-    def _expand_signal_name(
+    def _prepare_result_series(
         self,
-        data: SimulationData,
+        result: SimulationResult,
         signal_name: str,
-    ) -> List[str]:
+    ) -> Optional[Tuple[str, np.ndarray, np.ndarray]]:
+        if result is None or not result.success or result.data is None:
+            return None
+        resolved_signal_name = self.resolve_signal_name(result, signal_name)
+        if resolved_signal_name is None:
+            return None
+        x_data = result.get_x_axis_data()
+        y_data = self._get_signal_data(result.data, resolved_signal_name)
+        if x_data is None or y_data is None:
+            return None
+        x_array, y_array = align_xy(x_data, y_data)
+        nested_sweep = parse_nested_dc_sweep(result.analysis_type, result.analysis_command)
+        if nested_sweep is not None:
+            x_array, y_array = insert_nested_dc_breaks(x_array, y_array, nested_sweep)
+        if len(x_array) == 0 or not np.any(np.isfinite(x_array) & np.isfinite(y_array)):
+            return None
+        return resolved_signal_name, x_array, y_array
+
+    def _expand_signal_name(self, data: SimulationData, signal_name: str) -> List[str]:
         available_signals = set(data.get_signal_names())
-        base_name, component_suffix = self._split_component_suffix(signal_name)
+        base_name, component_suffix = split_virtual_complex_component_name(signal_name)
         candidate_bases = [base_name]
         normalized_base = normalize_simulation_signal_name(base_name)
         if normalized_base not in candidate_bases:
             candidate_bases.append(normalized_base)
+
         if component_suffix:
             for candidate_base in candidate_bases:
-                candidate_name = f"{candidate_base}{component_suffix}"
-                signal_data = self._get_signal_data(data, candidate_name)
-                if signal_data is not None:
-                    return [candidate_name]
+                base_signal = data.get_signal(candidate_base)
+                if base_signal is not None and np.iscomplexobj(base_signal):
+                    return [f"{candidate_base}{component_suffix}"]
             return []
 
         for candidate_name in candidate_bases:
             if candidate_name not in available_signals:
                 continue
-
             signal_data = data.get_signal(candidate_name)
             if signal_data is None:
                 continue
-
             if np.iscomplexobj(signal_data):
-                return [f"{candidate_name}{suffix}" for suffix in TABLE_COMPLEX_SUFFIXES]
-
+                return [
+                    f"{candidate_name}{suffix}"
+                    for suffix in VIRTUAL_COMPLEX_COMPONENT_SUFFIXES
+                ]
             return [candidate_name]
-
         return []
 
     def _get_signal_sort_key(
@@ -533,153 +344,107 @@ class WaveformDataService:
         data: SimulationData,
         signal_name: str,
     ) -> Tuple[int, int, str, int, str]:
-        signal_types = getattr(data, 'signal_types', {})
-        base_name = self._get_signal_base_name(signal_name)
-        component_suffix = signal_name[len(base_name):] if signal_name.startswith(base_name) else ""
+        signal_types = getattr(data, "signal_types", {})
+        base_name, component_suffix = split_virtual_complex_component_name(signal_name)
         signal_type = self.get_signal_type(base_name, signal_types)
-
-        type_rank = {
-            "voltage": 0,
-            "current": 1,
-            "other": 2,
-        }.get(signal_type, 2)
-
+        type_rank = {"voltage": 0, "current": 1, "other": 2}.get(signal_type, 2)
         name_lower = base_name.lower()
-        if "out" in name_lower:
-            role_rank = 0
-        elif "in" in name_lower:
-            role_rank = 1
-        else:
-            role_rank = 2
-
-        component_rank = TABLE_COMPLEX_SUFFIX_PRIORITY.get(component_suffix, len(TABLE_COMPLEX_SUFFIX_PRIORITY))
-        return (role_rank, type_rank, base_name.lower(), component_rank, signal_name.lower())
-
-    def _get_signal_base_name(self, signal_name: str) -> str:
-        base_name, _ = self._split_component_suffix(signal_name)
-        return base_name
-
-    def _split_component_suffix(self, signal_name: str) -> Tuple[str, str]:
-        for suffix in TABLE_COMPLEX_SUFFIXES:
-            if signal_name.endswith(suffix):
-                return signal_name[:-len(suffix)], suffix
-        return signal_name, ""
+        role_rank = 0 if "out" in name_lower else 1 if "in" in name_lower else 2
+        component_rank = _VIRTUAL_COMPONENT_PRIORITY.get(
+            component_suffix,
+            len(_VIRTUAL_COMPONENT_PRIORITY),
+        )
+        return role_rank, type_rank, name_lower, component_rank, signal_name.lower()
 
     def _get_signal_data(
         self,
         data: SimulationData,
         signal_name: str,
     ) -> Optional[np.ndarray]:
-        signal_data = data.get_signal(signal_name)
-        if signal_data is not None:
-            return np.asarray(signal_data)
-
-        base_name, component_suffix = self._split_component_suffix(signal_name)
+        base_name, component_suffix = split_virtual_complex_component_name(signal_name)
         if not component_suffix:
-            return None
-
+            signal_data = data.get_signal(signal_name)
+            return np.asarray(signal_data) if signal_data is not None else None
         base_signal = data.get_signal(base_name)
         if base_signal is None or not np.iscomplexobj(base_signal):
             return None
-
-        return self._derive_complex_component(np.asarray(base_signal), component_suffix)
-
-    def _derive_complex_component(
-        self,
-        complex_signal: np.ndarray,
-        component_suffix: str,
-    ) -> Optional[np.ndarray]:
+        complex_signal = np.asarray(base_signal)
         if component_suffix == "_mag":
             return np.abs(complex_signal)
         if component_suffix == "_phase":
-            return np.angle(complex_signal, deg=True)
+            phase = np.full(complex_signal.shape, np.nan, dtype=float)
+            finite = (
+                np.isfinite(np.real(complex_signal))
+                & np.isfinite(np.imag(complex_signal))
+                & (np.abs(complex_signal) > 0)
+            )
+            phase[finite] = np.angle(complex_signal[finite], deg=True)
+            return _unwrap_phase_degrees(phase)
         if component_suffix == "_real":
             return np.real(complex_signal)
         if component_suffix == "_imag":
             return np.imag(complex_signal)
         return None
 
-    def _to_table_scalar_value(self, value: object) -> Optional[float]:
+    @staticmethod
+    def _to_table_scalar_value(value: object) -> Optional[float]:
         if value is None:
             return None
-
         if np.iscomplexobj(value):
             complex_value = complex(value)
             if abs(complex_value.imag) > 1e-15:
                 return None
             return float(complex_value.real)
-
         try:
             return float(value)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             return None
 
-    def _get_table_x_axis(self, result: SimulationResult) -> Tuple[Optional[np.ndarray], str]:
+    @staticmethod
+    def _get_table_x_axis(result: SimulationResult) -> Tuple[Optional[np.ndarray], str]:
         x_axis_data = result.get_x_axis_data()
         if x_axis_data is not None:
             return x_axis_data, result.get_x_axis_label()
-
         data = result.data
         if data is None:
             return None, "X"
-
-        row_count = 0
-        for signal_name in data.get_signal_names():
-            signal_data = data.get_signal(signal_name)
-            if signal_data is not None:
-                row_count = max(row_count, len(signal_data))
-
-        if row_count > 0:
+        row_count = max(
+            (len(signal) for signal in data.signals.values() if signal is not None),
+            default=0,
+        )
+        if row_count:
             return np.arange(row_count, dtype=float), "Index"
-
         return None, "X"
 
-    def _get_or_build_pyramid(
-        self,
-        result: SimulationResult,
-        signal_name: str,
-        x_data: np.ndarray,
-        y_data: np.ndarray,
-    ) -> PyramidData:
-        """
-        获取或构建信号的金字塔数据
-        
-        使用 result.timestamp + signal_name 作为缓存键。
-        """
-        cache_key = f"{result.timestamp}:{signal_name}"
-        
-        # 尝试从缓存获取
-        cached = self._pyramid_cache.get(cache_key)
-        if cached is not None:
-            return cached
-        
-        # 构建新的金字塔
-        pyramid = build_pyramid(x_data, y_data, DEFAULT_PYRAMID_LEVELS)
-        
-        # 存入缓存
-        self._pyramid_cache.put(cache_key, pyramid)
-        
-        return pyramid
+
+def _finite_bounds(values: np.ndarray) -> Tuple[float, float]:
+    finite_values = np.asarray(values, dtype=float)
+    finite_values = finite_values[np.isfinite(finite_values)]
+    if finite_values.size == 0:
+        return 0.0, 0.0
+    return float(np.min(finite_values)), float(np.max(finite_values))
 
 
-# ============================================================
-# 模块级单例
-# ============================================================
+def _unwrap_phase_degrees(values: np.ndarray) -> np.ndarray:
+    phase = np.asarray(values, dtype=float)
+    result = np.full(phase.shape, np.nan, dtype=float)
+    finite = np.isfinite(phase)
+    padded = np.concatenate(([False], finite, [False]))
+    transitions = np.diff(padded.astype(np.int8))
+    for start, stop in zip(
+        np.flatnonzero(transitions == 1),
+        np.flatnonzero(transitions == -1),
+    ):
+        result[start:stop] = np.degrees(np.unwrap(np.radians(phase[start:stop])))
+    return result
+
 
 waveform_data_service = WaveformDataService()
-"""模块级单例实例，便于直接导入使用"""
 
-
-# ============================================================
-# 模块导出
-# ============================================================
 
 __all__ = [
-    # 数据类
     "WaveformData",
     "TableSnapshot",
-    # 服务类
     "WaveformDataService",
-    # 单例
     "waveform_data_service",
 ]

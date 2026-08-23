@@ -19,7 +19,7 @@ export function OpResultTab({ state, bridge }: OpResultTabProps) {
         title={getUiText(uiText, 'simulation.op_result.title', 'Operating Point Result')}
         description={getUiText(uiText, 'simulation.op_result.description', 'Local action area plus a structured result table.')}
         actions={
-          <button type="button" className="sim-compact-button sim-compact-button--accent" disabled={!opView.can_add_to_conversation} onClick={() => bridge?.addToConversation('op_result')}>
+          <button type="button" className="sim-compact-button sim-compact-button--accent" disabled={!opView.can_add_to_conversation} onClick={() => bridge?.addToConversation({ projectRoot: state.simulation_runtime.project_root, resultPath: state.simulation_runtime.current_result_path, target: 'op_result' })}>
             {getUiText(uiText, 'common.add_to_conversation', 'Add to Conversation')}
           </button>
         }

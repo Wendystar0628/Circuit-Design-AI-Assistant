@@ -6,15 +6,6 @@ from presentation.panels.conversation.inline_attachment_text_edit import InlineA
 from infrastructure.llm_adapters.qwen.qwen_client import QwenClient
 from shared.model_registry import ModelRegistry
 import pytest
-from PyQt6.QtWidgets import QApplication
-
-
-@pytest.fixture(scope="session")
-def qapp():
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
 
 
 def test_llm_message_builder_expands_file_attachment_into_user_content(tmp_path, monkeypatch):

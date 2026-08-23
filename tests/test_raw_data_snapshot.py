@@ -1,6 +1,8 @@
 import numpy as np
 import pytest
 import importlib
+import subprocess
+import sys
 from PyQt6.QtWidgets import QApplication
 
 import domain.simulation.data as simulation_data_package
@@ -13,14 +15,7 @@ from presentation.panels.simulation.raw_data_table import (
 
 
 waveform_data_service_module = importlib.import_module("domain.simulation.data.waveform_data_service")
-
-
-@pytest.fixture(scope="session")
-def qapp():
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
+_SOURCE_DIGEST = "0" * 64
 
 
 @pytest.fixture
@@ -32,6 +27,10 @@ def sample_result() -> SimulationResult:
             "V(out)": np.array([1.0, 2.0, 3.0, 4.0], dtype=float),
             "V(in)": np.array([0.5, 0.6, 0.7, 0.8], dtype=float),
         },
+        signal_types={
+            "V(out)": "voltage",
+            "V(in)": "voltage",
+        },
     )
 
     return SimulationResult(
@@ -39,13 +38,12 @@ def sample_result() -> SimulationResult:
         file_path="results/run_007.json",
         analysis_type="tran",
         success=True,
+        source_digest=_SOURCE_DIGEST,
         data=data,
-        timestamp="2026-04-05T17:00:00",
+        timestamp="2026-04-05T17:00:00Z",
         version=7,
         session_id="session-raw-7",
-        x_axis_kind="time",
-        x_axis_label="Time (s)",
-        x_axis_scale="linear",
+        analysis_command=".tran 100m 300m",
     )
 
 
@@ -57,6 +55,10 @@ def build_result(*, row_count: int, signal_count: int) -> SimulationResult:
             f"V(n{index})": np.arange(row_count, dtype=float) + float(index)
             for index in range(signal_count)
         },
+        signal_types={
+            f"V(n{index})": "voltage"
+            for index in range(signal_count)
+        },
     )
 
     return SimulationResult(
@@ -64,18 +66,17 @@ def build_result(*, row_count: int, signal_count: int) -> SimulationResult:
         file_path=f"results/wide_{row_count}_{signal_count}.json",
         analysis_type="tran",
         success=True,
+        source_digest=_SOURCE_DIGEST,
         data=data,
-        timestamp="2026-04-05T18:00:00",
+        timestamp="2026-04-05T18:00:00Z",
         version=8,
         session_id=f"session-wide-{row_count}-{signal_count}",
-        x_axis_kind="time",
-        x_axis_label="Time (s)",
-        x_axis_scale="linear",
+        analysis_command=f".tran 100m {(row_count - 1) * 0.1:g}",
     )
 
 
 def test_waveform_data_service_builds_stable_table_snapshot(sample_result: SimulationResult):
-    service = WaveformDataService(cache_size=4)
+    service = WaveformDataService()
 
     snapshot = service.build_table_snapshot(sample_result)
 
@@ -84,7 +85,7 @@ def test_waveform_data_service_builds_stable_table_snapshot(sample_result: Simul
     assert snapshot.analysis_type == "tran"
     assert snapshot.version == 7
     assert snapshot.session_id == "session-raw-7"
-    assert snapshot.timestamp == "2026-04-05T17:00:00"
+    assert snapshot.timestamp == "2026-04-05T17:00:00Z"
     assert snapshot.x_label == "Time (s)"
     assert snapshot.signal_names == ["V(out)", "V(in)"]
     np.testing.assert_allclose(snapshot.x_values, np.array([0.0, 0.1, 0.2, 0.3]))
@@ -96,8 +97,22 @@ def test_waveform_data_service_builds_stable_table_snapshot(sample_result: Simul
         "WaveformDataService",
         "waveform_data_service",
     ]
-    assert {"WaveformData", "TableSnapshot", "WaveformDataService", "waveform_data_service"}.issubset(
-        set(simulation_data_package.__all__)
+    assert simulation_data_package.__all__ == []
+
+
+def test_simulation_result_fresh_import_does_not_eager_load_data_services():
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys; "
+                "from domain.simulation.models.simulation_result import SimulationResult; "
+                "assert 'domain.simulation.data.waveform_data_service' not in sys.modules; "
+                "assert 'domain.simulation.data.simulation_artifact_exporter' not in sys.modules"
+            ),
+        ],
+        check=True,
     )
 
 
@@ -106,7 +121,7 @@ def test_raw_data_table_document_payload_exposes_metadata(qapp, sample_result: S
     table.load_data(sample_result)
     document = table.get_document_payload()
 
-    assert document["dataset_id"] == "session-raw-7::results/run_007.json::2026-04-05T17:00:00"
+    assert document["dataset_id"] == "session-raw-7::results/run_007.json::2026-04-05T17:00:00Z"
     assert document["version"] == 1
     assert document["has_data"] is True
     assert document["row_count"] == 4

@@ -315,19 +315,13 @@
   border-radius: var(--sim-radius-md);
   background: var(--sim-surface-muted);
   color: inherit;
-  cursor: pointer;
   text-align: left;
   font: inherit;
 }
 
-.circuit-selection-card:hover:not(:disabled) {
+.circuit-selection-card:not(.circuit-selection-card--disabled):hover {
   border-color: #bcd2ff;
   background: #f4f8ff;
-}
-
-.circuit-selection-card:focus-visible {
-  outline: 2px solid #bcd2ff;
-  outline-offset: 2px;
 }
 
 .circuit-selection-card--active {
@@ -1121,6 +1115,63 @@
   box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
 }
 
+.tab-surface--metrics > .noise-totals-panel {
+  margin-top: 34px;
+}
+
+.noise-totals-panel {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid #c7d7fe;
+  border-radius: var(--sim-radius-md);
+  background: #f6f9ff;
+}
+
+.noise-totals-panel__header {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.noise-totals-panel__note,
+.noise-totals-panel__unavailable {
+  color: var(--sim-text-secondary);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.noise-totals-panel__items {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.noise-totals-panel__item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px 10px;
+  border: 1px solid var(--sim-border);
+  border-radius: var(--sim-radius-sm);
+  background: var(--sim-surface-bg);
+}
+
+.noise-totals-panel__label {
+  color: var(--sim-text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.noise-totals-panel__value {
+  color: var(--sim-text-primary);
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
 .metrics-matrix-scroll {
   flex: 1 1 auto;
   min-height: 0;
@@ -1194,6 +1245,35 @@
 .metrics-matrix__current {
   font-variant-numeric: tabular-nums;
   font-weight: 600;
+  min-width: 160px;
+  white-space: normal;
+}
+
+.metrics-matrix__failure {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  max-width: 320px;
+}
+
+.metrics-matrix__status-badge {
+  display: inline-flex;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: rgba(220, 38, 38, 0.12);
+  color: #b91c1c;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+.metrics-matrix__error-message {
+  color: #b91c1c;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 
 .metrics-matrix__target {

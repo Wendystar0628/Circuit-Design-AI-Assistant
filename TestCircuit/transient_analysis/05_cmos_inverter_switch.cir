@@ -5,10 +5,11 @@
 * Devices exercised: V, M (PMOS bundled BSS84 + NMOS bundled BSS123), C.
 
 .title CMOS Inverter Switching
+.include "../../resources/models/ngspice/testcircuit_discrete.lib"
 
-* --- Supply and 5 V pulse input (100 ns edges, 500 ns pulse width) ---
+* --- Supply and 5 V pulse input (10 ns edges, 500 ns pulse width) ---
 Vdd vdd 0 DC 5
-Vin in  0 PULSE(0 5 0 100n 100n 500n 1u)
+Vin in  0 PULSE(0 5 0 10n 10n 500n 1u)
 
 * --- PMOS pull-up ---
 M1 out in vdd vdd BSS84
@@ -20,7 +21,7 @@ M2 out in 0   0   BSS123
 Cload out 0 10p
 
 * --- Analysis: a handful of switching periods ---
-.tran 10n 5u
+.tran 1n 5u
 
 .MEASURE TRAN t_pdhl TRIG V(in)  VAL=2.5 RISE=1 TARG V(out) VAL=2.5 FALL=1
 .MEASURE TRAN t_pdlh TRIG V(in)  VAL=2.5 FALL=1 TARG V(out) VAL=2.5 RISE=1

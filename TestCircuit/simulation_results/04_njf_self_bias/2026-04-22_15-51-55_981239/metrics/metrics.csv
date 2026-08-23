@@ -1,8 +1,0 @@
-# artifact_type: metrics
-# circuit_file: 04_njf_self_bias.cir
-# file_path: E:\Individual Project\circuit_design_ai\TestCircuit\op_analysis\04_njf_self_bias.cir
-# analysis_type: op
-# executor: spice
-# timestamp: 2026-04-22T15:51:55.981239
-
-display_name,name,value,unit,raw_value,target

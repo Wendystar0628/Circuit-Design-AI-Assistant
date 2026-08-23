@@ -14,6 +14,7 @@
 * Devices exercised: V, M (PMOS BSS84 x3 + NMOS BSS123 x3), C.
 
 .title CMOS Schmitt Trigger
+.include "../../resources/models/ngspice/testcircuit_discrete.lib"
 
 * --- Supply and slow triangle-wave input ---
 Vdd vdd 0 DC 5
@@ -22,20 +23,20 @@ Vin in  0 PWL(0 0   1m 5   2m 0   3m 5   4m 0)
 * ============================================================
 * NMOS pull-down stack (Mn1 on top of Mn2)
 * ============================================================
-Mn1 out in  ma ma BSS123
-Mn2 ma  in  0  0  BSS123
+Mn1 out in ma BSS123
+Mn2 ma  in 0  BSS123
 
-* --- NMOS feedback device: pulls 'ma' toward VDD when out is high ---
-Mnf ma  out vdd vdd BSS84
+* --- NMOS feedback: resists pull-down while the output is high ---
+Mnf vdd out ma BSS123
 
 * ============================================================
 * PMOS pull-up stack (Mp1 on top of Mp2)
 * ============================================================
-Mp1 out in  mb mb BSS84
-Mp2 mb  in  vdd vdd BSS84
+Mp1 out in mb  BSS84
+Mp2 mb  in vdd BSS84
 
-* --- PMOS feedback device: pulls 'mb' toward GND when out is low ---
-Mpf mb  out 0   0   BSS123
+* --- PMOS feedback: resists pull-up while the output is low ---
+Mpf 0 out mb BSS84
 
 * --- Output load ---
 Cload out 0 5p
@@ -43,7 +44,9 @@ Cload out 0 5p
 * --- Analysis: capture the full input sweep ---
 .tran 2u 4m
 
-.MEASURE TRAN v_out_high MAX V(out)
-.MEASURE TRAN v_out_low  MIN V(out)
+.MEASURE TRAN v_out_low  AVG V(out) FROM=0.9m TO=1.1m
+.MEASURE TRAN v_out_high AVG V(out) FROM=1.9m TO=2.1m
+.MEASURE TRAN vt_plus  FIND V(in) WHEN V(out)=2.5 FALL=1
+.MEASURE TRAN vt_minus FIND V(in) WHEN V(out)=2.5 RISE=1
 
 .end

@@ -1,8 +1,0 @@
-# artifact_type: metrics
-# circuit_file: non-inverting amplifier.cir
-# file_path: E:\Individual Project\circuit_design_ai\TestCircuit\cir\non-inverting amplifier.cir
-# analysis_type: tran
-# executor: spice
-# timestamp: 2026-04-22T15:51:54.988873
-
-display_name,name,value,unit,raw_value,target

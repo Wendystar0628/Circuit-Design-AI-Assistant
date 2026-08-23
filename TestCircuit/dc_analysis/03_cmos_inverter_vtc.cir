@@ -5,6 +5,7 @@
 * Devices exercised: V, M (NMOS bundled BSS123, PMOS bundled BSS84).
 
 .title CMOS Inverter Voltage Transfer Characteristic
+.include "../../resources/models/ngspice/testcircuit_discrete.lib"
 
 * --- Supply and swept input ---
 Vdd vdd 0 DC 5
@@ -16,8 +17,8 @@ M1 out in vdd vdd BSS84
 * --- NMOS (source tied to GND, drain to output) ---
 M2 out in 0   0   BSS123
 
-* --- Analysis: sweep Vin across the full supply rail ---
-.dc Vin 0 5 0.01
+* --- Extend one step past VDD so AT=5 is not a floating endpoint ---
+.dc Vin 0 5.01 0.01
 
 .MEASURE DC v_th WHEN V(out)=2.5 FALL=1
 .MEASURE DC v_oh FIND V(out) AT=0

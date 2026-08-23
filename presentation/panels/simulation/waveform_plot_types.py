@@ -43,6 +43,7 @@ class PlotItem:
     color: str
     waveform_data: Optional[WaveformData] = None
     axis: str = "left"
+    axis_family: str = "other"
 
 
 __all__ = [

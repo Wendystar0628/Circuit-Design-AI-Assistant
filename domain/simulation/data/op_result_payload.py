@@ -1,9 +1,13 @@
 from __future__ import annotations
 
-import re
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
+
+from domain.simulation.data.signal_semantics import (
+    parse_device_parameter_signal_name,
+    resolve_device_parameter_unit,
+)
 
 _SUPPLY_PREFIXES: Tuple[str, ...] = (
     "vcc",
@@ -74,32 +78,6 @@ _DEVICE_PARAM_PRIORITY: Tuple[str, ...] = (
     "ro",
 )
 _REGION_PARAM_NAMES = {"region", "operating_region", "op_region", "mode", "state"}
-_MOS_REGION_CODE_MAP: Dict[int, str] = {
-    0: "cutoff",
-    1: "linear",
-    2: "saturation",
-    3: "subthreshold",
-}
-_PARAM_UNIT_MAP: Dict[str, str] = {
-    "id": "A",
-    "ic": "A",
-    "ib": "A",
-    "ie": "A",
-    "is": "A",
-    "gm": "S",
-    "gds": "S",
-    "gmb": "S",
-    "gmbs": "S",
-    "vgs": "V",
-    "vds": "V",
-    "vdsat": "V",
-    "vth": "V",
-    "vbe": "V",
-    "vce": "V",
-    "vbc": "V",
-    "ro": "Ω",
-}
-_DEVICE_PARAM_PATTERN = re.compile(r"^@(?P<device>.+?)\[(?P<param>[^\]]+)\]$")
 
 
 def extract_signal_target(signal_name: str) -> str:
@@ -133,32 +111,46 @@ def op_result_device_name_sort_key(name: str) -> Tuple[int, str]:
 
 
 def sort_op_result_node_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    return sorted(rows, key=lambda row: op_result_node_name_sort_key(str(row.get("name") or "")))
+    return sorted(
+        rows, key=lambda row: op_result_node_name_sort_key(str(row.get("name") or ""))
+    )
 
 
 def sort_op_result_branch_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    return sorted(rows, key=lambda row: op_result_branch_name_sort_key(str(row.get("device") or row.get("name") or "")))
+    return sorted(
+        rows,
+        key=lambda row: op_result_branch_name_sort_key(
+            str(row.get("device") or row.get("name") or "")
+        ),
+    )
 
 
 def sort_op_result_device_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    return sorted(rows, key=lambda row: op_result_device_name_sort_key(str(row.get("device") or "")))
+    return sorted(
+        rows,
+        key=lambda row: op_result_device_name_sort_key(str(row.get("device") or "")),
+    )
 
 
 def normalize_op_result_payload(value: Any) -> Dict[str, Any]:
     payload = value if isinstance(value, dict) else {}
     nodes = sort_op_result_node_rows(_normalize_node_rows(payload.get("nodes")))
-    branches = sort_op_result_branch_rows(_normalize_branch_rows(payload.get("branches")))
+    branches = sort_op_result_branch_rows(
+        _normalize_branch_rows(payload.get("branches"))
+    )
     devices = sort_op_result_device_rows(_normalize_device_rows(payload.get("devices")))
     return {
         "nodes": nodes,
         "branches": branches,
         "devices": devices,
         "row_count": len(nodes) + len(branches) + len(devices),
-        "section_count": 2 + (1 if devices else 0) if (nodes or branches or devices) else 0,
+        "section_count": 2 + (1 if devices else 0)
+        if (nodes or branches or devices)
+        else 0,
     }
 
 
-def build_op_result_payload_from_signals(signals: Dict[str, Any], signal_types: Dict[str, str]) -> Dict[str, Any]:
+def build_op_result_payload_from_signals(signals: Dict[str, Any]) -> Dict[str, Any]:
     nodes: List[Dict[str, Any]] = []
     branches: List[Dict[str, Any]] = []
     device_parameters: Dict[str, Dict[str, float]] = {}
@@ -167,33 +159,41 @@ def build_op_result_payload_from_signals(signals: Dict[str, Any], signal_types: 
         scalar = _extract_scalar(signal_value)
         if scalar is None:
             continue
+        device_parameter = parse_device_parameter_signal_name(str(signal_name))
+        if device_parameter is not None:
+            device_name, parameter_name = device_parameter
+            device_parameters.setdefault(device_name, {})[parameter_name] = scalar
+            continue
         upper_name = str(signal_name).upper()
         if upper_name.startswith("V("):
             node_name = extract_signal_target(str(signal_name))
-            nodes.append({
-                "name": node_name,
-                "voltage": scalar,
-                "formatted": _format_value(scalar, "V"),
-            })
+            nodes.append(
+                {
+                    "name": node_name,
+                    "voltage": scalar,
+                    "formatted": _format_value(scalar, "V"),
+                }
+            )
             continue
         if upper_name.startswith("I("):
             device_name = extract_signal_target(str(signal_name))
-            branches.append({
-                "device": device_name,
-                "current": scalar,
-                "formatted": _format_value(scalar, "A"),
-            })
+            branches.append(
+                {
+                    "device": device_name,
+                    "current": scalar,
+                    "formatted": _format_value(scalar, "A"),
+                    "direction_convention": "positive_from_positive_to_negative_terminal",
+                }
+            )
             continue
-        device_name, parameter_name = _extract_device_parameter(str(signal_name))
-        if not device_name or not parameter_name:
-            continue
-        device_parameters.setdefault(device_name, {})[parameter_name] = scalar
 
-    return normalize_op_result_payload({
-        "nodes": nodes,
-        "branches": branches,
-        "devices": _build_device_rows(device_parameters),
-    })
+    return normalize_op_result_payload(
+        {
+            "nodes": nodes,
+            "branches": branches,
+            "devices": _build_device_rows(device_parameters),
+        }
+    )
 
 
 def build_op_result_sections(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -223,6 +223,10 @@ def build_op_result_sections(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
                     "formatted_value": row["formatted"],
                     "raw_value": row["current"],
                     "unit": "A",
+                    "direction_convention": row.get(
+                        "direction_convention",
+                        "positive_from_positive_to_negative_terminal",
+                    ),
                 }
                 for row in normalized["branches"]
             ],
@@ -237,7 +241,9 @@ def build_op_result_sections(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
                 "rows": [
                     {
                         "name": row["device"],
-                        "formatted_value": f"{row['operating_region']} | {row['key_parameters_summary']}".strip(" |"),
+                        "formatted_value": f"{row['operating_region']} | {row['key_parameters_summary']}".strip(
+                            " |"
+                        ),
                         "raw_value": None,
                         "unit": "",
                     }
@@ -261,9 +267,17 @@ def render_op_result_markdown(payload: Dict[str, Any]) -> str:
         ),
         _render_table(
             "branches",
-            ["device", "current", "formatted"],
+            ["device", "current", "formatted", "direction_convention"],
             [
-                [row["device"], _format_scalar_column(row["current"]), row["formatted"]]
+                [
+                    row["device"],
+                    _format_scalar_column(row["current"]),
+                    row["formatted"],
+                    row.get(
+                        "direction_convention",
+                        "positive_from_positive_to_negative_terminal",
+                    ),
+                ]
                 for row in normalized["branches"]
             ],
         ),
@@ -295,7 +309,11 @@ def _normalize_node_rows(value: Any) -> List[Dict[str, Any]]:
         voltage = _as_float(item.get("voltage", item.get("raw_value")))
         if not name or voltage is None:
             continue
-        formatted = str(item.get("formatted") or item.get("formatted_value") or _format_value(voltage, "V"))
+        formatted = str(
+            item.get("formatted")
+            or item.get("formatted_value")
+            or _format_value(voltage, "V")
+        )
         rows.append({"name": name, "voltage": voltage, "formatted": formatted})
     return rows
 
@@ -309,8 +327,22 @@ def _normalize_branch_rows(value: Any) -> List[Dict[str, Any]]:
         current = _as_float(item.get("current", item.get("raw_value")))
         if not device or current is None:
             continue
-        formatted = str(item.get("formatted") or item.get("formatted_value") or _format_value(current, "A"))
-        rows.append({"device": device, "current": current, "formatted": formatted})
+        formatted = str(
+            item.get("formatted")
+            or item.get("formatted_value")
+            or _format_value(current, "A")
+        )
+        rows.append(
+            {
+                "device": device,
+                "current": current,
+                "formatted": formatted,
+                "direction_convention": str(
+                    item.get("direction_convention")
+                    or "positive_from_positive_to_negative_terminal"
+                ),
+            }
+        )
     return rows
 
 
@@ -321,10 +353,13 @@ def _normalize_device_rows(value: Any) -> List[Dict[str, Any]]:
             continue
         device = str(item.get("device") or "").strip()
         operating_region = str(item.get("operating_region") or "").strip()
-        if not device or not operating_region:
+        if not device:
             continue
         key_parameters = _normalize_key_parameters(item.get("key_parameters"))
-        key_parameters_summary = str(item.get("key_parameters_summary") or _summarize_key_parameters(key_parameters))
+        key_parameters_summary = str(
+            item.get("key_parameters_summary")
+            or _summarize_key_parameters(key_parameters)
+        )
         rows.append(
             {
                 "device": device,
@@ -347,7 +382,9 @@ def _normalize_key_parameters(value: Any) -> List[Dict[str, Any]]:
             continue
         unit = str(item.get("unit") or "").strip()
         formatted = str(item.get("formatted") or _format_value(numeric, unit))
-        parameters.append({"name": name, "value": numeric, "unit": unit, "formatted": formatted})
+        parameters.append(
+            {"name": name, "value": numeric, "unit": unit, "formatted": formatted}
+        )
     return parameters
 
 
@@ -360,7 +397,7 @@ def _extract_scalar(value: Any) -> Optional[float]:
         length = len(value)
     except TypeError:
         return _as_float(value)
-    if length == 0:
+    if length != 1:
         return None
     candidate = value[0]
     if np.iscomplexobj(candidate):
@@ -371,24 +408,15 @@ def _extract_scalar(value: Any) -> Optional[float]:
     return _as_float(candidate)
 
 
-def _extract_device_parameter(signal_name: str) -> Tuple[str, str]:
-    match = _DEVICE_PARAM_PATTERN.match(signal_name.strip())
-    if not match:
-        return "", ""
-    device = match.group("device").strip()
-    parameter = match.group("param").strip().lower()
-    if not device or not parameter:
-        return "", ""
-    return device.split(".")[-1], parameter
-
-
-def _build_device_rows(device_parameters: Dict[str, Dict[str, float]]) -> List[Dict[str, Any]]:
+def _build_device_rows(
+    device_parameters: Dict[str, Dict[str, float]],
+) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
     for device_name, parameters in device_parameters.items():
         operating_region = _resolve_operating_region(parameters)
-        if not operating_region:
-            continue
         key_parameters = _build_key_parameters(parameters)
+        if not operating_region and not key_parameters:
+            continue
         rows.append(
             {
                 "device": device_name,
@@ -401,24 +429,32 @@ def _build_device_rows(device_parameters: Dict[str, Dict[str, float]]) -> List[D
 
 
 def _resolve_operating_region(parameters: Dict[str, float]) -> str:
+    """Return an explicit textual region only when the source provides one.
+
+    ngspice does not publish a model-independent numeric ``@m[region]``
+    contract across its MOS families.  The former 0/1/2/3 lookup therefore
+    produced confident but potentially wrong labels (notably
+    ``3=subthreshold``).  Our normalized source is numeric today, so an
+    undocumented code is deliberately left unlabeled instead of guessed.
+    """
     for parameter_name in _REGION_PARAM_NAMES:
         if parameter_name not in parameters:
             continue
         numeric = _as_float(parameters.get(parameter_name))
         if numeric is None:
             continue
-        rounded = int(round(numeric))
-        if abs(numeric - rounded) <= 1e-9 and rounded in _MOS_REGION_CODE_MAP:
-            return _MOS_REGION_CODE_MAP[rounded]
-        return _format_scalar_column(numeric)
+        return ""
     return ""
 
 
 def _build_key_parameters(parameters: Dict[str, float]) -> List[Dict[str, Any]]:
-    ordered_names: List[str] = [name for name in _DEVICE_PARAM_PRIORITY if name in parameters]
+    ordered_names: List[str] = [
+        name for name in _DEVICE_PARAM_PRIORITY if name in parameters
+    ]
     ordered_names.extend(
         sorted(
-            name for name in parameters.keys()
+            name
+            for name in parameters.keys()
             if name not in _REGION_PARAM_NAMES and name not in ordered_names
         )
     )
@@ -429,7 +465,7 @@ def _build_key_parameters(parameters: Dict[str, float]) -> List[Dict[str, Any]]:
         numeric = _as_float(parameters.get(name))
         if numeric is None:
             continue
-        unit = _PARAM_UNIT_MAP.get(name, "")
+        unit = resolve_device_parameter_unit(name)
         key_parameters.append(
             {
                 "name": name,
@@ -470,7 +506,11 @@ def _as_float(value: Any) -> Optional[float]:
 
 
 def _render_table(title: str, columns: List[str], rows: List[List[str]]) -> str:
-    header = [f"## {title}", f"| {' | '.join(columns)} |", f"| {' | '.join('---' for _ in columns)} |"]
+    header = [
+        f"## {title}",
+        f"| {' | '.join(columns)} |",
+        f"| {' | '.join('---' for _ in columns)} |",
+    ]
     body_rows = rows or [["(none)", *([""] * (len(columns) - 1))]]
     body = [f"| {' | '.join(str(cell or '') for cell in row)} |" for row in body_rows]
     return "\n".join(header + body)

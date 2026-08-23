@@ -1,217 +1,214 @@
 import asyncio
-import json
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from domain.llm.agent.tools.read_signals import ReadSignalsTool
+from domain.llm.agent.tools.simulation_series_stats import (
+    AnchorScale,
+    read_series_table,
+)
 from domain.llm.agent.types import ToolContext
-from domain.simulation.data.simulation_artifact_exporter import simulation_artifact_exporter
 from domain.simulation.models.simulation_result import SimulationData, SimulationResult
+from domain.simulation.spice.source_closure import collect_spice_source_closure
 from shared.models.load_result import LoadResult
 
 
 class _FakeRepository:
-    def __init__(self, *, result_path: str, result: SimulationResult, bundle_dir: Path):
-        self._result_path = result_path
-        self._result = result
-        self._bundle_dir = bundle_dir
+    def __init__(self, result_path: str, result: SimulationResult, bundle_dir: Path):
+        self.result_path = result_path
+        self.result = result
+        self.bundle_dir = bundle_dir
 
     def load(self, project_root: str, result_path: str):
-        if result_path == self._result_path:
-            return LoadResult.ok(self._result, result_path)
+        if result_path == self.result_path:
+            return LoadResult.ok(self.result, result_path)
         return LoadResult.file_missing(result_path)
 
     def resolve_bundle_dir(self, project_root: str, result_path: str):
-        if result_path == self._result_path:
-            return self._bundle_dir
-        return None
-
-    def list_by_circuit(self, project_root: str, per_circuit_limit: int = 5):
-        return []
+        return self.bundle_dir if result_path == self.result_path else None
 
 
-def _make_context(tmp_path: Path, result_path: str, result: SimulationResult, bundle_dir: Path) -> ToolContext:
-    return ToolContext(
+def _context(tmp_path: Path, result: SimulationResult):
+    result_path = "simulation_results/amp/run-1/result.json"
+    bundle_dir = tmp_path / "simulation_results" / "amp" / "run-1"
+    bundle_dir.mkdir(parents=True)
+    return result_path, ToolContext(
         project_root=str(tmp_path),
-        current_file=None,
-        sim_result_repository=_FakeRepository(
-            result_path=result_path,
-            result=result,
-            bundle_dir=bundle_dir,
-        ),
+        sim_result_repository=_FakeRepository(result_path, result, bundle_dir),
     )
 
 
-def _make_complex_ac_result() -> SimulationResult:
-    frequency = np.array([1.0, 10.0, 100.0], dtype=float)
-    response = np.array([1.0 + 1.0j, 0.5 + 0.5j, 0.1 + 0.1j], dtype=complex)
+def _run(tool: ReadSignalsTool, params, context):
+    return asyncio.run(tool.execute("call", params, context))
+
+
+def _successful_result(
+    tmp_path: Path,
+    *,
+    file_path: str,
+    analysis_type: str,
+    analysis_command: str,
+    data: SimulationData,
+) -> SimulationResult:
+    circuit = tmp_path / file_path
+    circuit.parent.mkdir(parents=True, exist_ok=True)
+    circuit.write_text(
+        "Agent signals fixture\n"
+        "V1 in 0 DC 0 AC 1\n"
+        "R1 in out 1k\n"
+        f"{analysis_command}\n"
+        ".end\n",
+        encoding="utf-8",
+    )
     return SimulationResult(
         executor="spice",
-        file_path="circuits/complex_amp.cir",
-        analysis_type="ac",
-        analysis_command=".ac dec 10 1 100",
+        file_path=file_path,
+        analysis_type=analysis_type,
+        analysis_command=analysis_command,
         success=True,
-        x_axis_kind="frequency",
-        x_axis_label="Frequency (Hz)",
-        x_axis_scale="log",
-        data=SimulationData(
-            frequency=frequency,
-            signals={"V(out)": response},
-            signal_types={"V(out)": "voltage"},
-        ),
+        source_digest=collect_spice_source_closure(circuit).digest,
+        timestamp="2026-08-23T10:00:00+08:00",
+        data=data,
     )
 
 
-def test_read_signals_raw_reads_authoritative_result_data_without_raw_artifact(tmp_path: Path):
-    result_path = "simulation_results/complex_amp/2026-04-19/result.json"
-    bundle_dir = tmp_path / "simulation_results" / "complex_amp" / "2026-04-19"
-    bundle_dir.mkdir(parents=True)
-    result = _make_complex_ac_result()
-    context = _make_context(tmp_path, result_path, result, bundle_dir)
-
-    tool_result = asyncio.run(
-        ReadSignalsTool().execute("call-raw-1", {"result_path": result_path}, context)
-    )
-
-    assert tool_result.is_error is False
-    assert tool_result.details["source"] == "raw"
-    assert tool_result.details["source_authority"] == "simulation_result.data"
-    assert tool_result.details["signal_count"] == 4
-    assert tool_result.details["source_json_path"] is None
-    assert "V(out)_mag" in tool_result.content
-    assert "V(out)_phase" in tool_result.content
-
-
-def test_read_signals_raw_filter_uses_waveform_authority_normalization_and_complex_expansion(tmp_path: Path):
-    result_path = "simulation_results/complex_amp/2026-04-19/result.json"
-    bundle_dir = tmp_path / "simulation_results" / "complex_amp" / "2026-04-19"
-    bundle_dir.mkdir(parents=True)
-    result = _make_complex_ac_result()
-    context = _make_context(tmp_path, result_path, result, bundle_dir)
-
-    tool_result = asyncio.run(
-        ReadSignalsTool().execute(
-            "call-raw-2",
-            {
-                "result_path": result_path,
-                "signal_filter": ["v(out)"],
-            },
-            context,
-        )
-    )
-
-    assert tool_result.is_error is False
-    assert tool_result.details["source"] == "raw"
-    assert tool_result.details["signal_count"] == 4
-    assert tool_result.details["unmatched_filter_names"] == []
-    assert "V(out)_mag" in tool_result.content
-    assert "V(out)_imag" in tool_result.content
-
-
-def test_read_signals_chart_reads_json_sidecar_authority_without_chart_csv(tmp_path: Path):
-    result_path = "simulation_results/tran_amp/2026-04-19/result.json"
-    bundle_dir = tmp_path / "simulation_results" / "tran_amp" / "2026-04-19"
-    charts_dir = bundle_dir / "charts"
-    charts_dir.mkdir(parents=True)
-
-    time = np.array([0.0, 1.0, 2.0], dtype=float)
-    result = SimulationResult(
-        executor="spice",
-        file_path="circuits/tran_amp.cir",
+def test_read_signals_has_no_ui_chart_source_and_requires_exact_handle(tmp_path: Path):
+    result = _successful_result(
+        tmp_path,
+        file_path="circuits/amp.cir",
         analysis_type="tran",
-        analysis_command=".tran 1n 2n",
-        success=True,
-        x_axis_kind="time",
-        x_axis_label="Time (s)",
-        x_axis_scale="linear",
+        analysis_command=".tran 1 2",
         data=SimulationData(
-            time=time,
-            signals={"V(out)": np.array([1.0, 2.0, 3.0], dtype=float)},
+            time=np.array([0.0, 1.0, 2.0]),
+            signals={"V(out)": np.array([0.0, 2.0, 4.0])},
             signal_types={"V(out)": "voltage"},
         ),
     )
+    result_path, context = _context(tmp_path, result)
+    tool = ReadSignalsTool()
 
-    chart_payload = simulation_artifact_exporter.build_artifact_payload(
-        result,
-        "chart",
-        summary={
-            "chart_index": 1,
-            "chart_type": "waveform_time",
-            "title": "Waveform",
-            "series_count": 1,
-            "row_count": 3,
-        },
-        files={"json": "01_waveform_time.json"},
-        data={
-            "chart_type": "waveform_time",
-            "title": "Waveform",
-            "x_label": "Time (s)",
-            "y_label": "Voltage (V)",
-            "secondary_y_label": "",
-            "log_x": False,
-            "log_y": False,
-            "right_log_y": False,
-            "series": [
-                {
-                    "name": "V(out)",
-                    "color": "#ff0000",
-                    "axis_key": "left",
-                    "line_style": "solid",
-                    "group_key": "V(out)",
-                    "component": None,
-                    "x": [0.0, 1.0, 2.0],
-                    "y": [1.0, 2.0, 3.0],
-                    "point_count": 3,
-                }
-            ],
-            "rows": [
-                {"Time (s)": 0.0, "V(out)": 1.0},
-                {"Time (s)": 1.0, "V(out)": 2.0},
-                {"Time (s)": 2.0, "V(out)": 3.0},
-            ],
-        },
-        extra_metadata={"chart_index": 1},
+    assert "source" not in tool.parameters["properties"]
+    assert "chart_index" not in tool.parameters["properties"]
+    assert tool.parameters["required"] == ["result_path"]
+
+    response = _run(tool, {"result_path": result_path}, context)
+    assert response.is_error is False
+    assert response.details["source"] == "result.json:data"
+    assert response.details["signal_count"] == 1
+    assert "sample_mean" in response.content
+    assert "| V(out) | 3 | 0 | 4 | 2 | 0 | 4 | 4 |" in response.content
+    assert "zero_cross" not in response.content
+    assert "source_image" not in response.content
+
+
+def test_read_signals_filter_normalizes_and_expands_complex_signal(tmp_path: Path):
+    result = _successful_result(
+        tmp_path,
+        file_path="circuits/ac.cir",
+        analysis_type="ac",
+        analysis_command=".ac dec 1 10 1k",
+        data=SimulationData(
+            frequency=np.array([10.0, 100.0, 1000.0]),
+            signals={
+                "V(out)": np.array([1 + 0j, 0 + 1j, -1 + 0j]),
+                "V(in)": np.array([1 + 0j, 1 + 0j, 1 + 0j]),
+            },
+            signal_types={"V(out)": "voltage", "V(in)": "voltage"},
+        ),
     )
-    (charts_dir / "01_waveform_time.json").write_text(
-        json.dumps(chart_payload, ensure_ascii=False, indent=2),
-        encoding="utf-8",
+    result_path, context = _context(tmp_path, result)
+    response = _run(
+        ReadSignalsTool(),
+        {
+            "result_path": result_path,
+            "signal_filter": ["v(out)", "missing"],
+            "anchor_count": 4,
+        },
+        context,
     )
 
-    charts_manifest = simulation_artifact_exporter.build_artifact_payload(
-        result,
-        "charts",
-        summary={"chart_count": 1},
-        files={"items": [{"json": "01_waveform_time.json"}]},
-        data={
-            "charts": [
-                {
-                    "chart_index": 1,
-                    "chart_type": "waveform_time",
-                    "title": "Waveform",
-                    "files": {"json": "01_waveform_time.json"},
-                }
-            ]
-        },
-    )
-    (charts_dir / "charts.json").write_text(
-        json.dumps(charts_manifest, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    assert response.is_error is False
+    assert response.details["signal_count"] == 4
+    assert response.details["anchor_scale_effective"] == "log"
+    assert response.details["unmatched_filter_names"] == ["missing"]
+    assert "V(out)_mag" in response.content
+    assert "V(out)_phase" in response.content
+    assert "unmatched_signal_filter: missing" in response.content
 
-    context = _make_context(tmp_path, result_path, result, bundle_dir)
-    tool_result = asyncio.run(
-        ReadSignalsTool().execute(
-            "call-chart-1",
-            {"result_path": result_path, "source": "chart", "chart_index": 1},
-            context,
+
+def test_read_signals_rejects_large_unfiltered_table(tmp_path: Path):
+    signals = {
+        f"V(n{index})": np.array([float(index), float(index + 1)])
+        for index in range(33)
+    }
+    result = _successful_result(
+        tmp_path,
+        file_path="circuits/many.cir",
+        analysis_type="tran",
+        analysis_command=".tran 1 1",
+        data=SimulationData(
+            time=np.array([0.0, 1.0]),
+            signals=signals,
+            signal_types={name: "voltage" for name in signals},
+        ),
+    )
+    result_path, context = _context(tmp_path, result)
+    response = _run(ReadSignalsTool(), {"result_path": result_path}, context)
+    assert response.is_error is True
+    assert "pass signal_filter" in response.content
+
+
+@pytest.mark.parametrize(
+    "params, message",
+    [
+        ({"signal_filter": "V(out)"}, "signal_filter must be an array"),
+        ({"anchor_count": 3}, "anchor_count must be an integer"),
+        ({"anchor_scale": "decade"}, "anchor_scale must be"),
+    ],
+)
+def test_read_signals_rejects_invalid_arguments(
+    tmp_path: Path, params, message: str
+):
+    result = _successful_result(
+        tmp_path,
+        file_path="circuits/amp.cir",
+        analysis_type="tran",
+        analysis_command=".tran 1 1",
+        data=SimulationData(
+            time=np.array([0.0, 1.0]),
+            signals={"V(out)": np.array([0.0, 1.0])},
+            signal_types={"V(out)": "voltage"},
+        ),
+    )
+    result_path, context = _context(tmp_path, result)
+    response = _run(
+        ReadSignalsTool(), {"result_path": result_path, **params}, context
+    )
+    assert response.is_error is True
+    assert message in response.content
+
+
+def test_series_stats_labels_sample_mean_and_detects_non_monotonic_x():
+    summary = read_series_table(
+        x_column_name="Time",
+        signal_column_names=["V(out)"],
+        x_values=[0.0, 2.0, 1.0],
+        signal_columns={"V(out)": [0.0, 10.0, 2.0]},
+        anchor_count=4,
+        anchor_scale=AnchorScale.LINEAR,
+    )
+    assert summary.x_order == "non_monotonic"
+    assert summary.stats[0].sample_mean == 4.0
+    assert not hasattr(summary.stats[0], "zero_crossings")
+
+
+def test_series_stats_rejects_misaligned_signal_columns():
+    with pytest.raises(ValueError, match="expected 3"):
+        read_series_table(
+            x_column_name="Time",
+            signal_column_names=["V(out)"],
+            x_values=[0.0, 1.0, 2.0],
+            signal_columns={"V(out)": [0.0, 1.0]},
         )
-    )
-
-    assert tool_result.is_error is False
-    assert tool_result.details["source"] == "chart"
-    assert tool_result.details["source_json_path"].endswith("01_waveform_time.json")
-    assert tool_result.details["source_csv_path"] is None
-    assert tool_result.details["signal_count"] == 1
-    assert "source_authority" in tool_result.content
-    assert "V(out)" in tool_result.content

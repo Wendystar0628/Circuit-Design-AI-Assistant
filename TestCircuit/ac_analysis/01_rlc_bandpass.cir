@@ -1,6 +1,6 @@
 * Series RLC Band-Pass Filter
 * Textbook series-RLC band-pass tuned to f0 = 1 / (2*pi*sqrt(L*C))
-* ~ 5.03 kHz with Q ~ 10. The output is tapped across the resistor
+* ~ 5.03 kHz with Q ~ 3.16. The output is tapped across the resistor
 * so it peaks at the resonance frequency.
 * Devices exercised: V (AC source), R, L, C.
 
@@ -10,9 +10,9 @@
 Vin in 0 AC 1
 
 * --- Series RLC from the source to ground ---
-R1 in   out 10
-L1 out  n2  1m
-C1 n2   0   1u
+L1 in   n2  1m
+C1 n2   out 1u
+R1 out  0   10
 
 * --- Analysis: 3 decades around the tuned frequency ---
 .ac dec 40 100 1Meg

@@ -1,13 +1,13 @@
-* Inverting Amplifier via Subcircuit
-* An ideal op-amp subcircuit (built on a very-high-gain VCVS) is
+* Inverting Amplifier via Single-Pole Op-Amp Subcircuit
+* A finite-bandwidth op-amp subcircuit (built from a high-gain VCVS,
+* a dominant-pole R-C node, and an output buffer) is
 * wrapped around an R-R feedback network to form a classic -10x
 * inverting amplifier. AC sweep captures the closed-loop gain and
-* the bandwidth rolled off by the finite open-loop gain of the
-* subcircuit's internal VCVS.
-* Devices exercised: V (AC), R, X (subcircuit instance),
+* the bandwidth rolled off by the subcircuit's dominant-pole network.
+* Devices exercised: V (AC), R, C, X (subcircuit instance),
 *                    E inside the subckt body.
 
-.title Inverting Amplifier (Subcircuit-Based)
+.title Single-Pole Op-Amp Inverting Amplifier
 
 * --- AC test source ---
 Vin in 0 AC 1
@@ -16,14 +16,16 @@ Vin in 0 AC 1
 Rin in  inv    1k
 Rf  inv out    10k
 
-* --- High-gain ideal op-amp subcircuit (single-pole roll-off) ---
-.subckt IDEAL_OPAMP plus minus out
-* Differential input to an internal high-gain VCVS
-Eopamp out 0 plus minus 1Meg
-.ends IDEAL_OPAMP
+* --- 1e6 DC gain with a 10 Hz dominant pole and buffered output ---
+.subckt SINGLE_POLE_OPAMP plus minus out
+Egain drive 0 plus minus 1Meg
+Rdom drive pole 1k
+Cdom pole 0 15.9u
+Eout out 0 pole 0 1.0
+.ends SINGLE_POLE_OPAMP
 
 * --- Subckt instance: + input tied to ground, - to the inv node ---
-Xopamp 0 inv out IDEAL_OPAMP
+Xopamp 0 inv out SINGLE_POLE_OPAMP
 
 * --- Output load ---
 Rload out 0 10k
@@ -32,5 +34,6 @@ Rload out 0 10k
 .ac dec 20 1 10Meg
 
 .MEASURE AC a_midband FIND vdb(out) AT=1k
+.MEASURE AC a_high_end FIND vdb(out) AT=1Meg
 
 .end

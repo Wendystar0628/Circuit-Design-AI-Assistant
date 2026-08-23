@@ -1,4 +1,5 @@
 .title LM741 Inverting Amplifier
+.include "../../resources/models/sub/LM741.lib"
 
 VCC vcc 0 DC 15
 VEE vee 0 DC -15
@@ -9,7 +10,7 @@ Rf out inv 10k
 XU1 0 inv vcc vee out LM741
 Rload out 0 10k
 
-.ac dec 20 10 1Meg
+.ac dec 20 10 10Meg
 
 .MEASURE AC av_low_end   FIND vdb(out) AT=100
 .MEASURE AC av_midband   FIND vdb(out) AT=10k

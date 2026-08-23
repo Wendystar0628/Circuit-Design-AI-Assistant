@@ -19,14 +19,12 @@
   \u503c\u5408\u5e76\u6210\u6307\u6807\u5217\u8868\uff0c\u4e0d\u627f\u62c5\u4efb\u4f55\u8bc4\u5206 / \u8fbe\u6807\u5224\u5b9a\u903b\u8f91\u3002
 """
 
-import logging
 from enum import Enum
 from typing import Dict, List, Optional
 
 from domain.simulation.models.display_metric import DisplayMetric
 from domain.simulation.models.simulation_result import SimulationResult
 from domain.simulation.service.display_metric_builder import display_metric_builder
-from presentation.core.base_view_model import BaseViewModel
 
 
 class SimulationStatus(Enum):
@@ -34,23 +32,23 @@ class SimulationStatus(Enum):
 
     IDLE = "idle"
     RUNNING = "running"
+    CANCELLING = "cancelling"
+    CANCELLED = "cancelled"
     COMPLETE = "complete"
     ERROR = "error"
 
 
-class SimulationViewModel(BaseViewModel):
+class SimulationViewModel:
     """\u4eff\u771f\u9762\u677f ViewModel\u3002
 
     \u6838\u5fc3\u8f93\u51fa\uff1a``metrics_list``\uff08List[DisplayMetric]\uff09+
     ``current_result`` + ``simulation_status`` + ``error_message``\u3002
-    \u8f93\u51fa\u901a\u8fc7 ``notify_property_changed`` \u63a8\u9001\u7ed9 SimulationTab\uff0c
-    SimulationTab \u518d\u8c03\u7528 Serializer \u4ea7\u751f\u524d\u7aef\u72b6\u6001\u3002
+    ``SimulationTab`` reads these values synchronously after a complete
+    transition and then publishes one serializer snapshot. There is no
+    parallel property-notification authority.
     """
 
     def __init__(self):
-        super().__init__()
-        self._logger = logging.getLogger(__name__)
-
         self._current_result: Optional[SimulationResult] = None
         self._metrics_list: List[DisplayMetric] = []
         self._simulation_status: SimulationStatus = SimulationStatus.IDLE
@@ -93,10 +91,6 @@ class SimulationViewModel(BaseViewModel):
     # \u751f\u547d\u5468\u671f
     # ------------------------------------------------------------------
 
-    def initialize(self):
-        super().initialize()
-        self._logger.info("SimulationViewModel initialized")
-
     # ------------------------------------------------------------------
     # SimulationTab-validated lifecycle updates
     # ------------------------------------------------------------------
@@ -108,17 +102,27 @@ class SimulationViewModel(BaseViewModel):
         events.  ``SimulationTab`` owns identity routing and calls this only
         after validating ``origin`` and ``job_id``.
         """
+        # A new run invalidates every field belonging to the previously
+        # displayed bundle.  Keeping the old result while stamping the new
+        # job/circuit identity made the UI claim that old metrics belonged to
+        # the circuit currently running.
+        self._current_result = None
+        self._metrics_list = []
         self._set_status(SimulationStatus.RUNNING)
         self._error_message = ""
-        self.notify_property_changed("simulation_status", self._simulation_status)
-        self.notify_property_changed("error_message", self._error_message)
+
+    def mark_cancelling(self) -> None:
+        self._set_status(SimulationStatus.CANCELLING)
+        self._error_message = ""
+
+    def mark_cancelled(self) -> None:
+        self._set_status(SimulationStatus.CANCELLED)
+        self._error_message = ""
 
     def mark_error(self, error_message: str) -> None:
         """Expose a validated UI job failure without observing other jobs."""
         self._set_status(SimulationStatus.ERROR)
         self._error_message = str(error_message or "Simulation failed")
-        self.notify_property_changed("simulation_status", self._simulation_status)
-        self.notify_property_changed("error_message", self._error_message)
 
     def _set_status(self, status: SimulationStatus):
         self._simulation_status = status
@@ -143,18 +147,13 @@ class SimulationViewModel(BaseViewModel):
         else:
             self._metrics_list = []
             self._set_status(SimulationStatus.ERROR)
+            self._error_message = "Simulation result is incomplete or failed"
             if result.error:
                 if hasattr(result.error, "message"):
-                    self._error_message = result.error.message
+                    self._error_message = str(result.error.message or self._error_message)
                 else:
-                    self._error_message = str(result.error)
+                    self._error_message = str(result.error or self._error_message)
 
-        self.notify_properties_changed({
-            "current_result": self._current_result,
-            "metrics_list": self._metrics_list,
-            "simulation_status": self._simulation_status,
-            "error_message": self._error_message,
-        })
 
     def refresh_metric_targets(self):
         """\u4ec5\u7528\u6237\u4fee\u6539\u76ee\u6807\u503c\u65f6\u8c03\u7528\uff0c\u5c06 MetricTargetService
@@ -171,13 +170,14 @@ class SimulationViewModel(BaseViewModel):
                 display_name=metric.display_name,
                 value=metric.value,
                 unit=metric.unit,
+                status=metric.status,
+                error_message=metric.error_message,
                 raw_value=metric.raw_value,
                 target=targets.get(metric.name, ""),
             )
             for metric in self._metrics_list
         ]
         self._metrics_list = updated
-        self.notify_property_changed("metrics_list", self._metrics_list)
 
     def _load_metrics_from_measurements(
         self,
@@ -216,12 +216,6 @@ class SimulationViewModel(BaseViewModel):
         self._metrics_list = []
         self._simulation_status = SimulationStatus.IDLE
         self._error_message = ""
-        self.notify_properties_changed({
-            "current_result": None,
-            "metrics_list": [],
-            "simulation_status": SimulationStatus.IDLE,
-            "error_message": "",
-        })
 
 
 __all__ = [

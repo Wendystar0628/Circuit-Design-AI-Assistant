@@ -1,19 +1,8 @@
 from pathlib import Path
 
-import pytest
-from PyQt6.QtWidgets import QApplication
-
 from presentation.panels.workspace_code_editor_panel import CodeEditorPanel
 from shared.file_change import FileChange
 from shared.path_utils import normalize_absolute_path, normalize_identity_path
-
-
-@pytest.fixture(scope="session")
-def qapp():
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
 
 
 class _ScopedFileManager:

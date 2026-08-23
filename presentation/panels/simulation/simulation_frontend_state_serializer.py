@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from domain.simulation.data.op_result_data_builder import op_result_data_builder
+from domain.simulation.data.noise_totals import build_noise_totals_payload
 from domain.simulation.models.simulation_result import SimulationResult
 from domain.simulation.service.simulation_result_repository import (
     CircuitResultGroup,
@@ -74,6 +76,7 @@ class SimulationFrontendStateSerializer:
         active_tab: str = "metrics",
         current_result: Optional[SimulationResult] = None,
         current_result_path: str = "",
+        current_job_id: str = "",
         displayed_circuit_file: str = "",
         metrics: Optional[Sequence[DisplayMetric]] = None,
         simulation_status: Any = "idle",
@@ -81,7 +84,7 @@ class SimulationFrontendStateSerializer:
         error_message: str = "",
         circuit_groups: Optional[Sequence[CircuitResultGroup]] = None,
         latest_project_export_root: str = "",
-        awaiting_confirmation: bool = False,
+        can_cancel: bool = False,
         analysis_chart_snapshot: Optional[Dict[str, Any]] = None,
         waveform_snapshot: Optional[Dict[str, Any]] = None,
         output_log_snapshot: Optional[Dict[str, Any]] = None,
@@ -105,7 +108,7 @@ class SimulationFrontendStateSerializer:
         available_tabs = self._compute_available_tabs(
             has_op_result=self._has_op_result(result),
         )
-        status_phase = self._resolve_status_phase(simulation_status, awaiting_confirmation)
+        status_phase = self._resolve_status_phase(simulation_status)
         normalized_active_tab = active_tab if active_tab in available_tabs else "metrics"
         normalized_result_path = self._normalize_result_path(current_result_path)
         normalized_groups = [
@@ -114,6 +117,7 @@ class SimulationFrontendStateSerializer:
         circuit_selection_view = self.serialize_circuit_selection_view(
             circuit_groups=normalized_groups,
             displayed_circuit_file=displayed_circuit_file,
+            current_result_path=normalized_result_path,
         )
         has_result = result is not None
         signal_names = self._signal_names(result)
@@ -125,6 +129,7 @@ class SimulationFrontendStateSerializer:
         has_output_log = bool(output_log_snapshot_payload.get("has_log")) if output_log_snapshot_payload is not None else bool(getattr(result, "raw_output", None))
         has_op_result = self._has_op_result(result)
         result_summary = self.serialize_result(result, normalized_result_path, ui_text=ui_text)
+        noise_totals = build_noise_totals_payload(result)
         op_result_view = self.serialize_op_result(result)
         available_export_types = [
             export_type
@@ -189,6 +194,8 @@ class SimulationFrontendStateSerializer:
             "y_label": "",
             "secondary_y_label": "",
             "log_x": False,
+            "log_y": False,
+            "right_log_y": False,
             "viewport": {
                 "active": False,
                 "x_min": None,
@@ -214,6 +221,9 @@ class SimulationFrontendStateSerializer:
             "search_keyword": "",
             "lines": [],
             "selected_line_number": None,
+            "total_line_count": 0,
+            "visible_line_count": 0,
+            "is_truncated": False,
         }
         if isinstance(analysis_chart_snapshot, dict):
             analysis_chart_view.update(analysis_chart_snapshot)
@@ -242,6 +252,7 @@ class SimulationFrontendStateSerializer:
 
         asc_conversion_view = {
             "can_choose_files": bool(project_root),
+            "is_running": False,
             "selected_files_summary": "",
         }
         if asc_conversion_snapshot_payload is not None:
@@ -259,11 +270,12 @@ class SimulationFrontendStateSerializer:
                 "error_message": str(error_message or ""),
                 "project_root": str(project_root or ""),
                 "has_project": bool(project_root),
+                "current_job_id": str(current_job_id or ""),
                 "current_result_path": normalized_result_path,
                 "is_empty": not has_result,
                 "has_result": has_result,
                 "has_error": bool(error_message),
-                "awaiting_confirmation": bool(awaiting_confirmation),
+                "can_cancel": bool(can_cancel),
                 "current_result": result_summary,
             },
             "surface_tabs": {
@@ -273,6 +285,7 @@ class SimulationFrontendStateSerializer:
             },
             "metrics_view": {
                 "items": normalized_metrics,
+                "noise_totals": noise_totals,
                 "source_file_path": self._normalize_source_file_path(result),
                 "can_add_to_conversation": has_result,
             },
@@ -290,6 +303,7 @@ class SimulationFrontendStateSerializer:
     def serialize_raw_data_document(
         self,
         raw_data_document: Optional[Dict[str, Any]] = None,
+        result: Optional[SimulationResult] = None,
     ) -> Dict[str, Any]:
         payload = raw_data_document if isinstance(raw_data_document, dict) else {}
         columns = [
@@ -311,6 +325,7 @@ class SimulationFrontendStateSerializer:
             "row_height_px": int(payload.get("row_height_px") or 0),
             "column_header_height_px": int(payload.get("column_header_height_px") or 0),
             "columns": columns,
+            "noise_totals": build_noise_totals_payload(result),
         }
 
     def serialize_raw_data_viewport(
@@ -328,7 +343,10 @@ class SimulationFrontendStateSerializer:
             "rows": [
                 {
                     "row_index": int(item.get("row_index") or 0),
-                    "values": [str(value or "") for value in item.get("values", [])],
+                    # Numeric zero is valid simulation data, not an empty
+                    # sentinel.  The old truthiness conversion silently
+                    # rendered every 0 V / 0 A sample as a missing cell.
+                    "values": ["" if value is None else str(value) for value in item.get("values", [])],
                 }
                 for item in payload.get("rows", [])
                 if isinstance(item, dict)
@@ -496,6 +514,8 @@ class SimulationFrontendStateSerializer:
             "display_name": metric.display_name,
             "value": metric.value,
             "unit": metric.unit,
+            "status": metric.status,
+            "error_message": metric.error_message,
             "raw_value": metric.raw_value,
             "target": metric.target,
         }
@@ -561,6 +581,7 @@ class SimulationFrontendStateSerializer:
                 "requested_x_range": None,
                 "actual_x_range": None,
                 "parameters": {},
+                "noise_totals": build_noise_totals_payload(None),
             }
         info = result.analysis_info if isinstance(result.analysis_info, dict) else {}
         return {
@@ -574,6 +595,7 @@ class SimulationFrontendStateSerializer:
             "requested_x_range": self._range_to_list(info.get("requested_x_range") or result.requested_x_range),
             "actual_x_range": self._range_to_list(info.get("actual_x_range") or result.actual_x_range),
             "parameters": dict(info.get("parameters") or {}),
+            "noise_totals": build_noise_totals_payload(result),
         }
 
     def serialize_loadable_result(
@@ -585,11 +607,8 @@ class SimulationFrontendStateSerializer:
         """Serialize a repository summary into the generic persisted-
         result load-target schema.
 
-        Post-Step-8 the serializer consumes the typed
-        :class:`SimulationResultSummary` directly — the old
-        ``Dict[str, Any]`` shape has been eliminated at the repository
-        boundary, so there is no ``.get(...)`` defensiveness needed
-        here anymore. ``result_path`` is the bundle-relative posix
+        The serializer consumes the typed :class:`SimulationResultSummary`
+        directly. ``result_path`` is the bundle-relative POSIX
         path and also acts as the identity key the frontend compares
         against the "current" result for the ``is_current`` highlight.
         """
@@ -603,7 +622,11 @@ class SimulationFrontendStateSerializer:
             "analysis_type": item.analysis_type,
             "success": item.success,
             "timestamp": item.timestamp,
-            "is_current": bool(result_path and result_path == current_result_path),
+            "is_current": bool(
+                result_path
+                and self._result_path_identity(result_path)
+                == self._result_path_identity(current_result_path)
+            ),
             "can_load": bool(result_path),
         }
 
@@ -612,6 +635,7 @@ class SimulationFrontendStateSerializer:
         *,
         circuit_groups: Sequence[CircuitResultGroup],
         displayed_circuit_file: str,
+        current_result_path: str = "",
     ) -> Dict[str, Any]:
         """Compose the per-circuit card grid for the circuit-selection tab.
 
@@ -629,29 +653,30 @@ class SimulationFrontendStateSerializer:
         naturally small and hiding old circuits just makes them
         unreachable.
 
-        ``is_current`` is a circuit-level predicate: it is true iff
-        the card's ``circuit_file`` matches the panel's currently-
-        displayed circuit. It is deliberately *not* a ``result_path``
-        match — clicking a card will switch circuits, not re-select
-        a specific historical bundle, and keying ``is_current`` off
-        ``result_path`` would make the card flip off the moment the
-        user drilled into a second run of the same circuit.
+        ``is_current`` is a circuit-level predicate: it accepts either
+        the repository's project-relative ``circuit_file`` or its resolved
+        ``circuit_absolute_path``. Live lifecycle events intentionally carry
+        an absolute circuit path, while persisted bundles use the relative
+        form; treating only one representation as authoritative made the
+        selected card lose its highlight during a run. It is deliberately
+        *not* a ``result_path`` match.
 
-        Each card embeds the group's newest
-        :class:`SimulationResultSummary` as ``latest_result`` via the
-        same :meth:`serialize_loadable_result` helper used everywhere a
-        persisted result is represented on the wire. This is how the
-        field-level deduplication invariant from the plan is realised:
-        there is exactly one ``result_path`` / ``analysis_type`` /
-        ``timestamp`` / ``success`` shape in the payload.
+        Each card exposes every run through the same
+        :meth:`serialize_loadable_result` schema. The first item is the
+        newest run, but older runs remain selectable instead of being
+        silently stranded behind a decorative run count.
         """
         normalized_displayed = self._normalize_circuit_file(displayed_circuit_file)
+        displayed_identity = self._circuit_file_identity(displayed_circuit_file)
         items: List[Dict[str, Any]] = []
         for group in circuit_groups:
             if not group.results:
                 continue
-            latest = group.results[0]
             normalized_circuit_file = self._normalize_circuit_file(group.circuit_file)
+            circuit_identities = {
+                self._circuit_file_identity(group.circuit_file),
+                self._circuit_file_identity(group.circuit_absolute_path),
+            }
             items.append({
                 "circuit_file": normalized_circuit_file,
                 "circuit_absolute_path": str(group.circuit_absolute_path or ""),
@@ -659,17 +684,15 @@ class SimulationFrontendStateSerializer:
                 "run_count": len(group.results),
                 "is_current": bool(
                     normalized_circuit_file
-                    and normalized_circuit_file == normalized_displayed
+                    and displayed_identity in circuit_identities
                 ),
-                # ``current_result_path=""`` intentionally zeroes out
-                # the embedded load-target's ``is_current`` field —
-                # per-run currency is not meaningful inside a card
-                # whose currency is already decided at the circuit
-                # level above.
-                "latest_result": self.serialize_loadable_result(
-                    latest,
-                    current_result_path="",
-                ),
+                "results": [
+                    self.serialize_loadable_result(
+                        result,
+                        current_result_path=current_result_path,
+                    )
+                    for result in group.results
+                ],
             })
         return {
             "items": items,
@@ -684,8 +707,7 @@ class SimulationFrontendStateSerializer:
         short, unambiguous, and matches how users refer to their
         circuits in conversation. Falls back to the full basename
         when a stem cannot be extracted (unusual, but protects
-        against pathological ``circuit_file`` values coming out of
-        legacy ``result.json`` headers).
+        against unusual persisted ``circuit_file`` values).
         """
         if not circuit_file:
             return ""
@@ -729,12 +751,10 @@ class SimulationFrontendStateSerializer:
             return bool(has_op_result)
         return True
 
-    def _resolve_status_phase(self, simulation_status: Any, awaiting_confirmation: bool) -> str:
-        if awaiting_confirmation:
-            return "awaiting_confirmation"
+    def _resolve_status_phase(self, simulation_status: Any) -> str:
         raw_value = getattr(simulation_status, "value", simulation_status)
         normalized = str(raw_value or "idle").lower()
-        if normalized in {"idle", "running", "complete", "error"}:
+        if normalized in {"idle", "running", "cancelling", "cancelled", "complete", "error"}:
             return normalized
         return "idle"
 
@@ -768,20 +788,26 @@ class SimulationFrontendStateSerializer:
             return None
 
     def _normalize_result_path(self, value: str) -> str:
-        return str(value or "").replace("\\", "/").lower()
+        # This value is an address consumed by loadResultByPath, not merely a
+        # comparison key.  Preserve case so bundles remain loadable on
+        # case-sensitive filesystems; identity comparisons use the helper
+        # below instead.
+        return str(value or "").replace("\\", "/")
+
+    def _result_path_identity(self, value: str) -> str:
+        return os.path.normcase(self._normalize_result_path(value))
 
     def _normalize_circuit_file(self, value: str) -> str:
-        """POSIX + case-fold normalisation for circuit-file identity.
+        """Return a case-preserving POSIX wire path for a circuit file.
 
-        Applied symmetrically to the ``displayed_circuit_file`` and to
-        each :class:`CircuitResultGroup` ``circuit_file`` before the
-        ``is_current`` comparison — Windows-born paths may differ in
-        case or separator from the persisted header while referring
-        to the same file, so the comparison must collapse both axes.
-        Mirrors :meth:`_normalize_result_path` so the two identity
-        relations in the payload use the same rule.
+        Wire addresses must preserve case for case-sensitive filesystems.
+        Comparisons use :meth:`_circuit_file_identity` separately so Windows
+        paths can still compare case-insensitively.
         """
-        return str(value or "").replace("\\", "/").lower()
+        return str(value or "").replace("\\", "/")
+
+    def _circuit_file_identity(self, value: str) -> str:
+        return os.path.normcase(self._normalize_circuit_file(value))
 
     def _normalize_source_file_path(self, result: Optional[SimulationResult]) -> str:
         """Return the canonicalised circuit-source path used as the key

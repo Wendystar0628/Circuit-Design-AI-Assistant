@@ -15,7 +15,7 @@ from domain.llm.token_counter import (
     count_message_tokens,
     get_model_context_limit,
     get_model_input_limit,
-    get_model_output_limit,
+    get_model_output_reserve,
 )
 from domain.llm.working_context_builder import (
     get_direct_working_messages,
@@ -86,7 +86,7 @@ class TokenMonitor:
         
         # 获取限制
         context_limit = get_model_context_limit(model, provider)
-        output_reserve = get_model_output_limit(model, provider)
+        output_reserve = get_model_output_reserve(model, provider)
         input_limit = get_model_input_limit(model, provider)
         available = input_limit - total_tokens
         

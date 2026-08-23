@@ -10,8 +10,8 @@ Token 计数工具 - 提供 Token 计数功能
 使用示例：
     from domain.llm.token_counter import count_tokens, get_model_context_limit
     
-    tokens = count_tokens("Hello, world!", model="glm-4")
-    limit = get_model_context_limit("glm-4")
+    tokens = count_tokens("Hello, world!", model="glm-5.3")
+    limit = get_model_context_limit("glm-5.3", provider="zhipu")
 """
 
 import logging
@@ -21,11 +21,11 @@ _logger = logging.getLogger(__name__)
 
 
 # ============================================================
-# 默认值（当 ModelRegistry 不可用时）
+# 保守默认值（聚合平台自定义模型没有可信元数据时使用）
 # ============================================================
 
 DEFAULT_CONTEXT_LIMIT = 128_000
-DEFAULT_OUTPUT_LIMIT = 32_768  # 现代大模型普遍支持 32K+ 输出
+DEFAULT_OUTPUT_RESERVE = 32_768
 
 
 # ============================================================
@@ -44,38 +44,40 @@ def _resolve_active_model_and_provider(
     resolved_provider = provider or ""
 
     try:
-        from infrastructure.config.llm_runtime_config_manager import LLMRuntimeConfigManager
+        from shared.service_locator import ServiceLocator
+        from shared.service_names import SVC_LLM_RUNTIME_CONFIG_MANAGER
 
-        active_config = LLMRuntimeConfigManager().resolve_active_config()
-        if resolved_model in {"", "default"} and active_config.model:
-            resolved_model = active_config.model
-        if not resolved_provider and active_config.provider:
-            resolved_provider = active_config.provider
+        runtime_config_manager = ServiceLocator.get_optional(
+            SVC_LLM_RUNTIME_CONFIG_MANAGER
+        )
+        if runtime_config_manager is not None:
+            active_config = runtime_config_manager.resolve_active_config()
+            if resolved_model in {"", "default"} and active_config.model:
+                resolved_model = active_config.model
+            if not resolved_provider and active_config.provider:
+                resolved_provider = active_config.provider
     except Exception:
         pass
 
     try:
-        from shared.model_registry import ModelRegistry
-
-        ModelRegistry.initialize()
+        from infrastructure.llm_adapters.provider_catalog import (
+            get_model,
+            get_provider,
+            list_providers,
+        )
 
         if resolved_model not in {"", "default"} and not resolved_provider:
-            matched_provider_ids = []
-            for provider_config in ModelRegistry.list_providers():
-                if ModelRegistry.get_model_by_name(provider_config.id, resolved_model):
-                    matched_provider_ids.append(provider_config.id)
+            matched_provider_ids = [
+                item.id
+                for item in list_providers()
+                if get_model(item.id, resolved_model) is not None
+            ]
             if len(matched_provider_ids) == 1:
                 resolved_provider = matched_provider_ids[0]
 
-        if not resolved_provider:
-            default_provider = ModelRegistry.get_default_provider()
-            if default_provider:
-                resolved_provider = default_provider.id
-
-        if resolved_model in {"", "default"} and resolved_provider:
-            default_model = ModelRegistry.get_default_model(resolved_provider)
-            if default_model:
-                resolved_model = default_model.name
+        provider_spec = get_provider(resolved_provider) if resolved_provider else None
+        if resolved_model in {"", "default"} and provider_spec is not None:
+            resolved_model = provider_spec.default_model
     except Exception:
         pass
 
@@ -92,10 +94,9 @@ def _get_tokenizer(model: str = "default") -> Any:
     获取 tokenizer（带缓存）
     
     Tokenizer 选择策略：
-    - 智谱 GLM 系列：使用 tiktoken 的 cl100k_base 编码器
-    - OpenAI 系列：使用 cl100k_base 编码器
-    - Anthropic Claude 系列：使用 cl100k_base 作为近似（误差在 5% 以内）
-    - 加载失败时回退到近似计算，记录 WARNING 日志
+    - 使用 cl100k_base 做统一的预算估算；它不是非 OpenAI 厂商的
+      官方 tokenizer，不承诺固定误差。
+    - 加载失败时回退到字符近似计算并记录日志。
     
     Args:
         model: 模型名称
@@ -110,7 +111,6 @@ def _get_tokenizer(model: str = "default") -> Any:
     
     try:
         import tiktoken
-        # 智谱 GLM / OpenAI GPT-4 / Claude 均使用 cl100k_base 编码
         tokenizer = tiktoken.get_encoding("cl100k_base")
         _tokenizer_cache[resolved_model] = tokenizer
         return tokenizer
@@ -277,11 +277,13 @@ def count_image_tokens(
     """
     估算图片的 Token 数量
     
-    智谱 GLM-4V 系列计算规则：
+    跨厂商预算使用的保守近似：
     - 基础消耗：85 tokens
     - 分块计算：每 512x512 像素区块约 170 tokens
     - 计算公式：tokens = 85 + ceil(width/512) * ceil(height/512) * 170
     - 最大尺寸限制：4096x4096 像素
+
+    该估算只用于本地上下文预算，不代表任何厂商的精确计费规则。
     
     Args:
         width: 图片宽度（像素）
@@ -324,9 +326,12 @@ def count_image_tokens(
 # 模型限制查询
 # ============================================================
 
-def get_model_context_limit(model: str = "default", provider: Optional[str] = None) -> int:
+def get_model_context_limit(
+    model: str = "default",
+    provider: Optional[str] = None,
+) -> int:
     """
-    获取模型的上下文限制（从 ModelRegistry 获取）
+    获取受支持模型目录中的上下文限制。
     
     Args:
         model: 模型名称
@@ -336,51 +341,70 @@ def get_model_context_limit(model: str = "default", provider: Optional[str] = No
         上下文限制（tokens）
     """
     try:
-        from shared.model_registry import ModelRegistry
-        resolved_model, resolved_provider = _resolve_active_model_and_provider(model, provider)
-        model_id = f"{resolved_provider}:{resolved_model}"
-        model_config = ModelRegistry.get_model(model_id)
+        from infrastructure.llm_adapters.provider_catalog import get_model
+
+        resolved_model, resolved_provider = _resolve_active_model_and_provider(
+            model,
+            provider,
+        )
+        model_config = get_model(resolved_provider, resolved_model)
         if model_config:
             return model_config.context_limit
     except Exception as e:
-        _logger.debug(f"ModelRegistry not available: {e}")
+        _logger.debug(f"Provider catalog not available: {e}")
     
     return DEFAULT_CONTEXT_LIMIT
 
 
-def get_model_output_limit(model: str = "default", provider: Optional[str] = None) -> int:
+def get_model_output_limit(
+    model: str = "default",
+    provider: Optional[str] = None,
+) -> Optional[int]:
     """
-    获取模型的输出限制（从 ModelRegistry 获取）
+    获取受支持模型目录中的输出限制。
     
     Args:
         model: 模型名称
         provider: 厂商 ID（默认 zhipu）
         
     Returns:
-        输出限制（tokens）
+        厂商公开的硬输出上限（tokens）；未公开时返回 ``None``。
     """
     try:
-        from shared.model_registry import ModelRegistry
-        resolved_model, resolved_provider = _resolve_active_model_and_provider(model, provider)
-        model_id = f"{resolved_provider}:{resolved_model}"
-        model_config = ModelRegistry.get_model(model_id)
-        if model_config:
-            try:
-                from infrastructure.config.llm_runtime_config_manager import LLMRuntimeConfigManager
+        from infrastructure.llm_adapters.provider_catalog import get_model
 
-                active_config = LLMRuntimeConfigManager().resolve_active_config(
-                    provider_id=resolved_provider,
-                    model_name=resolved_model,
-                )
-                if active_config.enable_thinking and model_config.supports_thinking:
-                    return model_config.max_tokens_thinking
-            except Exception:
-                pass
-            return model_config.max_tokens_default
+        resolved_model, resolved_provider = _resolve_active_model_and_provider(
+            model,
+            provider,
+        )
+        model_config = get_model(resolved_provider, resolved_model)
+        if model_config:
+            return model_config.max_output_tokens
     except Exception as e:
-        _logger.debug(f"ModelRegistry not available: {e}")
+        _logger.debug(f"Provider catalog not available: {e}")
     
-    return DEFAULT_OUTPUT_LIMIT
+    return None
+
+
+def get_model_output_reserve(
+    model: str = "default",
+    provider: Optional[str] = None,
+) -> int:
+    """获取本应用为一次主线生成预留的 Token 预算。"""
+    try:
+        from infrastructure.llm_adapters.provider_catalog import get_model
+
+        resolved_model, resolved_provider = _resolve_active_model_and_provider(
+            model,
+            provider,
+        )
+        model_config = get_model(resolved_provider, resolved_model)
+        if model_config:
+            return model_config.output_reserve_tokens
+    except Exception as e:
+        _logger.debug(f"Provider catalog not available: {e}")
+
+    return DEFAULT_OUTPUT_RESERVE
 
 
 def get_model_input_limit(model: str = "default", provider: Optional[str] = None) -> int:
@@ -395,33 +419,26 @@ def get_model_input_limit(model: str = "default", provider: Optional[str] = None
         输入限制（tokens）
     """
     try:
-        from shared.model_registry import ModelRegistry
-        resolved_model, resolved_provider = _resolve_active_model_and_provider(model, provider)
-        model_id = f"{resolved_provider}:{resolved_model}"
-        model_config = ModelRegistry.get_model(model_id)
+        from infrastructure.llm_adapters.provider_catalog import get_model
+
+        resolved_model, resolved_provider = _resolve_active_model_and_provider(
+            model,
+            provider,
+        )
+        model_config = get_model(resolved_provider, resolved_model)
         if model_config:
-            try:
-                from infrastructure.config.llm_runtime_config_manager import LLMRuntimeConfigManager
-
-                active_config = LLMRuntimeConfigManager().resolve_active_config(
-                    provider_id=resolved_provider,
-                    model_name=resolved_model,
-                )
-                if active_config.enable_thinking and model_config.supports_thinking:
-                    if model_config.max_input_tokens_thinking > 0:
-                        return model_config.max_input_tokens_thinking
-            except Exception:
-                pass
-
-            if model_config.max_input_tokens_default > 0:
-                return model_config.max_input_tokens_default
-
-            output_limit = get_model_output_limit(model, provider)
-            return max(0, model_config.context_limit - output_limit)
+            if model_config.max_input_tokens is not None:
+                return model_config.max_input_tokens
+            output_reserve = get_model_output_reserve(model, provider)
+            return max(0, model_config.context_limit - output_reserve)
     except Exception as e:
-        _logger.debug(f"ModelRegistry not available: {e}")
+        _logger.debug(f"Provider catalog not available: {e}")
 
-    return max(0, get_model_context_limit(model, provider) - get_model_output_limit(model, provider))
+    return max(
+        0,
+        get_model_context_limit(model, provider)
+        - get_model_output_reserve(model, provider),
+    )
 
 
 def get_available_context(
@@ -461,9 +478,10 @@ __all__ = [
     # 限制查询
     "get_model_context_limit",
     "get_model_output_limit",
+    "get_model_output_reserve",
     "get_model_input_limit",
     "get_available_context",
     # 默认值
     "DEFAULT_CONTEXT_LIMIT",
-    "DEFAULT_OUTPUT_LIMIT",
+    "DEFAULT_OUTPUT_RESERVE",
 ]

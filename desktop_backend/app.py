@@ -146,14 +146,28 @@ class PreferencesRequest(StrictModel):
     theme: Literal["system", "light", "dark"]
 
 
-class ModelConfigRequest(StrictModel):
-    chat: Dict[str, Any]
-    embedding: Dict[str, Any]
+class ChatModelConfigInput(StrictModel):
+    provider: str = Field(min_length=1, max_length=64)
+    model: str = Field(min_length=1, max_length=256)
+    api_protocol: Literal[
+        "openai_responses",
+        "openai_chat",
+        "anthropic_messages",
+        "gemini_generate_content",
+    ]
+    base_url: str = Field(default="", max_length=2048)
+    timeout: int = Field(default=60, ge=1, le=600)
+    enable_thinking: bool = False
+    api_key: Optional[str] = Field(default=None, max_length=4096)
 
 
-class ModelTestRequest(StrictModel):
-    section: Literal["chat", "embedding"]
-    config: Dict[str, Any]
+class EmbeddingModelConfigInput(StrictModel):
+    provider: str = Field(min_length=1, max_length=64)
+    model: str = Field(min_length=1, max_length=256)
+    base_url: str = Field(default="", max_length=2048)
+    timeout: int = Field(default=30, ge=1, le=600)
+    batch_size: int = Field(default=16, ge=1, le=256)
+    api_key: Optional[str] = Field(default=None, max_length=4096)
 
 
 class EventHub:
@@ -544,13 +558,29 @@ def create_app(
     async def model_config() -> Dict[str, Any]:
         return app_runtime.model_config()
 
-    @app.put("/api/v1/model-config", dependencies=protected)
-    async def save_model_config(request: ModelConfigRequest) -> Dict[str, Any]:
-        return await app_runtime.save_model_config(request.model_dump())
+    @app.put("/api/v1/model-config/chat", dependencies=protected)
+    async def save_chat_model_config(request: ChatModelConfigInput) -> Dict[str, Any]:
+        return await app_runtime.save_chat_model_config(
+            request.model_dump(exclude_unset=True)
+        )
 
-    @app.post("/api/v1/model-config/test", dependencies=protected)
-    async def test_model_config(request: ModelTestRequest) -> Dict[str, Any]:
-        return await app_runtime.test_model_config(request.section, request.config)
+    @app.put("/api/v1/model-config/embedding", dependencies=protected)
+    async def save_embedding_model_config(request: EmbeddingModelConfigInput) -> Dict[str, Any]:
+        return await app_runtime.save_embedding_model_config(
+            request.model_dump(exclude_unset=True)
+        )
+
+    @app.post("/api/v1/model-config/chat/test", dependencies=protected)
+    async def test_chat_model_config(request: ChatModelConfigInput) -> Dict[str, Any]:
+        return await app_runtime.test_chat_model_config(
+            request.model_dump(exclude_unset=True)
+        )
+
+    @app.post("/api/v1/model-config/embedding/test", dependencies=protected)
+    async def test_embedding_model_config(request: EmbeddingModelConfigInput) -> Dict[str, Any]:
+        return await app_runtime.test_embedding_model_config(
+            request.model_dump(exclude_unset=True)
+        )
 
     @app.get("/api/v1/about", dependencies=protected)
     async def about() -> Dict[str, str]:

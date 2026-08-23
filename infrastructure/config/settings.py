@@ -50,29 +50,13 @@ COMPRESS_FALLBACK_NEW_CONVERSATION = True  # 压缩失败时是否建议开启�
 # ============================================================
 
 DEFAULT_TIMEOUT = 60                 # LLM API 普通请求超时秒数
-DEFAULT_STREAMING = True             # 默认启用流式输出
 DEFAULT_LLM_PROVIDER = ""            # 默认 LLM 提供者（空表示未配置）
-
-# ============================================================
-# LLM 厂商常量
-# ============================================================
-
-LLM_PROVIDER_ZHIPU = "zhipu"           # 智谱 AI（已实现）
-LLM_PROVIDER_DEEPSEEK = "deepseek"     # DeepSeek
-LLM_PROVIDER_QWEN = "qwen"             # 阿里通义千问
-
-SUPPORTED_LLM_PROVIDERS = [
-    LLM_PROVIDER_ZHIPU,
-    LLM_PROVIDER_DEEPSEEK,
-    LLM_PROVIDER_QWEN,
-]
 
 # ============================================================
 # 深度思考相关默认值
 # ============================================================
 
-DEFAULT_ENABLE_THINKING = True       # 默认开启深度思考（全局开关）
-DEFAULT_THINKING_TIMEOUT = 300       # 深度思考模式下的超时秒数
+DEFAULT_ENABLE_THINKING = False      # 由用户显式开启，provider 再映射到自己的协议
 
 # ============================================================
 # RAG 相关默认值（Embedding-only 向量检索）
@@ -112,8 +96,8 @@ GLOBAL_CONFIG_DIR = Path.home() / ".circuit_design_ai"
 # 全局配置文件路径
 GLOBAL_CONFIG_FILE = GLOBAL_CONFIG_DIR / "config.json"
 
-# 凭证存储文件名
-CREDENTIALS_FILE = "credentials.json"
+# Windows DPAPI 加密凭证文件名
+CREDENTIALS_FILE = "credentials.dat"
 
 # 全局日志目录
 GLOBAL_LOG_DIR = GLOBAL_CONFIG_DIR / "logs"
@@ -127,6 +111,8 @@ WORK_FOLDER_HIDDEN_DIR = ".circuit_ai"
 
 DEFAULT_LANGUAGE = "en_US"           # 默认界面语言
 SUPPORTED_LANGUAGES = ["en_US", "zh_CN"]  # 支持的语言列表
+DEFAULT_THEME = "system"
+SUPPORTED_THEMES = ["system", "light", "dark"]
 
 # ============================================================
 # 功能开关默认值
@@ -137,17 +123,16 @@ SUPPORTED_LANGUAGES = ["en_US", "zh_CN"]  # 支持的语言列表
 
 # 通用配置
 CONFIG_LANGUAGE = "language"
+CONFIG_THEME = "theme"
 
 # LLM 厂商配置
 CONFIG_LLM_PROVIDER = "llm_provider"
 CONFIG_LLM_MODEL = "llm_model"
+CONFIG_LLM_API_PROTOCOL = "llm_api_protocol"
 CONFIG_LLM_BASE_URL = "llm_base_url"
 CONFIG_LLM_TIMEOUT = "llm_timeout"
-CONFIG_LLM_STREAMING = "llm_streaming"
 
-# 深度思考配置
 CONFIG_ENABLE_THINKING = "enable_thinking"
-CONFIG_THINKING_TIMEOUT = "thinking_timeout"
 
 # 嵌入模型配置
 CONFIG_EMBEDDING_PROVIDER = "embedding_provider"
@@ -163,17 +148,15 @@ CONFIG_EMBEDDING_BATCH_SIZE = "embedding_batch_size"
 DEFAULT_CONFIG = {
     # 通用配置
     CONFIG_LANGUAGE: DEFAULT_LANGUAGE,
+    CONFIG_THEME: DEFAULT_THEME,
     
     # LLM 厂商配置
     CONFIG_LLM_PROVIDER: DEFAULT_LLM_PROVIDER,
     CONFIG_LLM_MODEL: "",
+    CONFIG_LLM_API_PROTOCOL: "",
     CONFIG_LLM_BASE_URL: "",  # 空则使用厂商默认
     CONFIG_LLM_TIMEOUT: DEFAULT_TIMEOUT,
-    CONFIG_LLM_STREAMING: DEFAULT_STREAMING,
-    
-    # 深度思考配置
     CONFIG_ENABLE_THINKING: DEFAULT_ENABLE_THINKING,
-    CONFIG_THINKING_TIMEOUT: DEFAULT_THINKING_TIMEOUT,
     
     # 嵌入模型配置
     CONFIG_EMBEDDING_PROVIDER: DEFAULT_EMBEDDING_PROVIDER,

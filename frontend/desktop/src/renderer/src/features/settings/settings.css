@@ -198,13 +198,15 @@
 }
 
 .settings-field > span,
-.settings-model-grid label {
+.settings-model-field {
   display: grid;
   gap: 6px;
 }
 
 .settings-field strong,
-.settings-model-grid label > span,
+.settings-model-field > span,
+.settings-model-field > label,
+.settings-model-capabilities > strong,
 .settings-toggle strong {
   color: var(--settings-text);
   font-size: 13px;
@@ -212,7 +214,9 @@
 }
 
 .settings-field small,
-.settings-model-grid small,
+.settings-model-field small,
+.settings-model-capabilities small,
+.settings-model-toggle small,
 .settings-about small {
   color: var(--settings-secondary);
   font-size: 11px;
@@ -275,8 +279,159 @@
   gap: 16px;
 }
 
+.settings-model-panel {
+  display: grid;
+  gap: 16px;
+}
+
+.settings-model-form {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.settings-model-form:disabled .settings-toggle,
+.settings-model-form:disabled .settings-text-button,
+.settings-tabs button:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.settings-model-field {
+  align-content: start;
+  min-width: 0;
+}
+
+.settings-model-field input,
+.settings-model-field select {
+  width: 100%;
+}
+
 .settings-model-grid__wide {
   grid-column: 1 / -1;
+}
+
+.settings-api-key-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-text-button {
+  min-height: 36px;
+  padding: 0 9px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--settings-accent);
+  font-size: 12px;
+  font-weight: 620;
+  white-space: nowrap;
+}
+
+.settings-text-button:hover {
+  border-color: var(--settings-border);
+  background: var(--settings-muted);
+}
+
+.settings-text-button--danger {
+  color: var(--settings-danger);
+}
+
+.settings-model-protocol-note {
+  color: var(--settings-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.settings-model-capabilities {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 11px 12px;
+  border: 1px solid var(--settings-border);
+  border-radius: 8px;
+  background: var(--settings-bg);
+}
+
+.settings-capability-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.settings-capability-list span {
+  padding: 3px 7px;
+  border: 1px solid var(--settings-border);
+  border-radius: 6px;
+  background: var(--settings-surface);
+  color: var(--settings-secondary);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.settings-capability-list span[data-supported='true'] {
+  border-color: color-mix(in srgb, var(--settings-accent) 28%, var(--settings-border));
+  background: var(--settings-accent-soft);
+  color: var(--settings-accent);
+}
+
+.settings-model-meta {
+  overflow-wrap: anywhere;
+}
+
+.settings-model-toggle {
+  display: grid;
+  align-content: start;
+  gap: 3px;
+}
+
+.settings-advanced {
+  border-top: 1px solid var(--settings-border);
+  border-bottom: 1px solid var(--settings-border);
+}
+
+.settings-advanced summary {
+  padding: 10px 2px;
+  color: var(--settings-secondary);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 620;
+}
+
+.settings-advanced[open] summary {
+  color: var(--settings-text);
+}
+
+.settings-advanced__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  padding: 4px 2px 14px;
+}
+
+.settings-model-message {
+  padding: 9px 11px;
+  border: 1px solid;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.settings-model-message--error {
+  border-color: color-mix(in srgb, var(--settings-danger) 30%, transparent);
+  background: var(--settings-danger-soft);
+  color: var(--settings-danger);
+}
+
+.settings-model-message--success {
+  border-color: color-mix(in srgb, var(--settings-success) 30%, transparent);
+  background: var(--settings-success-soft);
+  color: var(--settings-success);
 }
 
 .settings-toggle {
@@ -386,6 +541,8 @@
 .settings-icon-button:focus-visible,
 .settings-nav button:focus-visible,
 .settings-tabs button:focus-visible,
+.settings-text-button:focus-visible,
+.settings-advanced summary:focus-visible,
 .settings-button:focus-visible {
   outline: 3px solid color-mix(in srgb, var(--settings-accent) 26%, transparent);
   outline-offset: 2px;
@@ -415,13 +572,13 @@
 }
 
 .settings-verification {
-  max-width: 320px;
-  overflow: hidden;
+  min-width: 0;
+  max-width: 360px;
   color: var(--settings-secondary);
   font-size: 12px;
   line-height: 1.4;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .settings-verification--verified {
@@ -547,8 +704,17 @@
 
   .settings-field,
   .settings-model-grid,
+  .settings-advanced__grid,
   .settings-about {
     grid-template-columns: 1fr;
+  }
+
+  .settings-api-key-row {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-text-button {
+    justify-self: start;
   }
 
   .settings-model-grid__wide {

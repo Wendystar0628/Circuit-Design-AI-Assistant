@@ -38,11 +38,9 @@ class _CompressionLLMAdapter:
         # but BaseLLMClient intentionally accepts only its explicit portable
         # chat contract.  Do not leak unsupported wire options into providers.
         del max_tokens, temperature
-        response = await asyncio.to_thread(
-            self._client.chat,
+        response = await self._client.complete(
             messages=[{"role": "user", "content": prompt}],
             model=self._model,
-            streaming=False,
             tools=None,
             thinking=False,
         )
@@ -169,20 +167,6 @@ class ContextCompressionService:
             except Exception:
                 pass
 
-        if not provider or not model:
-            try:
-                from shared.model_registry import ModelRegistry
-
-                default_provider = ModelRegistry.get_default_provider()
-                if default_provider and not provider:
-                    provider = default_provider.id
-
-                if provider and not model:
-                    default_model = ModelRegistry.get_default_model(provider)
-                    if default_model:
-                        model = default_model.name
-            except Exception:
-                pass
         return {
             "provider": provider,
             "model": model,

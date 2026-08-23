@@ -2,8 +2,6 @@ from domain.llm.llm_message_builder import LLMMessageBuilder
 from domain.llm.attachment_references import build_inline_attachment_marker
 from domain.llm.message_helpers import create_human_message
 from domain.llm.message_types import Attachment
-from infrastructure.llm_adapters.qwen.qwen_client import QwenClient
-from shared.model_registry import ModelRegistry
 import pytest
 
 
@@ -164,24 +162,3 @@ def test_llm_message_builder_upgrades_image_file_attachment_to_image_parts(tmp_p
 
     assert isinstance(payload["content"], list)
     assert any(item.get("type") == "image_url" for item in payload["content"])
-
-
-def test_qwen_client_switches_to_vision_fallback_for_image_messages():
-    ModelRegistry.clear()
-    ModelRegistry.initialize()
-    client = QwenClient(api_key="test", model="qwen3-max")
-
-    actual_model = client._resolve_model_for_messages(
-        "qwen3-max",
-        [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": "看图"},
-                    {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
-                ],
-            }
-        ],
-    )
-
-    assert actual_model == "qwen3.6-plus"

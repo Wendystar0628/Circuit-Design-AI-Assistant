@@ -16,8 +16,8 @@ class _StrictCompressionClient:
         self.content = content
         self.finish_reason = finish_reason
 
-    def chat(self, *, messages, model, streaming, tools, thinking):
-        self.calls.append({'messages': messages, 'model': model, 'streaming': streaming, 'tools': tools, 'thinking': thinking})
+    async def complete(self, *, messages, model, tools, thinking):
+        self.calls.append({'messages': messages, 'model': model, 'tools': tools, 'thinking': thinking})
         return SimpleNamespace(content=self.content, usage={'prompt_tokens': 12, 'completion_tokens': 4}, finish_reason=self.finish_reason)
 
 def test_compression_adapter_calls_strict_base_client_contract():
@@ -25,7 +25,7 @@ def test_compression_adapter_calls_strict_base_client_contract():
     adapter = _CompressionLLMAdapter(client, 'summary-model')
     result = asyncio.run(adapter.generate('��ѹ����ʷ', max_tokens=321, temperature=0.1))
     assert result == {'content': '��ʵģ��ժҪ', 'usage': {'prompt_tokens': 12, 'completion_tokens': 4}, 'finish_reason': None}
-    assert client.calls == [{'messages': [{'role': 'user', 'content': '��ѹ����ʷ'}], 'model': 'summary-model', 'streaming': False, 'tools': None, 'thinking': False}]
+    assert client.calls == [{'messages': [{'role': 'user', 'content': '��ѹ����ʷ'}], 'model': 'summary-model', 'tools': None, 'thinking': False}]
 
 def _compression_state():
     return {'messages': [HumanMessage(content='�������Ϊʮ�ķŴ���'), AIMessage(content='�ȼ��㷴������'), HumanMessage(content='�����Ż�����')], 'working_context_summary': '', 'working_context_compressed_count': 0, 'working_context_keep_recent': 0}

@@ -45,15 +45,6 @@ function stopReasonLabel(reason: string, uiText: Record<string, string>): string
   }[reason] ?? getUiText(uiText, 'conversation.timeline.stop_reason.incomplete', 'This response was not completed')
 }
 
-function searchStateLabel(state: string, uiText: Record<string, string>): string {
-  return {
-    idle: getUiText(uiText, 'conversation.timeline.search_state.idle', 'Not Started'),
-    running: getUiText(uiText, 'conversation.timeline.search_state.running', 'Searching'),
-    complete: getUiText(uiText, 'conversation.timeline.search_state.complete', 'Completed'),
-    error: getUiText(uiText, 'conversation.timeline.search_state.error', 'Failed'),
-  }[state] ?? getUiText(uiText, 'common.processing', 'Processing')
-}
-
 function stringifyValue(value: unknown): string {
   if (typeof value === 'string') {
     return value
@@ -62,23 +53,6 @@ function stringifyValue(value: unknown): string {
     return JSON.stringify(value ?? {}, null, 2)
   } catch {
     return String(value ?? '')
-  }
-}
-
-function summarizeSearchResult(result: Record<string, unknown>, uiText: Record<string, string>): {
-  title: string
-  url: string
-  snippet: string
-  details: string
-} {
-  const title = String(result.title ?? result.name ?? result.display_name ?? getUiText(uiText, 'conversation.timeline.search_result', 'Search Result'))
-  const url = String(result.url ?? result.link ?? '')
-  const snippet = String(result.snippet ?? result.summary ?? result.description ?? '')
-  return {
-    title,
-    url,
-    snippet,
-    details: stringifyValue(result),
   }
 }
 
@@ -200,49 +174,6 @@ const ToolCallView = memo(function ToolCallView({ toolCall, uiText }: { toolCall
   )
 })
 
-const SearchResultsView = memo(function SearchResultsView({
-  results,
-  actions,
-  contextId,
-  uiText,
-}: {
-  results: Array<Record<string, unknown>>
-  actions: ConversationActions | null
-  contextId: string
-  uiText: Record<string, string>
-}) {
-  if (!results.length) {
-    return <div className="search-results__empty">{getUiText(uiText, 'conversation.timeline.no_results', 'No results')}</div>
-  }
-
-  return (
-    <div className="search-results">
-      {results.map((result, index) => {
-        const summary = summarizeSearchResult(result, uiText)
-        return (
-          <article key={`${summary.url}:${index}`} className="search-result-card">
-            <div className="search-result-card__header">
-              <div className="search-result-card__title">{summary.title}</div>
-              {summary.url ? (
-                <button
-                  type="button"
-                  className="search-result-card__link"
-                  onClick={() => actions?.openLink(contextId, summary.url)}
-                >
-                  {getUiText(uiText, 'conversation.timeline.open_link', 'Open Link')}
-                </button>
-              ) : null}
-            </div>
-            {summary.url ? <div className="search-result-card__url">{summary.url}</div> : null}
-            {summary.snippet ? <div className="search-result-card__snippet">{summary.snippet}</div> : null}
-            <pre className="search-result-card__details">{summary.details}</pre>
-          </article>
-        )
-      })}
-    </div>
-  )
-})
-
 const AgentStepCard = memo(function AgentStepCard({
   step,
   actions,
@@ -256,7 +187,6 @@ const AgentStepCard = memo(function AgentStepCard({
   runtime: boolean
   uiText: Record<string, string>
 }) {
-  const hasSearchDetails = Boolean(step.web_search_query || step.web_search_message || step.web_search_results.length)
   const hasToolDetails = step.tool_calls.length > 0
 
   return (
@@ -279,18 +209,6 @@ const AgentStepCard = memo(function AgentStepCard({
       )}
       {step.is_partial ? <div className="partial-badge">{stopReasonLabel(step.stop_reason, uiText)}</div> : null}
       <div className="detail-card-list">
-        {hasSearchDetails ? (
-          <DetailCard title={getUiText(uiText, 'conversation.timeline.search_process', 'Search Process')} subtitle={searchStateLabel(step.web_search_state, uiText)} uiText={uiText}>
-            {step.web_search_query ? (
-              <div className="detail-label-group">
-                <span className="detail-label">{getUiText(uiText, 'conversation.timeline.query', 'Query')}</span>
-                <span className="detail-label__value">{step.web_search_query}</span>
-              </div>
-            ) : null}
-            {step.web_search_message ? <div className="detail-note">{step.web_search_message}</div> : null}
-            <SearchResultsView results={step.web_search_results} actions={actions} contextId={contextId} uiText={uiText} />
-          </DetailCard>
-        ) : null}
         {hasToolDetails ? (
           <DetailCard title={getUiText(uiText, 'conversation.timeline.tool_calls', 'Tool Calls')} subtitle={getUiText(uiText, 'conversation.timeline.call_count', '{count} calls', { count: step.tool_calls.length })} uiText={uiText}>
             <div className="tool-call-list">

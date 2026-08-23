@@ -39,7 +39,7 @@ def create_default_tools() -> ToolRegistry:
     注册的工具：
         文件操作：read_file, patch_file, rewrite_file
         搜索导航：grep_search, find_files, list_directory
-        知识检索：rag_search, web_search
+        知识检索：rag_search
         仿真闭环：run_simulation + exact-result readers
 
     Returns:
@@ -52,7 +52,6 @@ def create_default_tools() -> ToolRegistry:
     from domain.llm.agent.tools.find_files import FindFilesTool
     from domain.llm.agent.tools.list_directory import ListDirectoryTool
     from domain.llm.agent.tools.rag_search import RAGSearchTool
-    from domain.llm.agent.tools.web_search import WebSearchTool
     from domain.llm.agent.tools.run_simulation import RunSimulationTool
     from domain.llm.agent.tools.read_metrics import ReadMetricsTool
     from domain.llm.agent.tools.read_output_log import ReadOutputLogTool
@@ -72,7 +71,6 @@ def create_default_tools() -> ToolRegistry:
     registry.register(ListDirectoryTool())
 
     registry.register(RAGSearchTool())
-    registry.register(WebSearchTool())
 
     # ---- 仿真闭环：对项目内任意电路发起一次仿真，返回紧凑摘要 ----
     # 与桌面 Run 动作共享 SimulationJobManager 通道，但通过

@@ -34,16 +34,12 @@ from domain.llm.message_helpers import (
     ROLE_SYSTEM,
     create_human_message,
     create_ai_message,
-    create_tool_message,
     create_system_message,
-    get_role,
     get_operations,
     is_partial_response,
     is_ai_message,
     is_system_message,
     get_message_id,
-    message_to_dict,
-    dict_to_message,
     dicts_to_messages,
 )
 from domain.llm.message_types import Attachment
@@ -109,7 +105,6 @@ class MessageStore:
         operations: Optional[List[str]] = None,
         reasoning_content: str = "",
         usage: Optional[Dict[str, int]] = None,
-        web_search_results: Optional[List[Dict[str, Any]]] = None,
         is_partial: bool = False,
         stop_reason: str = "",
         tool_calls_pending: Optional[List[Dict[str, Any]]] = None,
@@ -128,7 +123,6 @@ class MessageStore:
             operations: 操作摘要（仅助手消息）
             reasoning_content: 思考内容（仅助手消息）
             usage: Token 使用统计（仅助手消息）
-            web_search_results: 联网搜索结果（仅助手消息）
             is_partial: 是否为部分响应
             stop_reason: 停止原因
             tool_calls_pending: 中断时未完成的工具调用
@@ -154,7 +148,6 @@ class MessageStore:
                     is_partial=is_partial,
                     stop_reason=stop_reason,
                     tool_calls_pending=tool_calls_pending,
-                    web_search_results=web_search_results,
                     agent_steps=agent_steps,
                     timestamp=timestamp,
                     message_id=message_id,

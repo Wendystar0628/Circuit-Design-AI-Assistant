@@ -22,7 +22,7 @@ ReAct 循环控制器
         client=llm_client,
         registry=tool_registry,
         context=tool_context,
-        model="glm-4-plus",
+        model="glm-5.3",
     )
     result = await loop.run(messages, on_event=my_callback)
 """
@@ -30,6 +30,7 @@ ReAct 循环控制器
 import json
 import logging
 import asyncio
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Callable, Coroutine, Dict, List, Optional, Union
 
@@ -66,6 +67,7 @@ class TurnResult:
     finish_reason: Optional[str] = None
     terminal_observed: bool = False
     usage: Optional[Dict[str, int]] = None
+    provider_state: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -191,10 +193,13 @@ class AgentLoop:
                 # 将工具结果追加到消息历史
                 for tc, tr in zip(turn_result.tool_calls, tool_results):
                     tc_id = tc.get("id", "")
+                    function = tc.get("function") if isinstance(tc.get("function"), dict) else {}
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tc_id,
+                        "name": str(function.get("name", "") or ""),
                         "content": tr.content,
+                        "is_error": bool(tr.is_error),
                     })
 
                 if any(tr.is_error for tr in tool_results):
@@ -285,6 +290,8 @@ class AgentLoop:
 
             if chunk.tool_calls:
                 turn.tool_calls = chunk.tool_calls
+            if chunk.provider_state is not None:
+                turn.provider_state = deepcopy(chunk.provider_state)
             if chunk.is_finished or chunk.finish_reason is not None:
                 turn.terminal_observed = True
             if chunk.finish_reason is not None:
@@ -464,6 +471,19 @@ class AgentLoop:
             "content": turn.content or "",
         }
 
+        # Several current provider APIs require their native assistant state
+        # to be replayed byte-for-byte in the immediately following tool
+        # round.  Keep that state on the canonical assistant message instead
+        # of flattening it into a lossy OpenAI-Chat-shaped approximation.
+        if turn.provider_state is not None:
+            msg["provider_state"] = deepcopy(turn.provider_state)
+
+        if turn.reasoning_content:
+            # OpenAI-compatible thinking models (DeepSeek, Qwen, GLM and
+            # Kimi) require the complete reasoning field alongside tool_calls
+            # on the continuation request.
+            msg["reasoning_content"] = turn.reasoning_content
+
         if turn.tool_calls:
             # 确保 arguments 是 JSON 字符串（API 要求）
             formatted_calls = []
@@ -478,6 +498,8 @@ class AgentLoop:
                         ),
                     },
                 }
+                if isinstance(tc.get("index"), int):
+                    formatted_tc["index"] = tc["index"]
                 formatted_calls.append(formatted_tc)
             msg["tool_calls"] = formatted_calls
 

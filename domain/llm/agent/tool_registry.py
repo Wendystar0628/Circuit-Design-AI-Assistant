@@ -9,7 +9,7 @@
 
 架构位置：
 - 被 AgentLoop 调用以查找工具并执行
-- 被 ZhipuRequestBuilder 调用以获取 tools 参数
+- 生成由四种协议适配器各自转换的 canonical function schema
 - 依赖 domain/llm/agent/types.py 中的 BaseTool
 
 参考来源：
@@ -52,7 +52,7 @@ class ToolRegistry:
     设计要点：
     - 非单例模式，允许不同 Agent 会话使用不同的注册表实例
     - 注册时检查名称唯一性，重复注册同名工具会覆盖并警告
-    - get_all_openai_schemas() 的返回值可直接传给 ZhipuClient.chat(tools=...)
+    - get_all_openai_schemas() 的返回值直接交给统一 LLM client 边界
     """
     
     def __init__(self):
@@ -113,7 +113,7 @@ class ToolRegistry:
         """
         获取所有已注册工具的 OpenAI Function Calling 格式 schema 列表
         
-        返回值可直接传给 ZhipuClient.chat(tools=...) 参数。
+        返回值可直接传给统一 ``chat_stream(tools=...)`` 参数。
         
         Returns:
             OpenAI tools 参数格式的字典列表

@@ -37,7 +37,7 @@
 """
 
 import threading
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from langchain_core.messages import BaseMessage
 
@@ -117,7 +117,6 @@ class ContextManager:
         operations: Optional[List[str]] = None,
         reasoning_content: str = "",
         usage: Optional[Dict[str, int]] = None,
-        web_search_results: Optional[List[Dict[str, Any]]] = None,
         is_partial: bool = False,
         stop_reason: str = "",
         agent_steps: Optional[List[Dict[str, Any]]] = None,
@@ -135,7 +134,6 @@ class ContextManager:
             operations: 操作摘要（仅助手消息）
             reasoning_content: 思考内容（仅助手消息）
             usage: Token 使用统计（仅助手消息）
-            web_search_results: 联网搜索结果（仅助手消息）
             is_partial: 是否为部分响应
             stop_reason: 停止原因
             
@@ -150,7 +148,6 @@ class ContextManager:
             operations=operations,
             reasoning_content=reasoning_content,
             usage=usage,
-            web_search_results=web_search_results,
             is_partial=is_partial,
             stop_reason=stop_reason,
             agent_steps=agent_steps,
@@ -390,7 +387,6 @@ class ContextManager:
         reasoning_content: str = "",
         tool_calls: Optional[List[Dict[str, Any]]] = None,
         usage: Optional[Dict[str, Any]] = None,
-        web_search_results: Optional[List[Dict[str, Any]]] = None,
         is_partial: bool = False,
         stop_reason: str = "",
         operations: Optional[List[str]] = None,
@@ -406,7 +402,6 @@ class ContextManager:
             reasoning_content: 思考内容
             tool_calls: 工具调用列表
             usage: Token 使用统计
-            web_search_results: 联网搜索结果
             is_partial: 是否为部分响应
             stop_reason: 停止原因
             operations: 操作摘要列表（直接传入，优先于 tool_calls 自动生成）
@@ -427,7 +422,6 @@ class ContextManager:
             reasoning_content=reasoning_content,
             operations=final_operations if final_operations else None,
             usage=usage,
-            web_search_results=web_search_results,
             is_partial=is_partial,
             stop_reason=stop_reason,
             agent_steps=agent_steps,

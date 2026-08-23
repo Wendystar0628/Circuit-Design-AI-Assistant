@@ -146,8 +146,10 @@ def test_api_v1_route_inventory_is_one_modern_contract() -> None:
         ("GET", "/api/v1/preferences"),
         ("PUT", "/api/v1/preferences"),
         ("GET", "/api/v1/model-config"),
-        ("PUT", "/api/v1/model-config"),
-        ("POST", "/api/v1/model-config/test"),
+        ("PUT", "/api/v1/model-config/chat"),
+        ("PUT", "/api/v1/model-config/embedding"),
+        ("POST", "/api/v1/model-config/chat/test"),
+        ("POST", "/api/v1/model-config/embedding/test"),
         ("GET", "/api/v1/about"),
     }
 
@@ -161,6 +163,84 @@ def test_api_v1_route_inventory_is_one_modern_contract() -> None:
         for path in paths
     )
     assert not any("/workspace/open-entry" in path for path in paths)
+
+
+def test_model_config_routes_are_section_scoped_and_preserve_api_key_tri_state() -> None:
+    runtime = _FakeRuntime()
+    received: list[tuple[str, dict[str, Any]]] = []
+
+    async def save_chat(payload: dict[str, Any]) -> dict[str, Any]:
+        received.append(("save_chat", payload))
+        return {"section": "chat"}
+
+    async def save_embedding(payload: dict[str, Any]) -> dict[str, Any]:
+        received.append(("save_embedding", payload))
+        return {"section": "embedding"}
+
+    async def test_chat(payload: dict[str, Any]) -> dict[str, Any]:
+        received.append(("test_chat", payload))
+        return {"section": "chat", "status": "verified"}
+
+    async def test_embedding(payload: dict[str, Any]) -> dict[str, Any]:
+        received.append(("test_embedding", payload))
+        return {"section": "embedding", "status": "verified"}
+
+    runtime.save_chat_model_config = save_chat
+    runtime.save_embedding_model_config = save_embedding
+    runtime.test_chat_model_config = test_chat
+    runtime.test_embedding_model_config = test_embedding
+    app = create_app(TOKEN, RENDERER_ORIGIN, runtime=runtime)
+    headers = {"Authorization": f"Bearer {TOKEN}"}
+
+    chat_payload = {
+        "provider": "opencode",
+        "model": "anthropic/claude-sonnet-5",
+        "api_protocol": "anthropic_messages",
+        "base_url": "",
+        "timeout": 60,
+        "enable_thinking": True,
+    }
+    embedding_payload = {
+        "provider": "zhipu",
+        "model": "embedding-3",
+        "base_url": "",
+        "timeout": 30,
+        "batch_size": 16,
+    }
+
+    with TestClient(app) as client:
+        saved_chat = client.put(
+            "/api/v1/model-config/chat",
+            headers=headers,
+            json=chat_payload,
+        )
+        cleared_embedding_key = client.put(
+            "/api/v1/model-config/embedding",
+            headers=headers,
+            json={**embedding_payload, "api_key": None},
+        )
+        tested_chat = client.post(
+            "/api/v1/model-config/chat/test",
+            headers=headers,
+            json={**chat_payload, "api_key": "draft-key"},
+        )
+        tested_embedding = client.post(
+            "/api/v1/model-config/embedding/test",
+            headers=headers,
+            json=embedding_payload,
+        )
+
+    assert saved_chat.json() == {"section": "chat"}
+    assert cleared_embedding_key.json() == {"section": "embedding"}
+    assert tested_chat.json() == {"section": "chat", "status": "verified"}
+    assert tested_embedding.json() == {
+        "section": "embedding",
+        "status": "verified",
+    }
+    assert "api_key" not in received[0][1]
+    assert received[1][1]["api_key"] is None
+    assert received[2][1]["api_key"] == "draft-key"
+    assert "api_key" not in received[3][1]
 
 
 def test_health_is_public_but_api_and_websocket_require_the_sidecar_token() -> None:
@@ -377,10 +457,6 @@ def test_conversation_message_dto_is_the_raw_react_contract(
                             "details": {},
                         }
                     ],
-                    "web_search_query": "",
-                    "web_search_results": [],
-                    "web_search_message": "",
-                    "web_search_state": "idle",
                     "is_complete": True,
                     "is_partial": False,
                     "stop_reason": "",
@@ -427,10 +503,6 @@ def test_conversation_message_dto_is_the_raw_react_contract(
         "content",
         "reasoning_content",
         "tool_calls",
-        "web_search_query",
-        "web_search_results",
-        "web_search_message",
-        "web_search_state",
         "is_complete",
         "is_partial",
         "stop_reason",
@@ -690,10 +762,6 @@ def test_agent_run_uses_role_wire_messages_and_persists_raw_steps() -> None:
                 "content": "raw **answer**",
                 "reasoning_content": "",
                 "tool_calls": [],
-                "web_search_query": "",
-                "web_search_results": [],
-                "web_search_message": "",
-                "web_search_state": "idle",
                 "is_complete": True,
                 "is_partial": False,
                 "stop_reason": "",
@@ -703,44 +771,100 @@ def test_agent_run_uses_role_wire_messages_and_persists_raw_steps() -> None:
     asyncio.run(scenario())
 
 
-def test_model_config_uses_plain_model_names_and_effective_embedding_defaults() -> None:
+def test_model_config_exposes_flagship_catalog_and_custom_aggregators() -> None:
     runtime = ApplicationRuntime()
     runtime.llm_runtime_config_manager = SimpleNamespace(
         resolve_active_config=lambda: SimpleNamespace(
             provider="zhipu",
-            model="glm-4.5",
-            base_url="https://example.invalid/chat",
+            model="glm-5.3",
+            api_protocol="openai_chat",
+            base_url="",
+            effective_base_url="https://open.bigmodel.cn/api/paas/v4",
             timeout=60,
-            streaming=True,
             enable_thinking=False,
-            thinking_timeout=120,
             has_api_key=False,
-            updated_at="",
         )
     )
     runtime.config_manager = SimpleNamespace(
         get=lambda _key, default=None: default
     )
     runtime.credential_manager = SimpleNamespace(
-        get_credential=lambda *_args: None
+        get_credential=lambda *_args: None,
+        has_credential=lambda *_args: False,
     )
 
     config = runtime.model_config()
 
-    for section in ("chat", "embedding"):
-        for provider in config["providers"][section]:
-            model_ids = {model["id"] for model in provider["models"]}
+    chat_providers = config["providers"]["chat"]
+    assert [provider["id"] for provider in chat_providers] == [
+        "openai",
+        "anthropic",
+        "gemini",
+        "xai",
+        "deepseek",
+        "qwen",
+        "zhipu",
+        "kimi",
+        "opencode",
+        "siliconflow",
+    ]
+    for provider in chat_providers:
+        model_ids = {model["id"] for model in provider["models"]}
+        assert all(not model_id.startswith(f"{provider['id']}:") for model_id in model_ids)
+        if provider["allow_custom_model"]:
+            assert provider["default_model"] == ""
+            assert provider["models"] == []
+        else:
             assert provider["default_model"] in model_ids
-            assert all(not model_id.startswith(f"{provider['id']}:") for model_id in model_ids)
+            assert all(
+                set(model) == {
+                    "id",
+                    "label",
+                    "role",
+                    "generation",
+                    "status",
+                    "protocol",
+                    "capabilities",
+                    "description",
+                }
+                for model in provider["models"]
+            )
+
+    opencode = next(provider for provider in chat_providers if provider["id"] == "opencode")
+    assert [item["id"] for item in opencode["protocol_options"]] == [
+        "openai_responses",
+        "openai_chat",
+        "anthropic_messages",
+        "gemini_generate_content",
+    ]
+    siliconflow = next(
+        provider for provider in chat_providers if provider["id"] == "siliconflow"
+    )
+    assert [item["id"] for item in siliconflow["protocol_options"]] == [
+        "openai_chat"
+    ]
+
+    assert config["chat"] == {
+        "provider": "zhipu",
+        "model": "glm-5.3",
+        "api_protocol": "openai_chat",
+        "base_url": "",
+        "effective_base_url": "https://open.bigmodel.cn/api/paas/v4",
+        "timeout": 60,
+        "enable_thinking": False,
+        "has_api_key": False,
+    }
     embedding_provider = next(
         provider
         for provider in config["providers"]["embedding"]
         if provider["id"] == config["embedding"]["provider"]
     )
     assert config["embedding"]["model"] == embedding_provider["default_model"]
-    assert config["embedding"]["base_url"] == embedding_provider["default_base_url"]
-    assert "verified_at" not in config["chat"]
-    assert "verified_at" not in config["embedding"]
+    assert config["embedding"]["base_url"] == ""
+    assert (
+        config["embedding"]["effective_base_url"]
+        == embedding_provider["default_base_url"]
+    )
 
 
 def test_rag_clear_passes_exact_project_and_index_identity() -> None:

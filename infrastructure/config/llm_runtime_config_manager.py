@@ -1,46 +1,47 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Any, Optional
 
 from infrastructure.config.settings import (
     CONFIG_ENABLE_THINKING,
+    CONFIG_LLM_API_PROTOCOL,
     CONFIG_LLM_BASE_URL,
     CONFIG_LLM_MODEL,
     CONFIG_LLM_PROVIDER,
-    CONFIG_LLM_STREAMING,
     CONFIG_LLM_TIMEOUT,
-    CONFIG_THINKING_TIMEOUT,
     CREDENTIAL_TYPE_LLM,
     DEFAULT_ENABLE_THINKING,
-    DEFAULT_STREAMING,
-    DEFAULT_THINKING_TIMEOUT,
     DEFAULT_TIMEOUT,
 )
-from shared.model_registry import ModelRegistry
+from infrastructure.llm_adapters.provider_catalog import (
+    get_model,
+    get_provider,
+    validate_selection,
+)
+from infrastructure.llm_adapters.base_url import validate_base_url
 
 
-_LLM_RUNTIME_UPDATED_AT_KEY = "llm_runtime_updated_at"
+UNSET_API_KEY = object()
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ActiveLLMConfig:
     provider: str = ""
     model: str = ""
+    api_protocol: str = ""
     model_id: str = ""
     display_name: str = ""
     base_url: str = ""
+    effective_base_url: str = ""
     timeout: int = DEFAULT_TIMEOUT
-    streaming: bool = DEFAULT_STREAMING
     enable_thinking: bool = DEFAULT_ENABLE_THINKING
-    thinking_timeout: int = DEFAULT_THINKING_TIMEOUT
     api_key: str = ""
     updated_at: str = ""
 
     @property
     def is_configured(self) -> bool:
-        return bool(self.provider and self.model)
+        return bool(self.provider and self.model and self.api_protocol)
 
     @property
     def has_api_key(self) -> bool:
@@ -48,196 +49,207 @@ class ActiveLLMConfig:
 
 
 class LLMRuntimeConfigManager:
-    def __init__(self, config_manager: Optional[Any] = None, credential_manager: Optional[Any] = None):
-        self._config_manager = config_manager
-        self._credential_manager = credential_manager
+    """Resolve and persist the one active chat connection.
 
-    @property
-    def config_manager(self):
-        if self._config_manager is None:
-            try:
-                from shared.service_locator import ServiceLocator
-                from shared.service_names import SVC_CONFIG_MANAGER
+    Provider and model validity comes exclusively from the immutable provider
+    catalog. The two aggregator providers are the only places where arbitrary
+    model IDs are accepted.
+    """
 
-                self._config_manager = ServiceLocator.get_optional(SVC_CONFIG_MANAGER)
-            except Exception:
-                self._config_manager = None
-        return self._config_manager
-
-    @property
-    def credential_manager(self):
-        if self._credential_manager is None:
-            try:
-                from shared.service_locator import ServiceLocator
-                from shared.service_names import SVC_CREDENTIAL_MANAGER
-
-                self._credential_manager = ServiceLocator.get_optional(SVC_CREDENTIAL_MANAGER)
-            except Exception:
-                self._credential_manager = None
-        return self._credential_manager
+    def __init__(self, config_manager: Any, credential_manager: Any):
+        if config_manager is None or credential_manager is None:
+            raise ValueError("LLM runtime config dependencies are required")
+        self.config_manager = config_manager
+        self.credential_manager = credential_manager
 
     def resolve_active_config(
         self,
         provider_id: Optional[str] = None,
         model_name: Optional[str] = None,
+        api_protocol: Optional[str] = None,
     ) -> ActiveLLMConfig:
-        ModelRegistry.initialize()
+        provider_value = str(
+            provider_id
+            if provider_id is not None
+            else self.config_manager.get(CONFIG_LLM_PROVIDER, "")
+            or ""
+        ).strip().lower()
+        provider = get_provider(provider_value) if provider_value else None
+        if provider is None:
+            return ActiveLLMConfig()
 
-        config_manager = self.config_manager
-        credential_manager = self.credential_manager
+        configured_model = str(
+            model_name
+            if model_name is not None
+            else self.config_manager.get(CONFIG_LLM_MODEL, "")
+            or ""
+        ).strip()
+        model_value = configured_model or provider.default_model
+        model = get_model(provider.id, model_value) if model_value else None
 
-        provider_value = (provider_id or "").strip()
-        if not provider_value and config_manager:
-            provider_value = str(config_manager.get(CONFIG_LLM_PROVIDER, "") or "").strip()
+        if not provider.allow_custom_model and model is None:
+            # Old or retired IDs are not aliases. Discard them and select the
+            # current provider default.
+            model_value = provider.default_model
+            model = get_model(provider.id, model_value) if model_value else None
 
-        provider_config = ModelRegistry.get_provider(provider_value) if provider_value else None
-        if provider_value and provider_config is None:
-            provider_value = ""
-
-        model_value = (model_name or "").strip()
-        if not provider_value:
-            model_value = ""
-        elif not model_value and config_manager:
-            model_value = str(config_manager.get(CONFIG_LLM_MODEL, "") or "").strip()
-        if not model_value and provider_config:
-            model_value = provider_config.default_model
-
-        model_config = None
-        if provider_value and model_value:
-            model_config = ModelRegistry.get_model_by_name(provider_value, model_value)
-            if model_config is None and provider_config and provider_config.default_model:
-                fallback_model = provider_config.default_model
-                fallback_model_config = ModelRegistry.get_model_by_name(provider_value, fallback_model)
-                if fallback_model_config is not None:
-                    model_value = fallback_model
-                    model_config = fallback_model_config
-
-        base_url = ""
-        if provider_value and config_manager:
-            base_url = str(config_manager.get(CONFIG_LLM_BASE_URL, "") or "").strip()
-        if not base_url and provider_config:
-            base_url = provider_config.base_url
-
-        timeout = DEFAULT_TIMEOUT
-        if config_manager:
-            timeout = self._coerce_positive_int(
-                config_manager.get(CONFIG_LLM_TIMEOUT, DEFAULT_TIMEOUT),
-                DEFAULT_TIMEOUT,
-            )
-
-        streaming = DEFAULT_STREAMING
-        if config_manager:
-            streaming = bool(config_manager.get(CONFIG_LLM_STREAMING, DEFAULT_STREAMING))
-
-        enable_thinking = DEFAULT_ENABLE_THINKING
-        if config_manager:
-            enable_thinking = bool(config_manager.get(CONFIG_ENABLE_THINKING, DEFAULT_ENABLE_THINKING))
-
-        thinking_timeout = DEFAULT_THINKING_TIMEOUT
-        if config_manager:
-            thinking_timeout = self._coerce_positive_int(
-                config_manager.get(CONFIG_THINKING_TIMEOUT, DEFAULT_THINKING_TIMEOUT),
-                DEFAULT_THINKING_TIMEOUT,
-            )
-
-        api_key = ""
-        updated_at = ""
-        if credential_manager and provider_value:
-            credential = credential_manager.get_credential(CREDENTIAL_TYPE_LLM, provider_value) or {}
-            if isinstance(credential, dict):
-                api_key = str(credential.get("api_key", "") or "").strip()
-                updated_at = str(credential.get("updated_at", "") or "").strip()
-
-        display_name = ""
-        if model_config is not None:
-            display_name = model_config.display_name
+        configured_protocol = str(
+            api_protocol
+            if api_protocol is not None
+            else self.config_manager.get(CONFIG_LLM_API_PROTOCOL, "")
+            or ""
+        ).strip()
+        if model is not None:
+            protocol = model.protocol
         elif model_value:
-            display_name = model_value
+            try:
+                validate_selection(provider.id, model_value, configured_protocol or None)
+            except ValueError:
+                # Invalid or incomplete aggregator settings are not silently
+                # repaired. OpenCode in particular needs an explicit protocol.
+                protocol = ""
+            else:
+                protocol = configured_protocol or provider.protocol_options[0]
+        else:
+            protocol = ""
 
-        model_id = f"{provider_value}:{model_value}" if provider_value and model_value else ""
+        base_url_override = str(
+            self.config_manager.get(CONFIG_LLM_BASE_URL, "") or ""
+        ).strip()
+        effective_base_url = base_url_override or provider.default_base_url
+        timeout = self._coerce_positive_int(
+            self.config_manager.get(CONFIG_LLM_TIMEOUT, DEFAULT_TIMEOUT),
+            DEFAULT_TIMEOUT,
+        )
+
+        enable_thinking = bool(
+            self.config_manager.get(CONFIG_ENABLE_THINKING, DEFAULT_ENABLE_THINKING)
+        )
+        if model is not None and not model.thinking:
+            enable_thinking = False
+
+        credential = self.credential_manager.get_credential(
+            CREDENTIAL_TYPE_LLM,
+            provider.id,
+        ) or {}
+        api_key = str(credential.get("api_key", "") or "").strip()
+        updated_at = str(credential.get("updated_at", "") or "").strip()
 
         return ActiveLLMConfig(
-            provider=provider_value,
+            provider=provider.id,
             model=model_value,
-            model_id=model_id,
-            display_name=display_name,
-            base_url=base_url,
+            api_protocol=protocol,
+            model_id=f"{provider.id}:{model_value}" if model_value else "",
+            display_name=model.label if model is not None else model_value,
+            base_url=base_url_override,
+            effective_base_url=effective_base_url,
             timeout=timeout,
-            streaming=streaming,
             enable_thinking=enable_thinking,
-            thinking_timeout=thinking_timeout,
             api_key=api_key,
             updated_at=updated_at,
         )
 
     def save_active_chat_config(
         self,
+        *,
         provider_id: str,
         model_name: str,
+        api_protocol: str,
         base_url: str,
         timeout: int,
-        streaming: bool,
         enable_thinking: bool,
-        thinking_timeout: int,
-        api_key: str,
+        api_key: Any = UNSET_API_KEY,
     ) -> ActiveLLMConfig:
-        config_manager = self.config_manager
-        credential_manager = self.credential_manager
-        if config_manager is None or credential_manager is None:
-            raise RuntimeError("LLM runtime config dependencies are unavailable")
-
-        ModelRegistry.initialize()
-
-        provider_value = str(provider_id or "").strip()
-        provider_config = ModelRegistry.get_provider(provider_value) if provider_value else None
+        provider_value = str(provider_id or "").strip().lower()
+        provider = get_provider(provider_value)
+        if provider is None:
+            raise ValueError(f"Unsupported LLM provider: {provider_value or '<empty>'}")
 
         model_value = str(model_name or "").strip()
-        if not model_value and provider_config:
-            model_value = provider_config.default_model
+        if not model_value:
+            raise ValueError("Model is required")
+        requested_protocol = str(api_protocol or "").strip()
+        validate_selection(provider.id, model_value, requested_protocol or None)
+        model = get_model(provider.id, model_value)
+        protocol = (
+            model.protocol
+            if model is not None
+            else requested_protocol or provider.protocol_options[0]
+        )
 
-        if provider_value and model_value and provider_config is not None:
-            model_config = ModelRegistry.get_model_by_name(provider_value, model_value)
-            if model_config is None and provider_config.default_model:
-                fallback_model = provider_config.default_model
-                if ModelRegistry.get_model_by_name(provider_value, fallback_model) is not None:
-                    model_value = fallback_model
+        thinking_value = bool(enable_thinking)
+        if model is not None and not model.thinking:
+            thinking_value = False
 
         base_url_value = str(base_url or "").strip()
-        if not base_url_value and provider_config:
-            base_url_value = provider_config.base_url
+        validate_base_url(base_url_value or provider.default_base_url)
 
-        timeout_value = self._coerce_positive_int(timeout, DEFAULT_TIMEOUT)
-        thinking_timeout_value = self._coerce_positive_int(thinking_timeout, DEFAULT_THINKING_TIMEOUT)
-        updated_at = datetime.now().isoformat()
+        previous_credential = self.credential_manager.get_credential(
+            CREDENTIAL_TYPE_LLM,
+            provider.id,
+        )
+        credential_changed = api_key is not UNSET_API_KEY
+        if api_key is not UNSET_API_KEY:
+            if api_key is None:
+                credential_saved = self.credential_manager.delete_credential(
+                    CREDENTIAL_TYPE_LLM,
+                    provider.id,
+                )
+            else:
+                api_key_value = str(api_key or "").strip()
+                if not api_key_value:
+                    raise ValueError("API key cannot be blank; omit it to keep the saved key")
+                credential_saved = self.credential_manager.set_llm_api_key(
+                    provider.id,
+                    api_key_value,
+                )
+            if not credential_saved:
+                raise RuntimeError("Failed to persist the API key")
 
-        config_manager.set(CONFIG_LLM_PROVIDER, provider_value, save=False)
-        config_manager.set(CONFIG_LLM_MODEL, model_value, save=False)
-        config_manager.set(CONFIG_LLM_BASE_URL, base_url_value, save=False)
-        config_manager.set(CONFIG_LLM_TIMEOUT, timeout_value, save=False)
-        config_manager.set(CONFIG_LLM_STREAMING, bool(streaming), save=False)
-        config_manager.set(CONFIG_ENABLE_THINKING, bool(enable_thinking), save=False)
-        config_manager.set(CONFIG_THINKING_TIMEOUT, thinking_timeout_value, save=False)
-        config_manager.set(_LLM_RUNTIME_UPDATED_AT_KEY, updated_at, save=False)
-        config_saved = config_manager.save_config()
+        updated = self.config_manager.update_many(
+            {
+                CONFIG_LLM_PROVIDER: provider.id,
+                CONFIG_LLM_MODEL: model_value,
+                CONFIG_LLM_API_PROTOCOL: protocol,
+                CONFIG_LLM_BASE_URL: base_url_value,
+                CONFIG_LLM_TIMEOUT: self._coerce_positive_int(
+                    timeout,
+                    DEFAULT_TIMEOUT,
+                ),
+                CONFIG_ENABLE_THINKING: thinking_value,
+            }
+        )
+        if not updated:
+            rollback_succeeded = True
+            if credential_changed:
+                previous_api_key = str(
+                    (previous_credential or {}).get("api_key", "") or ""
+                ).strip()
+                if previous_api_key:
+                    rollback_succeeded = self.credential_manager.set_llm_api_key(
+                        provider.id,
+                        previous_api_key,
+                    )
+                else:
+                    rollback_succeeded = self.credential_manager.delete_credential(
+                        CREDENTIAL_TYPE_LLM,
+                        provider.id,
+                    )
+            if not rollback_succeeded:
+                raise RuntimeError(
+                    "Failed to persist the LLM configuration and restore the API key"
+                )
+            raise RuntimeError("Failed to persist the LLM configuration")
 
-        api_key_value = str(api_key or "").strip()
-        if api_key_value:
-            credential_saved = credential_manager.set_llm_api_key(provider_value, api_key_value)
-        else:
-            credential_saved = credential_manager.delete_credential(CREDENTIAL_TYPE_LLM, provider_value)
-
-        if not config_saved or not credential_saved:
-            raise RuntimeError("Failed to persist LLM runtime config")
-
-        return self.resolve_active_config(provider_id=provider_value, model_name=model_value)
+        return self.resolve_active_config()
 
     @staticmethod
     def _coerce_positive_int(value: Any, default: int) -> int:
         try:
             parsed = int(value)
-            return parsed if parsed > 0 else default
-        except Exception:
+        except (TypeError, ValueError):
             return default
+        return parsed if parsed > 0 else default
 
 
-__all__ = ["LLMRuntimeConfigManager", "ActiveLLMConfig"]
+__all__ = ["ActiveLLMConfig", "LLMRuntimeConfigManager", "UNSET_API_KEY"]

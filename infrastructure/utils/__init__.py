@@ -48,17 +48,6 @@ from .json_utils import (
     extract_json_from_text,
 )
 
-from .web_search_tool import (
-    DEFAULT_MAX_RESULTS,
-    SearchResult,
-    SearchError,
-    SearchCapability,
-    SearchCapabilityError,
-    SearchExecutionError,
-    WebSearchTool,
-    get_web_search_tool,
-)
-
 __all__ = [
     # ngspice 配置
     "configure_ngspice",
@@ -89,13 +78,4 @@ __all__ = [
     "CustomJSONEncoder",
     "merge_json_objects",
     "extract_json_from_text",
-    # 联网搜索
-    "DEFAULT_MAX_RESULTS",
-    "SearchResult",
-    "SearchError",
-    "SearchCapability",
-    "SearchCapabilityError",
-    "SearchExecutionError",
-    "WebSearchTool",
-    "get_web_search_tool",
 ]

@@ -42,10 +42,6 @@ export interface ConversationAgentStepState {
   content: string
   reasoning_content: string
   tool_calls: ConversationToolCallState[]
-  web_search_query: string
-  web_search_results: Array<Record<string, unknown>>
-  web_search_message: string
-  web_search_state: string
   is_complete: boolean
   is_partial: boolean
   stop_reason: string
@@ -396,12 +392,6 @@ function normalizeAgentStepState(value: unknown): ConversationAgentStepState {
     tool_calls: Array.isArray(step.tool_calls)
       ? step.tool_calls.map((toolCall) => normalizeToolCallState(toolCall))
       : [],
-    web_search_query: asString(step.web_search_query),
-    web_search_results: Array.isArray(step.web_search_results)
-      ? step.web_search_results.map((result) => asRecord(result))
-      : [],
-    web_search_message: asString(step.web_search_message),
-    web_search_state: asString(step.web_search_state, 'idle'),
     is_complete: Boolean(step.is_complete),
     is_partial: Boolean(step.is_partial),
     stop_reason: asString(step.stop_reason),

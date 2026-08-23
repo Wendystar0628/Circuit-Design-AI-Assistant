@@ -29,7 +29,7 @@
 
 from datetime import datetime
 import uuid
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 
 from langchain_core.messages import (
     BaseMessage,
@@ -120,7 +120,6 @@ def create_ai_message(
     is_partial: bool = False,
     stop_reason: str = "",
     tool_calls_pending: Optional[List[Dict[str, Any]]] = None,
-    web_search_results: Optional[List[Dict[str, Any]]] = None,
     timestamp: Optional[str] = None,
     agent_steps: Optional[List[Dict[str, Any]]] = None,
     message_id: Optional[str] = None,
@@ -136,7 +135,6 @@ def create_ai_message(
         is_partial: 是否为部分响应（用户中断）
         stop_reason: 停止原因
         tool_calls_pending: 中断时未完成的工具调用
-        web_search_results: 联网搜索结果
         timestamp: ISO 时间戳，默认为当前时间
         
     Returns:
@@ -158,8 +156,6 @@ def create_ai_message(
         additional_kwargs["stop_reason"] = stop_reason
     if tool_calls_pending:
         additional_kwargs["tool_calls_pending"] = tool_calls_pending
-    if web_search_results:
-        additional_kwargs["web_search_results"] = web_search_results
     if agent_steps:
         additional_kwargs["agent_steps"] = agent_steps
     
@@ -289,11 +285,6 @@ def get_stop_reason(msg: BaseMessage) -> str:
 def get_tool_calls_pending(msg: BaseMessage) -> List[Dict[str, Any]]:
     """获取中断时未完成的工具调用"""
     return _get_additional_kwargs(msg).get("tool_calls_pending", [])
-
-
-def get_web_search_results(msg: BaseMessage) -> List[Dict[str, Any]]:
-    """获取联网搜索结果"""
-    return _get_additional_kwargs(msg).get("web_search_results", [])
 
 
 def get_agent_steps(msg: BaseMessage) -> List[Dict[str, Any]]:
@@ -470,8 +461,6 @@ def message_to_dict(msg: BaseMessage) -> Dict[str, Any]:
             result["additional_kwargs"]["stop_reason"] = kwargs.get("stop_reason", "")
         if kwargs.get("tool_calls_pending"):
             result["additional_kwargs"]["tool_calls_pending"] = kwargs["tool_calls_pending"]
-        if kwargs.get("web_search_results"):
-            result["additional_kwargs"]["web_search_results"] = kwargs["web_search_results"]
         if kwargs.get("agent_steps"):
             result["additional_kwargs"]["agent_steps"] = kwargs["agent_steps"]
     
@@ -610,7 +599,6 @@ __all__ = [
     "is_partial_response",
     "get_stop_reason",
     "get_tool_calls_pending",
-    "get_web_search_results",
     "get_agent_steps",
     # 扩展字段写入
     "set_reasoning_content",

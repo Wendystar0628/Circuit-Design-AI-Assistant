@@ -1,395 +1,350 @@
-# Credential Manager - Sensitive Information Management
-"""
-凭证管理器 - 敏感信息专用管理
+"""Per-user API credential storage backed by Windows DPAPI.
 
-职责：
-- 专门负责敏感凭证（API Key 等）的明文存储和读取
-- 按厂商隔离存储，避免切换厂商时丢失配置
-- 与普通配置分离，便于安全审计
+Only the Windows account that saved the credentials can decrypt them. The
+encrypted payload is kept separate from ordinary application settings and is
+written atomically so an interrupted save cannot leave half a credential file.
 
-初始化顺序：Phase 1.0，在 ConfigManager 之前初始化
-
-存储结构（~/.circuit_design_ai/credentials.json）：
-{
-    "llm": {
-        "zhipu": {"api_key": "plaintext_value", "updated_at": "..."},
-        "deepseek": {"api_key": "plaintext_value", "updated_at": "..."}
-    }
-}
+The former ``credentials.json`` format intentionally is not migrated: it
+stored API keys as plaintext. It is deleted when this manager first loads.
 """
 
+from __future__ import annotations
+
+import ctypes
+from ctypes import wintypes
+from datetime import datetime
 import json
 import os
-import stat
-from datetime import datetime
-from typing import Any, Dict, List, Optional
 from threading import RLock
+from typing import Any, Dict, List, Optional
 
 from .settings import (
-    GLOBAL_CONFIG_DIR,
     CREDENTIALS_FILE,
-    CREDENTIAL_TYPE_LLM,
     CREDENTIAL_TYPE_EMBEDDING,
+    CREDENTIAL_TYPE_LLM,
+    GLOBAL_CONFIG_DIR,
 )
 
 
+_FILE_MAGIC = b"CDAI-CREDENTIALS\x00\x01"
+_DPAPI_ENTROPY = b"Circuit Design AI credential store v1"
+_DPAPI_DESCRIPTION = "Circuit Design AI API credentials"
+_CRYPTPROTECT_UI_FORBIDDEN = 0x01
+_MISSING = object()
+
+
+class _DataBlob(ctypes.Structure):
+    _fields_ = [
+        ("cbData", wintypes.DWORD),
+        ("pbData", ctypes.POINTER(ctypes.c_ubyte)),
+    ]
+
+
+def _blob_from_bytes(value: bytes) -> tuple[_DataBlob, Any]:
+    """Return a DPAPI DATA_BLOB and keep its backing buffer alive."""
+
+    buffer = (ctypes.c_ubyte * len(value)).from_buffer_copy(value)
+    blob = _DataBlob(
+        len(value),
+        ctypes.cast(buffer, ctypes.POINTER(ctypes.c_ubyte)),
+    )
+    return blob, buffer
+
+
 class CredentialManager:
-    """
-    凭证管理器
-    
-    负责敏感凭证的明文存储、读取和管理。
-    每个厂商的凭证独立存储，切换厂商时不会丢失已保存的凭证。
-    """
-    
+    """Store provider API keys in one Windows-user-protected local file."""
+
     def __init__(self):
-        """
-        初始化凭证管理器
-        
-        注意：遵循延迟获取原则，不在 __init__ 中获取 ServiceLocator 服务
-        """
-        self._credentials: Dict[str, Dict[str, Dict[str, Any]]] = {}
         self._credentials_file = GLOBAL_CONFIG_DIR / CREDENTIALS_FILE
+        self._legacy_credentials_file = GLOBAL_CONFIG_DIR / "credentials.json"
+        self._credentials: Dict[str, Dict[str, Dict[str, Any]]] = self._empty_store()
         self._lock = RLock()
         self._loaded = False
-    
-    # ============================================================
-    # 核心功能
-    # ============================================================
-    
+
+    @staticmethod
+    def _empty_store() -> Dict[str, Dict[str, Dict[str, Any]]]:
+        return {
+            CREDENTIAL_TYPE_LLM: {},
+            CREDENTIAL_TYPE_EMBEDDING: {},
+        }
+
     def load_credentials(self) -> bool:
-        """
-        加载凭证文件
-        
-        Returns:
-            bool: 加载是否成功
-        """
+        """Load and decrypt saved credentials, failing closed on any error."""
+
         with self._lock:
             try:
-                # 确保配置目录存在
                 GLOBAL_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-                
-                if self._credentials_file.exists():
-                    with open(self._credentials_file, "r", encoding="utf-8") as f:
-                        loaded_credentials = json.load(f)
-                    removed_legacy_search = isinstance(loaded_credentials, dict) and "search" in loaded_credentials
-                    self._credentials = {
-                        CREDENTIAL_TYPE_LLM: dict(loaded_credentials.get(CREDENTIAL_TYPE_LLM, {})),
-                        CREDENTIAL_TYPE_EMBEDDING: dict(loaded_credentials.get(CREDENTIAL_TYPE_EMBEDDING, {})),
-                    }
-                    if removed_legacy_search:
-                        self._save_credentials_internal()
+                self._discard_legacy_plaintext()
+
+                if not self._credentials_file.exists():
+                    self._credentials = self._empty_store()
+                    if not self._save_credentials_internal():
+                        raise OSError("无法创建加密凭证文件")
                 else:
-                    # 凭证文件不存在，初始化空结构
-                    self._credentials = {
-                        CREDENTIAL_TYPE_LLM: {},
-                        CREDENTIAL_TYPE_EMBEDDING: {},
-                    }
-                    self._save_credentials_internal()
-                
+                    encoded = self._credentials_file.read_bytes()
+                    if not encoded.startswith(_FILE_MAGIC):
+                        raise ValueError("凭证文件格式无效")
+                    plaintext = self._unprotect_payload(encoded[len(_FILE_MAGIC) :])
+                    parsed = json.loads(plaintext.decode("utf-8"))
+                    self._credentials = self._validate_store(parsed)
+
                 self._loaded = True
-                self._log_info("凭证加载成功")
+                self._log_info("加密凭证加载成功")
                 return True
-                
-            except json.JSONDecodeError as e:
-                self._log_error(f"凭证文件 JSON 解析失败: {e}")
-                self._credentials = {
-                    CREDENTIAL_TYPE_LLM: {},
-                    CREDENTIAL_TYPE_EMBEDDING: {},
-                }
+            except Exception as exc:
+                self._credentials = self._empty_store()
                 self._loaded = True
+                self._log_error(f"加密凭证加载失败: {exc}")
                 return False
-                
-            except Exception as e:
-                self._log_error(f"凭证加载失败: {e}")
-                self._credentials = {
-                    CREDENTIAL_TYPE_LLM: {},
-                    CREDENTIAL_TYPE_EMBEDDING: {},
-                }
-                self._loaded = True
-                return False
-    
+
+    def _discard_legacy_plaintext(self) -> None:
+        """Delete the obsolete plaintext store without importing its values."""
+
+        if self._legacy_credentials_file == self._credentials_file:
+            return
+        if self._legacy_credentials_file.exists():
+            self._legacy_credentials_file.unlink()
+            self._log_warning("已删除旧版明文凭证文件，请重新填写 API Key")
+
+    @staticmethod
+    def _validate_store(value: Any) -> Dict[str, Dict[str, Dict[str, Any]]]:
+        if not isinstance(value, dict):
+            raise ValueError("凭证数据必须是对象")
+
+        result: Dict[str, Dict[str, Dict[str, Any]]] = {}
+        for provider_type in (CREDENTIAL_TYPE_LLM, CREDENTIAL_TYPE_EMBEDDING):
+            providers = value.get(provider_type, {})
+            if not isinstance(providers, dict):
+                raise ValueError(f"凭证分组格式无效: {provider_type}")
+
+            checked: Dict[str, Dict[str, Any]] = {}
+            for provider_id, credential in providers.items():
+                if not isinstance(provider_id, str) or not isinstance(credential, dict):
+                    raise ValueError(f"厂商凭证格式无效: {provider_type}")
+                api_key = credential.get("api_key", "")
+                if not isinstance(api_key, str):
+                    raise ValueError(f"API Key 格式无效: {provider_type}/{provider_id}")
+                normalized = dict(credential)
+                normalized["api_key"] = api_key.strip()
+                checked[provider_id] = normalized
+            result[provider_type] = checked
+        return result
+
     def _save_credentials_internal(self) -> bool:
-        """内部保存方法（不加锁）"""
+        """Encrypt and atomically replace the credential file (lock held)."""
+
+        temporary_file = self._credentials_file.with_suffix(
+            self._credentials_file.suffix + ".tmp"
+        )
         try:
             GLOBAL_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-            
-            with open(self._credentials_file, "w", encoding="utf-8") as f:
-                json.dump(self._credentials, f, indent=2, ensure_ascii=False)
-            
-            # 设置文件权限为仅当前用户可读写（Unix 系统）
-            self._set_file_permissions()
-            
-            self._log_info("凭证保存成功")
-            return True
-            
-        except Exception as e:
-            self._log_error(f"凭证保存失败: {e}")
-            return False
-    
-    def _set_file_permissions(self) -> None:
-        """设置凭证文件权限为仅当前用户可读写"""
-        try:
-            if os.name != "nt":  # Unix 系统
-                os.chmod(self._credentials_file, stat.S_IRUSR | stat.S_IWUSR)
-        except Exception:
-            pass  # 权限设置失败不影响功能
+            serialized = json.dumps(
+                self._credentials,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8")
+            encrypted = _FILE_MAGIC + self._protect_payload(serialized)
 
-    
-    # ============================================================
-    # 凭证读写接口
-    # ============================================================
-    
+            with temporary_file.open("wb") as handle:
+                handle.write(encrypted)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary_file, self._credentials_file)
+            self._log_info("加密凭证保存成功")
+            return True
+        except Exception as exc:
+            try:
+                temporary_file.unlink(missing_ok=True)
+            except OSError:
+                pass
+            self._log_error(f"加密凭证保存失败: {exc}")
+            return False
+
+    @staticmethod
+    def _protect_payload(plaintext: bytes) -> bytes:
+        return CredentialManager._call_dpapi("CryptProtectData", plaintext)
+
+    @staticmethod
+    def _unprotect_payload(ciphertext: bytes) -> bytes:
+        return CredentialManager._call_dpapi("CryptUnprotectData", ciphertext)
+
+    @staticmethod
+    def _call_dpapi(operation: str, value: bytes) -> bytes:
+        """Protect or unprotect bytes for the current Windows user."""
+
+        if os.name != "nt":
+            raise OSError("API 凭证存储需要 Windows DPAPI")
+        if not value:
+            raise ValueError("DPAPI 输入不能为空")
+
+        crypt32 = ctypes.WinDLL("crypt32", use_last_error=True)
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        function = getattr(crypt32, operation)
+        function.argtypes = [
+            ctypes.POINTER(_DataBlob),
+            wintypes.LPCWSTR if operation == "CryptProtectData" else ctypes.c_void_p,
+            ctypes.POINTER(_DataBlob),
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            wintypes.DWORD,
+            ctypes.POINTER(_DataBlob),
+        ]
+        function.restype = wintypes.BOOL
+        kernel32.LocalFree.argtypes = [ctypes.c_void_p]
+        kernel32.LocalFree.restype = ctypes.c_void_p
+
+        input_blob, input_buffer = _blob_from_bytes(value)
+        entropy_blob, entropy_buffer = _blob_from_bytes(_DPAPI_ENTROPY)
+        output_blob = _DataBlob()
+        description = _DPAPI_DESCRIPTION if operation == "CryptProtectData" else None
+
+        # Both backing buffers must remain live until the native call returns.
+        _ = input_buffer, entropy_buffer
+        succeeded = function(
+            ctypes.byref(input_blob),
+            description,
+            ctypes.byref(entropy_blob),
+            None,
+            None,
+            _CRYPTPROTECT_UI_FORBIDDEN,
+            ctypes.byref(output_blob),
+        )
+        if not succeeded:
+            error_code = ctypes.get_last_error()
+            raise OSError(error_code, ctypes.FormatError(error_code))
+
+        try:
+            return ctypes.string_at(output_blob.pbData, output_blob.cbData)
+        finally:
+            kernel32.LocalFree(ctypes.cast(output_blob.pbData, ctypes.c_void_p))
+
     def get_credential(
-        self, 
-        provider_type: str, 
-        provider_id: str
+        self,
+        provider_type: str,
+        provider_id: str,
     ) -> Optional[Dict[str, Any]]:
-        """
-        获取指定厂商的凭证
-        
-        Args:
-            provider_type: 厂商类型（llm/embedding 等）
-            provider_id: 厂商标识（zhipu/deepseek/qwen 等）
-            
-        Returns:
-            凭证字典，不存在则返回 None
-        """
         with self._lock:
-            type_credentials = self._credentials.get(provider_type, {})
-            provider_credentials = type_credentials.get(provider_id)
-            
-            if not provider_credentials:
+            credential = self._credentials.get(provider_type, {}).get(provider_id)
+            if not credential:
                 return None
-            
-            result = provider_credentials.copy()
+            result = dict(credential)
             api_key = result.get("api_key", "")
             if isinstance(api_key, str):
                 result["api_key"] = api_key.strip()
-            
             return result
-    
+
     def set_credential(
-        self, 
-        provider_type: str, 
-        provider_id: str, 
-        credential_data: Dict[str, Any]
+        self,
+        provider_type: str,
+        provider_id: str,
+        credential_data: Dict[str, Any],
     ) -> bool:
-        """
-        存储厂商凭证（明文）
-        
-        Args:
-            provider_type: 厂商类型（llm/embedding 等）
-            provider_id: 厂商标识
-            credential_data: 凭证数据
-            
-        Returns:
-            bool: 保存是否成功
-        """
         with self._lock:
-            # 确保类型存在
-            if provider_type not in self._credentials:
-                self._credentials[provider_type] = {}
-            
-            # 准备存储数据
-            store_data = credential_data.copy()
-            
-            # 规范化 api_key
+            type_credentials = self._credentials.setdefault(provider_type, {})
+            previous = type_credentials.get(provider_id, _MISSING)
+
+            store_data = dict(credential_data)
             api_key = store_data.get("api_key", "")
             if isinstance(api_key, str):
                 store_data["api_key"] = api_key.strip()
-            
-            # 添加更新时间
             store_data["updated_at"] = datetime.now().isoformat()
-            
-            # 存储
-            self._credentials[provider_type][provider_id] = store_data
-            
-            # 保存到文件
-            success = self._save_credentials_internal()
-            
-            if success:
+            type_credentials[provider_id] = store_data
+
+            if self._save_credentials_internal():
                 self._log_info(f"凭证已保存: {provider_type}/{provider_id}")
-            
-            return success
-    
+                return True
+
+            if previous is _MISSING:
+                type_credentials.pop(provider_id, None)
+            else:
+                type_credentials[provider_id] = previous
+            return False
+
     def delete_credential(self, provider_type: str, provider_id: str) -> bool:
-        """
-        删除指定厂商凭证
-        
-        Args:
-            provider_type: 厂商类型
-            provider_id: 厂商标识
-            
-        Returns:
-            bool: 删除是否成功
-        """
         with self._lock:
             type_credentials = self._credentials.get(provider_type, {})
-            
-            if provider_id in type_credentials:
-                del type_credentials[provider_id]
-                success = self._save_credentials_internal()
-                if success:
-                    self._log_info(f"凭证已删除: {provider_type}/{provider_id}")
-                return success
-            
-            return True  # 不存在也算成功
-    
+            previous = type_credentials.get(provider_id, _MISSING)
+            if previous is _MISSING:
+                return True
+
+            del type_credentials[provider_id]
+            if self._save_credentials_internal():
+                self._log_info(f"凭证已删除: {provider_type}/{provider_id}")
+                return True
+
+            type_credentials[provider_id] = previous
+            return False
+
     def has_credential(self, provider_type: str, provider_id: str) -> bool:
-        """
-        检查凭证是否存在
-        
-        Args:
-            provider_type: 厂商类型
-            provider_id: 厂商标识
-            
-        Returns:
-            bool: 凭证是否存在且 api_key 非空
-        """
         with self._lock:
-            type_credentials = self._credentials.get(provider_type, {})
-            provider_credentials = type_credentials.get(provider_id, {})
-            return bool(provider_credentials.get("api_key"))
-    
+            credential = self._credentials.get(provider_type, {}).get(provider_id, {})
+            return bool(credential.get("api_key"))
+
     def list_providers(self, provider_type: str) -> List[str]:
-        """
-        列出已配置凭证的厂商
-        
-        Args:
-            provider_type: 厂商类型
-            
-        Returns:
-            已配置凭证的厂商标识列表
-        """
         with self._lock:
-            type_credentials = self._credentials.get(provider_type, {})
-            # 只返回有 api_key 的厂商
             return [
-                pid for pid, cred in type_credentials.items()
-                if cred.get("api_key")
+                provider_id
+                for provider_id, credential in self._credentials.get(provider_type, {}).items()
+                if credential.get("api_key")
             ]
-    
+
     def validate_credential(
-        self, 
-        provider_type: str, 
-        provider_id: str
+        self,
+        provider_type: str,
+        provider_id: str,
     ) -> tuple[bool, str]:
-        """
-        校验凭证格式
-        
-        Args:
-            provider_type: 厂商类型
-            provider_id: 厂商标识
-            
-        Returns:
-            (是否有效, 错误信息)
-        """
         credential = self.get_credential(provider_type, provider_id)
-        
         if not credential:
             return False, "凭证不存在"
-        
         api_key = credential.get("api_key", "")
         if not api_key:
             return False, "API Key 为空"
-        
-        # 基本格式校验
         if len(api_key) < 10:
             return False, "API Key 长度过短"
-        
         return True, ""
 
-    
-    # ============================================================
-    # 便捷方法（LLM 凭证）
-    # ============================================================
-    
     def get_llm_api_key(self, provider_id: str) -> str:
-        """
-        获取 LLM 厂商的 API Key
-        
-        Args:
-            provider_id: 厂商标识（zhipu/deepseek/qwen/openai/anthropic）
-            
-        Returns:
-            API Key 明文，不存在则返回空字符串
-        """
         credential = self.get_credential(CREDENTIAL_TYPE_LLM, provider_id)
         return credential.get("api_key", "") if credential else ""
-    
+
     def set_llm_api_key(self, provider_id: str, api_key: str) -> bool:
-        """
-        设置 LLM 厂商的 API Key
-        
-        Args:
-            provider_id: 厂商标识
-            api_key: API Key 明文
-            
-        Returns:
-            bool: 保存是否成功
-        """
         return self.set_credential(CREDENTIAL_TYPE_LLM, provider_id, {"api_key": api_key})
-    
+
     def get_embedding_api_key(self, provider_id: str) -> str:
-        """
-        获取嵌入模型厂商的 API Key
-        
-        Args:
-            provider_id: 厂商标识
-            
-        Returns:
-            API Key 明文，不存在则返回空字符串
-        """
         credential = self.get_credential(CREDENTIAL_TYPE_EMBEDDING, provider_id)
         return credential.get("api_key", "") if credential else ""
-    
-    def set_embedding_api_key(self, provider_id: str, api_key: str) -> bool:
-        """
-        设置嵌入模型厂商的 API Key
-        
-        Args:
-            provider_id: 厂商标识
-            api_key: API Key 明文
-            
-        Returns:
-            bool: 保存是否成功
-        """
-        return self.set_credential(CREDENTIAL_TYPE_EMBEDDING, provider_id, {"api_key": api_key})
 
-    
-    # ============================================================
-    # 日志辅助方法
-    # ============================================================
-    
+    def set_embedding_api_key(self, provider_id: str, api_key: str) -> bool:
+        return self.set_credential(
+            CREDENTIAL_TYPE_EMBEDDING,
+            provider_id,
+            {"api_key": api_key},
+        )
+
     def _log_info(self, message: str) -> None:
-        """记录信息日志"""
         try:
             from infrastructure.utils.logger import get_logger
+
             get_logger("credential_manager").info(message)
         except Exception:
             print(f"[INFO] CredentialManager: {message}")
-    
+
     def _log_warning(self, message: str) -> None:
-        """记录警告日志"""
         try:
             from infrastructure.utils.logger import get_logger
+
             get_logger("credential_manager").warning(message)
         except Exception:
             print(f"[WARNING] CredentialManager: {message}")
-    
+
     def _log_error(self, message: str) -> None:
-        """记录错误日志"""
         try:
             from infrastructure.utils.logger import get_logger
+
             get_logger("credential_manager").error(message)
         except Exception:
             print(f"[ERROR] CredentialManager: {message}")
 
 
-# ============================================================
-# 模块导出
-# ============================================================
-
-__all__ = [
-    "CredentialManager",
-]
+__all__ = ["CredentialManager"]

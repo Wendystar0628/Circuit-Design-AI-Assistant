@@ -853,8 +853,7 @@
 
  .attachment-card__path,
  .composer-gallery__path,
- .composer-summary__file-stats,
- .search-result-card__url {
+ .composer-summary__file-stats {
    overflow: hidden;
    text-overflow: ellipsis;
    white-space: nowrap;
@@ -946,16 +945,13 @@
  }
 
  .detail-label__value,
- .detail-note,
- .search-result-card__snippet,
- .search-results__empty {
+ .detail-note {
    font-size: 12px;
    color: #344054;
    line-height: 1.5;
  }
 
  .tool-call-list,
- .search-results,
  .composer-summary__files {
    display: grid;
    gap: 8px;
@@ -968,7 +964,6 @@
  }
 
  .tool-call,
- .search-result-card,
  .composer-gallery__item,
  .composer-summary__file {
    display: grid;
@@ -985,7 +980,6 @@
  }
 
  .tool-call__header,
- .search-result-card__header,
  .composer-summary__header,
  .composer-summary__file {
    display: flex;
@@ -994,8 +988,7 @@
    gap: 8px;
  }
 
- .tool-call__name,
- .search-result-card__title {
+ .tool-call__name {
    font-size: 12px;
    font-weight: 600;
    color: var(--text-primary);
@@ -1016,8 +1009,7 @@
    color: #b42318;
  }
 
- .tool-call__code,
- .search-result-card__details {
+ .tool-call__code {
    margin: 0;
    max-width: 100%;
    box-sizing: border-box;
@@ -1030,7 +1022,6 @@
    line-height: 1.5;
  }
 
- .search-result-card__link,
  .ghost-button,
  .icon-button {
    padding: 0;
@@ -1041,7 +1032,6 @@
    font-weight: 600;
  }
 
- .search-result-card__link:hover,
  .ghost-button:hover,
  .icon-button:hover {
    text-decoration: underline;

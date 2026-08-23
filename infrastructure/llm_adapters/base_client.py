@@ -1,278 +1,234 @@
-# Base LLM Client Interface
-"""
-LLM 客户端基类接口
+"""Canonical asynchronous contract for chat-completion providers."""
 
-职责：
-- 定义所有 LLM 客户端的统一接口
-- 提供通用属性和异常类型
-- 确保调用方只依赖抽象接口，不依赖具体实现
-
-设计原则：
-- 契约式设计：所有子类必须实现基类定义的抽象方法
-- 返回值类型和异常类型保持一致，便于调用方统一处理
-- 新增 LLM 提供商只需实现此接口，无需修改调用方代码
-
-使用示例：
-    from infrastructure.llm_adapters.base_client import BaseLLMClient
-    
-    class ZhipuClient(BaseLLMClient):
-        def chat(self, messages, **kwargs):
-            # 实现智谱 API 调用
-            pass
-"""
+from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, AsyncIterator, Dict, List, Optional
+from typing import Any, AsyncIterator, Mapping, Optional, Sequence
 
-
-# ============================================================
-# 异常类型定义
-# ============================================================
 
 class LLMError(Exception):
-    """LLM 客户端基础异常"""
-    pass
+    """Base error raised by the LLM transport boundary."""
 
 
 class APIError(LLMError):
-    """API 调用错误"""
-    
+    """The provider rejected a request or the request could not be sent."""
+
     def __init__(self, message: str, status_code: Optional[int] = None):
         super().__init__(message)
         self.status_code = status_code
 
 
-class AuthError(LLMError):
-    """认证错误（API Key 无效或权限不足）"""
-    pass
+class AuthError(APIError):
+    """The provider rejected the configured credential."""
 
 
-class RateLimitError(LLMError):
-    """速率限制错误"""
-    
-    def __init__(self, message: str, retry_after: Optional[int] = None):
-        super().__init__(message)
+class RateLimitError(APIError):
+    """The provider rate-limited the request."""
+
+    def __init__(
+        self,
+        message: str,
+        retry_after: Optional[int] = None,
+        status_code: Optional[int] = 429,
+    ):
+        super().__init__(message, status_code=status_code)
         self.retry_after = retry_after
 
 
-class ContextOverflowError(LLMError):
-    """上下文溢出错误"""
-    
-    def __init__(self, message: str, max_tokens: Optional[int] = None):
-        super().__init__(message)
+class ContextOverflowError(APIError):
+    """The request exceeded the provider's context window."""
+
+    def __init__(
+        self,
+        message: str,
+        max_tokens: Optional[int] = None,
+        status_code: Optional[int] = 400,
+    ):
+        super().__init__(message, status_code=status_code)
         self.max_tokens = max_tokens
 
 
 class ResponseParseError(LLMError):
-    """响应解析错误"""
-    pass
+    """The provider returned a malformed or incomplete response."""
 
 
-# ============================================================
-# 数据结构定义
-# ============================================================
-
-@dataclass
+@dataclass(frozen=True, slots=True)
 class ModelInfo:
-    """模型信息"""
-    name: str                          # 模型名称
-    context_limit: int                 # 上下文限制（tokens）
-    supports_vision: bool = False      # 是否支持图像输入
-    supports_tools: bool = False       # 是否支持工具调用
-    supports_thinking: bool = False    # 是否支持深度思考
+    """Small capability view consumed by context and attachment code."""
+
+    name: str
+    context_limit: int
+    supports_vision: bool = False
+    supports_tools: bool = False
+    supports_thinking: bool = False
 
 
-@dataclass
+@dataclass(slots=True)
 class ChatResponse:
-    """Chat response"""
-    content: str                       # Final answer content
-    reasoning_content: Optional[str] = None  # Reasoning process (deep thinking mode)
-    tool_calls: Optional[List[Dict[str, Any]]] = None  # 工具调用
-    usage: Optional[Dict[str, int]] = None  # token 使用统计
-    finish_reason: Optional[str] = None  # 完成原因
-    metadata: Optional[Dict[str, Any]] = None
+    """One fully collected assistant response."""
+
+    content: str = ""
+    reasoning_content: Optional[str] = None
+    tool_calls: Optional[list[dict[str, Any]]] = None
+    usage: Optional[dict[str, Any]] = None
+    finish_reason: Optional[str] = None
+    index: int = 0
+    provider_state: Any = None
+    metadata: Optional[dict[str, Any]] = None
 
 
-@dataclass
+@dataclass(slots=True)
 class StreamChunk:
-    """流式响应块"""
-    content: Optional[str] = None      # 内容增量
-    reasoning_content: Optional[str] = None  # 思考增量
-    is_finished: bool = False          # 是否结束
-    usage: Optional[Dict[str, int]] = None  # token 使用统计（最后一块）
-    tool_calls: Optional[List[Dict[str, Any]]] = None  # 工具调用（流式累积完成后填充）
-    finish_reason: Optional[str] = None  # 完成原因（"stop" | "tool_calls" | None）
+    """One canonical delta from a provider stream.
+
+    ``provider_state`` is opaque by design. The provider can require the value
+    to be returned unchanged on a later assistant message; core code must not
+    interpret or rewrite it.
+    """
+
+    content: Optional[str] = None
+    reasoning_content: Optional[str] = None
+    is_finished: bool = False
+    usage: Optional[dict[str, Any]] = None
+    tool_calls: Optional[list[dict[str, Any]]] = None
+    finish_reason: Optional[str] = None
+    index: int = 0
+    provider_state: Any = None
 
 
-# ============================================================
-# 基类定义
-# ============================================================
+CanonicalMessage = Mapping[str, Any]
+CanonicalTool = Mapping[str, Any]
+
 
 class BaseLLMClient(ABC):
-    """
-    LLM 客户端抽象基类
-    
-    所有 LLM 提供商的客户端都必须继承此类并实现抽象方法。
-    调用方只依赖此基类定义的接口，不依赖具体实现。
+    """Pure-async LLM client boundary.
+
+    Streaming is the sole transport path. ``complete`` collects that exact
+    stream so request construction, error handling, and connection lifecycle
+    cannot diverge between streaming and non-streaming callers.
     """
 
     def __init__(
         self,
+        provider_id: str,
         api_key: str,
-        base_url: Optional[str] = None,
-        model: Optional[str] = None,
-        timeout: int = 60,
-    ):
-        """
-        初始化客户端
-        
-        Args:
-            api_key: API 密钥
-            base_url: API 端点（可选，使用默认端点）
-            model: 模型名称（可选，使用默认模型）
-            timeout: 超时秒数
-        """
-        self.api_key = api_key.strip() if isinstance(api_key, str) else api_key
-        self.base_url = base_url
-        self.model = model
-        self.timeout = timeout
-
-    # ============================================================
-    # 抽象方法（子类必须实现）
-    # ============================================================
-
-    @abstractmethod
-    def chat(
-        self,
-        messages: List[Dict[str, Any]],
-        model: Optional[str] = None,
-        streaming: bool = False,
-        tools: Optional[List[Dict[str, Any]]] = None,
-        thinking: bool = False,
-    ) -> ChatResponse:
-        """发送对话请求（非流式）。
-
-        No ``**kwargs``: any new wire parameter must be added as an
-        explicit named argument so unknown fields cannot silently leak
-        into the provider request body.
-
-        Args:
-            messages: 消息列表
-            model: 模型名称（可选，使用实例默认模型）
-            streaming: 是否流式输出（此方法应为 False）
-            tools: 工具定义列表
-            thinking: 是否启用深度思考
-
-        Returns:
-            ChatResponse: 对话响应
-
-        Raises:
-            APIError: API 调用错误
-            AuthError: 认证错误
-            RateLimitError: 速率限制
-            ContextOverflowError: 上下文溢出
-            ResponseParseError: 响应解析错误
-        """
-        pass
+        base_url: str,
+        model: str,
+        timeout: float = 60,
+    ) -> None:
+        self.provider_id = provider_id.strip().casefold()
+        self.api_key = api_key.strip()
+        self.base_url = base_url.strip()
+        self.model = model.strip()
+        self.timeout = float(timeout)
 
     @abstractmethod
     async def chat_stream(
         self,
-        messages: List[Dict[str, Any]],
+        messages: Sequence[CanonicalMessage],
         model: Optional[str] = None,
-        tools: Optional[List[Dict[str, Any]]] = None,
+        tools: Optional[Sequence[CanonicalTool]] = None,
         thinking: bool = False,
+        *,
+        reasoning_effort: Optional[str] = None,
     ) -> AsyncIterator[StreamChunk]:
-        """流式对话（异步生成器）。
+        """Yield canonical deltas through the provider's terminal marker."""
+        if False:  # pragma: no cover - defines an abstract async generator
+            yield StreamChunk()
 
-        Cancellation protocol (authoritative):
-        - Stop is **not** an SDK concern. The caller (``AgentLoop`` →
-          ``LLMExecutor``) owns cancellation by calling
-          ``asyncio.Task.cancel()`` on the active generation task.
-          ``CancelledError`` is injected at the deepest live
-          ``await`` point (httpx's ``socket.recv``) and unwinds
-          through the implementation's ``async with`` stack via the
-          normal exception-propagation path. httpx/httpcore shield
-          their own cleanup with ``AsyncShieldCancellation``, so
-          ``response.aclose()`` runs synchronously on the live event
-          loop.
-        - Implementations MUST NOT open side-channels (``cancel_event``
-          arguments, background watcher tasks, ``aclose()`` overrides)
-          — those were required only to work around bugs in an older,
-          aclose-based stop design that was abandoned.
-        - Consumers MUST NOT call ``aclose()`` on the returned
-          generator as a stop mechanism. Cancellation goes through
-          the asyncio Task, not through the async-generator protocol.
-        - ``**kwargs`` is deliberately absent: every wire parameter
-          must be explicit so unknown fields cannot leak into the
-          provider request body.
+    async def complete(
+        self,
+        messages: Sequence[CanonicalMessage],
+        model: Optional[str] = None,
+        tools: Optional[Sequence[CanonicalTool]] = None,
+        thinking: bool = False,
+        *,
+        reasoning_effort: Optional[str] = None,
+    ) -> ChatResponse:
+        """Collect ``chat_stream`` into one response without another wire path."""
+        content_parts: list[str] = []
+        reasoning_parts: list[str] = []
+        tool_calls: Optional[list[dict[str, Any]]] = None
+        usage: Optional[dict[str, Any]] = None
+        finish_reason: Optional[str] = None
+        provider_state: Any = None
+        selected_index: Optional[int] = None
 
-        Args:
-            messages: 消息列表
-            model: 模型名称
-            tools: 工具定义列表
-            thinking: 是否启用深度思考
+        async for chunk in self.chat_stream(
+            messages=messages,
+            model=model,
+            tools=tools,
+            thinking=thinking,
+            reasoning_effort=reasoning_effort,
+        ):
+            if selected_index is None:
+                selected_index = chunk.index
+            if chunk.index != selected_index:
+                continue
+            if chunk.content:
+                content_parts.append(chunk.content)
+            if chunk.reasoning_content:
+                reasoning_parts.append(chunk.reasoning_content)
+            if chunk.tool_calls is not None:
+                tool_calls = chunk.tool_calls
+            if chunk.usage is not None:
+                usage = chunk.usage
+            if chunk.finish_reason is not None:
+                finish_reason = chunk.finish_reason
+            if chunk.provider_state is not None:
+                provider_state = chunk.provider_state
 
-        Yields:
-            StreamChunk: 流式响应块
-        """
-        pass
+        return ChatResponse(
+            content="".join(content_parts),
+            reasoning_content="".join(reasoning_parts) or None,
+            tool_calls=tool_calls,
+            usage=usage,
+            finish_reason=finish_reason,
+            index=selected_index or 0,
+            provider_state=provider_state,
+        )
 
-    @abstractmethod
     def get_model_info(self, model: Optional[str] = None) -> ModelInfo:
+        """Read capability metadata from the new static provider catalog.
+
+        Catalog construction is owned outside the HTTP client. The conservative
+        fallback keeps a custom OpenAI-compatible endpoint usable without
+        claiming capabilities it did not declare.
         """
-        获取模型信息
-        
-        Args:
-            model: 模型名称（可选，使用实例默认模型）
-            
-        Returns:
-            ModelInfo: 模型信息
-        """
-        pass
+        model_name = (model or self.model).strip()
+        try:
+            from infrastructure.llm_adapters.provider_catalog import get_model
 
-    # ============================================================
-    # 可选方法（子类可覆盖）
-    # ============================================================
+            spec = get_model(self.provider_id, model_name)
+        except (ImportError, LookupError, ValueError):
+            spec = None
 
-    def supports_vision(self, model: Optional[str] = None) -> bool:
-        """是否支持图像输入"""
-        info = self.get_model_info(model)
-        return info.supports_vision
+        if spec is None:
+            return ModelInfo(name=model_name, context_limit=128_000)
+        return ModelInfo(
+            name=str(spec.id),
+            context_limit=int(spec.context_limit),
+            supports_vision=bool(spec.vision),
+            supports_tools=bool(spec.tools),
+            supports_thinking=bool(spec.thinking),
+        )
 
-    def supports_tools(self, model: Optional[str] = None) -> bool:
-        """是否支持工具调用"""
-        info = self.get_model_info(model)
-        return info.supports_tools
+    async def close(self) -> None:
+        """Release async transport resources owned by this client."""
 
-    def supports_thinking(self, model: Optional[str] = None) -> bool:
-        """是否支持深度思考"""
-        info = self.get_model_info(model)
-        return info.supports_thinking
-
-    def get_context_limit(self, model: Optional[str] = None) -> int:
-        """获取上下文限制"""
-        info = self.get_model_info(model)
-        return info.context_limit
-
-
-# ============================================================
-# 模块导出
-# ============================================================
 
 __all__ = [
-    # 基类
-    "BaseLLMClient",
-    # 数据结构
-    "ModelInfo",
-    "ChatResponse",
-    "StreamChunk",
-    # 异常类型
-    "LLMError",
     "APIError",
     "AuthError",
-    "RateLimitError",
+    "BaseLLMClient",
+    "CanonicalMessage",
+    "CanonicalTool",
+    "ChatResponse",
     "ContextOverflowError",
+    "LLMError",
+    "ModelInfo",
+    "RateLimitError",
     "ResponseParseError",
+    "StreamChunk",
 ]

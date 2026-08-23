@@ -17,6 +17,7 @@
 """
 
 import json
+import os
 from typing import Any, Callable, Dict, List, Optional
 from threading import Lock
 
@@ -25,20 +26,14 @@ from .settings import (
     GLOBAL_CONFIG_FILE,
     DEFAULT_CONFIG,
     CONFIG_LANGUAGE,
+    CONFIG_THEME,
     CONFIG_LLM_PROVIDER,
-    CONFIG_LLM_MODEL,
     CONFIG_LLM_TIMEOUT,
-    CONFIG_LLM_STREAMING,
     CONFIG_EMBEDDING_PROVIDER,
     SUPPORTED_LANGUAGES,
-    SUPPORTED_LLM_PROVIDERS,
+    SUPPORTED_THEMES,
     SUPPORTED_EMBEDDING_PROVIDERS,
 )
-
-
-_REMOVED_CONFIG_KEYS = {
-    "general_web_search_provider",
-}
 
 
 class ConfigManager:
@@ -101,13 +96,18 @@ class ConfigManager:
                     with open(self._config_file, "r", encoding="utf-8") as f:
                         loaded_config = json.load(f)
 
-                    removed_keys = [key for key in _REMOVED_CONFIG_KEYS if key in loaded_config]
-                    for key in removed_keys:
-                        loaded_config.pop(key, None)
-                    
-                    # 合并默认配置（缺失字段使用默认值）
-                    self._config = {**DEFAULT_CONFIG, **loaded_config}
-                    if removed_keys:
+                    if not isinstance(loaded_config, dict):
+                        raise ValueError("配置文件根节点必须是对象")
+                    current_config = {
+                        key: value
+                        for key, value in loaded_config.items()
+                        if key in DEFAULT_CONFIG
+                    }
+                    removed_unknown_keys = len(current_config) != len(loaded_config)
+
+                    # 配置文件只有当前 schema；已删除功能的字段不会继续存活。
+                    self._config = {**DEFAULT_CONFIG, **current_config}
+                    if removed_unknown_keys:
                         self._save_config_internal()
                 else:
                     # 配置文件不存在，使用默认配置
@@ -140,18 +140,29 @@ class ConfigManager:
         with self._lock:
             return self._save_config_internal()
     
-    def _save_config_internal(self) -> bool:
-        """内部保存方法（不加锁）"""
+    def _save_config_internal(self, config: Optional[Dict[str, Any]] = None) -> bool:
+        """Atomically persist one complete configuration snapshot (lock held)."""
+        temporary_file = self._config_file.with_suffix(
+            self._config_file.suffix + ".tmp"
+        )
         try:
-            GLOBAL_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-            
-            with open(self._config_file, "w", encoding="utf-8") as f:
-                json.dump(self._config, f, indent=2, ensure_ascii=False)
+            self._config_file.parent.mkdir(parents=True, exist_ok=True)
+            snapshot = self._config if config is None else config
+
+            with temporary_file.open("w", encoding="utf-8", newline="\n") as handle:
+                json.dump(snapshot, handle, indent=2, ensure_ascii=False)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary_file, self._config_file)
             
             self._log_info("配置保存成功")
             return True
             
         except Exception as e:
+            try:
+                temporary_file.unlink(missing_ok=True)
+            except OSError:
+                pass
             self._log_error(f"配置保存失败: {e}")
             return False
     
@@ -169,7 +180,7 @@ class ConfigManager:
         with self._lock:
             return self._config.get(key, default)
     
-    def set(self, key: str, value: Any, save: bool = True) -> None:
+    def set(self, key: str, value: Any, save: bool = True) -> bool:
         """
         统一配置写入接口
         
@@ -180,16 +191,40 @@ class ConfigManager:
             value: 配置值
             save: 是否立即保存到文件
         """
+        if save:
+            return self.update_many({key: value})
+
         with self._lock:
             old_value = self._config.get(key)
             self._config[key] = value
-            
-            if save:
-                self._save_config_internal()
-        
+
         # 触发变更通知（锁外执行，避免死锁）
         if old_value != value:
             self._notify_change(key, old_value, value)
+        return True
+
+    def update_many(self, changes: Dict[str, Any]) -> bool:
+        """Persist and publish a group of settings as one atomic update."""
+
+        if not changes:
+            return True
+
+        changed_values: List[tuple[str, Any, Any]] = []
+        with self._lock:
+            candidate = self._config.copy()
+            candidate.update(changes)
+            for key, value in changes.items():
+                old_value = self._config.get(key)
+                if old_value != value:
+                    changed_values.append((key, old_value, value))
+
+            if not self._save_config_internal(candidate):
+                return False
+            self._config = candidate
+
+        for key, old_value, value in changed_values:
+            self._notify_change(key, old_value, value)
+        return True
     
     def get_all(self) -> Dict[str, Any]:
         """
@@ -230,20 +265,26 @@ class ConfigManager:
             if llm_timeout and (not isinstance(llm_timeout, (int, float)) or llm_timeout <= 0):
                 errors.append(f"LLM 超时值必须大于 0，当前值: {llm_timeout}")
             
-            # 校验 LLM 流式输出开关
-            llm_streaming = self._config.get(CONFIG_LLM_STREAMING)
-            if llm_streaming is not None and not isinstance(llm_streaming, bool):
-                errors.append(f"llm_streaming 必须为布尔值，当前值: {llm_streaming}")
-            
             # 校验语言设置
             language = self._config.get(CONFIG_LANGUAGE, "")
             if language and language not in SUPPORTED_LANGUAGES:
                 errors.append(f"不支持的语言: {language}，支持: {SUPPORTED_LANGUAGES}")
+
+            theme = self._config.get(CONFIG_THEME, "")
+            if theme and theme not in SUPPORTED_THEMES:
+                errors.append(f"不支持的主题: {theme}，支持: {SUPPORTED_THEMES}")
             
             # 校验 LLM 厂商标识
             llm_provider = self._config.get(CONFIG_LLM_PROVIDER, "")
-            if llm_provider and llm_provider not in SUPPORTED_LLM_PROVIDERS:
-                errors.append(f"不支持的 LLM 厂商: {llm_provider}，支持: {SUPPORTED_LLM_PROVIDERS}")
+            if llm_provider:
+                try:
+                    from infrastructure.llm_adapters.provider_catalog import get_provider
+
+                    provider_exists = get_provider(str(llm_provider)) is not None
+                except Exception:
+                    provider_exists = False
+                if not provider_exists:
+                    errors.append(f"不支持的 LLM 厂商: {llm_provider}")
             
             # 校验嵌入模型厂商标识
             embedding_provider = self._config.get(CONFIG_EMBEDDING_PROVIDER, "")

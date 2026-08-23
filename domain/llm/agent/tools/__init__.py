@@ -10,7 +10,6 @@ Agent 工具实现模块
 - find_files     : 按 glob 模式查找文件
 - list_directory : 列出目录内容
 - rag_search     : 项目索引库检索
-- web_search     : Web 检索
 - run_simulation : 对显式项目电路发起仿真并返回 exact result_path
 - read_metrics   : 按 exact result_path 读取结构化 .MEASURE 值与单位
 - read_output_log: 按 exact result_path 读取结构化诊断或原始仿真输出
@@ -26,7 +25,6 @@ from domain.llm.agent.tools.grep_search import GrepSearchTool
 from domain.llm.agent.tools.find_files import FindFilesTool
 from domain.llm.agent.tools.list_directory import ListDirectoryTool
 from domain.llm.agent.tools.rag_search import RAGSearchTool
-from domain.llm.agent.tools.web_search import WebSearchTool
 from domain.llm.agent.tools.run_simulation import RunSimulationTool
 from domain.llm.agent.tools.read_metrics import ReadMetricsTool
 from domain.llm.agent.tools.read_output_log import ReadOutputLogTool
@@ -42,7 +40,6 @@ __all__ = [
     "FindFilesTool",
     "ListDirectoryTool",
     "RAGSearchTool",
-    "WebSearchTool",
     "RunSimulationTool",
     "ReadMetricsTool",
     "ReadOutputLogTool",

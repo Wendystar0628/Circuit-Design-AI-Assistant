@@ -1,83 +1,42 @@
-# LLM Adapters
-"""
-LLM 提供商适配器模块
+"""Canonical asynchronous LLM provider adapters."""
 
-设计说明：
-- LLM 客户端是外部服务的适配器，按 DDD 原则属于基础设施层
-- 封装与各 LLM 提供商 API 的交互细节，为领域层提供统一接口
-
-目录结构：
-- base_client.py: 客户端抽象基类，定义统一接口
-- zhipu/: 智谱 GLM 适配器目录（当前版本实现）
-  - zhipu_client.py: 智谱客户端主类
-  - zhipu_request_builder.py: 请求体构建
-  - zhipu_response_parser.py: 响应解析
-  - zhipu_stream_handler.py: 流式处理
-
-后续扩展：
-- openai/: OpenAI 适配器目录
-- claude/: Claude 适配器目录
-- gemini/: Gemini 适配器目录
-- qwen/: Qwen 适配器目录
-- deepseek/: DeepSeek 适配器目录
-
-使用示例：
-    from infrastructure.llm_adapters import ZhipuClient
-    
-    # 创建智谱客户端
-    client = ZhipuClient(api_key="your_api_key")
-    
-    # 非流式调用
-    response = client.chat(messages=[{"role": "user", "content": "Hello"}])
-    
-    # 流式调用
-    async for chunk in client.chat_stream(messages):
-        print(chunk.content, end="")
-"""
-
+from infrastructure.llm_adapters.anthropic_client import AnthropicClient
 from infrastructure.llm_adapters.base_client import (
-    BaseLLMClient,
-    ModelInfo,
-    ChatResponse,
-    StreamChunk,
-    LLMError,
     APIError,
     AuthError,
-    RateLimitError,
+    BaseLLMClient,
+    CanonicalMessage,
+    CanonicalTool,
+    ChatResponse,
     ContextOverflowError,
+    LLMError,
+    ModelInfo,
+    RateLimitError,
     ResponseParseError,
+    StreamChunk,
 )
-from infrastructure.llm_adapters.openai_compatible_client import OpenAICompatibleClient
 from infrastructure.llm_adapters.client_factory import LLMClientFactory
+from infrastructure.llm_adapters.gemini_client import GeminiClient
+from infrastructure.llm_adapters.openai_chat_client import OpenAIChatClient
+from infrastructure.llm_adapters.openai_responses_client import OpenAIResponsesClient
 
-# 智谱 GLM 适配器
-from infrastructure.llm_adapters.zhipu import (
-    ZhipuClient,
-)
-from infrastructure.llm_adapters.deepseek import DeepSeekClient
-from infrastructure.llm_adapters.qwen import QwenClient
-
-# 模型配置已迁移到 ModelRegistry
-# 参见：shared/model_registry.py 和 infrastructure/llm_adapters/model_configs/
 
 __all__ = [
-    # 基类
-    "BaseLLMClient",
-    # 数据结构
-    "ModelInfo",
-    "ChatResponse",
-    "StreamChunk",
-    # 异常类型
-    "LLMError",
     "APIError",
+    "AnthropicClient",
     "AuthError",
-    "RateLimitError",
+    "BaseLLMClient",
+    "CanonicalMessage",
+    "CanonicalTool",
+    "ChatResponse",
     "ContextOverflowError",
-    "ResponseParseError",
-    "OpenAICompatibleClient",
+    "GeminiClient",
     "LLMClientFactory",
-    # 智谱客户端
-    "ZhipuClient",
-    "DeepSeekClient",
-    "QwenClient",
+    "LLMError",
+    "ModelInfo",
+    "OpenAIChatClient",
+    "OpenAIResponsesClient",
+    "RateLimitError",
+    "ResponseParseError",
+    "StreamChunk",
 ]

@@ -20,7 +20,7 @@ import threading
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
-from typing import Any, Callable, Dict, Iterable, Optional
+from typing import Any, Callable, Dict, Optional
 
 
 EventEmitter = Callable[[str, str, Dict[str, Any], Dict[str, Any]], None]
@@ -180,7 +180,6 @@ class ApplicationRuntime:
         from infrastructure.persistence.file_manager import FileManager
         from shared.embedding_model_registry import EmbeddingModelRegistry
         from shared.event_bus import EventBus
-        from shared.model_registry import ModelRegistry
         from shared.service_locator import ServiceLocator
         from shared.service_names import (
             SVC_CONFIG_MANAGER,
@@ -216,7 +215,6 @@ class ApplicationRuntime:
             self.config_manager.load_config()
             ServiceLocator.register(SVC_CONFIG_MANAGER, self.config_manager)
 
-            ModelRegistry.initialize()
             EmbeddingModelRegistry.initialize()
             self.llm_runtime_config_manager = LLMRuntimeConfigManager(
                 self.config_manager,
@@ -316,7 +314,7 @@ class ApplicationRuntime:
 
             self._subscribe_domain_events()
             self._started = True
-            await self.refresh_llm()
+            await self._initialize_llm_client()
         except Exception:
             await self.stop()
             raise
@@ -358,6 +356,10 @@ class ApplicationRuntime:
     async def _close_llm_client(self) -> None:
         client = self.llm_client
         self.llm_client = None
+        await self._close_client(client)
+
+    @staticmethod
+    async def _close_client(client: Any) -> None:
         if client is None:
             return
         close = getattr(client, "close", None)
@@ -367,28 +369,61 @@ class ApplicationRuntime:
         if inspect.isawaitable(result):
             await result
 
-    async def refresh_llm(self) -> bool:
-        """Replace the active client on the current asyncio loop."""
+    async def _replace_llm_client(self, candidate: Any) -> None:
         from shared.service_locator import ServiceLocator
         from shared.service_names import SVC_LLM_CLIENT
 
-        await self._close_llm_client()
-        ServiceLocator.unregister(SVC_LLM_CLIENT)
+        previous = self.llm_client
+        self.llm_client = candidate
+        if candidate is None:
+            ServiceLocator.unregister(SVC_LLM_CLIENT)
+        else:
+            ServiceLocator.register(SVC_LLM_CLIENT, candidate)
+
+        if previous is None or previous is candidate:
+            return
+        try:
+            await self._close_client(previous)
+        except Exception as exc:
+            from infrastructure.utils.logger import get_logger
+
+            get_logger("application_runtime").warning(
+                "Previous LLM client could not be closed after replacement: %s",
+                exc,
+            )
+
+    async def _initialize_llm_client(self) -> None:
+        """Keep an invalid saved model connection from aborting app startup."""
+
+        try:
+            await self.refresh_llm()
+        except Exception as exc:
+            from infrastructure.utils.logger import get_logger
+
+            get_logger("application_runtime").error(
+                "LLM client initialization failed; the application remains available: %s",
+                exc,
+            )
+
+    async def refresh_llm(self) -> bool:
+        """Build a candidate before replacing the active async client."""
         if self.llm_runtime_config_manager is None:
             return False
         active = self.llm_runtime_config_manager.resolve_active_config()
         if not active.is_configured or not active.api_key:
+            await self._replace_llm_client(None)
             return False
         from infrastructure.llm_adapters import LLMClientFactory
 
-        self.llm_client = LLMClientFactory.create_client(
+        candidate = LLMClientFactory.create_client(
             provider_id=active.provider,
             api_key=active.api_key,
-            base_url=active.base_url or None,
+            base_url=active.effective_base_url,
             model=active.model or None,
             timeout=active.timeout,
+            api_protocol=active.api_protocol,
         )
-        ServiceLocator.register(SVC_LLM_CLIENT, self.llm_client)
+        await self._replace_llm_client(candidate)
         return True
 
     # ------------------------------------------------------------------
@@ -854,17 +889,12 @@ class ApplicationRuntime:
                         ),
                     }
                 )
-        web_results = step.get("web_search_results", [])
         return {
             "step_index": int(step.get("step_index", 1) or 1),
             "step_id": str(step.get("step_id", "") or ""),
             "content": str(step.get("content", "") or ""),
             "reasoning_content": str(step.get("reasoning_content", "") or ""),
             "tool_calls": tool_calls,
-            "web_search_query": str(step.get("web_search_query", "") or ""),
-            "web_search_results": web_results if isinstance(web_results, list) else [],
-            "web_search_message": str(step.get("web_search_message", "") or ""),
-            "web_search_state": str(step.get("web_search_state", "idle") or "idle"),
             "is_complete": bool(step.get("is_complete", False)),
             "is_partial": bool(step.get("is_partial", False)),
             "stop_reason": str(step.get("stop_reason", "") or ""),
@@ -1177,10 +1207,6 @@ class ApplicationRuntime:
                     "content": "",
                     "reasoning_content": "",
                     "tool_calls": [],
-                    "web_search_query": "",
-                    "web_search_results": [],
-                    "web_search_message": "",
-                    "web_search_state": "idle",
                     "is_complete": False,
                     "is_partial": False,
                     "stop_reason": "",
@@ -1947,37 +1973,83 @@ class ApplicationRuntime:
             CONFIG_EMBEDDING_PROVIDER,
             CONFIG_EMBEDDING_TIMEOUT,
             CREDENTIAL_TYPE_EMBEDDING,
+            CREDENTIAL_TYPE_LLM,
+        )
+        from infrastructure.llm_adapters.provider_catalog import (
+            list_models,
+            list_providers,
         )
         from shared.embedding_model_registry import EmbeddingModelRegistry
-        from shared.model_registry import ModelRegistry
 
-        ModelRegistry.initialize()
         EmbeddingModelRegistry.initialize()
         active = self.llm_runtime_config_manager.resolve_active_config()
 
-        def provider_dict(provider: Any, models: Iterable[Any]) -> Dict[str, Any]:
+        protocol_labels = {
+            "openai_responses": "OpenAI Responses",
+            "openai_chat": "OpenAI Chat Completions",
+            "anthropic_messages": "Anthropic Messages",
+            "gemini_generate_content": "Gemini GenerateContent",
+        }
+
+        def chat_provider_dict(provider: Any) -> Dict[str, Any]:
+            return {
+                "id": provider.id,
+                "label": provider.label,
+                "default_base_url": provider.default_base_url,
+                "default_model": provider.default_model,
+                "allow_custom_model": provider.allow_custom_model,
+                "protocol_options": [
+                    {"id": item, "label": protocol_labels[item]}
+                    for item in provider.protocol_options
+                ],
+                "has_api_key": self.credential_manager.has_credential(
+                    CREDENTIAL_TYPE_LLM,
+                    provider.id,
+                ),
+                "models": [
+                    {
+                        "id": model.id,
+                        "label": model.label,
+                        "role": model.role,
+                        "generation": model.generation,
+                        "status": model.status,
+                        "protocol": model.protocol,
+                        "capabilities": {
+                            "tools": model.tools,
+                            "vision": model.vision,
+                            "thinking": model.thinking,
+                            "streaming": model.streaming,
+                        },
+                        "description": model.description,
+                    }
+                    for model in list_models(provider.id)
+                ],
+            }
+
+        chat_providers = [
+            chat_provider_dict(provider)
+            for provider in list_providers()
+        ]
+
+        def embedding_provider_dict(provider: Any) -> Dict[str, Any]:
             return {
                 "id": provider.id,
                 "label": provider.display_name,
                 "default_base_url": provider.base_url,
                 "default_model": provider.default_model,
-                "requires_api_key": getattr(provider, "requires_api_key", True),
+                "requires_api_key": provider.requires_api_key,
+                "has_api_key": self.credential_manager.has_credential(
+                    CREDENTIAL_TYPE_EMBEDDING,
+                    provider.id,
+                ),
                 "models": [
-                    {
-                        "id": model.name,
-                        "label": model.display_name,
-                        "supports_thinking": getattr(model, "supports_thinking", False),
-                    }
-                    for model in models
+                    {"id": model.name, "label": model.display_name}
+                    for model in EmbeddingModelRegistry.list_models(provider.id)
                 ],
             }
 
-        chat_providers = [
-            provider_dict(provider, ModelRegistry.list_models(provider.id))
-            for provider in ModelRegistry.list_implemented_providers()
-        ]
         embedding_providers = [
-            provider_dict(provider, EmbeddingModelRegistry.list_models(provider.id))
+            embedding_provider_dict(provider)
             for provider in EmbeddingModelRegistry.list_implemented_providers()
         ]
         embedding_provider = str(self.config_manager.get(CONFIG_EMBEDDING_PROVIDER, "") or "")
@@ -2014,11 +2086,11 @@ class ApplicationRuntime:
             "chat": {
                 "provider": active.provider,
                 "model": active.model,
+                "api_protocol": active.api_protocol,
                 "base_url": active.base_url,
+                "effective_base_url": active.effective_base_url,
                 "timeout": active.timeout,
-                "streaming": active.streaming,
                 "enable_thinking": active.enable_thinking,
-                "thinking_timeout": active.thinking_timeout,
                 "has_api_key": active.has_api_key,
             },
             "embedding": {
@@ -2026,11 +2098,11 @@ class ApplicationRuntime:
                 "model": embedding_model,
                 "base_url": (
                     configured_embedding_base_url
-                    or (
-                        embedding_provider_config.base_url
-                        if embedding_provider_config
-                        else ""
-                    )
+                ),
+                "effective_base_url": configured_embedding_base_url or (
+                    embedding_provider_config.base_url
+                    if embedding_provider_config
+                    else ""
                 ),
                 "timeout": int(self.config_manager.get(CONFIG_EMBEDDING_TIMEOUT, 60)),
                 "batch_size": int(self.config_manager.get(CONFIG_EMBEDDING_BATCH_SIZE, 16)),
@@ -2038,7 +2110,52 @@ class ApplicationRuntime:
             },
         }
 
-    async def save_model_config(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    async def save_chat_model_config(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        from infrastructure.config.llm_runtime_config_manager import UNSET_API_KEY
+        from infrastructure.llm_adapters import LLMClientFactory
+
+        self._ensure_no_active_conversation()
+        provider = str(payload.get("provider", "")).strip().casefold()
+        model = str(payload.get("model", "")).strip()
+        api_protocol = str(payload.get("api_protocol", "")).strip()
+        base_url = str(payload.get("base_url", "")).strip()
+        timeout = int(payload.get("timeout", 60))
+        kwargs: Dict[str, Any] = {
+            "provider_id": provider,
+            "model_name": model,
+            "api_protocol": api_protocol,
+            "base_url": base_url,
+            "timeout": timeout,
+            "enable_thinking": bool(payload.get("enable_thinking", False)),
+            "api_key": payload.get("api_key", UNSET_API_KEY),
+        }
+        candidate = None
+        try:
+            api_key = self._resolve_draft_api_key("llm", provider, payload)
+            if api_key:
+                candidate = LLMClientFactory.create_client(
+                    provider_id=provider,
+                    api_key=api_key,
+                    base_url=base_url or None,
+                    model=model,
+                    timeout=timeout,
+                    api_protocol=api_protocol or None,
+                )
+            self.llm_runtime_config_manager.save_active_chat_config(**kwargs)
+        except ValueError as exc:
+            if candidate is not None:
+                await self._close_client(candidate)
+            raise RuntimeErrorResponse(422, str(exc)) from exc
+        except RuntimeError as exc:
+            if candidate is not None:
+                await self._close_client(candidate)
+            raise RuntimeErrorResponse(500, str(exc)) from exc
+
+        await self._replace_llm_client(candidate)
+        self._publish_llm_config_changed()
+        return self.model_config()
+
+    async def save_embedding_model_config(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         from infrastructure.config.settings import (
             CONFIG_EMBEDDING_BASE_URL,
             CONFIG_EMBEDDING_BATCH_SIZE,
@@ -2047,145 +2164,213 @@ class ApplicationRuntime:
             CONFIG_EMBEDDING_TIMEOUT,
             CREDENTIAL_TYPE_EMBEDDING,
         )
+        from infrastructure.llm_adapters.base_url import validate_base_url
+        from shared.embedding_model_registry import EmbeddingModelRegistry
 
-        chat = payload.get("chat") or {}
-        provider_id = str(chat.get("provider", ""))
-        from infrastructure.config.settings import CREDENTIAL_TYPE_LLM
+        provider = str(payload.get("provider", "") or "").strip()
+        model = str(payload.get("model", "") or "").strip()
+        provider_spec = EmbeddingModelRegistry.get_provider(provider)
+        model_spec = EmbeddingModelRegistry.get_model_by_name(provider, model)
+        if provider_spec is None or model_spec is None:
+            raise RuntimeErrorResponse(422, "Unsupported embedding provider or model")
 
-        provider_credential = self.credential_manager.get_credential(
-            CREDENTIAL_TYPE_LLM,
-            provider_id,
-        ) or {}
-        api_key = chat.get("api_key", provider_credential.get("api_key", ""))
-        if api_key is None:
-            api_key = ""
-        self.llm_runtime_config_manager.save_active_chat_config(
-            provider_id=provider_id,
-            model_name=str(chat.get("model", "")),
-            base_url=str(chat.get("base_url", "")),
-            timeout=int(chat.get("timeout", 60)),
-            streaming=bool(chat.get("streaming", True)),
-            enable_thinking=bool(chat.get("enable_thinking", False)),
-            thinking_timeout=int(chat.get("thinking_timeout", 120)),
-            api_key=str(api_key),
+        base_url = str(payload.get("base_url", "") or "").strip()
+        try:
+            validate_base_url(base_url or provider_spec.base_url)
+        except ValueError as exc:
+            raise RuntimeErrorResponse(422, str(exc)) from exc
+
+        embedding_key = payload.get("api_key", ...)
+        previous_credential = self.credential_manager.get_credential(
+            CREDENTIAL_TYPE_EMBEDDING,
+            provider,
         )
-        embedding = payload.get("embedding") or {}
-        if embedding:
-            provider = str(embedding.get("provider", ""))
-            self.config_manager.set(CONFIG_EMBEDDING_PROVIDER, provider, save=False)
-            self.config_manager.set(CONFIG_EMBEDDING_MODEL, str(embedding.get("model", "")), save=False)
-            self.config_manager.set(CONFIG_EMBEDDING_BASE_URL, str(embedding.get("base_url", "")), save=False)
-            self.config_manager.set(CONFIG_EMBEDDING_TIMEOUT, int(embedding.get("timeout", 60)), save=False)
-            self.config_manager.set(CONFIG_EMBEDDING_BATCH_SIZE, int(embedding.get("batch_size", 16)), save=False)
-            embedding_key = embedding.get("api_key", ...)
+        if embedding_key is not ...:
+            if embedding_key is None:
+                credential_saved = self.credential_manager.delete_credential(
+                    CREDENTIAL_TYPE_EMBEDDING,
+                    provider,
+                )
+            else:
+                api_key = str(embedding_key or "").strip()
+                if not api_key:
+                    raise RuntimeErrorResponse(
+                        422,
+                        "API key cannot be blank; omit it to keep the saved key",
+                    )
+                credential_saved = self.credential_manager.set_embedding_api_key(
+                    provider,
+                    api_key,
+                )
+            if not credential_saved:
+                raise RuntimeErrorResponse(500, "Failed to persist the embedding API key")
+
+        updated = self.config_manager.update_many(
+            {
+                CONFIG_EMBEDDING_PROVIDER: provider,
+                CONFIG_EMBEDDING_MODEL: model,
+                CONFIG_EMBEDDING_BASE_URL: base_url,
+                CONFIG_EMBEDDING_TIMEOUT: int(payload.get("timeout", 30)),
+                CONFIG_EMBEDDING_BATCH_SIZE: int(payload.get("batch_size", 16)),
+            }
+        )
+        if not updated:
+            rollback_succeeded = True
             if embedding_key is not ...:
-                if embedding_key is None:
-                    self.credential_manager.delete_credential(CREDENTIAL_TYPE_EMBEDDING, provider)
+                previous_api_key = str(
+                    (previous_credential or {}).get("api_key", "") or ""
+                ).strip()
+                if previous_api_key:
+                    rollback_succeeded = (
+                        self.credential_manager.set_embedding_api_key(
+                            provider,
+                            previous_api_key,
+                        )
+                    )
                 else:
-                    self.credential_manager.set_credential(
+                    rollback_succeeded = self.credential_manager.delete_credential(
                         CREDENTIAL_TYPE_EMBEDDING,
                         provider,
-                        {"api_key": str(embedding_key), "updated_at": _utcnow()},
                     )
-            self.config_manager.save_config()
-        await self.refresh_llm()
-        if self.event_bus is not None:
-            from shared.event_types import EVENT_LLM_CONFIG_CHANGED
-
-            self.event_bus.publish(EVENT_LLM_CONFIG_CHANGED, {"source": "desktop_backend"})
+            detail = "Failed to persist the embedding configuration"
+            if not rollback_succeeded:
+                detail += " and restore the API key"
+            raise RuntimeErrorResponse(500, detail)
+        self._publish_llm_config_changed()
         return self.model_config()
 
-    async def test_model_config(
-        self,
-        section: str,
-        config: Dict[str, Any],
-    ) -> Dict[str, Any]:
-        """Make one real, minimal provider request without saving the draft."""
+    async def test_chat_model_config(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        """Make one real request through the selected provider protocol."""
         verified_at = _utcnow()
         provider = str(config.get("provider", "") or "").strip()
         model = str(config.get("model", "") or "").strip()
-        api_key_value = config.get("api_key", ...)
-        credential_type = "llm" if section == "chat" else "embedding"
-        if api_key_value is ...:
-            credential = self.credential_manager.get_credential(
-                credential_type,
-                provider,
-            ) or {}
-            api_key = str(credential.get("api_key", "") or "").strip()
-        elif api_key_value is None:
-            api_key = ""
-        else:
-            api_key = str(api_key_value).strip()
+        api_key = self._resolve_draft_api_key("llm", provider, config)
         if not provider or not model or not api_key:
             raise RuntimeErrorResponse(422, "Provider, model, and API key are required")
 
         try:
-            if section == "chat":
-                from infrastructure.llm_adapters import LLMClientFactory
+            from infrastructure.llm_adapters import LLMClientFactory
 
-                client = LLMClientFactory.create_client(
-                    provider_id=provider,
-                    api_key=api_key,
-                    base_url=str(config.get("base_url", "") or "") or None,
+            client = LLMClientFactory.create_client(
+                provider_id=provider,
+                api_key=api_key,
+                base_url=str(config.get("base_url", "") or "") or None,
+                model=model,
+                timeout=int(config.get("timeout", 60)),
+                api_protocol=str(config.get("api_protocol", "") or "") or None,
+            )
+            try:
+                response = await client.complete(
+                    messages=[{"role": "user", "content": "Reply with OK."}],
                     model=model,
-                    timeout=int(config.get("timeout", 60)),
+                    tools=None,
+                    thinking=bool(config.get("enable_thinking", False)),
                 )
-                try:
-                    response = await asyncio.to_thread(
-                        client.chat,
-                        messages=[{"role": "user", "content": "Reply with OK."}],
-                        model=model,
-                        streaming=False,
-                        tools=None,
-                        thinking=False,
-                    )
-                    if not str(getattr(response, "content", "") or "").strip():
-                        raise RuntimeError("Provider returned an empty response")
-                finally:
-                    close = getattr(client, "close", None)
-                    if close is not None:
-                        closed = close()
-                        if inspect.isawaitable(closed):
-                            await closed
-            elif section == "embedding":
-                if provider != "zhipu":
-                    raise RuntimeError("Only Zhipu embedding is implemented")
-                import httpx
-
-                base_url = str(config.get("base_url", "") or "").strip()
-                if not base_url:
-                    from shared.embedding_model_registry import EmbeddingModelRegistry
-
-                    provider_info = EmbeddingModelRegistry.get_provider(provider)
-                    base_url = provider_info.base_url if provider_info else ""
-                async with httpx.AsyncClient(timeout=int(config.get("timeout", 30))) as client:
-                    response = await client.post(
-                        base_url,
-                        headers={"Authorization": f"Bearer {api_key}"},
-                        json={"input": ["connection test"], "model": model},
-                    )
-                    response.raise_for_status()
-                    payload = response.json()
-                    vectors = payload.get("data", []) if isinstance(payload, dict) else []
-                    if not vectors or not vectors[0].get("embedding"):
-                        raise RuntimeError("Provider returned no embedding vector")
-            else:
-                raise RuntimeErrorResponse(422, "Unknown model-config section")
+                if not str(getattr(response, "content", "") or "").strip():
+                    raise RuntimeError("Provider returned an empty response")
+            finally:
+                await client.close()
         except RuntimeErrorResponse:
             raise
         except Exception as exc:
             return {
-                "section": section,
+                "section": "chat",
                 "status": "failed",
+                "code": self._model_test_error_code(exc),
                 "message": str(exc),
                 "verified_at": None,
             }
         return {
-            "section": section,
+            "section": "chat",
             "status": "verified",
+            "code": "ok",
             "message": "Connection verified",
             "verified_at": verified_at,
         }
+
+    async def test_embedding_model_config(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        provider = str(config.get("provider", "") or "").strip()
+        model = str(config.get("model", "") or "").strip()
+        api_key = self._resolve_draft_api_key("embedding", provider, config)
+        if provider != "zhipu" or not model or not api_key:
+            raise RuntimeErrorResponse(422, "Provider, model, and API key are required")
+
+        try:
+            import httpx
+            from shared.embedding_model_registry import EmbeddingModelRegistry
+
+            provider_info = EmbeddingModelRegistry.get_provider(provider)
+            if provider_info is None or EmbeddingModelRegistry.get_model_by_name(provider, model) is None:
+                raise RuntimeError("Unsupported embedding provider or model")
+            base_url = str(config.get("base_url", "") or "").strip() or provider_info.base_url
+            async with httpx.AsyncClient(timeout=int(config.get("timeout", 30))) as client:
+                response = await client.post(
+                    base_url,
+                    headers={"Authorization": f"Bearer {api_key}"},
+                    json={"input": ["connection test"], "model": model},
+                )
+                response.raise_for_status()
+                payload = response.json()
+                vectors = payload.get("data", []) if isinstance(payload, dict) else []
+                if not vectors or not vectors[0].get("embedding"):
+                    raise RuntimeError("Provider returned no embedding vector")
+        except RuntimeErrorResponse:
+            raise
+        except Exception as exc:
+            return {
+                "section": "embedding",
+                "status": "failed",
+                "code": self._model_test_error_code(exc),
+                "message": str(exc),
+                "verified_at": None,
+            }
+        return {
+            "section": "embedding",
+            "status": "verified",
+            "code": "ok",
+            "message": "Connection verified",
+            "verified_at": _utcnow(),
+        }
+
+    def _resolve_draft_api_key(
+        self,
+        credential_type: str,
+        provider: str,
+        config: Dict[str, Any],
+    ) -> str:
+        if "api_key" not in config:
+            credential = self.credential_manager.get_credential(
+                credential_type,
+                provider,
+            ) or {}
+            return str(credential.get("api_key", "") or "").strip()
+        value = config.get("api_key")
+        return "" if value is None else str(value or "").strip()
+
+    @staticmethod
+    def _model_test_error_code(exc: Exception) -> str:
+        from infrastructure.llm_adapters.base_client import (
+            AuthError,
+            RateLimitError,
+            ResponseParseError,
+        )
+
+        if isinstance(exc, AuthError):
+            return "auth_failed"
+        if isinstance(exc, RateLimitError):
+            return "rate_limited"
+        if isinstance(exc, (asyncio.TimeoutError, TimeoutError)):
+            return "timeout"
+        if isinstance(exc, ResponseParseError):
+            return "invalid_response"
+        return "connection_failed"
+
+    def _publish_llm_config_changed(self) -> None:
+        if self.event_bus is None:
+            return
+        from shared.event_types import EVENT_LLM_CONFIG_CHANGED
+
+        self.event_bus.publish(EVENT_LLM_CONFIG_CHANGED, {"source": "desktop_backend"})
 
     # ------------------------------------------------------------------
     # Event projection

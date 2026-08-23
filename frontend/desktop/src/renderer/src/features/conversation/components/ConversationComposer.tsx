@@ -12,6 +12,8 @@ interface ConversationComposerProps {
   state: ConversationMainState
   actions: ConversationActions | null
   available: boolean
+  draftText: string
+  onDraftTextChange(text: string): void
 }
 
 function attachmentKey(attachment: ConversationAttachmentState): string {
@@ -172,11 +174,13 @@ export function ConversationComposer({
   state,
   actions,
   available,
+  draftText,
+  onDraftTextChange,
 }: ConversationComposerProps) {
   const composingRef = useRef(false)
-  const clearNonceRef = useRef(state.composer.clear_draft_nonce)
-  const draftContextIdRef = useRef(state.context_id)
-  const [draftText, setDraftText] = useState('')
+  const draftTextRef = useRef(draftText)
+  const contextIdRef = useRef(state.context_id)
+  const draftSessionIdRef = useRef(state.session.id)
   const [draftAttachments, setDraftAttachments] = useState<ConversationAttachmentState[]>([])
   const [isSelectingAttachments, setIsSelectingAttachments] = useState(false)
 
@@ -189,28 +193,27 @@ export function ConversationComposer({
     setDraftAttachments((current) => mergeAttachments(current, incoming))
   }, [])
 
-  const clearDraft = useCallback(() => {
+  const clearTransientDraftState = useCallback(() => {
     composingRef.current = false
-    setDraftText('')
     setDraftAttachments([])
     setIsSelectingAttachments(false)
   }, [])
 
   useEffect(() => {
-    if (state.composer.clear_draft_nonce === clearNonceRef.current) {
-      return
-    }
-    clearNonceRef.current = state.composer.clear_draft_nonce
-    clearDraft()
-  }, [clearDraft, state.composer.clear_draft_nonce])
+    draftTextRef.current = draftText
+  }, [draftText])
 
   useEffect(() => {
-    if (state.context_id === draftContextIdRef.current) {
+    contextIdRef.current = state.context_id
+  }, [state.context_id])
+
+  useEffect(() => {
+    if (state.session.id === draftSessionIdRef.current) {
       return
     }
-    draftContextIdRef.current = state.context_id
-    clearDraft()
-  }, [clearDraft, state.context_id])
+    draftSessionIdRef.current = state.session.id
+    clearTransientDraftState()
+  }, [clearTransientDraftState, state.session.id])
 
   const serializedDraft = serializeDraft(draftText, draftAttachments)
   const hasSendPayload = Boolean(serializedDraft.trim())
@@ -236,11 +239,11 @@ export function ConversationComposer({
     setIsSelectingAttachments(true)
     try {
       const imported = await actions.selectAttachments(requestedContextId, kind)
-      if (draftContextIdRef.current === requestedContextId) {
+      if (contextIdRef.current === requestedContextId) {
         appendAttachments(imported)
       }
     } finally {
-      if (draftContextIdRef.current === requestedContextId) {
+      if (contextIdRef.current === requestedContextId) {
         setIsSelectingAttachments(false)
       }
     }
@@ -251,7 +254,22 @@ export function ConversationComposer({
       return
     }
     if (canSend) {
-      actions?.sendMessage(state.context_id, serializedDraft, { attachments: draftAttachments })
+      const submittedDraftText = draftText
+      const submittedAttachmentKeys = new Set(draftAttachments.map(attachmentKey))
+      actions?.sendMessage(
+        state.context_id,
+        serializedDraft,
+        { attachments: draftAttachments },
+        () => {
+          composingRef.current = false
+          if (draftTextRef.current === submittedDraftText) {
+            onDraftTextChange('')
+          }
+          setDraftAttachments((current) => current.filter(
+            (attachment) => !submittedAttachmentKeys.has(attachmentKey(attachment)),
+          ))
+        },
+      )
       return
     }
     if (canStop) {
@@ -313,7 +331,10 @@ export function ConversationComposer({
           <textarea
             className="composer-editor"
             value={draftText}
-            onChange={(event) => setDraftText(event.target.value)}
+            onChange={(event) => {
+              draftTextRef.current = event.target.value
+              onDraftTextChange(event.target.value)
+            }}
             onCompositionStart={() => {
               composingRef.current = true
             }}

@@ -14,7 +14,16 @@ interface EditorAreaProps {
   onClose: (documentId: string) => void
   onContentChange: (documentId: string, content: string) => void
   onSave: (documentId: string) => void
-  onCursorChange: (line: number, column: number) => void
+  onCursorChange: (documentId: string, line: number, column: number) => void
+  onMarkdownPreviewChange: (documentId: string, preview: boolean) => void
+  onOpenProject: () => void
+  openingProject: boolean
+  simulationRunControl: {
+    canRun: boolean
+    busy: boolean
+    title: string
+  }
+  onRunSimulation: () => void
 }
 
 function AssetPreview({ projectId, document }: { projectId: string; document: WorkspaceDocument }) {
@@ -100,11 +109,16 @@ export function EditorArea({
   onContentChange,
   onSave,
   onCursorChange,
+  onMarkdownPreviewChange,
+  onOpenProject,
+  openingProject,
+  simulationRunControl,
+  onRunSimulation,
 }: EditorAreaProps) {
   const activeDocument = documents.find((document) => document.documentId === activeDocumentId) ?? null
-  const [markdownPreview, setMarkdownPreview] = useState(true)
   const tabsRef = useRef<HTMLDivElement | null>(null)
   const tabRefs = useRef(new Map<string, HTMLDivElement>())
+  const editorRef = useRef<Parameters<OnMount>[0] | null>(null)
   const activeDocumentRef = useRef(activeDocument)
   const onSaveRef = useRef(onSave)
   const onCursorChangeRef = useRef(onCursorChange)
@@ -112,10 +126,6 @@ export function EditorArea({
   activeDocumentRef.current = activeDocument
   onSaveRef.current = onSave
   onCursorChangeRef.current = onCursorChange
-
-  useEffect(() => {
-    setMarkdownPreview(true)
-  }, [activeDocumentId])
 
   useEffect(() => {
     const tabs = tabsRef.current
@@ -127,32 +137,83 @@ export function EditorArea({
     }
   }, [activeDocumentId, documents.length])
 
+  const restoreEditorCursor = () => {
+    const editor = editorRef.current
+    const document = activeDocumentRef.current
+    const model = editor?.getModel()
+    if (!editor || !document || !model) return
+    const lineNumber = Math.max(1, Math.min(document.cursorLine, model.getLineCount()))
+    const column = Math.max(1, Math.min(document.cursorColumn, model.getLineMaxColumn(lineNumber)))
+    const current = editor.getPosition()
+    if (current?.lineNumber !== lineNumber || current.column !== column) {
+      editor.setPosition({ lineNumber, column })
+    }
+    editor.revealPositionInCenterIfOutsideViewport({ lineNumber, column })
+  }
+
+  useEffect(() => {
+    if (
+      !activeDocument
+      || (activeDocument.viewKind === 'markdown' && activeDocument.markdownPreview)
+    ) return
+    restoreEditorCursor()
+  }, [
+    activeDocument?.documentId,
+    activeDocument?.cursorColumn,
+    activeDocument?.cursorLine,
+    activeDocument?.markdownPreview,
+  ])
+
   const handleEditorMount: OnMount = (editor) => {
+    editorRef.current = editor
     editor.onDidChangeCursorPosition((event) => {
-      onCursorChangeRef.current(event.position.lineNumber, event.position.column)
+      const document = activeDocumentRef.current
+      if (document) {
+        onCursorChangeRef.current(
+          document.documentId,
+          event.position.lineNumber,
+          event.position.column,
+        )
+      }
     })
+    editor.onDidChangeModel(() => window.queueMicrotask(restoreEditorCursor))
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
       const document = activeDocumentRef.current
       if (document && !document.readonly && document.dirty) {
         onSaveRef.current(document.documentId)
       }
     })
+    restoreEditorCursor()
     editor.focus()
   }
 
   const renderDocument = () => {
     if (!activeDocument || !projectId) {
+      if (!projectId) {
+        return (
+          <div className="workspace-document-state workspace-document-state--empty">
+            <span>Open a workspace to get started.</span>
+            <button
+              type="button"
+              className="workspace-button workspace-button--primary workspace-open-project-button"
+              disabled={openingProject}
+              onClick={onOpenProject}
+            >
+              {openingProject ? 'Opening…' : 'Open project'}
+            </button>
+          </div>
+        )
+      }
       return (
-        <div className="workspace-document-state">
-          <span className="workspace-document-state__mark" aria-hidden="true" />
-          <span>Select a file from the project tree.</span>
+        <div className="workspace-document-state workspace-document-state--empty">
+          <span>Select a file to view.</span>
         </div>
       )
     }
     if (activeDocument.viewKind === 'image' || activeDocument.viewKind === 'pdf') {
       return <AssetPreview projectId={projectId} document={activeDocument} />
     }
-    if (activeDocument.viewKind === 'markdown' && markdownPreview) {
+    if (activeDocument.viewKind === 'markdown' && activeDocument.markdownPreview) {
       return <SafeMarkdown content={activeDocument.content} />
     }
     return (
@@ -183,9 +244,10 @@ export function EditorArea({
   }
 
   return (
-    <main className="workspace-editor-area">
+    <main className="workspace-editor-area" data-layout-surface="editor">
       <header className="workspace-tabs">
         <div className="workspace-tabs__scroll" ref={tabsRef} role="tablist">
+          {!documents.length ? <div className="workspace-tabs__empty">No open files</div> : null}
           {documents.map((document) => {
             const active = document.documentId === activeDocumentId
             return (
@@ -212,8 +274,20 @@ export function EditorArea({
         <div className="workspace-tabs__actions">
           {activeDocument?.viewKind === 'markdown' ? (
             <div className="workspace-segmented" aria-label="Markdown view">
-              <button type="button" className={!markdownPreview ? 'active' : ''} onClick={() => setMarkdownPreview(false)}>Edit</button>
-              <button type="button" className={markdownPreview ? 'active' : ''} onClick={() => setMarkdownPreview(true)}>Preview</button>
+              <button
+                type="button"
+                className={!activeDocument.markdownPreview ? 'active' : ''}
+                onClick={() => onMarkdownPreviewChange(activeDocument.documentId, false)}
+              >
+                Edit
+              </button>
+              <button
+                type="button"
+                className={activeDocument.markdownPreview ? 'active' : ''}
+                onClick={() => onMarkdownPreviewChange(activeDocument.documentId, true)}
+              >
+                Preview
+              </button>
             </div>
           ) : null}
           {activeDocument && !activeDocument.readonly && activeDocument.viewKind !== 'image' && activeDocument.viewKind !== 'pdf' ? (
@@ -226,6 +300,19 @@ export function EditorArea({
               {savingDocumentIds.has(activeDocument.documentId) ? 'Saving…' : 'Save'}
             </button>
           ) : null}
+          <button
+            type="button"
+            className="workspace-run-button"
+            title={simulationRunControl.title}
+            aria-label={simulationRunControl.title}
+            disabled={!simulationRunControl.canRun}
+            onClick={onRunSimulation}
+          >
+            <span aria-hidden="true">▶</span>
+            <span className="workspace-run-button__label">
+              {simulationRunControl.busy ? 'Starting…' : 'Run'}
+            </span>
+          </button>
         </div>
       </header>
       <section className="workspace-document-surface" role="tabpanel">

@@ -207,10 +207,6 @@ export interface ConversationNoticeDialogState {
   tone: string
 }
 
-export interface RightPanelUiState {
-  active_surface: string
-}
-
 export interface RagStatusState {
   phase: 'idle' | 'unavailable' | 'indexing' | 'ready' | 'error'
   label: string
@@ -275,7 +271,6 @@ export interface ConversationMainState {
   project_id: string
   context_id: string
   active_run_id: string
-  ui: RightPanelUiState
   ui_text: Record<string, string>
   session: {
     id: string
@@ -294,7 +289,6 @@ export interface ConversationMainState {
     model_display_name: string
     action_mode: ConversationActionMode
     action_status: string
-    clear_draft_nonce: number
     pending_workspace_edit_summary: PendingWorkspaceEditSummaryState
   }
   view_flags: {
@@ -628,9 +622,6 @@ export const emptyConversationState: ConversationMainState = {
   project_id: '',
   context_id: '',
   active_run_id: '',
-  ui: {
-    active_surface: 'conversation',
-  },
   ui_text: {},
   session: {
     id: '',
@@ -657,7 +648,6 @@ export const emptyConversationState: ConversationMainState = {
     model_display_name: '',
     action_mode: 'unavailable',
     action_status: '',
-    clear_draft_nonce: 0,
     pending_workspace_edit_summary: {
       file_count: 0,
       added_lines: 0,
@@ -874,7 +864,6 @@ function normalizeRagState(value: unknown, hasContext: boolean): RagMainState {
 export function normalizeConversationState(nextState: unknown): ConversationMainState {
   const incoming = asRecord(nextState)
   const contextId = asIdentity(incoming.context_id)
-  const ui = asRecord(incoming.ui)
   const session = asRecord(incoming.session)
   const conversation = asRecord(incoming.conversation)
   const composer = asRecord(incoming.composer)
@@ -885,9 +874,6 @@ export function normalizeConversationState(nextState: unknown): ConversationMain
     project_id: asIdentity(incoming.project_id),
     context_id: contextId,
     active_run_id: asIdentity(incoming.active_run_id),
-    ui: {
-      active_surface: asString(ui.active_surface, 'conversation'),
-    },
     ui_text: normalizeUiText(incoming.ui_text),
     session: {
       id: asString(session.id),
@@ -918,7 +904,6 @@ export function normalizeConversationState(nextState: unknown): ConversationMain
       model_display_name: asString(composer.model_display_name),
       action_mode: normalizeActionMode(composer.action_mode),
       action_status: asString(composer.action_status),
-      clear_draft_nonce: Math.max(0, asNumber(composer.clear_draft_nonce)),
       pending_workspace_edit_summary: normalizePendingSummaryState(
         composer.pending_workspace_edit_summary,
       ),

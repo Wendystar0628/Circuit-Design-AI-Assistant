@@ -1,14 +1,37 @@
-import { useRef, useState } from 'react'
+import { useRef, useState, type CSSProperties } from 'react'
 
+import { SplitHandle } from '../components/SplitHandle'
+import { usePanelSplit, type PanelSplitOptions } from '../components/usePanelSplit'
 import { ConversationFeature } from '../features/conversation/ConversationFeature'
 import { SettingsFeature } from '../features/settings'
 import { SimulationFeature } from '../features/simulation/SimulationFeature'
+import type { SimulationRunControlState } from '../features/simulation/types'
 import { WorkspaceFeature } from '../features/workspace'
 import {
   useAppState,
   type ActiveSection,
 } from '../lib/app-state'
 import { FeatureBoundary } from './FeatureBoundary'
+
+const WORKBENCH_SPLIT: PanelSplitOptions = {
+  storageKey: 'circuit-design-ai.layout.workbench.v1',
+  dimension: 'width',
+  defaultPercent: 70,
+  minPercent: 55,
+  maxPercent: 80,
+  minPrimaryPixels: 600,
+  minSecondaryPixels: 300,
+}
+
+const SIMULATION_SPLIT: PanelSplitOptions = {
+  storageKey: 'circuit-design-ai.layout.simulation.v1',
+  dimension: 'height',
+  defaultPercent: 78,
+  minPercent: 55,
+  maxPercent: 85,
+  minPrimaryPixels: 320,
+  minSecondaryPixels: 120,
+}
 
 export function DesktopLayout() {
   const {
@@ -22,6 +45,8 @@ export function DesktopLayout() {
   } = useAppState()
   const previousSection = useRef<Exclude<ActiveSection, 'settings'>>('workspace')
   const openDocumentRequestId = useRef(0)
+  const featureGridRef = useRef<HTMLElement | null>(null)
+  const featureStackRef = useRef<HTMLDivElement | null>(null)
   const [settingsSection, setSettingsSection] = useState<
     'general' | 'models' | 'about'
   >('general')
@@ -29,6 +54,14 @@ export function DesktopLayout() {
     path: string
     requestId: number
   } | null>(null)
+  const [simulationRunRequestId, setSimulationRunRequestId] = useState(0)
+  const [simulationRunControl, setSimulationRunControl] = useState<SimulationRunControlState>({
+    canRun: false,
+    busy: false,
+    title: 'Select a SPICE circuit to run.',
+  })
+  const workbenchSplit = usePanelSplit(featureGridRef, WORKBENCH_SPLIT)
+  const simulationSplit = usePanelSplit(featureStackRef, SIMULATION_SPLIT)
 
   const activate = (section: Exclude<ActiveSection, 'settings'>) => {
     previousSection.current = section
@@ -84,81 +117,108 @@ export function DesktopLayout() {
         </button>
       </header>
 
-      {backend.status === 'error' ? (
-        <div className="backend-error" role="alert">
-          <strong>Local backend connection failed.</strong>
-          <span>{backend.message}</span>
-        </div>
-      ) : null}
+      <div className="desktop-body">
+        {backend.status === 'error' ? (
+          <div className="backend-error" role="alert">
+            <strong>Local backend connection failed.</strong>
+            <span>{backend.message}</span>
+          </div>
+        ) : null}
 
-      <main className="feature-grid" aria-label="Circuit design workspace">
-        <section
-          className="feature-column feature-column--workspace"
-          data-active={activeSection === 'workspace'}
-          onPointerDownCapture={() => activate('workspace')}
+        <main
+          ref={featureGridRef}
+          className="feature-grid"
+          aria-label="Circuit design workspace"
+          style={{ '--workbench-size': `${workbenchSplit.percent}%` } as CSSProperties}
         >
-          <div className="feature-column__header">
-            <span>Workspace</span>
-            <span>{document ? document.path.split(/[\\/]/).at(-1) : 'No file'}</span>
-          </div>
-          <div className="feature-column__body">
-            <FeatureBoundary name="Workspace">
-              <WorkspaceFeature
-                active={featureSurfacesActive}
-                onProjectChange={setProject}
-                onActiveDocumentChange={setDocument}
-                openDocumentRequest={openDocumentRequest}
-              />
-            </FeatureBoundary>
-          </div>
-        </section>
+          <div
+            ref={featureStackRef}
+            className="feature-stack"
+            aria-label="Workspace and simulation panes"
+            style={{ '--workspace-size': `${simulationSplit.percent}%` } as CSSProperties}
+          >
+            <section
+              className="feature-pane feature-pane--workspace"
+              data-active={activeSection === 'workspace'}
+              data-layout-region="workspace"
+              aria-label="Workspace pane"
+              onPointerDownCapture={() => activate('workspace')}
+            >
+              <FeatureBoundary name="Workspace">
+                <WorkspaceFeature
+                  active={featureSurfacesActive}
+                  simulationRunControl={simulationRunControl}
+                  onRunSimulation={() => setSimulationRunRequestId((requestId) => requestId + 1)}
+                  onProjectChange={setProject}
+                  onActiveDocumentChange={setDocument}
+                  openDocumentRequest={openDocumentRequest}
+                />
+              </FeatureBoundary>
+            </section>
 
-        <section
-          className="feature-column feature-column--simulation"
-          data-active={activeSection === 'simulation'}
-          onPointerDownCapture={() => activate('simulation')}
-        >
-          <div className="feature-column__header">
-            <span>Simulation</span>
-            <span>{project ? 'Project scoped' : 'No project'}</span>
-          </div>
-          <div className="feature-column__body">
-            <FeatureBoundary name="Simulation">
-              <SimulationFeature
-                active={featureSurfacesActive}
-                projectId={project?.id ?? null}
-                activeDocumentPath={document?.path ?? null}
-              />
-            </FeatureBoundary>
-          </div>
-        </section>
+            <SplitHandle
+              name="workspace-simulation"
+              orientation="horizontal"
+              label="Resize workspace and simulation panels"
+              percent={simulationSplit.percent}
+              minPercent={simulationSplit.minPercent}
+              maxPercent={simulationSplit.maxPercent}
+              defaultPercent={SIMULATION_SPLIT.defaultPercent}
+              onPointerPosition={simulationSplit.percentFromPointer}
+              onChange={simulationSplit.setPercent}
+            />
 
-        <section
-          className="feature-column feature-column--conversation"
-          data-active={activeSection === 'conversation'}
-          onPointerDownCapture={() => activate('conversation')}
-        >
-          <div className="feature-column__header">
-            <span>Conversation</span>
-            <span>{project ? 'Project context' : 'No project'}</span>
+            <section
+              className="feature-pane feature-pane--simulation"
+              data-active={activeSection === 'simulation'}
+              data-layout-region="simulation"
+              aria-label="Simulation pane"
+              onPointerDownCapture={() => activate('simulation')}
+            >
+              <FeatureBoundary name="Simulation">
+                <SimulationFeature
+                  active={featureSurfacesActive}
+                  projectId={project?.id ?? null}
+                  projectRoot={project?.root ?? null}
+                  activeDocumentPath={document?.path ?? null}
+                  runRequestId={simulationRunRequestId}
+                  onRunControlChange={setSimulationRunControl}
+                />
+              </FeatureBoundary>
+            </section>
           </div>
-          <div className="feature-column__body">
+
+          <SplitHandle
+            name="workbench-conversation"
+            orientation="vertical"
+            label="Resize workbench and conversation panels"
+            percent={workbenchSplit.percent}
+            minPercent={workbenchSplit.minPercent}
+            maxPercent={workbenchSplit.maxPercent}
+            defaultPercent={WORKBENCH_SPLIT.defaultPercent}
+            onPointerPosition={workbenchSplit.percentFromPointer}
+            onChange={workbenchSplit.setPercent}
+          />
+
+          <section
+            className="feature-pane feature-pane--conversation"
+            data-active={activeSection === 'conversation'}
+            data-layout-region="conversation"
+            aria-label="Conversation pane"
+            onPointerDownCapture={() => activate('conversation')}
+          >
             <FeatureBoundary name="Conversation">
               <ConversationFeature
                 active={featureSurfacesActive}
                 projectId={project?.id ?? null}
+                projectRoot={project?.root ?? null}
                 onOpenSettings={() => openSettings('models')}
                 onOpenWorkspaceFile={openWorkspaceFile}
               />
             </FeatureBoundary>
-          </div>
-        </section>
-      </main>
-
-      <footer className="app-statusbar">
-        <span>{project?.root ?? 'Open a workspace to begin'}</span>
-        <span>{document ? `Revision ${document.revision}` : 'No active document'}</span>
-      </footer>
+          </section>
+        </main>
+      </div>
 
       {activeSection === 'settings' ? (
         <FeatureBoundary name="Settings">

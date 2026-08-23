@@ -1,4 +1,14 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
+import { SplitHandle } from '../../components/SplitHandle'
+import { usePanelSplit, type PanelSplitOptions } from '../../components/usePanelSplit'
+import {
+  beginWorkSessionProject,
+  forgetWorkSessionProject,
+  getWorkSession,
+  sameProjectRoot,
+  updateWorkspaceSession,
+  type WorkspaceSession,
+} from '../../lib/workSession'
 import { ApiError, errorMessage, eventsClient, projectApi, workspaceApi } from './apiPort'
 import {
   pathOwns,
@@ -7,6 +17,7 @@ import {
 } from './documentPathChanges'
 import { EditorArea } from './EditorArea'
 import { WorkspaceDialog, type WorkspaceDialogState } from './WorkspaceDialog'
+import { restoreWorkspaceDocuments, restoredActiveDocumentId } from './workspaceRestore'
 import { WorkspaceTree, type TreeEntryAction } from './WorkspaceTree'
 import {
   documentFromWire,
@@ -18,8 +29,25 @@ import {
 } from './types'
 import './workspace.css'
 
+const EXPLORER_SPLIT: PanelSplitOptions = {
+  storageKey: 'circuit-design-ai.layout.explorer.v1',
+  dimension: 'width',
+  defaultPercent: 15,
+  minPercent: 10,
+  maxPercent: 35,
+  minPrimaryPixels: 150,
+  minSecondaryPixels: 400,
+  maxPrimaryPixels: 420,
+}
+
 export interface WorkspaceFeatureProps {
   active: boolean
+  simulationRunControl: {
+    canRun: boolean
+    busy: boolean
+    title: string
+  }
+  onRunSimulation: () => void
   onProjectChange?: (project: { id: string; name: string; root: string } | null) => void
   onActiveDocumentChange?: (document: { documentId: string; path: string; revision: string } | null) => void
   openDocumentRequest?: { path: string; requestId: number } | null
@@ -61,6 +89,8 @@ function validEntryName(name: string): boolean {
 
 export function WorkspaceFeature({
   active,
+  simulationRunControl,
+  onRunSimulation,
   onProjectChange,
   onActiveDocumentChange,
   openDocumentRequest,
@@ -77,8 +107,10 @@ export function WorkspaceFeature({
   const [dialogBusy, setDialogBusy] = useState(false)
   const [notice, setNotice] = useState('')
   const [cursor, setCursor] = useState({ line: 1, column: 1 })
+  const [workspaceHydrated, setWorkspaceHydrated] = useState(false)
 
   const projectRef = useRef<ProjectSummary | null>(null)
+  const workspaceLayoutRef = useRef<HTMLElement | null>(null)
   const documentsRef = useRef<WorkspaceDocument[]>([])
   const activeDocumentIdRef = useRef<string | null>(null)
   const onProjectChangeRef = useRef(onProjectChange)
@@ -87,6 +119,7 @@ export function WorkspaceFeature({
   const rootTreeRequestRef = useRef(0)
   const subtreeRequestRef = useRef(new Map<string, number>())
   const openDocumentRequestRef = useRef(0)
+  const restoreDocumentsRequestRef = useRef(0)
   const handledExternalOpenRequestRef = useRef<number | null>(null)
   const documentReloadRequestRef = useRef(new Map<string, number>())
   const saveRequestRef = useRef(new Map<string, number>())
@@ -94,6 +127,7 @@ export function WorkspaceFeature({
   const savesInFlightRef = useRef(new Set<string>())
   const lastEventSequenceRef = useRef(0)
   const pendingProjectTransitionRef = useRef<ProjectTransition | null>(null)
+  const explorerSplit = usePanelSplit(workspaceLayoutRef, EXPLORER_SPLIT)
 
   onProjectChangeRef.current = onProjectChange
   onActiveDocumentChangeRef.current = onActiveDocumentChange
@@ -107,7 +141,11 @@ export function WorkspaceFeature({
   const activateDocument = useCallback((documentId: string | null) => {
     activeDocumentIdRef.current = documentId
     setActiveDocumentId(documentId)
-    setCursor({ line: 1, column: 1 })
+    const document = documentsRef.current.find((candidate) => candidate.documentId === documentId)
+    setCursor({
+      line: document?.cursorLine ?? 1,
+      column: document?.cursorColumn ?? 1,
+    })
   }, [])
 
   const replaceProject = useCallback((nextProject: ProjectSummary | null) => {
@@ -117,6 +155,7 @@ export function WorkspaceFeature({
     documentsRef.current = []
     setDocuments([])
     activateDocument(null)
+    restoreDocumentsRequestRef.current += 1
     subtreeRequestRef.current.clear()
     documentReloadRequestRef.current.clear()
     saveRequestRef.current.clear()
@@ -158,30 +197,101 @@ export function WorkspaceFeature({
     }
   }, [])
 
+  const restoreDocumentsFor = useCallback(async (
+    expectedProject: ProjectSummary,
+    expectedEpoch: number,
+    workspace: WorkspaceSession,
+  ) => {
+    const requestId = restoreDocumentsRequestRef.current + 1
+    restoreDocumentsRequestRef.current = requestId
+    const responses = await Promise.allSettled(
+      workspace.openDocuments.map((document) => (
+        workspaceApi.document(expectedProject.id, document.path)
+      )),
+    )
+    if (
+      projectEpochRef.current !== expectedEpoch
+      || projectRef.current?.id !== expectedProject.id
+      || restoreDocumentsRequestRef.current !== requestId
+    ) return
+
+    const freshDocuments = responses.map((response, index) => {
+      if (
+        response.status !== 'fulfilled'
+        || response.value.project_id !== expectedProject.id
+        || response.value.path !== workspace.openDocuments[index]?.path
+      ) return null
+      return documentFromWire(response.value)
+    })
+    const restored = restoreWorkspaceDocuments(workspace.openDocuments, freshDocuments)
+    replaceDocuments(() => restored.documents)
+    activateDocument(restoredActiveDocumentId(restored.documents, workspace.activeDocumentPath))
+    if (restored.conflictPaths.length) {
+      setNotice(
+        `Restored unsaved edits for ${restored.conflictPaths.length} file${restored.conflictPaths.length === 1 ? '' : 's'} changed on disk. Review before saving.`,
+      )
+    }
+  }, [activateDocument, replaceDocuments])
+
   useEffect(() => {
     let disposed = false
     const epoch = projectEpochRef.current + 1
     projectEpochRef.current = epoch
     setProjectBusy(true)
-    projectApi.current()
-      .then((wire) => {
+    const restore = async () => {
+      try {
+        const savedSession = getWorkSession()
+        let wire = await projectApi.current()
         if (disposed || projectEpochRef.current !== epoch) return
+        if (!wire && savedSession.projectRoot) {
+          wire = await projectApi.open(savedSession.projectRoot)
+          if (disposed || projectEpochRef.current !== epoch) return
+        }
         const current = wire ? projectFromWire(wire) : null
         replaceProject(current)
-        if (current) void refreshTreeFor(current, epoch)
-      })
-      .catch((error) => {
+        if (current) {
+          const session = beginWorkSessionProject(current.root)
+          const restoreWorkspace = sameProjectRoot(savedSession.projectRoot, current.root)
+            ? savedSession.workspace
+            : session.workspace
+          setExplorerCollapsed(restoreWorkspace.explorerCollapsed)
+          await Promise.all([
+            refreshTreeFor(current, epoch),
+            restoreDocumentsFor(current, epoch, restoreWorkspace),
+          ])
+        }
+      } catch (error) {
         if (!disposed && projectEpochRef.current === epoch) setNotice(errorMessage(error))
-      })
-      .finally(() => {
-        if (!disposed && projectEpochRef.current === epoch) setProjectBusy(false)
-      })
+      } finally {
+        if (!disposed && projectEpochRef.current === epoch) {
+          setWorkspaceHydrated(true)
+          setProjectBusy(false)
+        }
+      }
+    }
+    void restore()
     return () => {
       disposed = true
     }
-  }, [refreshTreeFor, replaceProject])
+  }, [refreshTreeFor, replaceProject, restoreDocumentsFor])
 
   const activeDocument = documents.find((document) => document.documentId === activeDocumentId) ?? null
+
+  useEffect(() => {
+    if (!workspaceHydrated || !project) return
+    updateWorkspaceSession(project.root, {
+      openDocuments: documents.map((document) => ({
+        path: document.path,
+        unsavedContent: document.dirty ? document.content : null,
+        savedContent: document.dirty ? document.savedContent : null,
+        cursorLine: document.cursorLine,
+        cursorColumn: document.cursorColumn,
+        markdownPreview: document.markdownPreview,
+      })),
+      activeDocumentPath: activeDocument?.path ?? null,
+      explorerCollapsed,
+    })
+  }, [activeDocument?.path, documents, explorerCollapsed, project, workspaceHydrated])
 
   useEffect(() => {
     onActiveDocumentChangeRef.current?.(
@@ -197,7 +307,7 @@ export function WorkspaceFeature({
 
   const openDocumentPath = useCallback(async (path: string) => {
     const currentProject = projectRef.current
-    if (!currentProject || !path) return
+    if (!workspaceHydrated || !currentProject || !path) return
     const existing = documentsRef.current.find((document) => document.path === path)
     openDocumentRequestRef.current += 1
     if (existing) {
@@ -224,18 +334,19 @@ export function WorkspaceFeature({
     } catch (error) {
       if (projectEpochRef.current === expectedEpoch) setNotice(errorMessage(error))
     }
-  }, [activateDocument, replaceDocuments])
+  }, [activateDocument, replaceDocuments, workspaceHydrated])
 
   useEffect(() => {
     if (
-      !project
+      !workspaceHydrated
+      || !project
       || !openDocumentRequest
       || !openDocumentRequest.path
       || handledExternalOpenRequestRef.current === openDocumentRequest.requestId
     ) return
     handledExternalOpenRequestRef.current = openDocumentRequest.requestId
     void openDocumentPath(openDocumentRequest.path)
-  }, [openDocumentPath, openDocumentRequest, project])
+  }, [openDocumentPath, openDocumentRequest, project, workspaceHydrated])
 
   const toggleDirectory = useCallback(async (entry: WorkspaceTreeEntry) => {
     const currentProject = projectRef.current
@@ -288,6 +399,21 @@ export function WorkspaceFeature({
       document.documentId === documentId && !document.readonly
         ? { ...document, content, dirty: content !== document.savedContent }
         : document
+    )))
+  }, [replaceDocuments])
+
+  const changeCursor = useCallback((documentId: string, line: number, column: number) => {
+    replaceDocuments((current) => current.map((document) => (
+      document.documentId === documentId
+        ? { ...document, cursorLine: line, cursorColumn: column }
+        : document
+    )))
+    if (activeDocumentIdRef.current === documentId) setCursor({ line, column })
+  }, [replaceDocuments])
+
+  const changeMarkdownPreview = useCallback((documentId: string, markdownPreview: boolean) => {
+    replaceDocuments((current) => current.map((document) => (
+      document.documentId === documentId ? { ...document, markdownPreview } : document
     )))
   }, [replaceDocuments])
 
@@ -400,22 +526,36 @@ export function WorkspaceFeature({
 
   const beginOpenProject = useCallback(async () => {
     setProjectBusy(true)
+    let transitionEpoch: number | null = null
     try {
       const path = await window.circuitDesktop.selectDirectory()
       if (!path) return
       const epoch = projectEpochRef.current + 1
+      transitionEpoch = epoch
       projectEpochRef.current = epoch
+      setWorkspaceHydrated(false)
       const response = await projectApi.open(path)
       if (projectEpochRef.current !== epoch) return
       const nextProject = projectFromWire(response)
+      const session = beginWorkSessionProject(nextProject.root)
       replaceProject(nextProject)
-      await refreshTreeFor(nextProject, epoch)
+      setExplorerCollapsed(session.workspace.explorerCollapsed)
+      await Promise.all([
+        refreshTreeFor(nextProject, epoch),
+        restoreDocumentsFor(nextProject, epoch, session.workspace),
+      ])
+      if (projectEpochRef.current === epoch && projectRef.current?.id === nextProject.id) {
+        setWorkspaceHydrated(true)
+      }
     } catch (error) {
-      setNotice(errorMessage(error))
+      if (transitionEpoch === null || projectEpochRef.current === transitionEpoch) {
+        setNotice(errorMessage(error))
+        if (transitionEpoch !== null) setWorkspaceHydrated(Boolean(projectRef.current))
+      }
     } finally {
       setProjectBusy(false)
     }
-  }, [refreshTreeFor, replaceProject])
+  }, [refreshTreeFor, replaceProject, restoreDocumentsFor])
 
   const requestOpenProject = useCallback(() => {
     if (documentsRef.current.some((document) => document.dirty)) {
@@ -432,13 +572,18 @@ export function WorkspaceFeature({
     setProjectBusy(true)
     const epoch = projectEpochRef.current + 1
     projectEpochRef.current = epoch
+    setWorkspaceHydrated(false)
     try {
       await projectApi.close(currentProject.id)
       if (projectEpochRef.current === epoch && projectRef.current?.id === currentProject.id) {
+        forgetWorkSessionProject(currentProject.root)
         replaceProject(null)
       }
     } catch (error) {
-      if (projectEpochRef.current === epoch) setNotice(errorMessage(error))
+      if (projectEpochRef.current === epoch) {
+        setNotice(errorMessage(error))
+        setWorkspaceHydrated(true)
+      }
     } finally {
       setProjectBusy(false)
     }
@@ -560,7 +705,12 @@ export function WorkspaceFeature({
         document.documentId === documentId
         && !document.dirty
         && refreshed.revision >= document.revision
-          ? refreshed
+          ? {
+              ...refreshed,
+              cursorLine: document.cursorLine,
+              cursorColumn: document.cursorColumn,
+              markdownPreview: document.markdownPreview,
+            }
           : document
       )))
     } catch (error) {
@@ -610,7 +760,12 @@ export function WorkspaceFeature({
   }, [active, applyDocumentDelete, applyDocumentMove, project, refreshTreeFor, reloadCleanDocument])
 
   return (
-    <section className={`workspace-feature${explorerCollapsed ? ' workspace-feature--collapsed' : ''}`} hidden={!active}>
+    <section
+      ref={workspaceLayoutRef}
+      className={`workspace-feature${explorerCollapsed ? ' workspace-feature--collapsed' : ''}`}
+      hidden={!active}
+      style={{ '--workspace-explorer-size': `${explorerSplit.percent}%` } as CSSProperties}
+    >
       <WorkspaceTree
         project={project}
         entries={tree}
@@ -625,6 +780,19 @@ export function WorkspaceFeature({
         onOpenFile={(entry) => { void openDocumentPath(entry.path) }}
         onEntryAction={requestEntryAction}
       />
+      {!explorerCollapsed ? (
+        <SplitHandle
+          name="explorer-editor"
+          orientation="vertical"
+          label="Resize file explorer and editor panels"
+          percent={explorerSplit.percent}
+          minPercent={explorerSplit.minPercent}
+          maxPercent={explorerSplit.maxPercent}
+          defaultPercent={EXPLORER_SPLIT.defaultPercent}
+          onPointerPosition={explorerSplit.percentFromPointer}
+          onChange={explorerSplit.setPercent}
+        />
+      ) : null}
       <EditorArea
         projectId={project?.id ?? null}
         documents={documents}
@@ -634,20 +802,27 @@ export function WorkspaceFeature({
         onClose={requestCloseDocument}
         onContentChange={changeContent}
         onSave={(documentId) => { void saveDocument(documentId) }}
-        onCursorChange={(line, column) => setCursor({ line, column })}
+        onCursorChange={changeCursor}
+        onMarkdownPreviewChange={changeMarkdownPreview}
+        onOpenProject={requestOpenProject}
+        openingProject={projectBusy}
+        simulationRunControl={simulationRunControl}
+        onRunSimulation={onRunSimulation}
       />
-      <footer className="workspace-status" aria-live="polite">
-        <span className="workspace-status__path" title={activeDocument?.path || project?.root}>
-          {activeDocument?.path || project?.root || 'No project open'}
-        </span>
-        <span className="workspace-status__meta">
-          {activeDocument && activeDocument.viewKind !== 'image' && activeDocument.viewKind !== 'pdf' ? (
-            <span>Ln {cursor.line}, Col {cursor.column}</span>
-          ) : null}
-          {activeDocument?.mimeType ? <span>{activeDocument.mimeType}</span> : null}
-          {activeDocument?.missing ? <span>Deleted on disk</span> : activeDocument?.readonly ? <span>Read only</span> : null}
-        </span>
-      </footer>
+      {activeDocument ? (
+        <footer className="workspace-status" aria-live="polite">
+          <span className="workspace-status__meta">
+            {activeDocument.viewKind !== 'image' && activeDocument.viewKind !== 'pdf' ? (
+              <>
+                <span>Ln {cursor.line}, Col {cursor.column}</span>
+                <span>UTF-8</span>
+              </>
+            ) : null}
+            {activeDocument.mimeType ? <span>{activeDocument.mimeType}</span> : null}
+            {activeDocument.missing ? <span>Deleted on disk</span> : activeDocument.readonly ? <span>Read only</span> : null}
+          </span>
+        </footer>
+      ) : null}
       {notice ? (
         <div className="workspace-notice" role="alert">
           <span>{notice}</span>

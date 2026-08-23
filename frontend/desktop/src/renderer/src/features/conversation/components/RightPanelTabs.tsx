@@ -1,9 +1,8 @@
-import type { ConversationActions } from '../actions'
 import { getUiText, type UiTextMap } from '../uiText'
 
 interface RightPanelTabsProps {
   activeSurface: 'conversation' | 'rag'
-  actions: ConversationActions | null
+  onActivateSurface(surface: 'conversation' | 'rag'): void
   uiText?: UiTextMap
 }
 
@@ -36,7 +35,7 @@ function LibraryIcon() {
   )
 }
 
-export function RightPanelTabs({ activeSurface, actions, uiText }: RightPanelTabsProps) {
+export function RightPanelTabs({ activeSurface, onActivateSurface, uiText }: RightPanelTabsProps) {
   const tabs: Array<{
     id: 'conversation' | 'rag'
     label: string
@@ -64,7 +63,7 @@ export function RightPanelTabs({ activeSurface, actions, uiText }: RightPanelTab
             type="button"
             aria-current={isActive ? 'page' : undefined}
             className={`right-panel-tab${isActive ? ' right-panel-tab--active' : ''}`}
-            onClick={() => actions?.activateSurface?.(tab.id)}
+            onClick={() => onActivateSurface(tab.id)}
           >
             <span className="right-panel-tab__icon">{tab.icon}</span>
             <span className="right-panel-tab__label">{tab.label}</span>

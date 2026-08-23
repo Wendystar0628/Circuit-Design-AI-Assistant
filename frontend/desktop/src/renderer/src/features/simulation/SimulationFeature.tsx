@@ -1,4 +1,11 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+
+import {
+  getWorkSession,
+  sameProjectRoot,
+  updateSimulationSession,
+  type SimulationSession,
+} from '../../lib/workSession'
 
 import { buildPlotSvg, SeriesChart } from './SeriesChart'
 import {
@@ -10,10 +17,12 @@ import {
 } from './exportUtils'
 import {
   buildNoiseTotalRows,
+  collectCursorSamples,
   displayAnalysisType,
   formatEngineering,
   isSupportedCircuitPath,
   nearestSampleIndex,
+  snapCursorValue,
 } from './simulationModel'
 import { buildSchematicLayout } from './schematicLayout'
 import type {
@@ -38,8 +47,8 @@ const TAB_LABELS: Record<SimulationTabId, string> = {
   waveform: 'Waveform',
   schematic: 'Schematic',
   analysis: 'Analysis',
-  raw: 'Raw data',
-  log: 'Output log',
+  raw: 'Raw',
+  log: 'Log',
   export: 'Export',
 }
 
@@ -53,6 +62,88 @@ function fileName(path: string | null): string {
   if (!path) return 'No active circuit'
   const segments = path.split(/[\\/]/)
   return segments[segments.length - 1] || path
+}
+
+function emptySimulationViewSession(): SimulationSession {
+  return {
+    selectedResultPath: null,
+    activeTab: 'runs',
+    visibleSeriesIds: [],
+    cursorA: null,
+    cursorB: null,
+    cursorTarget: 'a',
+  }
+}
+
+function tabsForResult(view: ResultViewModel | null): SimulationTabId[] {
+  if (!view) return ['runs']
+  const tabs: SimulationTabId[] = ['runs', 'metrics', 'schematic']
+  if (view.plot) tabs.push('chart', 'waveform')
+  tabs.push('analysis', 'raw', 'log', 'export')
+  return tabs
+}
+
+function defaultTabForResult(view: ResultViewModel): SimulationTabId {
+  if (!view.result.success) return view.outputLog ? 'log' : 'analysis'
+  return view.result.analysis_type === 'op' ? 'analysis' : 'metrics'
+}
+
+function allSeriesIds(view: ResultViewModel): string[] {
+  return view.plot?.series.map((series) => series.id) ?? []
+}
+
+function cursorSamplesForResult(view: ResultViewModel, seriesIds: readonly string[]): number[] {
+  if (!view.plot) return []
+  return collectCursorSamples(view.plot, new Set(seriesIds))
+}
+
+function defaultSimulationViewSession(view: ResultViewModel): SimulationSession {
+  const visibleSeriesIds = allSeriesIds(view)
+  const samples = cursorSamplesForResult(view, visibleSeriesIds)
+  return {
+    selectedResultPath: view.resultPath,
+    activeTab: defaultTabForResult(view),
+    visibleSeriesIds,
+    cursorA: samples.length ? samples[Math.floor((samples.length - 1) * 0.25)] : null,
+    cursorB: samples.length ? samples[Math.floor((samples.length - 1) * 0.75)] : null,
+    cursorTarget: 'a',
+  }
+}
+
+function restoreCursor(
+  samples: readonly number[],
+  value: number | null,
+  logarithmic: boolean,
+): number | null {
+  if (value === null || !Number.isFinite(value) || !samples.length) return null
+  if (value < samples[0] || value > samples[samples.length - 1]) return null
+  return snapCursorValue(samples, value, logarithmic)
+}
+
+function restoredSimulationViewSession(
+  view: ResultViewModel,
+  saved: SimulationSession,
+): SimulationSession {
+  const availableSeriesIds = allSeriesIds(view)
+  const availableSeriesSet = new Set(availableSeriesIds)
+  const matchingSeriesIds = saved.visibleSeriesIds.filter((id) => availableSeriesSet.has(id))
+  const visibleSeriesIds = saved.visibleSeriesIds.length === 0
+    ? []
+    : matchingSeriesIds.length
+      ? matchingSeriesIds
+      : availableSeriesIds
+  const cursorSamples = cursorSamplesForResult(view, availableSeriesIds)
+  const availableTabs = tabsForResult(view)
+  return {
+    selectedResultPath: view.resultPath,
+    activeTab: availableTabs.includes(saved.activeTab as SimulationTabId)
+      ? saved.activeTab as SimulationTabId
+      : defaultTabForResult(view),
+    visibleSeriesIds,
+    cursorA: restoreCursor(cursorSamples, saved.cursorA, view.plot?.logX ?? false),
+    cursorB: restoreCursor(cursorSamples, saved.cursorB, view.plot?.logX ?? false),
+    cursorTarget: saved.cursorTarget,
+  }
 }
 
 function StatusBadge({ status }: { status: SimulationJobDto['status'] }) {
@@ -267,11 +358,12 @@ function PlotPanel({
   cursorB: number | null
   cursorTarget: 'a' | 'b'
   onCursorTarget(cursor: 'a' | 'b'): void
-  onCursorChange(cursor: 'a' | 'b', value: number): void
+  onCursorChange(cursor: 'a' | 'b', value: number | null): void
 }) {
   const model = view.plot
   if (!model) return <EmptyState title="No plotted sweep" detail="Operating-point results are shown as scalar values." />
   const readouts = buildCursorReadouts(model, visibleSeriesIds, cursorA, cursorB)
+  const cursorReadoutId = `simulation-cursor-readout-${view.identity.resultId}`
   return (
     <div className={`simulation-plot-layout simulation-plot-layout--${mode}`}>
       <aside className="simulation-series-rail">
@@ -301,8 +393,23 @@ function PlotPanel({
             <span>{model.logX ? 'log X' : 'linear X'}{model.logLeftY ? ' · log Y' : ''}</span>
           </div>
           <div className="simulation-cursor-toggle" aria-label="Active measurement cursor">
-            <button type="button" className={cursorTarget === 'a' ? 'is-active' : ''} onClick={() => onCursorTarget('a')}>Cursor A</button>
-            <button type="button" className={cursorTarget === 'b' ? 'is-active' : ''} onClick={() => onCursorTarget('b')}>Cursor B</button>
+            <button type="button" aria-pressed={cursorTarget === 'a'} className={cursorTarget === 'a' ? 'is-active' : ''} onClick={() => onCursorTarget('a')}>Cursor A</button>
+            <button type="button" aria-pressed={cursorTarget === 'b'} className={cursorTarget === 'b' ? 'is-active' : ''} onClick={() => onCursorTarget('b')}>Cursor B</button>
+            <button
+              type="button"
+              aria-label={`Clear cursor ${cursorTarget.toUpperCase()}`}
+              disabled={cursorTarget === 'a' ? cursorA === null : cursorB === null}
+              onClick={() => onCursorChange(cursorTarget, null)}
+            >Clear {cursorTarget.toUpperCase()}</button>
+            <button
+              type="button"
+              aria-label="Clear both measurement cursors"
+              disabled={cursorA === null && cursorB === null}
+              onClick={() => {
+                onCursorChange('a', null)
+                onCursorChange('b', null)
+              }}
+            >Clear all</button>
           </div>
         </div>
         <SeriesChart
@@ -312,15 +419,23 @@ function PlotPanel({
           cursorA={cursorA}
           cursorB={cursorB}
           cursorTarget={cursorTarget}
+          onCursorTarget={onCursorTarget}
           onCursorChange={onCursorChange}
+          readoutId={cursorReadoutId}
         />
-        <div className="simulation-measurement-strip">
+        <div id={cursorReadoutId} className="simulation-measurement-strip" role="region" aria-label="Cursor measurements">
           <div className="simulation-measurement-axis">
-            <span>A: {formatEngineering(cursorA, model.xUnit)}</span>
-            <span>B: {formatEngineering(cursorB, model.xUnit)}</span>
-            <strong>ΔX: {formatEngineering(cursorA === null || cursorB === null ? null : cursorB - cursorA, model.xUnit)}</strong>
+            <span>X(A): {formatEngineering(cursorA, model.xUnit)}</span>
+            <span>X(B): {formatEngineering(cursorB, model.xUnit)}</span>
+            <strong>ΔX (B − A): {formatEngineering(cursorA === null || cursorB === null ? null : cursorB - cursorA, model.xUnit)}</strong>
           </div>
           <div className="simulation-measurement-values">
+            <div className="simulation-measurement-values__header">
+              <span>Signal</span>
+              <code>Y(A)</code>
+              <code>Y(B)</code>
+              <strong>ΔY (B − A)</strong>
+            </div>
             {readouts.map((row) => (
               <div key={row.id}>
                 <span title={row.label}>{row.label}</span>
@@ -585,47 +700,147 @@ function ExportPanel({
 export function SimulationFeature(props: SimulationFeatureProps) {
   const controller = useSimulationController(props)
   const activeDocumentIsCircuit = isSupportedCircuitPath(props.activeDocumentPath)
+  const handledRunRequestRef = useRef(props.runRequestId ?? 0)
+  const projectScopeRef = useRef<string | null | undefined>(undefined)
+  const restoreAttemptRef = useRef<string | null>(null)
   const [activeTab, setActiveTab] = useState<SimulationTabId>('runs')
   const [visibleSeriesIds, setVisibleSeriesIds] = useState<Set<string>>(new Set())
   const [cursorA, setCursorA] = useState<number | null>(null)
   const [cursorB, setCursorB] = useState<number | null>(null)
   const [cursorTarget, setCursorTarget] = useState<'a' | 'b'>('a')
+  const [hydratedProjectId, setHydratedProjectId] = useState<string | null>(null)
+  const [configuredResultId, setConfiguredResultId] = useState<string | null>(null)
   const selectedId = controller.selected?.identity.resultId ?? null
+  const selectedResultPath = controller.selected?.resultPath ?? null
+  const projectScope = props.projectId && props.projectRoot
+    ? `${props.projectId}\u0000${props.projectRoot}`
+    : null
+  const hydrated = props.projectId !== null && hydratedProjectId === props.projectId
+
+  const applyViewSession = useCallback((session: SimulationSession) => {
+    setActiveTab(session.activeTab as SimulationTabId)
+    setVisibleSeriesIds(new Set(session.visibleSeriesIds))
+    setCursorA(session.cursorA)
+    setCursorB(session.cursorB)
+    setCursorTarget(session.cursorTarget)
+  }, [])
 
   useEffect(() => {
-    const plot = controller.selected?.plot
-    setVisibleSeriesIds(new Set(plot?.series.map((series) => series.id) ?? []))
-    if (plot?.series[0]) {
-      const finiteX = plot.series[0].x.filter((value): value is number => typeof value === 'number' && Number.isFinite(value))
-      setCursorA(finiteX.length ? finiteX[Math.floor((finiteX.length - 1) * 0.25)] : null)
-      setCursorB(finiteX.length ? finiteX[Math.floor((finiteX.length - 1) * 0.75)] : null)
-    } else {
-      setCursorA(null)
-      setCursorB(null)
-    }
-    setCursorTarget('a')
-    if (controller.selected) {
-      setActiveTab(
-        !controller.selected.result.success
-          ? (controller.selected.outputLog ? 'log' : 'analysis')
-          : controller.selected.result.analysis_type === 'op'
-            ? 'analysis'
-            : 'metrics',
-      )
-    }
-  }, [controller.selected])
-
-  const availableTabs = useMemo<SimulationTabId[]>(() => {
-    if (!controller.selected) return ['runs']
-    const tabs: SimulationTabId[] = ['runs', 'metrics']
-    if (controller.selected.plot) tabs.push('chart', 'waveform')
-    tabs.push('schematic', 'analysis', 'raw', 'log', 'export')
-    return tabs
-  }, [controller.selected])
+    if (projectScopeRef.current === projectScope) return
+    projectScopeRef.current = projectScope
+    restoreAttemptRef.current = null
+    setHydratedProjectId(null)
+    setConfiguredResultId(null)
+    applyViewSession(emptySimulationViewSession())
+  }, [applyViewSession, projectScope])
 
   useEffect(() => {
-    if (!availableTabs.includes(activeTab)) setActiveTab(availableTabs[0])
-  }, [activeTab, availableTabs])
+    const projectId = props.projectId
+    const projectRoot = props.projectRoot
+    if (
+      !projectId
+      || !projectRoot
+      || !projectScope
+      || projectScopeRef.current !== projectScope
+      || !controller.snapshotReady
+      || restoreAttemptRef.current === projectScope
+    ) return
+
+    restoreAttemptRef.current = projectScope
+    const workSession = getWorkSession()
+    const saved = sameProjectRoot(workSession.projectRoot, projectRoot)
+      ? workSession.simulation
+      : null
+
+    const clearAndFinish = () => {
+      const empty = emptySimulationViewSession()
+      applyViewSession(empty)
+      setConfiguredResultId(null)
+      setHydratedProjectId(projectId)
+      if (saved) updateSimulationSession(projectRoot, empty)
+    }
+
+    if (!saved?.selectedResultPath) {
+      clearAndFinish()
+      return
+    }
+
+    const summary = controller.results.find(
+      (result) => result.result_path === saved.selectedResultPath,
+    )
+    if (!summary) {
+      clearAndFinish()
+      return
+    }
+
+    void controller.selectResult(summary.result_id, summary.job_id).then((view) => {
+      if (projectScopeRef.current !== projectScope) return
+      if (!view || view.resultPath !== saved.selectedResultPath) {
+        clearAndFinish()
+        return
+      }
+      applyViewSession(restoredSimulationViewSession(view, saved))
+      setConfiguredResultId(view.identity.resultId)
+      setHydratedProjectId(projectId)
+    })
+  }, [
+    applyViewSession,
+    controller.results,
+    controller.selectResult,
+    controller.snapshotReady,
+    projectScope,
+    props.projectId,
+    props.projectRoot,
+  ])
+
+  useEffect(() => {
+    if (!hydrated || configuredResultId === selectedId) return
+    const session = controller.selected
+      ? defaultSimulationViewSession(controller.selected)
+      : emptySimulationViewSession()
+    applyViewSession(session)
+    setConfiguredResultId(selectedId)
+  }, [
+    applyViewSession,
+    configuredResultId,
+    controller.selected,
+    hydrated,
+    selectedId,
+  ])
+
+  useEffect(() => {
+    if (
+      !hydrated
+      || !props.projectId
+      || !props.projectRoot
+      || configuredResultId !== selectedId
+    ) return
+    updateSimulationSession(props.projectRoot, {
+      selectedResultPath,
+      activeTab,
+      visibleSeriesIds: [...visibleSeriesIds],
+      cursorA,
+      cursorB,
+      cursorTarget,
+    })
+  }, [
+    activeTab,
+    configuredResultId,
+    cursorA,
+    cursorB,
+    cursorTarget,
+    hydrated,
+    props.projectId,
+    props.projectRoot,
+    selectedId,
+    selectedResultPath,
+    visibleSeriesIds,
+  ])
+
+  const availableTabs = useMemo(
+    () => tabsForResult(controller.selected),
+    [controller.selected],
+  )
 
   const toggleSeries = (id: string) => setVisibleSeriesIds((current) => {
     const next = new Set(current)
@@ -642,6 +857,51 @@ export function SimulationFeature(props: SimulationFeatureProps) {
       ? (controller.selected.result.success ? 'completed' : 'failed')
       : 'idle'
 
+  const activeFileLabel = fileName(props.activeDocumentPath)
+  const runSourceDescription = controller.activeJob
+    ? `Tracking editor job for ${controller.activeJob.circuit_file}; new runs wait for its exact terminal state.`
+    : activeDocumentIsCircuit
+      ? controller.blockingJob
+        ? `An ${controller.blockingJob.origin === 'agent_tool' ? 'agent' : 'editor'} job already runs this circuit; it is observed read-only and a duplicate run is blocked.`
+        : 'Runs the saved project file; save editor changes before starting.'
+      : props.activeDocumentPath
+        ? 'Choose a supported SPICE netlist (.cir, .sp, .spice, .net, or .ckt) before running.'
+        : 'Select a SPICE circuit to run.'
+  const runControlTitle = controller.busyAction === 'run'
+    ? 'Starting simulation…'
+    : controller.activeJob
+      ? 'A simulation started from the editor is already running.'
+      : controller.blockingJob
+        ? 'A project job for this circuit is already active.'
+        : activeDocumentIsCircuit
+          ? 'Run the saved circuit file.'
+          : props.activeDocumentPath
+            ? 'Select a supported SPICE netlist first.'
+            : 'Select a SPICE circuit to run.'
+  const resultDescription = controller.selected
+    ? `${displayAnalysisType(controller.selected.result.analysis_type)} result ${controller.selected.identity.resultId}`
+    : 'No simulation result is selected.'
+  const toolbarDescription = [
+    props.activeDocumentPath ?? 'No active circuit file.',
+    runSourceDescription,
+    resultDescription,
+  ].join('\n')
+
+  useEffect(() => {
+    props.onRunControlChange?.({
+      canRun: controller.canRun,
+      busy: controller.busyAction === 'run',
+      title: runControlTitle,
+    })
+  }, [controller.busyAction, controller.canRun, props.onRunControlChange, runControlTitle])
+
+  useEffect(() => {
+    const requestId = props.runRequestId ?? 0
+    if (handledRunRequestRef.current === requestId) return
+    handledRunRequestRef.current = requestId
+    if (controller.canRun) void controller.run()
+  }, [controller.canRun, controller.run, props.runRequestId])
+
   const exportCanonicalJson = async () => {
     const exported = await controller.exportCanonicalJson()
     if (exported) downloadBlob(exported.metadata.file_name, exported.blob)
@@ -650,6 +910,8 @@ export function SimulationFeature(props: SimulationFeatureProps) {
   let content
   if (!props.projectId) {
     content = <EmptyState title="Open a project" detail="Simulation history and execution are strictly project-scoped." />
+  } else if (!controller.snapshotReady || !hydrated) {
+    content = <EmptyState title="Restoring simulation state" detail="Loading project results and the last simulation view." />
   } else if (controller.resultLoading) {
     content = <EmptyState title="Loading exact result" detail="Result and surface identities are being verified." />
   } else if (activeTab === 'runs' || !controller.selected) {
@@ -660,8 +922,11 @@ export function SimulationFeature(props: SimulationFeatureProps) {
         selectedResultId={selectedId}
         resultLoading={controller.resultLoading}
         onSelectResult={(result) => {
-          setActiveTab('metrics')
-          void controller.selectResult(result.result_id, result.job_id)
+          void controller.selectResult(result.result_id, result.job_id).then((view) => {
+            if (!view || view.identity.projectId !== props.projectId) return
+            applyViewSession(defaultSimulationViewSession(view))
+            setConfiguredResultId(view.identity.resultId)
+          })
         }}
       />
     )
@@ -708,46 +973,27 @@ export function SimulationFeature(props: SimulationFeatureProps) {
   return (
     <section className="simulation-feature" hidden={!props.active} aria-label="Circuit simulation">
       <header className="simulation-header">
-        <div className="simulation-header__identity">
-          <span className="simulation-eyebrow">Circuit simulation</span>
-          <div className="simulation-header__title-row">
-            <h1>{fileName(props.activeDocumentPath)}</h1>
-            <span className={`simulation-runtime-status simulation-runtime-status--${runStatus}`}>{runStatus}</span>
-          </div>
-          <span className="simulation-header__path simulation-mono" title={props.activeDocumentPath ?? undefined}>{props.activeDocumentPath ?? 'Select a SPICE circuit to run.'}</span>
-          {props.activeDocumentPath ? (
-            <span className={`simulation-header__run-source${activeDocumentIsCircuit ? '' : ' simulation-header__run-source--error'}`}>
-              {controller.activeJob
-                ? `Tracking editor job for ${controller.activeJob.circuit_file}; new runs wait for its exact terminal state.`
-                : activeDocumentIsCircuit
-                  ? controller.blockingJob
-                    ? `An ${controller.blockingJob.origin === 'agent_tool' ? 'agent' : 'editor'} job already runs this circuit; it is observed read-only and a duplicate run is blocked.`
-                    : 'Runs the saved project file; save editor changes before starting.'
-                  : 'Choose a supported SPICE netlist (.cir, .sp, .spice, .net, or .ckt) before running.'}
-            </span>
-          ) : null}
+        <div className="simulation-header__identity" title={toolbarDescription} aria-label={toolbarDescription}>
+          <strong className="simulation-header__label">Simulation</strong>
+          <span className="simulation-header__file simulation-mono">{activeFileLabel}</span>
+          <span className={`simulation-runtime-status simulation-runtime-status--${runStatus}`}>{runStatus}</span>
         </div>
+
+        <nav className="simulation-tabs" aria-label="Simulation result sections">
+          {availableTabs.map((tab) => (
+            <button key={tab} type="button" className={activeTab === tab ? 'is-active' : ''} aria-current={activeTab === tab ? 'page' : undefined} onClick={() => setActiveTab(tab)}>{TAB_LABELS[tab]}</button>
+          ))}
+        </nav>
+
         <div className="simulation-header__actions">
           <button type="button" className="simulation-button simulation-button--secondary" disabled={!props.projectId || controller.loading} onClick={() => void controller.refresh()}>{controller.loading ? 'Refreshing…' : 'Refresh'}</button>
           {controller.activeJob ? (
             <button type="button" className="simulation-button simulation-button--danger-ghost" disabled={controller.activeJob.cancel_requested || controller.busyAction !== null} onClick={() => void controller.cancel()}>{controller.activeJob.cancel_requested ? 'Cancelling…' : 'Cancel'}</button>
           ) : null}
-          <button type="button" className="simulation-button simulation-button--primary" title={!activeDocumentIsCircuit ? 'Select a supported SPICE netlist first' : controller.blockingJob ? 'A project job for this circuit is already active' : 'Run the saved project file'} disabled={!controller.canRun} onClick={() => void controller.run()}>{controller.busyAction === 'run' ? 'Starting…' : 'Run simulation'}</button>
         </div>
       </header>
 
       {controller.notice ? <Notice level={controller.notice.level} message={controller.notice.message} onClose={controller.clearNotice} /> : null}
-
-      <nav className="simulation-tabs" aria-label="Simulation result sections">
-        {availableTabs.map((tab) => (
-          <button key={tab} type="button" className={activeTab === tab ? 'is-active' : ''} aria-current={activeTab === tab ? 'page' : undefined} onClick={() => setActiveTab(tab)}>{TAB_LABELS[tab]}</button>
-        ))}
-        {controller.selected ? (
-          <span className="simulation-tabs__result" title={controller.selected.identity.resultId}>
-            {displayAnalysisType(controller.selected.result.analysis_type)} · {controller.selected.identity.resultId.slice(0, 10)}
-          </span>
-        ) : null}
-      </nav>
 
       <main className="simulation-content">{content}</main>
     </section>

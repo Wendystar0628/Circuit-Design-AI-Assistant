@@ -33,6 +33,7 @@ export interface SimulationNotice {
 
 export interface SimulationController {
   loading: boolean
+  snapshotReady: boolean
   resultLoading: boolean
   busyAction: string | null
   jobs: SimulationJobDto[]
@@ -45,7 +46,7 @@ export interface SimulationController {
   refresh(): Promise<void>
   run(): Promise<void>
   cancel(): Promise<void>
-  selectResult(resultId: string, expectedJobId: string | null): Promise<void>
+  selectResult(resultId: string, expectedJobId: string | null): Promise<ResultViewModel | null>
   deleteSelected(): Promise<void>
   exportCanonicalJson(): Promise<{ metadata: SimulationJsonExportResponse; blob: Blob } | null>
   clearNotice(): void
@@ -86,6 +87,7 @@ export function useSimulationController({
   const [busyAction, setBusyAction] = useState<string | null>(null)
   const [jobs, setJobs] = useState<SimulationJobDto[]>([])
   const [results, setResults] = useState<SimulationResultSummaryDto[]>([])
+  const [loadedSnapshotProjectId, setLoadedSnapshotProjectId] = useState<string | null>(null)
   const [activeJobId, setActiveJobId] = useState<string | null>(null)
   const [selected, setSelected] = useState<ResultViewModel | null>(null)
   const [notice, setNotice] = useState<SimulationNotice | null>(null)
@@ -114,6 +116,14 @@ export function useSimulationController({
   const applySnapshot = useCallback((snapshot: Awaited<ReturnType<typeof fetchSimulationSnapshot>>) => {
     setJobs(snapshot.jobs)
     setResults(snapshot.results)
+    setSelected((current) => {
+      if (!current || snapshot.results.some((result) => result.result_path === current.resultPath)) {
+        return current
+      }
+      selectedRef.current = null
+      return null
+    })
+    setLoadedSnapshotProjectId(snapshot.project_id)
   }, [])
 
   const refreshForProject = useCallback(async (expectedProjectId: string, generation: number) => {
@@ -167,6 +177,7 @@ export function useSimulationController({
     eventSequenceRef.current = -1
     setJobs([])
     setResults([])
+    setLoadedSnapshotProjectId(null)
     setActiveJobId(null)
     activeJobIdRef.current = null
     setSelected(null)
@@ -221,13 +232,14 @@ export function useSimulationController({
         generationRef.current !== generation
         || resultRequestRef.current !== request
         || projectIdRef.current !== expectedProjectId
-      ) return
+      ) return null
       if (resultResponse.job_id !== expectedJobId) {
         throw new Error('The selected history row no longer points to the same simulation job.')
       }
       const view = buildResultViewModel(resultResponse, surfaceResponse)
       selectedRef.current = view
       setSelected(view)
+      return view
     } catch (error) {
       if (
         generationRef.current === generation
@@ -238,6 +250,7 @@ export function useSimulationController({
         selectedRef.current = null
         publishNotice('error', errorText(error))
       }
+      return null
     } finally {
       if (
         generationRef.current === generation
@@ -250,8 +263,8 @@ export function useSimulationController({
   }, [publishNotice])
 
   const selectResult = useCallback(async (resultId: string, expectedJobId: string | null) => {
-    if (!projectId || !resultId) return
-    await loadResultForIdentity(projectId, resultId, expectedJobId)
+    if (!projectId || !resultId) return null
+    return loadResultForIdentity(projectId, resultId, expectedJobId)
   }, [loadResultForIdentity, projectId])
 
   useEffect(() => subscribeToSimulationEvents((event) => {
@@ -584,6 +597,7 @@ export function useSimulationController({
 
   return {
     loading,
+    snapshotReady: projectId !== null && loadedSnapshotProjectId === projectId,
     resultLoading,
     busyAction,
     jobs,

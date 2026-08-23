@@ -337,5 +337,14 @@ export type SimulationTabId =
 export interface SimulationFeatureProps {
   active: boolean
   projectId: string | null
+  projectRoot: string | null
   activeDocumentPath: string | null
+  runRequestId?: number
+  onRunControlChange?: (control: SimulationRunControlState) => void
+}
+
+export interface SimulationRunControlState {
+  canRun: boolean
+  busy: boolean
+  title: string
 }

@@ -1,12 +1,26 @@
-import { useId, useMemo, useRef, type PointerEvent } from 'react'
+import {
+  useId,
+  useMemo,
+  useRef,
+  type KeyboardEvent,
+  type PointerEvent,
+} from 'react'
 
-import { formatEngineering } from './simulationModel'
+import {
+  collectCursorSamples,
+  formatEngineering,
+  snapCursorValue,
+  stepCursorValue,
+} from './simulationModel'
 import type { AxisSide, PlotModel, PlotSeries, ResultIdentity } from './types'
 
 const WIDTH = 1000
 const HEIGHT = 480
 const MARGIN = { top: 24, right: 76, bottom: 58, left: 76 }
 const MAX_RENDER_POINTS_PER_SEGMENT = 4000
+const CURSOR_HIT_RADIUS_PX = 10
+
+type CursorId = 'a' | 'b'
 
 interface Domain {
   min: number
@@ -39,8 +53,10 @@ interface SeriesChartProps {
   visibleSeriesIds: ReadonlySet<string>
   cursorA: number | null
   cursorB: number | null
-  cursorTarget: 'a' | 'b'
-  onCursorChange(cursor: 'a' | 'b', value: number): void
+  cursorTarget: CursorId
+  onCursorTarget(cursor: CursorId): void
+  onCursorChange(cursor: CursorId, value: number | null): void
+  readoutId?: string
 }
 
 function transform(value: number | null, logarithmic: boolean): number | null {
@@ -210,11 +226,18 @@ export function SeriesChart({
   cursorA,
   cursorB,
   cursorTarget,
+  onCursorTarget,
   onCursorChange,
+  readoutId,
 }: SeriesChartProps) {
   const svgRef = useRef<SVGSVGElement | null>(null)
+  const dragRef = useRef<{ pointerId: number; cursor: CursorId } | null>(null)
   const clipId = useId().replaceAll(':', '')
   const geometry = useMemo(() => buildGeometry(model, visibleSeriesIds), [model, visibleSeriesIds])
+  const cursorSamples = useMemo(
+    () => collectCursorSamples(model, visibleSeriesIds),
+    [model, visibleSeriesIds],
+  )
   if (!geometry) {
     return <div className="simulation-empty simulation-empty--chart">No visible finite samples.</div>
   }
@@ -228,14 +251,105 @@ export function SeriesChart({
     result_id: identity.resultId,
   })
 
-  const handlePointer = (event: PointerEvent<SVGSVGElement>) => {
-    const bounds = svgRef.current?.getBoundingClientRect()
-    if (!bounds) return
-    const svgX = (event.clientX - bounds.left) / bounds.width * WIDTH
-    if (svgX < MARGIN.left || svgX > WIDTH - MARGIN.right) return
+  const eventPoint = (event: PointerEvent<SVGSVGElement>) => {
+    const svg = svgRef.current
+    const matrix = svg?.getScreenCTM()
+    if (!svg || !matrix) return null
+    const point = svg.createSVGPoint()
+    point.x = event.clientX
+    point.y = event.clientY
+    return {
+      local: point.matrixTransform(matrix.inverse()),
+      scaleX: Math.hypot(matrix.a, matrix.b),
+    }
+  }
+
+  const moveCursor = (cursor: CursorId, svgX: number) => {
+    const clampedX = Math.max(MARGIN.left, Math.min(WIDTH - MARGIN.right, svgX))
     const transformed = geometry.xDomain.min
-      + (svgX - MARGIN.left) / plotWidth * (geometry.xDomain.max - geometry.xDomain.min)
-    onCursorChange(cursorTarget, displayAxisValue(transformed, model.logX))
+      + (clampedX - MARGIN.left) / plotWidth * (geometry.xDomain.max - geometry.xDomain.min)
+    const snapped = snapCursorValue(
+      cursorSamples,
+      displayAxisValue(transformed, model.logX),
+      model.logX,
+    )
+    if (snapped !== null) onCursorChange(cursor, snapped)
+  }
+
+  const cursorAtPoint = (svgX: number, scaleX: number): CursorId => {
+    const hitRadius = scaleX > 0 ? CURSOR_HIT_RADIUS_PX / scaleX : 0
+    const candidates: Array<{ cursor: CursorId; distance: number }> = []
+    if (cursorAX !== null) {
+      candidates.push({ cursor: 'a', distance: Math.abs(cursorAX - svgX) })
+    }
+    if (cursorBX !== null) {
+      candidates.push({ cursor: 'b', distance: Math.abs(cursorBX - svgX) })
+    }
+    candidates.sort((left, right) => {
+      const distance = left.distance - right.distance
+      if (distance !== 0) return distance
+      if (left.cursor === cursorTarget) return -1
+      if (right.cursor === cursorTarget) return 1
+      return 0
+    })
+    const closest = candidates[0]
+    return closest && closest.distance <= hitRadius ? closest.cursor : cursorTarget
+  }
+
+  const handlePointerDown = (event: PointerEvent<SVGSVGElement>) => {
+    const point = eventPoint(event)
+    if (!point) return
+    const { x, y } = point.local
+    if (
+      x < MARGIN.left
+      || x > WIDTH - MARGIN.right
+      || y < MARGIN.top
+      || y > HEIGHT - MARGIN.bottom
+    ) return
+
+    const cursor = cursorAtPoint(x, point.scaleX)
+    dragRef.current = { pointerId: event.pointerId, cursor }
+    event.currentTarget.setPointerCapture(event.pointerId)
+    event.currentTarget.focus({ preventScroll: true })
+    onCursorTarget(cursor)
+    moveCursor(cursor, x)
+    event.preventDefault()
+  }
+
+  const handlePointerMove = (event: PointerEvent<SVGSVGElement>) => {
+    const drag = dragRef.current
+    if (!drag || drag.pointerId !== event.pointerId) return
+    const point = eventPoint(event)
+    if (!point) return
+    moveCursor(drag.cursor, point.local.x)
+    event.preventDefault()
+  }
+
+  const finishPointer = (event: PointerEvent<SVGSVGElement>) => {
+    if (dragRef.current?.pointerId !== event.pointerId) return
+    dragRef.current = null
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+  }
+
+  const handleKeyDown = (event: KeyboardEvent<SVGSVGElement>) => {
+    if (event.key === 'Delete' || event.key === 'Backspace') {
+      onCursorChange(cursorTarget, null)
+      event.preventDefault()
+      return
+    }
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+    const current = cursorTarget === 'a' ? cursorA : cursorB
+    const next = stepCursorValue(
+      cursorSamples,
+      current,
+      event.key === 'ArrowLeft' ? -1 : 1,
+      model.logX,
+      event.shiftKey,
+    )
+    if (next !== null) onCursorChange(cursorTarget, next)
+    event.preventDefault()
   }
 
   return (
@@ -243,9 +357,17 @@ export function SeriesChart({
       ref={svgRef}
       className="simulation-chart"
       viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
-      role="img"
-      aria-label={`${model.title}. Click the plot to place cursor ${cursorTarget.toUpperCase()}.`}
-      onPointerDown={handlePointer}
+      role="application"
+      tabIndex={0}
+      aria-describedby={readoutId}
+      aria-keyshortcuts="ArrowLeft ArrowRight Shift+ArrowLeft Shift+ArrowRight Delete Backspace"
+      aria-label={`${model.title}. Click or drag to move active cursor ${cursorTarget.toUpperCase()}. Use Left and Right arrows to move by one sample, Shift with an arrow to move by ten samples, and Delete to clear it.`}
+      onKeyDown={handleKeyDown}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={finishPointer}
+      onPointerCancel={finishPointer}
+      onLostPointerCapture={() => { dragRef.current = null }}
     >
       <metadata>{metadata}</metadata>
       <defs>
@@ -302,11 +424,11 @@ export function SeriesChart({
             />
           ))
         })}
-        {cursorAX !== null ? <line x1={cursorAX} y1={MARGIN.top} x2={cursorAX} y2={HEIGHT - MARGIN.bottom} className="simulation-chart__cursor simulation-chart__cursor--a" /> : null}
-        {cursorBX !== null ? <line x1={cursorBX} y1={MARGIN.top} x2={cursorBX} y2={HEIGHT - MARGIN.bottom} className="simulation-chart__cursor simulation-chart__cursor--b" /> : null}
+        {cursorAX !== null ? <line x1={cursorAX} y1={MARGIN.top} x2={cursorAX} y2={HEIGHT - MARGIN.bottom} className={`simulation-chart__cursor simulation-chart__cursor--a${cursorTarget === 'a' ? ' is-active' : ''}`} /> : null}
+        {cursorBX !== null ? <line x1={cursorBX} y1={MARGIN.top} x2={cursorBX} y2={HEIGHT - MARGIN.bottom} className={`simulation-chart__cursor simulation-chart__cursor--b${cursorTarget === 'b' ? ' is-active' : ''}`} /> : null}
       </g>
-      {cursorAX !== null ? <text x={cursorAX + 5} y={MARGIN.top + 14} className="simulation-chart__cursor-label simulation-chart__cursor-label--a">A</text> : null}
-      {cursorBX !== null ? <text x={cursorBX + 5} y={MARGIN.top + 30} className="simulation-chart__cursor-label simulation-chart__cursor-label--b">B</text> : null}
+      {cursorAX !== null ? <text x={cursorAX + 5} y={MARGIN.top + 14} className={`simulation-chart__cursor-label simulation-chart__cursor-label--a${cursorTarget === 'a' ? ' is-active' : ''}`}>A</text> : null}
+      {cursorBX !== null ? <text x={cursorBX + 5} y={MARGIN.top + 30} className={`simulation-chart__cursor-label simulation-chart__cursor-label--b${cursorTarget === 'b' ? ' is-active' : ''}`}>B</text> : null}
       <text x={WIDTH / 2} y={HEIGHT - 12} textAnchor="middle" className="simulation-chart__axis-title">
         {model.xLabel}{model.xUnit ? ` (${model.xUnit})` : ''}
       </text>

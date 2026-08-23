@@ -64,7 +64,7 @@ textarea:focus-visible {
 
 .desktop-shell {
   display: grid;
-  grid-template-rows: 44px auto minmax(0, 1fr) 24px;
+  grid-template-rows: 42px minmax(0, 1fr);
   width: 100%;
   height: 100%;
   background: var(--app-bg);
@@ -73,9 +73,10 @@ textarea:focus-visible {
 .app-header {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
+  gap: var(--space-2);
   min-width: 0;
-  padding: 0 var(--space-3);
+  min-height: 0;
+  padding: 0 10px;
   border-bottom: 1px solid var(--border);
   background: rgba(255, 255, 255, 0.96);
 }
@@ -189,93 +190,82 @@ textarea:focus-visible {
   white-space: nowrap;
 }
 
+.desktop-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .feature-grid {
   display: grid;
   grid-template-columns:
-    minmax(440px, 1.35fr)
-    minmax(330px, 1fr)
-    minmax(340px, 0.95fr);
-  gap: var(--space-2);
+    clamp(600px, var(--workbench-size, 70%), calc(100% - 305px))
+    5px
+    minmax(300px, 1fr);
+  flex: 1 1 auto;
+  gap: 0;
   min-width: 0;
   min-height: 0;
-  padding: var(--space-2);
-  overflow: auto;
+  padding: 0;
+  overflow: hidden;
+  background: var(--border);
+  container-name: desktop-workbench;
+  container-type: inline-size;
 }
 
-.feature-column {
+.feature-stack {
   display: grid;
-  grid-template-rows: 31px minmax(0, 1fr);
+  grid-template-rows:
+    clamp(320px, var(--workspace-size, 78%), calc(100% - 125px))
+    5px
+    minmax(120px, 1fr);
+  gap: 0;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
+  background: var(--border);
+  container-name: left-workbench;
+  container-type: inline-size;
+}
+
+.feature-pane {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
   background: var(--surface);
+  container-type: inline-size;
 }
 
-.feature-column[data-active="true"] {
-  border-color: var(--border-strong);
-  box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.08);
+.feature-pane--workspace {
+  grid-row: 1;
+  container-name: workspace-pane;
 }
 
-.feature-column__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  min-width: 0;
-  padding: 0 10px;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface-soft);
-  color: #334155;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.025em;
-  text-transform: uppercase;
+.feature-pane--simulation {
+  grid-row: 3;
+  container-name: simulation-pane;
 }
 
-.feature-column__header span:last-child {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--text-muted);
-  font-size: 10px;
-  font-weight: 500;
-  letter-spacing: 0;
-  text-overflow: ellipsis;
-  text-transform: none;
-  white-space: nowrap;
+.feature-pane--conversation {
+  grid-column: 3;
+  grid-row: 1;
+  container-name: conversation-pane;
 }
 
-.feature-column__body {
-  min-width: 0;
-  min-height: 0;
-  overflow: hidden;
+.feature-grid > .split-handle {
+  grid-column: 2;
+  grid-row: 1;
 }
 
-.feature-column__body > * {
+.feature-stack > .split-handle {
+  grid-row: 2;
+}
+
+.feature-pane > * {
   width: 100%;
   height: 100%;
-}
-
-.app-statusbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  min-width: 0;
-  padding: 0 var(--space-3);
-  overflow: hidden;
-  border-top: 1px solid var(--border);
-  background: #eef3f9;
-  color: var(--text-muted);
-  font-size: 10px;
-}
-
-.app-statusbar span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .feature-failure {

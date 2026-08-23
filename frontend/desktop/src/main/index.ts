@@ -397,10 +397,10 @@ function requiredDevelopmentRendererUrl(): string {
 
 function createMainWindow(): BrowserWindow {
   const window = new BrowserWindow({
-    width: 1560,
-    height: 960,
-    minWidth: 1180,
-    minHeight: 720,
+    width: 1400,
+    height: 900,
+    minWidth: 1200,
+    minHeight: 800,
     show: false,
     autoHideMenuBar: true,
     backgroundColor: '#f4f7fb',

@@ -757,7 +757,6 @@ class ApplicationRuntime:
             "project_id": project_id,
             "context_id": context_id,
             "active_run_id": self._active_run_id or "",
-            "ui": {"active_surface": "conversation"},
             "ui_text": {},
             "session": {
                 "id": session_id,
@@ -784,7 +783,6 @@ class ApplicationRuntime:
                 "model_display_name": active.display_name,
                 "action_mode": "stop" if is_generating else ("send" if self.llm_client else "unavailable"),
                 "action_status": "",
-                "clear_draft_nonce": 0,
                 "pending_workspace_edit_summary": _json_safe(pending_summary),
             },
             "view_flags": {

@@ -12,11 +12,11 @@ import {
 } from './types'
 
 export interface ConversationActions {
-  activateSurface(surfaceId: 'conversation' | 'rag'): void
   sendMessage(
     contextId: string,
     text: string,
     composerState: { attachments: ConversationAttachmentState[] },
+    onAccepted: () => void,
   ): void
   requestStop(contextId: string, activeRunId: string): void
   requestNewConversation(contextId: string): void
@@ -259,14 +259,7 @@ export function createConversationActions(
   }
 
   return {
-    activateSurface(surfaceId) {
-      dependencies.updateState((current) => ({
-        ...current,
-        ui: { ...current.ui, active_surface: surfaceId },
-      }))
-    },
-
-    sendMessage(contextId, text, composerState) {
+    sendMessage(contextId, text, composerState, onAccepted) {
       const session = currentSession()
       const submittedText = text.trim()
       if (!session || session.contextId !== contextId || !submittedText || sendRequestInFlight) {
@@ -294,6 +287,7 @@ export function createConversationActions(
           ) {
             return
           }
+          onAccepted()
           dependencies.updateState((current) => {
             const lastMessage = current.conversation.messages.at(-1)
             const messages = lastMessage?.role === 'user' && lastMessage.content === submittedText
@@ -326,7 +320,6 @@ export function createConversationActions(
               composer: {
                 ...current.composer,
                 action_mode: 'stop',
-                clear_draft_nonce: current.composer.clear_draft_nonce + 1,
               },
               view_flags: {
                 ...current.view_flags,

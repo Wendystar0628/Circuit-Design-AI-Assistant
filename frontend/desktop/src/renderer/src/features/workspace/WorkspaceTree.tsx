@@ -138,31 +138,39 @@ export function WorkspaceTree({
 
   if (collapsed) {
     return (
-      <aside className="workspace-explorer workspace-explorer--collapsed">
+      <aside className="workspace-explorer workspace-explorer--collapsed" data-layout-surface="explorer">
         <button type="button" className="workspace-icon-button" aria-label="Expand explorer" onClick={onToggleCollapsed}>›</button>
       </aside>
     )
   }
 
   return (
-    <aside className="workspace-explorer">
+    <aside className="workspace-explorer" data-layout-surface="explorer">
       <header className="workspace-explorer__header">
         <strong title={project?.root}>{project?.name || 'Workspace'}</strong>
         <div className="workspace-explorer__header-actions">
-          <button type="button" className="workspace-icon-button" title="Refresh" aria-label="Refresh" disabled={!project || loading} onClick={onRefresh}>↻</button>
           <button type="button" className="workspace-icon-button" title="Collapse explorer" aria-label="Collapse explorer" onClick={onToggleCollapsed}>‹</button>
+          <button type="button" className="workspace-icon-button" title="Refresh" aria-label="Refresh" disabled={!project || loading} onClick={onRefresh}>↻</button>
         </div>
       </header>
-      <div className="workspace-explorer__project-actions">
-        <button type="button" className="workspace-button workspace-button--primary" disabled={busy} onClick={onOpenProject}>
-          {project ? 'Open another' : 'Open project'}
-        </button>
-        {project ? <button type="button" className="workspace-button" disabled={busy} onClick={onCloseProject}>Close</button> : null}
-      </div>
       {project ? (
-        <div className="workspace-explorer__entry-actions">
-          <button type="button" onClick={() => onEntryAction('create-file', null)}>New file</button>
-          <button type="button" onClick={() => onEntryAction('create-directory', null)}>New folder</button>
+        <div className="workspace-explorer__toolbar" aria-label="Workspace actions">
+          <button
+            type="button"
+            className="workspace-button workspace-button--primary workspace-explorer__open-button"
+            title="Open another project"
+            disabled={busy}
+            onClick={onOpenProject}
+          >
+            Open
+          </button>
+            <button type="button" className="workspace-icon-button" title="New file" aria-label="New file" onClick={() => onEntryAction('create-file', null)}>
+              <span aria-hidden="true">F+</span>
+            </button>
+            <button type="button" className="workspace-icon-button" title="New folder" aria-label="New folder" onClick={() => onEntryAction('create-directory', null)}>
+              <span aria-hidden="true">D+</span>
+            </button>
+            <button type="button" className="workspace-icon-button workspace-explorer__close-button" title="Close project" aria-label="Close project" disabled={busy} onClick={onCloseProject}>×</button>
         </div>
       ) : null}
       <div className="workspace-tree" role="tree" aria-label="Project files">

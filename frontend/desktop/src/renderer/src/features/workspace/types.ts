@@ -32,6 +32,9 @@ export interface WorkspaceDocument {
   readonly: boolean
   dirty: boolean
   missing: boolean
+  cursorLine: number
+  cursorColumn: number
+  markdownPreview: boolean
 }
 
 export interface ProjectWire {
@@ -120,5 +123,8 @@ export function documentFromWire(document: WorkspaceDocumentWire): WorkspaceDocu
     readonly: document.readonly,
     dirty: false,
     missing: false,
+    cursorLine: 1,
+    cursorColumn: 1,
+    markdownPreview: true,
   }
 }

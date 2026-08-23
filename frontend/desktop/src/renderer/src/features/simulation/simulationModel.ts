@@ -632,6 +632,104 @@ export function nearestSampleIndex(x: Array<number | null>, position: number): n
   return bestIndex
 }
 
+function displayedCursorValue(value: number, logarithmic: boolean): number | null {
+  if (!Number.isFinite(value)) return null
+  if (!logarithmic) return value
+  return value > 0 ? Math.log10(value) : null
+}
+
+/**
+ * Returns the raw X samples that can actually be reached on the visible plot.
+ * The values are unique and sorted from left to right in display space.
+ */
+export function collectCursorSamples(
+  model: PlotModel,
+  visibleSeriesIds: ReadonlySet<string>,
+): number[] {
+  const samples = new Set<number>()
+
+  model.series.forEach((series) => {
+    if (!visibleSeriesIds.has(series.id)) return
+    const logarithmicY = series.axis === 'right' ? model.logRightY : model.logLeftY
+    const count = Math.min(series.x.length, series.y.length)
+    for (let index = 0; index < count; index += 1) {
+      const x = series.x[index]
+      const y = series.y[index]
+      if (x === null || y === null) continue
+      if (displayedCursorValue(x, model.logX) === null) continue
+      if (displayedCursorValue(y, logarithmicY) === null) continue
+      samples.add(x)
+    }
+  })
+
+  return [...samples].sort((left, right) => (
+    (displayedCursorValue(left, model.logX) as number)
+    - (displayedCursorValue(right, model.logX) as number)
+  ))
+}
+
+function nearestCursorSampleIndex(
+  samples: readonly number[],
+  position: number,
+  logarithmic: boolean,
+): number | null {
+  if (!samples.length) return null
+  const target = displayedCursorValue(position, logarithmic)
+  if (target === null) return null
+
+  const first = displayedCursorValue(samples[0], logarithmic)
+  const last = displayedCursorValue(samples[samples.length - 1], logarithmic)
+  if (first === null || last === null) return null
+  if (target <= first) return 0
+  if (target >= last) return samples.length - 1
+
+  let lower = 0
+  let upper = samples.length - 1
+  while (upper - lower > 1) {
+    const middle = lower + Math.floor((upper - lower) / 2)
+    const displayed = displayedCursorValue(samples[middle], logarithmic)
+    if (displayed === null) return null
+    if (displayed <= target) lower = middle
+    else upper = middle
+  }
+
+  const lowerValue = displayedCursorValue(samples[lower], logarithmic) as number
+  const upperValue = displayedCursorValue(samples[upper], logarithmic) as number
+  return target - lowerValue <= upperValue - target ? lower : upper
+}
+
+/** Snaps a raw X position to the nearest plotted sample in display space. */
+export function snapCursorValue(
+  samples: readonly number[],
+  position: number,
+  logarithmic: boolean,
+): number | null {
+  const index = nearestCursorSampleIndex(samples, position, logarithmic)
+  return index === null ? null : samples[index]
+}
+
+/**
+ * Moves a cursor along the plotted sample axis. A coarse step advances ten
+ * samples. When no cursor exists yet, right starts at the first sample and
+ * left starts at the last sample.
+ */
+export function stepCursorValue(
+  samples: readonly number[],
+  current: number | null,
+  direction: -1 | 1,
+  logarithmic: boolean,
+  coarse = false,
+): number | null {
+  if (!samples.length) return null
+  if (current === null) return direction > 0 ? samples[0] : samples[samples.length - 1]
+
+  const currentIndex = nearestCursorSampleIndex(samples, current, logarithmic)
+  if (currentIndex === null) return direction > 0 ? samples[0] : samples[samples.length - 1]
+  const distance = coarse ? 10 : 1
+  const nextIndex = Math.max(0, Math.min(samples.length - 1, currentIndex + direction * distance))
+  return samples[nextIndex]
+}
+
 export function formatEngineering(value: number | null, unit = ''): string {
   if (value === null || !Number.isFinite(value)) return '—'
   if (value === 0) return `0${unit ? ` ${unit}` : ''}`

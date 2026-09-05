@@ -4,13 +4,13 @@ SPICE 仿真执行器
 
 职责：
 - 通过 NgSpiceWrapper 执行 SPICE 电路仿真
-- 执行主网表中唯一的 AC、DC、瞬态、噪声或工作点分析卡
+- 执行显式实验选择的 AC、DC、瞬态、噪声或工作点分析
 - 把递归 include/lib 源闭包固定到不可变临时镜像后再运行
 
 执行模式说明：
 - 通过 ctypes 直接调用 ngspice 共享库
-- ngspice 在同一进程内执行，不需要启动独立子进程
-- 这种模式性能更高，且完全控制与 ngspice 的交互
+- 该适配器运行于 ProcessSpiceExecutor 为当次任务建立的独立进程
+- 共享库崩溃、超时与取消由父进程监督，不复用前一次任务的原生状态
 
 源文件策略：
 - 主文件与依赖各读取一次，由同一 source-closure graph 产生摘要与运行镜像
@@ -22,6 +22,7 @@ SPICE 仿真执行器
 
 import logging
 import math
+import platform
 import re
 import threading
 import time
@@ -68,6 +69,12 @@ from domain.simulation.spice.source_closure import (
     SpiceSourceClosureError,
     SpiceSourceView,
     snapshot_spice_source_closure,
+    export_spice_source_graph,
+)
+from domain.simulation.models.experiment import ExperimentSpec
+from domain.simulation.spice.experiment_deck import (
+    compile_experiment_graph,
+    source_solver_options,
 )
 from infrastructure.utils.ngspice_config import (
     is_ngspice_available,
@@ -104,11 +111,6 @@ _UNSUPPORTED_ANALYSIS_DIRECTIVES = frozenset(
         ".tf",
     }
 )
-
-# ngspice silently ignores unknown solver options and clamps some invalid
-# values (for example ``maxord``) without a machine-readable result contract.
-# A partial allow-list would therefore still admit scientific false-successes.
-_UNSUPPORTED_RUNTIME_DIRECTIVES = frozenset({".option", ".options"})
 
 # Exact native diagnostics where ngspice continues by discarding or replacing
 # user intent.  These are scientific failures, not harmless warnings: a model
@@ -243,8 +245,10 @@ class SpiceExecutor:
         file_path: str,
         *,
         cancel_signal: Optional[object] = None,
+        experiment: Optional[ExperimentSpec] = None,
+        source_snapshot: Optional[dict] = None,
     ) -> SimulationResult:
-        """Execute one source-owned SPICE deck within one total deadline.
+        """Execute one frozen source plus explicit experiment within one deadline.
 
         Source resolution, closure snapshotting and policy validation happen
         before the native lock. Lock acquisition is deadline/cancellation
@@ -252,7 +256,21 @@ class SpiceExecutor:
         destroy/load/run/vector-read transaction.
         """
         started_at = time.monotonic()
-        deadline = time.monotonic() + self._timeout_seconds
+        provenance_holder: dict = {}
+        try:
+            if experiment is not None and not isinstance(experiment, ExperimentSpec):
+                raise ValueError("experiment must be an ExperimentSpec")
+            effective_experiment = (
+                ExperimentSpec.from_dict(experiment.to_dict())
+                if experiment is not None
+                else ExperimentSpec(timeout_seconds=self._timeout_seconds)
+            )
+        except ValueError as exc:
+            result = self._parameter_error(file_path, "unknown", str(exc))
+            result.duration_seconds = time.monotonic() - started_at
+            result.provenance = None
+            return result
+        deadline = started_at + effective_experiment.timeout_seconds
         if cancel_signal is not None and not all(
             callable(getattr(cancel_signal, method, None))
             for method in ("is_set", "wait")
@@ -273,8 +291,12 @@ class SpiceExecutor:
                 file_path,
                 cancel_signal=cancel_signal,
                 deadline=deadline,
+                experiment=effective_experiment,
+                source_snapshot=source_snapshot,
+                provenance_holder=provenance_holder,
             )
         result.duration_seconds = time.monotonic() - started_at
+        result.provenance = provenance_holder.get("value")
         return result
 
     def _execute(
@@ -283,10 +305,17 @@ class SpiceExecutor:
         *,
         cancel_signal: Optional[object],
         deadline: float,
+        experiment: ExperimentSpec,
+        source_snapshot: Optional[dict],
+        provenance_holder: dict,
     ) -> SimulationResult:
-        """Build one immutable closure, then execute its single analysis."""
+        """Compile an experiment from frozen sources, then execute its analysis."""
         analysis_type = "unknown"
-        circuit_path, error_msg = self._resolve_source_path(file_path)
+        circuit_path, error_msg = (
+            (Path(file_path).expanduser().resolve(), None)
+            if source_snapshot is not None and self.can_handle(file_path)
+            else self._resolve_source_path(file_path)
+        )
         if circuit_path is None:
             return create_error_result(
                 executor=self.get_name(),
@@ -301,7 +330,7 @@ class SpiceExecutor:
             )
 
         try:
-            source_bytes = circuit_path.read_bytes()
+            source_bytes = None if source_snapshot is not None else circuit_path.read_bytes()
         except OSError as exc:
             return create_error_result(
                 executor=self.get_name(),
@@ -319,6 +348,7 @@ class SpiceExecutor:
             source_closure = snapshot_spice_source_closure(
                 circuit_path,
                 main_bytes=source_bytes,
+                **({"source_snapshot": source_snapshot} if source_snapshot is not None else {}),
             )
         except SpiceSourceClosureError as exc:
             return create_error_result(
@@ -339,6 +369,10 @@ class SpiceExecutor:
         with source_closure:
             source_digest = source_closure.digest
             source_text = source_closure.main_text
+            original_source = export_spice_source_graph(source_closure.graph)
+            provenance_holder["value"] = self._capture_run_provenance(
+                source_closure, experiment, original_source, []
+            )
 
             control_commands = source_closure.graph.control_commands
             if control_commands:
@@ -373,6 +407,21 @@ class SpiceExecutor:
                         + details
                     ),
                     source_digest=source_digest,
+                )
+
+            try:
+                graph, selected_command, omitted = compile_experiment_graph(source_closure.graph, experiment)
+                if graph is not source_closure.graph:
+                    source_closure.replace_graph(graph)
+                source_digest = source_closure.digest
+                source_text = source_closure.main_text
+                provenance_holder["value"] = self._capture_run_provenance(
+                    source_closure, experiment, original_source, omitted,
+                    analysis_command=selected_command,
+                )
+            except ValueError as exc:
+                return self._parameter_error(
+                    str(circuit_path), analysis_type, str(exc), source_digest=source_digest,
                 )
 
             analysis_commands = source_closure.graph.main_analysis_commands
@@ -596,6 +645,26 @@ class SpiceExecutor:
             bool: ngspice 是否已正确配置且可用
         """
         return self._ngspice is not None and self._ngspice.initialized
+
+    def _capture_run_provenance(self, source_closure, experiment, original_source, omitted, *, analysis_command="") -> dict:
+        root = source_closure.snapshot_root
+        files = [
+            {"path": path.relative_to(root).as_posix(), "content": path.read_text(encoding="utf-8")}
+            for path in sorted((root / "sources").iterdir()) if path.is_file()
+        ]
+        files.insert(0, {"path": "circuit.cir", "content": source_closure.main_text})
+        request = experiment.to_dict()
+        if analysis_command:
+            request["analysis_command"] = analysis_command
+        return {
+            "schema_version": 1, "experiment": request,
+            "original_source": original_source,
+            "effective_source": export_spice_source_graph(source_closure.graph),
+            "runtime": {"entry_path": "circuit.cir", "root": root.as_posix(), "files": files},
+            "engine": {"name": "ngspice", "version": getattr(self._ngspice, "engine_version", None), "platform": platform.platform(),
+                       "execution_mode": "in_process"},
+            "omitted_measurements": omitted,
+        }
     
     # ============================================================
     # 内部方法
@@ -1221,17 +1290,11 @@ class SpiceExecutor:
     def _runtime_options_preflight_error(
         source_views: Sequence[SpiceSourceView],
     ) -> Optional[str]:
-        locations = SpiceExecutor._top_level_directive_locations(
-            source_views,
-            _UNSUPPORTED_RUNTIME_DIRECTIVES,
-        )
-        if not locations:
-            return None
-        return (
-            "不支持顶层 .option/.options：ngspice 会静默忽略或替换"
-            "部分运行参数，无法证明执行语义与源网表一致: "
-            + "; ".join(locations)
-        )
+        try:
+            source_solver_options(source_views)
+        except ValueError as exc:
+            return f".option/.options 无效: {exc}"
+        return None
 
     @staticmethod
     def _top_level_directive_locations(

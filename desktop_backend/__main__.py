@@ -4,10 +4,7 @@ from __future__ import annotations
 
 import argparse
 import re
-
-import uvicorn
-
-from desktop_backend.app import create_app
+import sys
 
 
 _TOKEN_PATTERN = re.compile(r"^[0-9a-fA-F]{64}$")
@@ -24,6 +21,16 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
+    if sys.argv[1:2] == ["--simulation-worker"]:
+        from domain.simulation.executor.spice_worker import main as worker_main
+
+        worker_main(sys.argv[2:])
+        return
+
+    import uvicorn
+
+    from desktop_backend.app import create_app
+
     args = build_parser().parse_args()
     if args.host not in _LOOPBACK_HOSTS:
         raise SystemExit("--host must be a loopback address")

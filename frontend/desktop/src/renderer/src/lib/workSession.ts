@@ -2,15 +2,12 @@ export const WORK_SESSION_STORAGE_KEY = 'circuit-design-ai.work-session.v1'
 export const WORK_SESSION_VERSION = 1 as const
 
 export const WORK_SESSION_SIMULATION_TABS = [
-  'runs',
-  'metrics',
-  'chart',
-  'waveform',
-  'schematic',
-  'analysis',
+  'experiment',
+  'waveforms',
+  'measurements',
+  'topology',
   'raw',
   'log',
-  'export',
 ] as const
 
 export type WorkSessionSimulationTab = typeof WORK_SESSION_SIMULATION_TABS[number]
@@ -34,11 +31,17 @@ export interface WorkspaceSession {
 
 export interface SimulationSession {
   selectedResultPath: string | null
+  baselineResultPath: string | null
   activeTab: WorkSessionSimulationTab
-  visibleSeriesIds: string[]
+  traces: Array<{
+    signal: string
+    reference?: string | null
+    component: 'real' | 'imaginary' | 'magnitude' | 'db' | 'phase'
+  }>
   cursorA: number | null
   cursorB: number | null
   cursorTarget: WorkSessionCursorTarget
+  xRange: [number, number] | null
 }
 
 export interface ConversationSession {
@@ -74,11 +77,13 @@ function emptyWorkspaceSession(): WorkspaceSession {
 function emptySimulationSession(): SimulationSession {
   return {
     selectedResultPath: null,
-    activeTab: 'runs',
-    visibleSeriesIds: [],
+    baselineResultPath: null,
+    activeTab: 'experiment',
+    traces: [],
     cursorA: null,
     cursorB: null,
     cursorTarget: 'a',
+    xRange: null,
   }
 }
 
@@ -170,28 +175,68 @@ function normalizeWorkspace(value: unknown): WorkspaceSession | null {
 
 function normalizeSimulation(value: unknown): SimulationSession | null {
   const simulation = recordValue(value)
-  if (!simulation || !Array.isArray(simulation.visibleSeriesIds)) return null
+  if (!simulation) return null
+  // Replace the former plot presentation state without discarding editor or chat state.
+  if ('visibleSeriesIds' in simulation) {
+    const previousTabs: Record<string, WorkSessionSimulationTab> = {
+      chart: 'waveforms', waveform: 'waveforms', metrics: 'measurements',
+      schematic: 'topology', analysis: 'experiment', export: 'experiment',
+      runs: 'experiment', raw: 'raw', log: 'log',
+    }
+    return {
+      ...emptySimulationSession(),
+      selectedResultPath: nullableString(simulation.selectedResultPath) ?? null,
+      activeTab: typeof simulation.activeTab === 'string'
+        ? previousTabs[simulation.activeTab] ?? 'experiment'
+        : 'experiment',
+    }
+  }
+  if (!Array.isArray(simulation.traces)) return null
   if (
-    !simulation.visibleSeriesIds.every((id) => typeof id === 'string' && Boolean(id))
-    || typeof simulation.activeTab !== 'string'
+    typeof simulation.activeTab !== 'string'
     || !SIMULATION_TAB_SET.has(simulation.activeTab)
     || (simulation.cursorTarget !== 'a' && simulation.cursorTarget !== 'b')
   ) return null
+  const traces: SimulationSession['traces'] = []
+  const traceKeys = new Set<string>()
+  const components = new Set(['real', 'imaginary', 'magnitude', 'db', 'phase'])
+  for (const item of simulation.traces) {
+    const trace = recordValue(item)
+    if (!trace || typeof trace.signal !== 'string' || !trace.signal
+      || typeof trace.component !== 'string' || !components.has(trace.component)) return null
+    const reference = trace.reference === undefined ? null : nullableString(trace.reference)
+    if (reference === undefined || reference === '') return null
+    const key = JSON.stringify([trace.signal, reference, trace.component])
+    if (traceKeys.has(key)) continue
+    traceKeys.add(key)
+    traces.push({ signal: trace.signal, reference, component: trace.component as SimulationSession['traces'][number]['component'] })
+  }
   const selectedResultPath = nullableString(simulation.selectedResultPath)
+  const baselineResultPath = nullableString(simulation.baselineResultPath)
   const cursorA = finiteNumberOrNull(simulation.cursorA)
   const cursorB = finiteNumberOrNull(simulation.cursorB)
   if (
     selectedResultPath === undefined
+    || baselineResultPath === undefined
     || cursorA === undefined
     || cursorB === undefined
   ) return null
+  let xRange: [number, number] | null = null
+  if (simulation.xRange !== null) {
+    if (!Array.isArray(simulation.xRange) || simulation.xRange.length !== 2
+      || !simulation.xRange.every((value) => typeof value === 'number' && Number.isFinite(value))
+      || simulation.xRange[0] >= simulation.xRange[1]) return null
+    xRange = [simulation.xRange[0], simulation.xRange[1]]
+  }
   return {
     selectedResultPath,
+    baselineResultPath,
     activeTab: simulation.activeTab as WorkSessionSimulationTab,
-    visibleSeriesIds: [...new Set(simulation.visibleSeriesIds as string[])],
+    traces,
     cursorA,
     cursorB,
     cursorTarget: simulation.cursorTarget,
+    xRange,
   }
 }
 
@@ -295,7 +340,8 @@ function cloneSession(session: WorkSessionV1): WorkSessionV1 {
     },
     simulation: {
       ...session.simulation,
-      visibleSeriesIds: [...session.simulation.visibleSeriesIds],
+      traces: session.simulation.traces.map((trace) => ({ ...trace })),
+      xRange: session.simulation.xRange ? [...session.simulation.xRange] : null,
     },
     conversation: { ...session.conversation },
   }

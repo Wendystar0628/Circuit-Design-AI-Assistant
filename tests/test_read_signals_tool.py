@@ -212,3 +212,34 @@ def test_series_stats_rejects_misaligned_signal_columns():
             x_values=[0.0, 1.0, 2.0],
             signal_columns={"V(out)": [0.0, 1.0]},
         )
+
+
+def test_read_signals_nested_dc_keeps_native_rows_and_outer_branch_identity(tmp_path: Path):
+    result = _successful_result(
+        tmp_path, file_path="circuits/nested.cir", analysis_type="dc",
+        analysis_command=".dc V1 0 1 1 V2 1 3 1",
+        data=SimulationData(sweep=np.array([0., 1., 0., 1., 0., 1.]),
+                            signals={"V(out)": np.arange(6.)},
+                            signal_types={"V(out)": "voltage"}),
+    )
+    result_path, context = _context(tmp_path, result)
+    response = _run(ReadSignalsTool(), {"result_path": result_path}, context)
+    assert response.is_error is False
+    assert response.details["sample_count"] == 6
+    assert "Outer sweep V2" in response.content
+    assert "native samples only" in response.content
+
+
+def test_read_signals_phase_description_matches_unwrapped_values(tmp_path: Path):
+    result = _successful_result(
+        tmp_path, file_path="circuits/phase.cir", analysis_type="ac",
+        analysis_command=".ac lin 2 1 2",
+        data=SimulationData(frequency=np.array([1., 2.]),
+                            signals={"V(out)": np.exp(1j * np.radians([179., -179.]))},
+                            signal_types={"V(out)": "voltage"}),
+    )
+    result_path, context = _context(tmp_path, result)
+    response = _run(ReadSignalsTool(), {"result_path": result_path, "signal_filter": ["V(out)_phase"]}, context)
+    assert response.is_error is False
+    assert "degrees unwrapped within each finite run" in response.content
+    assert "181" in response.content

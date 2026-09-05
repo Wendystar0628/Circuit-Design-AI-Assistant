@@ -58,11 +58,16 @@ function populatedSession() {
     },
     simulation: {
       selectedResultPath: 'simulation_results/filter/run/result.json',
-      activeTab: 'chart',
-      visibleSeriesIds: ['V(out)', 'V(out)'],
+      baselineResultPath: 'simulation_results/filter/baseline/result.json',
+      activeTab: 'waveforms',
+      traces: [
+        { signal: 'V(out)', reference: 'V(in)', component: 'db' },
+        { signal: 'V(out)', reference: 'V(in)', component: 'db' },
+      ],
       cursorA: 1_000,
       cursorB: 10_000,
       cursorTarget: 'b',
+      xRange: [100, 100_000],
     },
     conversation: {
       sessionId: 'session-1',
@@ -72,12 +77,53 @@ function populatedSession() {
   }
 }
 
-test('normalization accepts the v1 contract and canonicalizes series identities', () => {
+test('normalization preserves experiment state and canonicalizes trace expressions', () => {
   const normalized = workSession.normalizeWorkSession(populatedSession())
   assert.ok(normalized)
-  assert.deepEqual(normalized.simulation.visibleSeriesIds, ['V(out)'])
+  assert.deepEqual(normalized.simulation.traces, [{ signal: 'V(out)', reference: 'V(in)', component: 'db' }])
+  assert.equal(normalized.simulation.baselineResultPath, 'simulation_results/filter/baseline/result.json')
+  assert.deepEqual(normalized.simulation.xRange, [100, 100_000])
   assert.equal(normalized.workspace.openDocuments[0].unsavedContent, 'R1 in out 10k\n')
   assert.equal(normalized.conversation.activeSurface, 'rag')
+})
+
+test('old simulation presentation state migrates without losing workspace or conversation', () => {
+  const original = populatedSession()
+  for (const [previousTab, nextTab] of Object.entries({ chart: 'waveforms', waveform: 'waveforms', metrics: 'measurements', schematic: 'topology', analysis: 'experiment', export: 'experiment', runs: 'experiment', raw: 'raw', log: 'log' })) {
+    const storage = new MemoryStorage({
+      [workSession.WORK_SESSION_STORAGE_KEY]: JSON.stringify({
+        ...original,
+        simulation: {
+          selectedResultPath: original.simulation.selectedResultPath,
+          activeTab: previousTab, visibleSeriesIds: ['V(out)'],
+          cursorA: 1_000, cursorB: 10_000, cursorTarget: 'b',
+        },
+      }),
+    })
+    const restored = workSession.loadWorkSession(storage)
+    assert.deepEqual(restored.workspace, original.workspace)
+    assert.deepEqual(restored.conversation, original.conversation)
+    assert.deepEqual(restored.simulation, {
+      ...workSession.emptyWorkSession().simulation,
+      selectedResultPath: original.simulation.selectedResultPath,
+      activeTab: nextTab,
+    })
+  }
+})
+
+test('trace identity includes transfer reference and rejects invalid transform or viewport state', () => {
+  const session = populatedSession()
+  session.simulation.traces = [
+    { signal: 'V(out)', component: 'db' },
+    { signal: 'V(out)', reference: null, component: 'db' },
+    { signal: 'V(out)', reference: 'V(in)', component: 'db' },
+    { signal: 'V(out)', reference: 'V(in)', component: 'phase' },
+  ]
+  assert.equal(workSession.normalizeWorkSession(session).simulation.traces.length, 3)
+  for (const xRange of [[2, 1], [1, 1], [0, Number.POSITIVE_INFINITY], [0]]) {
+    assert.equal(workSession.normalizeWorkSession({ ...session, simulation: { ...session.simulation, xRange } }), null)
+  }
+  assert.equal(workSession.normalizeWorkSession({ ...session, simulation: { ...session.simulation, traces: [{ signal: 'V(out)', component: 'wrapped-legacy' }] } }), null)
 })
 
 test('invalid, corrupt, and unknown-version storage is discarded as an empty v1 session', () => {
@@ -118,11 +164,14 @@ test('singleton project lifecycle preserves the same Windows root and rejects st
   workSession.updateConversationSession('e:\\circuit demo', populatedSession().conversation)
   const populated = workSession.getWorkSession()
   assert.equal(populated.workspace.openDocuments.length, 1)
-  assert.equal(populated.simulation.activeTab, 'chart')
+  assert.equal(populated.simulation.activeTab, 'waveforms')
   assert.equal(populated.conversation.draftText, 'Continue from the previous design.')
 
   const preserved = workSession.beginWorkSessionProject('e:/circuit demo')
   assert.deepEqual(preserved, populated)
+  preserved.simulation.traces[0].signal = 'mutated'
+  preserved.simulation.xRange[0] = -999
+  assert.deepEqual(workSession.getWorkSession().simulation, populated.simulation)
 
   workSession.updateConversationSession('D:\\stale-project', {
     sessionId: null,

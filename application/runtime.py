@@ -287,11 +287,11 @@ class ApplicationRuntime:
             self.project_service = ProjectService()
             ServiceLocator.register(SVC_PROJECT_SERVICE, self.project_service)
 
-            from domain.simulation.executor.spice_executor import SpiceExecutor
+            from domain.simulation.executor.process_spice_executor import ProcessSpiceExecutor
 
             self.simulation_result_repository = SimulationResultRepository()
             self.simulation_job_manager = SimulationJobManager(
-                simulation_service=SimulationService(executor=SpiceExecutor()),
+                simulation_service=SimulationService(executor=ProcessSpiceExecutor()),
                 result_repository=self.simulation_result_repository,
                 event_bus=self.event_bus,
             )
@@ -1681,19 +1681,27 @@ class ApplicationRuntime:
     # Simulation
     # ------------------------------------------------------------------
 
-    def start_simulation(self, project_id: str, circuit_path: str) -> Dict[str, Any]:
+    def start_simulation(
+        self, project_id: str, circuit_path: str, experiment: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         from domain.simulation.models.simulation_job import JobOrigin
+        from domain.simulation.models.experiment import ExperimentSpec
 
         project = self.require_project(project_id)
         circuit = self.resolve_project_path(project_id, circuit_path, must_exist=True)
         if not circuit.is_file():
             raise RuntimeErrorResponse(422, "circuit_path must identify a file")
-        job = self.simulation_job_manager.submit(
-            circuit_file=str(circuit),
-            origin=JobOrigin.UI_EDITOR,
-            project_root=project.root,
-            session_id=self.session_state_manager.get_current_session_id(),
-        )
+        try:
+            specification = ExperimentSpec.from_dict(experiment or {})
+            job = self.simulation_job_manager.submit(
+                circuit_file=str(circuit),
+                origin=JobOrigin.UI_EDITOR,
+                project_root=project.root,
+                session_id=self.session_state_manager.get_current_session_id(),
+                experiment=specification,
+            )
+        except (ValueError, TypeError, OSError) as exc:
+            raise RuntimeErrorResponse(422, str(exc)) from exc
         return {"project_id": project_id, "job": self._job_dict(job, project)}
 
     def simulation_snapshot(self, project_id: str) -> Dict[str, Any]:
@@ -1810,51 +1818,123 @@ class ApplicationRuntime:
             "result": _json_safe(result.to_dict()),
         }
 
-    def get_simulation_surface(self, project_id: str, result_id: str) -> Dict[str, Any]:
-        project, _result_path, result = self._result_record(project_id, result_id)
-        payload = result.to_dict()
-        schematic = None
-        circuit = self.simulation_result_repository.resolve_circuit_path(
-            project.root,
-            result.file_path,
+    def get_simulation_workbench(self, project_id: str, result_id: str) -> Dict[str, Any]:
+        from domain.simulation.data.trace_analysis_service import TraceAnalysisService
+        from domain.simulation.data.noise_totals import build_noise_totals_payload
+        from domain.simulation.data.simulation_run_archive import (
+            load_run_archive, load_archived_source_graph, summarize_run_archive,
         )
-        if circuit is not None and result.source_digest:
+
+        project, result_path, result = self._result_record(project_id, result_id)
+        # The browser receives a catalog, never two copies of every raw vector.
+        metadata = result.to_dict()
+        metadata.pop("data", None)
+        schematic = None
+        archive_error = None
+        archive = None
+        try:
+            archive = load_run_archive(project.root, result_path)
+        except (ValueError, OSError) as exc:
+            archive_error = str(exc)
+        if archive is not None:
             try:
                 from domain.simulation.spice.parser import SpiceParser
-                from domain.simulation.spice.schematic_builder import (
-                    SpiceSchematicBuilder,
-                )
-                from domain.simulation.spice.source_closure import (
-                    collect_spice_source_closure,
-                )
+                from domain.simulation.spice.schematic_builder import SpiceSchematicBuilder
 
-                graph = collect_spice_source_closure(circuit)
-                if secrets.compare_digest(graph.digest, result.source_digest):
-                    document = SpiceParser().parse_source_graph(graph)
-                    dependency_snapshots = {
+                graph = load_archived_source_graph(project.root, result_path)
+                document = SpiceParser().parse_source_graph(graph)
+                schematic = SpiceSchematicBuilder().build_document(
+                    document,
+                    source_text=graph.main_blob.source_text,
+                    dependency_snapshots={
                         blob.source_id: blob.source_text
-                        for blob in graph.blobs
-                        if blob.key != graph.main_key
-                    }
-                    schematic = SpiceSchematicBuilder().build_document(
-                        document,
-                        source_text=graph.main_blob.source_text,
-                        dependency_snapshots=dependency_snapshots,
-                    )
-            except Exception:
-                # A historical result remains browsable when its source graph
-                # moved, changed, or no longer parses.  Never substitute the
-                # current editor document for the verified historical input.
-                schematic = None
+                        for blob in graph.blobs if blob.key != graph.main_key
+                    },
+                )
+            except (ValueError, OSError) as exc:
+                archive_error = str(exc)
+        provenance = summarize_run_archive(archive)
+        if archive_error:
+            provenance["error"] = archive_error
         return {
             "project_id": project_id,
             "job_id": self._result_jobs.get(result_id),
             "result_id": result_id,
-            "data": _json_safe(payload.get("data")),
-            "metrics": _json_safe(payload.get("measurements") or []),
-            "output_log": str(payload.get("raw_output", "") or ""),
+            "result_path": result_path,
+            "result": _json_safe(metadata),
+            "catalog": TraceAnalysisService().catalog(result),
+            "noise_totals": build_noise_totals_payload(result),
+            "metrics": _json_safe(metadata.get("measurements") or []),
             "schematic": _json_safe(schematic),
+            "provenance": _json_safe(provenance),
         }
+
+    def simulation_trace_operation(
+        self, project_id: str, result_id: str, operation: str, request: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        from domain.simulation.data.trace_analysis_service import TraceAnalysisService
+
+        _project, _path, result = self._result_record(project_id, result_id)
+        service = TraceAnalysisService()
+        operations = {"query": service.query, "table": service.table, "measure": service.measure}
+        try:
+            payload = operations[operation](result, **request)
+        except (ValueError, TypeError, KeyError) as exc:
+            raise RuntimeErrorResponse(422, str(exc)) from exc
+        return {
+            "project_id": project_id, "result_id": result_id,
+            "job_id": self._result_jobs.get(result_id), **payload,
+        }
+
+    def export_simulation_traces(self, project_id: str, result_id: str, traces: list[dict]) -> str:
+        from domain.simulation.data.trace_analysis_service import TraceAnalysisService
+
+        _project, _path, result = self._result_record(project_id, result_id)
+        try:
+            return TraceAnalysisService().export_csv(result, traces)
+        except (ValueError, TypeError) as exc:
+            raise RuntimeErrorResponse(422, str(exc)) from exc
+
+    def replay_simulation(self, project_id: str, result_id: str) -> Dict[str, Any]:
+        from domain.simulation.data.simulation_run_archive import load_run_archive
+        from domain.simulation.models.experiment import ExperimentSpec
+        from domain.simulation.models.simulation_job import JobOrigin
+
+        project, result_path, result = self._result_record(project_id, result_id)
+        try:
+            archive = load_run_archive(project.root, result_path)
+            if archive is None:
+                raise ValueError("This historical result has no archived simulation inputs")
+            job = self.simulation_job_manager.submit(
+                circuit_file=str(Path(project.root) / result.file_path),
+                origin=JobOrigin.UI_EDITOR, project_root=project.root,
+                session_id=self.session_state_manager.get_current_session_id(),
+                experiment=ExperimentSpec.from_dict(archive["experiment"]),
+                source_snapshot=archive["original_source"],
+            )
+        except (ValueError, TypeError, OSError) as exc:
+            raise RuntimeErrorResponse(422, str(exc)) from exc
+        return {"project_id": project_id, "job": self._job_dict(job, project)}
+
+    def export_simulation_inputs(self, project_id: str, result_id: str) -> bytes:
+        import io
+        import tempfile
+        import zipfile
+        from domain.simulation.data.simulation_run_archive import export_replay_bundle
+
+        project, result_path, _result = self._result_record(project_id, result_id)
+        try:
+            with tempfile.TemporaryDirectory(prefix="circuit-replay-export-") as temporary:
+                destination = Path(temporary) / "inputs"
+                export_replay_bundle(project.root, result_path, destination)
+                buffer = io.BytesIO()
+                with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+                    for path in sorted(destination.rglob("*")):
+                        if path.is_file():
+                            archive.write(path, path.relative_to(destination).as_posix())
+                return buffer.getvalue()
+        except (ValueError, OSError) as exc:
+            raise RuntimeErrorResponse(422, str(exc)) from exc
 
     def delete_simulation_result(self, project_id: str, result_id: str) -> Dict[str, Any]:
         project, result_path, _result = self._result_record(project_id, result_id)
@@ -1871,8 +1951,6 @@ class ApplicationRuntime:
         export_format: str,
         surface: str,
     ) -> Dict[str, Any]:
-        import csv
-        import io
         import json
 
         project, _result_path, result = self._result_record(project_id, result_id)
@@ -1886,25 +1964,20 @@ class ApplicationRuntime:
         file_name = f"{result_id}.{export_format}"
         output_path = export_dir / file_name
         if export_format == "json":
-            content = json.dumps(result_payload.get("data"), ensure_ascii=False, indent=2)
+            content = json.dumps(result_payload, ensure_ascii=False, indent=2, allow_nan=False)
             mime_type = "application/json"
         else:
-            buffer = io.StringIO(newline="")
-            writer = csv.writer(buffer)
-            data = result_payload.get("data") or {}
-            axes = [(key, value) for key, value in data.items() if key in {"time", "frequency", "sweep"} and isinstance(value, list)]
-            signals = data.get("signals") if isinstance(data, dict) else {}
-            if not isinstance(signals, dict):
-                signals = {}
-            axis_name, axis_values = axes[0] if axes else ("index", [])
-            length = max([len(axis_values), *(len(value) for value in signals.values() if isinstance(value, list))], default=0)
-            writer.writerow([axis_name, *signals.keys()])
-            for index in range(length):
-                row = [axis_values[index] if index < len(axis_values) else index]
-                for values in signals.values():
-                    row.append(values[index] if isinstance(values, list) and index < len(values) else "")
-                writer.writerow(row)
-            content = buffer.getvalue()
+            from domain.simulation.data.trace_analysis_service import TraceAnalysisService
+            service = TraceAnalysisService()
+            traces = []
+            for signal in service.catalog(result)["signals"]:
+                traces.append({"signal": signal["name"], "component": "real"})
+                if signal["is_complex"]:
+                    traces.append({"signal": signal["name"], "component": "imaginary"})
+            try:
+                content = service.export_csv(result, traces)
+            except (ValueError, TypeError) as exc:
+                raise RuntimeErrorResponse(422, str(exc)) from exc
             mime_type = "text/csv"
         output_path.write_text(content, encoding="utf-8", newline="")
         return {

@@ -12,6 +12,7 @@ uses exactly the same manifest algorithm as live execution.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import os
@@ -161,6 +162,13 @@ class RuntimeSpiceSourceClosure:
         self._temporary_directory = None
         if temporary_directory is not None:
             temporary_directory.cleanup()
+
+    def replace_graph(self, graph: SpiceSourceClosureGraph) -> None:
+        """Compile a derived experiment into this private runtime directory."""
+        self.main_text = _write_runtime_mirror(graph, self.snapshot_root)
+        self.graph = graph
+        self.digest = graph.digest
+        self.source_paths = graph.source_keys
 
     def __enter__(self) -> "RuntimeSpiceSourceClosure":
         return self
@@ -551,10 +559,15 @@ def snapshot_spice_source_closure(
     main_path: str | Path,
     *,
     main_bytes: Optional[bytes] = None,
+    source_snapshot: Optional[dict] = None,
 ) -> RuntimeSpiceSourceClosure:
     """Collect a live source graph and mirror that exact snapshot for native execution."""
 
-    graph = collect_spice_source_closure(main_path, main_bytes=main_bytes)
+    graph = (
+        restore_spice_source_graph(source_snapshot)
+        if source_snapshot is not None
+        else collect_spice_source_closure(main_path, main_bytes=main_bytes)
+    )
     temporary_directory = tempfile.TemporaryDirectory(
         prefix="circuit-ai-spice-closure-"
     )
@@ -570,6 +583,64 @@ def snapshot_spice_source_closure(
         snapshot_root=snapshot_root,
         main_text=main_text,
     )
+
+
+def export_spice_source_graph(graph: SpiceSourceClosureGraph) -> dict:
+    """Encode complete byte snapshots with portable logical source identities."""
+    ids = {blob.key: blob.source_id for blob in graph.blobs}
+    return {
+        "entry_path": ids[graph.main_key],
+        "digest": graph.digest,
+        "sources": [
+            {"path": blob.source_id, "source_id": blob.source_id,
+             "content_base64": base64.b64encode(blob.raw_bytes).decode("ascii")}
+            for blob in graph.blobs
+        ],
+        "references": [
+            {"parent_path": ids[reference.parent_key], "raw_path": reference.raw_path,
+             "target_path": ids[reference.target_key]}
+            for reference in graph.references
+        ],
+    }
+
+
+def restore_spice_source_graph(snapshot: dict) -> SpiceSourceClosureGraph:
+    """Restore a queued or historical input without reading the working tree."""
+    try:
+        sources = snapshot["sources"]
+        raw = {}
+        identities = {}
+        for source in sources:
+            key = source["path"]
+            if key in raw:
+                raise ValueError(f"duplicate source: {key}")
+            raw[key] = base64.b64decode(source["content_base64"], validate=True)
+            identities[key] = source["source_id"]
+        references = {}
+        for reference in snapshot["references"]:
+            pair = (reference["parent_path"], reference["raw_path"])
+            target = reference["target_path"]
+            if pair in references and references[pair] != target:
+                raise ValueError("ambiguous source reference")
+            references[pair] = target
+        graph = build_spice_source_closure(
+            snapshot["entry_path"],
+            load_bytes=lambda key: raw[key],
+            resolve_reference=lambda parent, path: references[(parent, path)],
+            identify_source=lambda _parent, _parent_id, target, _path: identities[target],
+        )
+        if graph.digest != snapshot["digest"]:
+            raise ValueError("source snapshot digest does not match its contents")
+        if set(graph.source_keys) != set(raw):
+            raise ValueError("source snapshot contains unreferenced source blobs")
+        return graph
+    except (KeyError, TypeError, ValueError) as exc:
+        raise SpiceSourceClosureError(f"Invalid SPICE source snapshot: {exc}") from exc
+
+
+def capture_spice_source_snapshot(main_path: str | Path) -> dict:
+    """Capture immutable input at submission, before any queue delay."""
+    return export_spice_source_graph(collect_spice_source_closure(main_path))
 
 
 class _LivePathCallbacks:
@@ -941,7 +1012,7 @@ def _write_runtime_mirror(
     snapshot_root: Path,
 ) -> str:
     sources_root = snapshot_root / "sources"
-    sources_root.mkdir(parents=True, exist_ok=False)
+    sources_root.mkdir(parents=True, exist_ok=True)
     mirror_path_by_key: Dict[str, Path] = {}
     for blob in graph.blobs:
         name_digest = hashlib.sha256(blob.source_id.encode("utf-8")).hexdigest()
@@ -1030,5 +1101,8 @@ __all__ = [
     "SpiceSourceView",
     "build_spice_source_closure",
     "collect_spice_source_closure",
+    "capture_spice_source_snapshot",
+    "export_spice_source_graph",
+    "restore_spice_source_graph",
     "snapshot_spice_source_closure",
 ]

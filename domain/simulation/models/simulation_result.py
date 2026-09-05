@@ -1672,6 +1672,13 @@ class SimulationResult:
     
     analysis_command: str = ""
 
+    provenance: Optional[Dict[str, Any]] = field(default=None, repr=False, compare=False)
+    """Captured execution inputs; persisted separately in the bundle's run.json.
+
+    This runtime companion is intentionally absent from schema-v3 result.json.
+    Waveforms and measurements remain authoritative only in result.json.
+    """
+
     def __post_init__(self):
         _validate_source_digest(
             self.source_digest,

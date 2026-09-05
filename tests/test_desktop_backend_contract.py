@@ -133,8 +133,14 @@ def test_api_v1_route_inventory_is_one_modern_contract() -> None:
         ),
         (
             "GET",
-            "/api/v1/projects/{project_id}/simulation-results/{result_id}/surface-data",
+            "/api/v1/projects/{project_id}/simulation-results/{result_id}/workbench",
         ),
+        ("POST", "/api/v1/projects/{project_id}/simulation-results/{result_id}/traces"),
+        ("POST", "/api/v1/projects/{project_id}/simulation-results/{result_id}/trace-table"),
+        ("POST", "/api/v1/projects/{project_id}/simulation-results/{result_id}/trace-measurements"),
+        ("POST", "/api/v1/projects/{project_id}/simulation-results/{result_id}/trace-exports"),
+        ("POST", "/api/v1/projects/{project_id}/simulation-results/{result_id}/replay"),
+        ("GET", "/api/v1/projects/{project_id}/simulation-results/{result_id}/inputs"),
         (
             "DELETE",
             "/api/v1/projects/{project_id}/simulation-results/{result_id}",
@@ -976,30 +982,34 @@ def test_historical_result_job_lookup_is_scoped_to_the_current_project() -> None
     assert runtime._job_for_result(project, result_path) == "current-job"
 
 
-def test_failed_simulation_surface_uses_an_empty_metrics_collection() -> None:
+def test_failed_simulation_workbench_keeps_diagnostics_and_empty_trace_catalog(tmp_path) -> None:
+    from domain.simulation.data.simulation_artifact_persistence import SimulationArtifactPersistence
+    from domain.simulation.models.simulation_error import ErrorSeverity, SimulationError, SimulationErrorType
+    from domain.simulation.models.simulation_result import create_error_result
+    from domain.simulation.service.simulation_result_repository import SimulationResultRepository
+
     runtime = ApplicationRuntime()
-    result = SimpleNamespace(
-        file_path="failed.cir",
-        source_digest="",
-        to_dict=lambda: {
-            "data": None,
-            "measurements": None,
-            "raw_output": "ngspice failed",
-        },
+    runtime._project = ProjectIdentity("project-1", str(tmp_path), "project", 1)
+    result = create_error_result(
+        executor="spice", file_path=str(tmp_path / "failed.cir"), analysis_type="tran",
+        error=SimulationError(
+            type=SimulationErrorType.CONVERGENCE_DC, severity=ErrorSeverity.HIGH,
+            message="operating point did not converge",
+        ),
+        raw_output="ngspice failed",
     )
-    runtime._result_record = lambda project_id, result_id: (  # type: ignore[method-assign]
-        ProjectIdentity(project_id, r"C:\\project", "project", 1),
-        "simulation_results/failed/result.json",
-        result,
-    )
-    runtime.simulation_result_repository = SimpleNamespace(
-        resolve_circuit_path=lambda _root, _path: None,
-    )
+    bundle = SimulationArtifactPersistence().persist_bundle(str(tmp_path), result)
+    runtime.simulation_result_repository = SimulationResultRepository()
+    result_id = runtime._register_result(bundle.result_path, None)
 
-    surface = runtime.get_simulation_surface("project-1", "result-1")
+    workbench = runtime.get_simulation_workbench("project-1", result_id)
 
-    assert surface["metrics"] == []
-    assert surface["output_log"] == "ngspice failed"
+    assert workbench["metrics"] == []
+    assert workbench["result"]["raw_output"] == "ngspice failed"
+    assert workbench["result"]["error"]["message"] == "operating point did not converge"
+    assert "data" not in workbench["result"]
+    assert workbench["catalog"]["signals"] == []
+    assert workbench["catalog"]["default_traces"] == []
 
 
 def _file_change_event(change: FileChange) -> dict[str, Any]:
@@ -1186,7 +1196,7 @@ def test_attachment_preview_simulation_start_and_one_file_health_contracts() -> 
     assert "api.getBlob(overlay.source_url)" in image_preview
     assert "src={overlay.source_url}" not in image_preview
 
-    assert set(SimulationStartRequest.model_fields) == {"circuit_path"}
+    assert set(SimulationStartRequest.model_fields) == {"circuit_path", "experiment"}
 
     electron_main = (
         PROJECT_ROOT / "frontend" / "desktop" / "src" / "main" / "index.ts"

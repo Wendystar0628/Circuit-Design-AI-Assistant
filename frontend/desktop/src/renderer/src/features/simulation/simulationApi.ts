@@ -9,11 +9,16 @@ import type {
   SimulationJobDto,
   SimulationJobResponse,
   SimulationJsonExportResponse,
-  SimulationResultResponse,
   SimulationResultSummaryDto,
   SimulationsSnapshotResponse,
   StartSimulationResponse,
-  SurfaceDataResponse,
+  SchematicDocumentDto,
+  ExperimentSpec,
+  WorkbenchResponse,
+  TraceRequest,
+  TraceQuery,
+  TraceTable,
+  TraceMeasurements,
 } from './types'
 
 const JOB_STATUSES = new Set<JobStatus>([
@@ -92,7 +97,7 @@ function stringRecord(value: unknown, label: string): Record<string, string> {
   ]))
 }
 
-function schematicValue(value: unknown): NonNullable<SurfaceDataResponse['schematic']> {
+function schematicValue(value: unknown): SchematicDocumentDto {
   const record = objectValue(value, 'surface data response.schematic')
   if (!Array.isArray(record.components) || !Array.isArray(record.nets)) {
     throw new Error('schematic must contain components and nets arrays')
@@ -325,9 +330,10 @@ export async function fetchSimulationSnapshot(projectId: string): Promise<Simula
 export async function startSimulation(
   projectId: string,
   circuitPath: string,
+  experiment: ExperimentSpec,
 ): Promise<StartSimulationResponse> {
   return verifyJobResponse(
-    await api.post(simulationsPath(projectId), { circuit_path: circuitPath }),
+    await api.post(simulationsPath(projectId), { circuit_path: circuitPath, experiment }),
     projectId,
     'start simulation response',
   )
@@ -355,46 +361,54 @@ export async function cancelSimulation(projectId: string, jobId: string): Promis
   return { project_id: projectId, job_id: jobId, cancel_requested: true }
 }
 
-export async function fetchSimulationResult(projectId: string, resultId: string): Promise<SimulationResultResponse> {
-  const value: unknown = await api.get(resultPath(projectId, resultId))
-  const record = objectValue(value, 'simulation result response')
-  exactProject(record, projectId, 'simulation result response')
-  exactResult(record, resultId, 'simulation result response')
+export async function fetchWorkbench(projectId: string, resultId: string): Promise<WorkbenchResponse> {
+  const value: unknown = await api.get(`${resultPath(projectId, resultId)}/workbench`)
+  const record = objectValue(value, 'simulation workbench')
+  exactProject(record, projectId, 'simulation workbench')
+  exactResult(record, resultId, 'simulation workbench')
+  const result = objectValue(record.result, 'workbench.result')
+  if (typeof result.success !== 'boolean' || !ANALYSIS_TYPES.has(String(result.analysis_type))) throw new Error('Workbench has an invalid simulation outcome.')
+  const catalog = record.catalog === null ? null : objectValue(record.catalog, 'workbench.catalog')
+  if (catalog && (!Array.isArray(catalog.signals) || !Array.isArray(catalog.default_traces))) throw new Error('Workbench signal catalog is invalid.')
+  if (!Array.isArray(record.metrics)) throw new Error('Workbench measurements are invalid.')
   return {
-    project_id: projectId,
-    result_id: resultId,
-    job_id: nullableString(record.job_id, 'simulation result response.job_id'),
-    result_path: stringValue(record.result_path, 'simulation result response.result_path'),
-    result: objectValue(record.result, 'simulation result response.result') as unknown as SimulationResultResponse['result'],
+    project_id: projectId, result_id: resultId,
+    job_id: nullableString(record.job_id, 'workbench.job_id'),
+    result_path: stringValue(record.result_path, 'workbench.result_path'),
+    result: result as unknown as WorkbenchResponse['result'],
+    catalog: catalog as unknown as WorkbenchResponse['catalog'],
+    metrics: record.metrics as WorkbenchResponse['metrics'],
+    schematic: record.schematic === null ? null : schematicValue(record.schematic),
+    provenance: objectValue(record.provenance, 'workbench.provenance') as unknown as WorkbenchResponse['provenance'],
+    noise_totals: objectValue(record.noise_totals, 'workbench.noise_totals') as unknown as WorkbenchResponse['noise_totals'],
   }
 }
 
-export async function fetchSurfaceData(projectId: string, resultId: string): Promise<SurfaceDataResponse> {
-  const value: unknown = await api.get(`${resultPath(projectId, resultId)}/surface-data`)
-  const record = objectValue(value, 'surface data response')
-  exactProject(record, projectId, 'surface data response')
-  exactResult(record, resultId, 'surface data response')
-  if (!Object.hasOwn(record, 'data')) {
-    throw new Error('surface data response must contain data')
+export async function queryTraces(projectId: string, resultId: string, request: TraceRequest): Promise<TraceQuery> {
+  const response = await api.post<TraceQuery>(`${resultPath(projectId, resultId)}/traces`, {traces: request.traces, x_min: request.x_min ?? null, x_max: request.x_max ?? null, max_points: request.max_points ?? 1800})
+  if (!Array.isArray(response.series) || !response.x_axis) throw new Error('Invalid waveform query response.')
+  for (const series of response.series) {
+    if (!Array.isArray(series.x) || !Array.isArray(series.y) || series.x.length !== series.y.length) throw new Error('Waveform coordinate lengths disagree.')
+    if (series.x.some((value) => value !== null && !Number.isFinite(value)) || series.y.some((value) => value !== null && !Number.isFinite(value))) throw new Error('Waveform contains nonfinite coordinates.')
   }
-  if (!Array.isArray(record.metrics)) {
-    throw new Error('surface data response.metrics must be an array')
-  }
-  if (typeof record.output_log !== 'string') {
-    throw new Error('surface data response.output_log must be a string')
-  }
-  if (!Object.hasOwn(record, 'schematic')) {
-    throw new Error('surface data response must contain schematic')
-  }
-  return {
-    project_id: projectId,
-    result_id: resultId,
-    job_id: nullableString(record.job_id, 'surface data response.job_id'),
-    data: record.data as SurfaceDataResponse['data'],
-    metrics: record.metrics as SurfaceDataResponse['metrics'],
-    output_log: record.output_log,
-    schematic: record.schematic === null ? null : schematicValue(record.schematic),
-  }
+  return response
+}
+export function queryTraceTable(projectId: string, resultId: string, request: TraceRequest & {offset: number; limit: number}): Promise<TraceTable> {
+  return api.post(`${resultPath(projectId, resultId)}/trace-table`, {traces: request.traces, offset: request.offset, limit: request.limit})
+}
+export function queryTraceMeasurements(projectId: string, resultId: string, request: TraceRequest & {cursor_a: number | null; cursor_b: number | null}): Promise<TraceMeasurements> {
+  return api.post(`${resultPath(projectId, resultId)}/trace-measurements`, {traces: request.traces, x_min: request.x_min ?? null, x_max: request.x_max ?? null, cursor_a: request.cursor_a, cursor_b: request.cursor_b})
+}
+export async function exportTraceCsv(projectId: string, resultId: string, request: TraceRequest): Promise<Blob> {
+  // This endpoint returns text/csv; the common API client preserves its body as a string.
+  const csv = await api.post<string>(`${resultPath(projectId, resultId)}/trace-exports`, {traces: request.traces, format: 'csv'})
+  return new Blob([csv], {type: 'text/csv;charset=utf-8'})
+}
+export function fetchExperimentInputs(projectId: string, resultId: string): Promise<Blob> {
+  return api.getBlob(`${resultPath(projectId, resultId)}/inputs`)
+}
+export async function replaySimulation(projectId: string, resultId: string): Promise<StartSimulationResponse> {
+  return verifyJobResponse(await api.post(`${resultPath(projectId, resultId)}/replay`, {}), projectId, 'replay simulation response')
 }
 
 export async function deleteSimulationResult(

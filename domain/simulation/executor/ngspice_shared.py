@@ -1,13 +1,14 @@
-"""Process-safe binding for the ngspice shared-library API.
+"""Per-worker binding for the ngspice shared-library API.
 
 ngspice keeps callbacks, the active circuit, plots and its background worker
 in process-global C state. Loading the same DLL into several Python objects
 does not create independent simulators. This module therefore owns exactly
 one :class:`NgSpiceWrapper` per process.
 
-Only the operations needed by ``SpiceExecutor`` are exposed. Simulations use
-``bg_run`` so the caller can enforce a deadline or cancellation request, and
-native vectors are copied before their plots can be destroyed.
+Only the operations needed by ``SpiceExecutor`` are exposed. ``bg_run`` supports
+cooperative cancellation inside the worker. ``ProcessSpiceExecutor`` enforces
+the hard deadline outside the DLL, including native calls that never return.
+Native vectors are copied before their plots can be destroyed.
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ import logging
 import math
 import os
 import platform
+import re
 import threading
 import time
 from ctypes import (
@@ -198,6 +200,7 @@ class NgSpiceWrapper:
             self._plot_scale_names: Dict[str, str] = {}
             self._fatal_error_message: Optional[str] = None
             self._initialized = False
+            self._engine_version: Optional[str] = None
             self._run_started = threading.Event()
             self._run_finished = threading.Event()
             self._run_finished.set()
@@ -400,6 +403,11 @@ class NgSpiceWrapper:
         if result != 0:
             raise NgSpiceInitError(f"ngSpice_Init 返回错误码: {result}")
         self._initialized = True
+        banner = re.search(
+            r"(?m)^stdout \*\* ngspice-(\S+) shared library\b",
+            self.get_stdout(),
+        )
+        self._engine_version = banner.group(1) if banner else None
 
     def set_input_path(self, directory: Path) -> None:
         """Set XSPICE's input path without changing the process ``cwd``."""
@@ -701,6 +709,11 @@ class NgSpiceWrapper:
             self._fatal_error_message = str(message or "ngspice 原生状态已损坏")
             self._initialized = False
         self._run_finished.set()
+
+    @property
+    def engine_version(self) -> Optional[str]:
+        """Version reported by the loaded library's initialization banner."""
+        return self._engine_version
 
     @property
     def initialized(self) -> bool:

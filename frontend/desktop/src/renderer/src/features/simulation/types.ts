@@ -56,33 +56,6 @@ export interface CancelSimulationResponse {
   cancel_requested: true
 }
 
-export interface ComplexSignal {
-  _complex: true
-  real: Array<number | null>
-  imag: Array<number | null>
-}
-
-export type SimulationSignal = Array<number | null> | ComplexSignal
-
-export type SignalKind =
-  | 'voltage'
-  | 'current'
-  | 'other'
-
-export interface NoiseTotals {
-  output_rms: number
-  input_referred_rms: number
-}
-
-export interface SimulationData {
-  frequency: Array<number | null> | null
-  time: Array<number | null> | null
-  sweep: Array<number | null> | null
-  signals: Record<string, SimulationSignal>
-  signal_types: Record<string, SignalKind>
-  noise_totals: NoiseTotals | null
-}
-
 export type MeasurementStatus = 'OK' | 'FAILED' | 'PARSE_ERROR'
 
 export interface SimulationErrorPayload {
@@ -101,41 +74,6 @@ export interface SimulationErrorPayload {
 }
 
 export interface SimulationMeasurement {
-  name: string
-  value: number | null
-  status: MeasurementStatus
-  statement: string
-  raw_output: string
-  error_message: string
-}
-
-export interface SimulationResult {
-  schema_version: number
-  executor: string
-  file_path: string
-  analysis_type: AnalysisType
-  success: boolean
-  source_digest: string | null
-  data: SimulationData | null
-  measurements: SimulationMeasurement[] | null
-  error: SimulationErrorPayload | null
-  raw_output: string
-  timestamp: string
-  duration_seconds: number
-  version: number
-  session_id: string
-  analysis_command: string
-}
-
-export interface SimulationResultResponse {
-  project_id: string
-  result_id: string
-  job_id: string | null
-  result_path: string
-  result: SimulationResult
-}
-
-export interface SurfaceMetricDto {
   name: string
   value: number | null
   status: MeasurementStatus
@@ -232,16 +170,6 @@ export interface SchematicDocumentDto {
   readonly_reasons: string[]
 }
 
-export interface SurfaceDataResponse {
-  project_id: string
-  result_id: string
-  job_id: string | null
-  data: SimulationData | null
-  metrics: SurfaceMetricDto[]
-  output_log: string
-  schematic: SchematicDocumentDto | null
-}
-
 export interface DeleteSimulationResultResponse {
   project_id: string
   result_id: string
@@ -279,60 +207,76 @@ export interface ResultIdentity {
   resultId: string
 }
 
-export type AxisSide = 'left' | 'right'
-
-export interface PlotSeries {
-  id: string
-  label: string
-  color: string
-  axis: AxisSide
-  component: 'real' | 'magnitude' | 'phase' | 'density'
-  unit: string
-  x: Array<number | null>
-  y: Array<number | null>
+export interface ExperimentSpec {
+  analysis_command?: string
+  parameters?: Record<string, string | number>
+  temperature?: number | null
+  solver_options?: Record<string, string | number>
+  timeout_seconds?: number
 }
 
-export interface PlotModel {
-  analysisType: Exclude<AnalysisType, 'op'>
-  title: string
-  xLabel: string
-  xUnit: string
-  leftLabel: string
-  rightLabel: string | null
-  logX: boolean
-  logLeftY: boolean
-  logRightY: boolean
-  series: PlotSeries[]
+export interface SimulationResult {
+  schema_version: number
+  executor: string
+  file_path: string
+  analysis_type: AnalysisType
+  success: boolean
+  source_digest: string | null
+  error: SimulationErrorPayload | null
+  raw_output: string | null
+  timestamp: string
+  duration_seconds: number
+  version: number
+  session_id: string
+  analysis_command: string
 }
 
-export interface OpRow {
-  signal: string
-  value: number | null
-  unit: string
+export type TraceComponent = 'real' | 'imaginary' | 'magnitude' | 'db' | 'phase'
+export interface TraceSpec { signal: string; reference?: string | null; component: TraceComponent }
+export interface TraceAxis { kind: string; label: string; unit: string; scale: 'linear' | 'log' }
+export interface TraceSignal { name: string; unit: string; signal_type: string; is_complex: boolean; components: TraceComponent[] }
+export interface TraceBranch { id: number; label: string; outer_value: number | null; outer_unit: string }
+export interface TraceCatalog { x_axis: TraceAxis; signals: TraceSignal[]; branches: TraceBranch[]; default_traces: TraceSpec[] }
+export interface TraceSeries {
+  id: string; label: string; unit: string; trace: TraceSpec
+  x: Array<number | null>; y: Array<number | null>; branch_ids: Array<number | null>
+  branches: TraceBranch[]; raw_point_count: number; visible_point_count: number; point_count: number; downsampled: boolean
 }
-
+export interface TraceQuery { x_axis: TraceAxis; series: TraceSeries[]; max_points: number }
+export interface TraceRequest { traces: TraceSpec[]; x_min?: number | null; x_max?: number | null; max_points?: number }
+export interface TraceTable {
+  x_axis: TraceAxis
+  columns: Array<{id: string; label: string; unit: string; trace: TraceSpec}>
+  rows: Array<{index: number; x: number | null; branch_id: number; outer_value: number | null; values: Array<number | null>}>
+  total_rows: number; offset: number; limit: number
+}
+export interface TraceCursor { x: number; y: number | null; interpolated: boolean; status?: string }
+export interface TraceMeasurement {
+  trace: TraceSpec; label: string; unit: string; branch_id: number; outer_value: number | null
+  sample_count: number; min: number | null; max: number | null; peak_to_peak: number | null
+  sample_mean: number | null; time_mean: number | null; time_rms: number | null; duration: number | null
+  cursor_a: TraceCursor | null; cursor_b: TraceCursor | null
+  delta_y: number | null; delta_x: number | null; slope: number | null; statistics_basis?: string
+}
+export interface TraceMeasurements { x_axis: TraceAxis; window: {x_min: number | null; x_max: number | null}; measurements: TraceMeasurement[]; method: string }
+export interface SimulationProvenance {
+  available: boolean; experiment: ExperimentSpec | null; source_digest: string | null
+  engine?: {name: string; version: string | null; platform: string; execution_mode: string} | null
+  omitted_measurements?: Array<{source_id: string; line_number: number; statement: string; reason: string}>
+  files: Array<{path: string}>; [key: string]: unknown
+}
+export interface NoiseTotalsView { applicable: boolean; available: boolean; source: string; items: Array<{key: 'output_rms' | 'input_referred_rms'; value: number; unit: 'V' | 'A'}> }
+export interface WorkbenchResponse {
+  project_id: string; result_id: string; job_id: string | null; result_path: string
+  result: SimulationResult; catalog: TraceCatalog | null; metrics: SimulationMeasurement[]
+  schematic: SchematicDocumentDto | null; provenance: SimulationProvenance; noise_totals: NoiseTotalsView
+}
 export interface ResultViewModel {
-  identity: ResultIdentity
-  resultPath: string
-  result: SimulationResult
-  data: SimulationData | null
-  metrics: SurfaceMetricDto[]
-  outputLog: string
-  schematic: SchematicDocumentDto | null
-  plot: PlotModel | null
-  opRows: OpRow[]
+  identity: ResultIdentity; resultPath: string; result: SimulationResult
+  catalog: TraceCatalog | null; metrics: SimulationMeasurement[]
+  schematic: SchematicDocumentDto | null; provenance: SimulationProvenance; noiseTotals: NoiseTotalsView
 }
-
-export type SimulationTabId =
-  | 'runs'
-  | 'metrics'
-  | 'chart'
-  | 'waveform'
-  | 'schematic'
-  | 'analysis'
-  | 'raw'
-  | 'log'
-  | 'export'
+export type SimulationTabId = 'experiment' | 'waveforms' | 'measurements' | 'topology' | 'raw' | 'log'
 
 export interface SimulationFeatureProps {
   active: boolean

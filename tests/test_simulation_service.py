@@ -20,6 +20,7 @@ import numpy as np
 import pytest
 
 from domain.services.simulation_service import SimulationService
+from domain.simulation.models.experiment import ExperimentSpec
 from domain.simulation.data.simulation_artifact_persistence import (
     BundlePersistenceResult,
 )
@@ -34,6 +35,7 @@ from domain.simulation.models.simulation_result import (
     create_error_result,
     create_success_result,
 )
+from domain.simulation.spice.source_closure import capture_spice_source_snapshot
 
 
 _FAKE_SOURCE_DIGEST = "0" * 64
@@ -80,6 +82,7 @@ class _FakeExecutor:
         self._raise_exc = raise_exc
         self._returned = returned
         self.execute_calls: List[Tuple[str, Optional[threading.Event]]] = []
+        self.experiment_calls: List[Tuple[Any, Any]] = []
 
     def get_name(self) -> str:
         return "spice"
@@ -95,8 +98,11 @@ class _FakeExecutor:
         file_path: str,
         *,
         cancel_signal: Optional[threading.Event] = None,
+        experiment=None,
+        source_snapshot=None,
     ) -> Any:
         self.execute_calls.append((file_path, cancel_signal))
+        self.experiment_calls.append((experiment, source_snapshot))
         if self._raise_exc is not None:
             raise self._raise_exc
         if self._returned is not _UNSET:
@@ -277,6 +283,35 @@ def test_cancel_signal_uses_the_explicit_executor_channel(tmp_path):
     assert executor.execute_calls == [
         (str((tmp_path / "amp.fake").resolve()), cancel_signal)
     ]
+
+
+def test_experiment_and_frozen_sources_reach_the_executor_unchanged(tmp_path):
+    executor = _FakeExecutor()
+    service = SimulationService(
+        executor=executor,
+        artifact_persistence=_FakePersistence(),
+    )
+    experiment = ExperimentSpec(
+        analysis_command=".tran 1u 10u",
+        parameters={"rload": "2k"},
+        temperature=55,
+        solver_options={"method": "gear"},
+        timeout_seconds=12,
+    )
+    circuit = tmp_path / "amp.fake"
+    circuit.write_text(".title Service fixture\n.param rload=1k\nR1 out 0 {rload}\n.tran 1u 10u\n.end\n", encoding="utf-8")
+    snapshot = capture_spice_source_snapshot(circuit)
+
+    service.run_simulation(
+        file_path="amp.fake",
+        project_root=str(tmp_path),
+        experiment=experiment,
+        source_snapshot=snapshot,
+    )
+
+    assert executor.experiment_calls == [(experiment, snapshot)]
+    assert executor.experiment_calls[0][0] is experiment
+    assert executor.experiment_calls[0][1] is snapshot
 
 
 def test_source_digest_survives_the_real_persistence_roundtrip(tmp_path):

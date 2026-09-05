@@ -14,6 +14,7 @@ from urllib.parse import urlsplit
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -134,6 +135,39 @@ class AttachmentPreviewRequest(ContextRequest):
 
 class SimulationStartRequest(StrictModel):
     circuit_path: str
+    experiment: Optional[Dict[str, Any]] = None
+
+
+class TraceSpecRequest(StrictModel):
+    signal: str = Field(min_length=1, max_length=512)
+    reference: Optional[str] = Field(default=None, min_length=1, max_length=512)
+    component: Literal["real", "imaginary", "magnitude", "db", "phase"] = "real"
+
+
+class TraceQueryRequest(StrictModel):
+    traces: list[TraceSpecRequest] = Field(min_length=1, max_length=16)
+    x_min: Optional[float] = Field(default=None, allow_inf_nan=False, strict=True)
+    x_max: Optional[float] = Field(default=None, allow_inf_nan=False, strict=True)
+    max_points: int = Field(default=1200, ge=16, le=20000, strict=True)
+
+
+class TraceTableRequest(StrictModel):
+    traces: list[TraceSpecRequest] = Field(min_length=1, max_length=16)
+    offset: int = Field(default=0, ge=0, strict=True)
+    limit: int = Field(default=200, ge=1, le=1000, strict=True)
+
+
+class TraceMeasureRequest(StrictModel):
+    traces: list[TraceSpecRequest] = Field(min_length=1, max_length=16)
+    x_min: Optional[float] = Field(default=None, allow_inf_nan=False, strict=True)
+    x_max: Optional[float] = Field(default=None, allow_inf_nan=False, strict=True)
+    cursor_a: Optional[float] = Field(default=None, allow_inf_nan=False, strict=True)
+    cursor_b: Optional[float] = Field(default=None, allow_inf_nan=False, strict=True)
+
+
+class TraceExportRequest(StrictModel):
+    traces: list[TraceSpecRequest] = Field(min_length=1, max_length=16)
+    format: Literal["csv"] = "csv"
 
 
 class ExportRequest(StrictModel):
@@ -271,6 +305,15 @@ def create_app(
             raise HTTPException(status_code=401, detail="Invalid bearer token")
 
     protected = [Depends(require_token)]
+
+    @app.exception_handler(RequestValidationError)
+    async def request_validation_error(_request: Any, exc: RequestValidationError) -> JSONResponse:
+        # A JSON number such as 1e309 may parse as inf. Never serialize the
+        # rejected input back into the error response and turn a 422 into 500.
+        return JSONResponse(status_code=422, content={
+            "detail": [{"loc": error["loc"], "msg": error["msg"], "type": error["type"]}
+                       for error in exc.errors()],
+        })
 
     @app.exception_handler(RuntimeErrorResponse)
     async def runtime_error_handler(_request, exc: RuntimeErrorResponse) -> JSONResponse:
@@ -508,8 +551,8 @@ def create_app(
         return app_runtime.simulation_snapshot(project_id)
 
     @app.post("/api/v1/projects/{project_id}/simulations", status_code=202, dependencies=protected)
-    async def start_simulation(project_id: str, request: SimulationStartRequest) -> Dict[str, Any]:
-        return app_runtime.start_simulation(project_id, request.circuit_path)
+    def start_simulation(project_id: str, request: SimulationStartRequest) -> Dict[str, Any]:
+        return app_runtime.start_simulation(project_id, request.circuit_path, request.experiment)
 
     @app.get("/api/v1/projects/{project_id}/simulations/jobs/{job_id}", dependencies=protected)
     async def simulation_job(project_id: str, job_id: str) -> Dict[str, Any]:
@@ -527,9 +570,35 @@ def create_app(
     async def simulation_result(project_id: str, result_id: str) -> Dict[str, Any]:
         return app_runtime.get_simulation_result(project_id, result_id)
 
-    @app.get("/api/v1/projects/{project_id}/simulation-results/{result_id}/surface-data", dependencies=protected)
-    async def simulation_surface(project_id: str, result_id: str) -> Dict[str, Any]:
-        return app_runtime.get_simulation_surface(project_id, result_id)
+    @app.get("/api/v1/projects/{project_id}/simulation-results/{result_id}/workbench", dependencies=protected)
+    def simulation_workbench(project_id: str, result_id: str) -> Dict[str, Any]:
+        return app_runtime.get_simulation_workbench(project_id, result_id)
+
+    @app.post("/api/v1/projects/{project_id}/simulation-results/{result_id}/traces", dependencies=protected)
+    def simulation_traces(project_id: str, result_id: str, request: TraceQueryRequest) -> Dict[str, Any]:
+        return app_runtime.simulation_trace_operation(project_id, result_id, "query", request.model_dump())
+
+    @app.post("/api/v1/projects/{project_id}/simulation-results/{result_id}/trace-table", dependencies=protected)
+    def simulation_trace_table(project_id: str, result_id: str, request: TraceTableRequest) -> Dict[str, Any]:
+        return app_runtime.simulation_trace_operation(project_id, result_id, "table", request.model_dump())
+
+    @app.post("/api/v1/projects/{project_id}/simulation-results/{result_id}/trace-measurements", dependencies=protected)
+    def simulation_trace_measurements(project_id: str, result_id: str, request: TraceMeasureRequest) -> Dict[str, Any]:
+        return app_runtime.simulation_trace_operation(project_id, result_id, "measure", request.model_dump())
+
+    @app.post("/api/v1/projects/{project_id}/simulation-results/{result_id}/trace-exports", dependencies=protected)
+    def simulation_trace_export(project_id: str, result_id: str, request: TraceExportRequest) -> Response:
+        content = app_runtime.export_simulation_traces(project_id, result_id, request.model_dump()["traces"])
+        return Response(content, media_type="text/csv", headers={"Content-Disposition": 'attachment; filename="simulation-traces.csv"'})
+
+    @app.post("/api/v1/projects/{project_id}/simulation-results/{result_id}/replay", status_code=202, dependencies=protected)
+    def replay_simulation(project_id: str, result_id: str) -> Dict[str, Any]:
+        return app_runtime.replay_simulation(project_id, result_id)
+
+    @app.get("/api/v1/projects/{project_id}/simulation-results/{result_id}/inputs", dependencies=protected)
+    def simulation_inputs(project_id: str, result_id: str) -> Response:
+        content = app_runtime.export_simulation_inputs(project_id, result_id)
+        return Response(content, media_type="application/zip", headers={"Content-Disposition": 'attachment; filename="simulation-inputs.zip"'})
 
     @app.delete("/api/v1/projects/{project_id}/simulation-results/{result_id}", dependencies=protected)
     async def delete_simulation_result(project_id: str, result_id: str) -> Dict[str, Any]:

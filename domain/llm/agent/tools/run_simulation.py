@@ -14,6 +14,7 @@ from domain.simulation.models.simulation_job import (
     JobOrigin,
     JobStatus,
 )
+from domain.simulation.models.experiment import ExperimentSpec
 from shared.workspace_file_types import (
     SIMULATABLE_CIRCUIT_EXTENSIONS,
     is_simulatable_circuit_extension,
@@ -32,8 +33,10 @@ class RunSimulationTool(BaseTool):
     @property
     def description(self) -> str:
         return (
-            "Run the analysis directives embedded in one explicit project "
-            "circuit file. The tool waits for a terminal job state and only "
+            "Run a saved project circuit with an optional explicit experiment "
+            "(analysis, parameter overrides, temperature and solver settings). "
+            "Inputs and recursive dependencies are frozen at submission. "
+            "The tool waits for a terminal job state and only "
             "reports success when the persisted bundle is readable and tied "
             "to the submitted circuit, session, and version. A successful "
             "call returns the exact "
@@ -54,7 +57,19 @@ class RunSimulationTool(BaseTool):
                         + ", ".join(sorted(SIMULATABLE_CIRCUIT_EXTENSIONS))
                         + "."
                     ),
-                }
+                },
+                "experiment": {
+                    "type": "object",
+                    "description": "Optional experiment. Omit to run the source's single analysis. Overrides never edit the source.",
+                    "properties": {
+                        "analysis_command": {"type": "string", "description": "Complete .op/.ac/.dc/.tran/.noise directive"},
+                        "parameters": {"type": "object", "additionalProperties": {"type": ["string", "number"]}, "description": "Override existing top-level .param names with SPICE numbers"},
+                        "temperature": {"type": "number", "description": "Temperature in degrees Celsius"},
+                        "solver_options": {"type": "object", "additionalProperties": {"type": ["string", "number"]}, "description": "Validated reltol/abstol/vntol/gmin/itl1/itl4/method/maxord options"},
+                        "timeout_seconds": {"type": "number", "description": "Finite worker execution budget in seconds"},
+                    },
+                    "additionalProperties": False,
+                },
             },
             "required": ["file_path"],
         }
@@ -110,10 +125,14 @@ class RunSimulationTool(BaseTool):
             )
 
         try:
+            experiment_args = {}
+            if "experiment" in params:
+                experiment_args["experiment"] = ExperimentSpec.from_dict(params["experiment"])
             job = manager.submit(
                 circuit_file=circuit_file,
                 origin=JobOrigin.AGENT_TOOL,
                 project_root=project_root,
+                **experiment_args,
             )
         except DuplicateSimulationJobError as exc:
             return ToolResult(

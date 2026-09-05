@@ -21,13 +21,13 @@ from domain.simulation.data.downsampler import (
 from domain.simulation.data.signal_semantics import (
     VIRTUAL_COMPLEX_COMPONENT_SUFFIXES,
     insert_nested_dc_breaks,
-    nested_dc_reset_indexes,
     nested_dc_secondary_values,
     normalize_simulation_signal_name,
     parse_nested_dc_sweep,
     resolve_signal_type,
     split_virtual_complex_component_name,
 )
+from domain.simulation.data.trace_analysis_service import project_trace_values
 from domain.simulation.models.simulation_result import SimulationData, SimulationResult
 
 
@@ -267,15 +267,8 @@ class WaveformDataService:
                         column[row] = scalar_value
             signal_columns[signal_name] = column
 
-        if nested_sweep is not None:
-            reset_indexes = nested_dc_reset_indexes(raw_x_values, nested_sweep)
-            if reset_indexes.size:
-                x_values = np.insert(x_values, reset_indexes, np.nan)
-                signal_columns = {
-                    name: np.insert(column, reset_indexes, np.nan)
-                    for name, column in signal_columns.items()
-                }
-
+        # Tables are native rows, not rendered polylines. The outer-source
+        # column identifies nested DC branches without inventing NaN rows.
         return TableSnapshot(
             result_path=result.file_path,
             analysis_type=result.analysis_type,
@@ -368,23 +361,8 @@ class WaveformDataService:
         base_signal = data.get_signal(base_name)
         if base_signal is None or not np.iscomplexobj(base_signal):
             return None
-        complex_signal = np.asarray(base_signal)
-        if component_suffix == "_mag":
-            return np.abs(complex_signal)
-        if component_suffix == "_phase":
-            phase = np.full(complex_signal.shape, np.nan, dtype=float)
-            finite = (
-                np.isfinite(np.real(complex_signal))
-                & np.isfinite(np.imag(complex_signal))
-                & (np.abs(complex_signal) > 0)
-            )
-            phase[finite] = np.angle(complex_signal[finite], deg=True)
-            return _unwrap_phase_degrees(phase)
-        if component_suffix == "_real":
-            return np.real(complex_signal)
-        if component_suffix == "_imag":
-            return np.imag(complex_signal)
-        return None
+        component = {"_mag": "magnitude", "_phase": "phase", "_real": "real", "_imag": "imaginary"}.get(component_suffix)
+        return project_trace_values(np.asarray(base_signal), component) if component else None
 
     @staticmethod
     def _to_table_scalar_value(value: object) -> Optional[float]:
@@ -423,20 +401,6 @@ def _finite_bounds(values: np.ndarray) -> Tuple[float, float]:
     if finite_values.size == 0:
         return 0.0, 0.0
     return float(np.min(finite_values)), float(np.max(finite_values))
-
-
-def _unwrap_phase_degrees(values: np.ndarray) -> np.ndarray:
-    phase = np.asarray(values, dtype=float)
-    result = np.full(phase.shape, np.nan, dtype=float)
-    finite = np.isfinite(phase)
-    padded = np.concatenate(([False], finite, [False]))
-    transitions = np.diff(padded.astype(np.int8))
-    for start, stop in zip(
-        np.flatnonzero(transitions == 1),
-        np.flatnonzero(transitions == -1),
-    ):
-        result[start:stop] = np.degrees(np.unwrap(np.radians(phase[start:stop])))
-    return result
 
 
 waveform_data_service = WaveformDataService()

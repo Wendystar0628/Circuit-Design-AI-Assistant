@@ -26,7 +26,7 @@ EXPORT_SCHEMA_VERSION = 2
 # ---------------------------------------------------------------------------
 # Canonical disk layout for manual exports and temporary attachments.
 #
-# Committed bundles contain only ``result.json``. The category layout below is
+# Committed bundles contain result.json and captured run inputs. The layout below is
 # used by user-requested external exports and bundle-external temporary
 # attachments. Consumers use the typed helpers instead of repeating filenames.
 # ---------------------------------------------------------------------------
@@ -80,7 +80,7 @@ _CANONICAL_SUBDIRS: Final[Dict[str, str]] = {
 }
 
 # Manual exports may include any pure-data or display category. Committed
-# simulation bundles do not use this list: they contain only result.json.
+# simulation bundles do not use this list: result.json and run.json are atomic.
 DISPLAY_EXPORT_CATEGORIES: Final[Tuple[str, ...]] = (
     CATEGORY_METRICS,
     CATEGORY_CHARTS,

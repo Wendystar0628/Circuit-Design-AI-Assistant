@@ -27,9 +27,9 @@ Every ``run_simulation`` call is self-contained: its inputs come via
 arguments, its outputs via the return value, and its only mutable
 side effect is the filesystem bundle it writes. The service instance
 holds only the concrete ngspice executor and artifact persistence it was
-handed at construction time. The executor serializes its native session.
-That means manager workers can share one service across threads, or
-spin up per-worker instances — either works.
+handed at construction time. The process executor gives each call its own
+native worker. Manager workers can therefore share one service across threads
+without sharing ngspice state.
 
 Return contract
 ---------------
@@ -55,7 +55,8 @@ from domain.simulation.data.simulation_artifact_persistence import (
     SimulationArtifactPersistence,
     simulation_artifact_persistence,
 )
-from domain.simulation.executor.spice_executor import SpiceExecutor
+from domain.simulation.executor.process_spice_executor import ProcessSpiceExecutor
+from domain.simulation.models.experiment import ExperimentSpec
 from domain.simulation.models.simulation_error import (
     ErrorSeverity,
     SimulationError,
@@ -82,7 +83,7 @@ class SimulationService:
     def __init__(
         self,
         *,
-        executor: SpiceExecutor,
+        executor: ProcessSpiceExecutor,
         artifact_persistence: Optional[SimulationArtifactPersistence] = None,
     ) -> None:
         if executor is None:
@@ -102,6 +103,8 @@ class SimulationService:
         cancel_signal: Optional[threading.Event] = None,
         version: int = 1,
         session_id: str = "",
+        experiment: Optional[ExperimentSpec] = None,
+        source_snapshot: Optional[dict] = None,
     ) -> str:
         """Execute one simulation and persist its bundle.
 
@@ -160,6 +163,8 @@ class SimulationService:
                 result = executor.execute(
                     file_path,
                     cancel_signal=cancel_signal,
+                    experiment=experiment,
+                    source_snapshot=source_snapshot,
                 )
             except Exception as exc:
                 _logger.exception(

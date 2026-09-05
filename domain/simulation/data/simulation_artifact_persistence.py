@@ -1,6 +1,8 @@
-"""Atomically persist the one authoritative simulation result document.
+"""Atomically persist a result and its captured, portable execution inputs.
 
-A committed bundle contains exactly ``result.json``.  Metrics, logs, raw-data
+A captured run contains ``result.json`` plus ``run.json``. The latter stores
+input sources and the execution deck, never a second waveform authority.
+Older results without captured provenance remain readable. Metrics, logs, raw-data
 tables, OP reports and images are views derived from that document and are
 created only by the manual exporter or in the bundle-external attachment cache.
 Keeping the committed bundle this small removes duplicate authorities and makes
@@ -24,6 +26,11 @@ from domain.simulation.data.simulation_artifact_exporter import (
 )
 from domain.simulation.models.simulation_error import SimulationError
 from domain.simulation.models.simulation_result import SimulationResult
+from domain.simulation.data.simulation_run_archive import (
+    RUN_JSON_FILENAME,
+    prepare_run_archive,
+    validate_run_archive,
+)
 
 
 def _reject_nonstandard_json_constant(token: str) -> None:
@@ -39,7 +46,7 @@ class BundlePersistenceResult:
 
 
 class SimulationArtifactPersistence:
-    """Publish one portable ``result.json`` in a new immutable bundle."""
+    """Publish the result and captured inputs together in one immutable bundle."""
 
     def persist_bundle(
         self,
@@ -48,6 +55,11 @@ class SimulationArtifactPersistence:
     ) -> BundlePersistenceResult:
         project = self._require_project_root(project_root)
         persisted_result = self._build_persisted_result(project, result)
+        run_archive = (
+            prepare_run_archive(result.provenance, result=persisted_result)
+            if result.provenance is not None
+            else None
+        )
         final_hint = simulation_artifact_exporter.build_project_export_root(
             project,
             persisted_result,
@@ -60,7 +72,12 @@ class SimulationArtifactPersistence:
                 simulation_artifact_exporter.result_json_path(staging_root),
                 persisted_result.to_dict(),
             )
-            self._validate_staged_bundle(staging_root)
+            if run_archive is not None:
+                simulation_artifact_exporter.write_json(
+                    staging_root / RUN_JSON_FILENAME,
+                    run_archive,
+                )
+            self._validate_staged_bundle(staging_root, has_run_archive=run_archive is not None)
             committed_root = self._commit_staged_bundle(
                 project,
                 persisted_result,
@@ -144,25 +161,37 @@ class SimulationArtifactPersistence:
         )
         return SimulationResult.from_dict(portable_result.to_dict())
 
-    def _validate_staged_bundle(self, staging_root: Path) -> None:
+    def _validate_staged_bundle(self, staging_root: Path, *, has_run_archive: bool = False) -> None:
         expected_file = simulation_artifact_exporter.result_json_path(staging_root)
         files = {
             path.relative_to(staging_root).as_posix()
             for path in staging_root.rglob("*")
             if path.is_file()
         }
-        if files != {RESULT_JSON_FILENAME} or not expected_file.is_file():
+        expected_files = {RESULT_JSON_FILENAME}
+        if has_run_archive:
+            expected_files.add(RUN_JSON_FILENAME)
+        if files != expected_files or not expected_file.is_file():
             raise RuntimeError(
-                f"Staged simulation bundle must contain only {RESULT_JSON_FILENAME}"
+                f"Staged simulation bundle must contain only {', '.join(sorted(expected_files))}"
             )
         try:
             payload = json.loads(
                 expected_file.read_text(encoding="utf-8"),
                 parse_constant=_reject_nonstandard_json_constant,
             )
-            SimulationResult.from_dict(payload)
+            persisted_result = SimulationResult.from_dict(payload)
         except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
             raise RuntimeError("Staged result.json failed strict validation") from exc
+        if has_run_archive:
+            try:
+                archive_payload = json.loads(
+                    (staging_root / RUN_JSON_FILENAME).read_text(encoding="utf-8"),
+                    parse_constant=_reject_nonstandard_json_constant,
+                )
+                validate_run_archive(archive_payload, result=persisted_result)
+            except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
+                raise RuntimeError("Staged run.json failed strict validation") from exc
 
     def _commit_staged_bundle(
         self,

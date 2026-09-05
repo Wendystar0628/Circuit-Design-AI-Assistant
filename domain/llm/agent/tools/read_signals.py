@@ -96,7 +96,7 @@ class ReadSignalsTool(BaseTool):
             *READ_TOOL_SHARED_GUIDELINES,
             "Use read_metrics for .MEASURE values and read_op_result for .op data; read_signals only reports raw numerical series.",
             "Do not interpret sample_mean as a time-weighted, frequency-weighted, RMS, or integrated engineering metric.",
-            "Treat *_phase values as wrapped degrees; the tool does not unwrap phase or derive margins/bandwidth from samples.",
+            "Treat *_phase values as degrees unwrapped within each finite run; zero-magnitude phase is missing. The tool does not derive margins/bandwidth from samples.",
         ]
 
     async def execute(
@@ -262,8 +262,9 @@ class ReadSignalsTool(BaseTool):
             f"- signal_count: {len(summary.signal_column_names)} of {len(available)}",
             f"- anchor_scale: {summary.anchor_scale_effective.value}",
             "- statistic_semantics: sample_mean is arithmetic over finite samples; no interpolation, integration, RMS, or zero-crossing inference is performed",
-            "- phase_semantics: *_phase vectors are wrapped degrees; no phase unwrapping is performed",
-            "- unit_semantics: values are simulator-native scalars; this tool does not guess or convert physical units",
+            "- phase_semantics: *_phase vectors are degrees unwrapped within each finite run; zero-magnitude phase is missing",
+            "- unit_semantics: real/imaginary/magnitude retain native physical units; phase is derived in degrees",
+            "- row_semantics: native samples only; nested DC branches are identified by the outer-sweep column, without render separators",
         ]
         if summary.anchor_scale_effective is not summary.anchor_scale_requested:
             lines.append(

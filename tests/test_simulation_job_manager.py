@@ -91,6 +91,8 @@ class _FakeService:
         cancel_signal,
         version,
         session_id,
+        experiment,
+        source_snapshot,
     ):
         with self._lock:
             self.calls.append(
@@ -100,6 +102,8 @@ class _FakeService:
                     "cancel_signal": cancel_signal,
                     "version": version,
                     "session_id": session_id,
+                    "experiment": experiment,
+                    "source_snapshot": source_snapshot,
                 }
             )
         self.started.set()
@@ -258,6 +262,9 @@ def manager_factory(bus):
 
 
 def _submit(manager, tmp_path, name="amp.cir", origin=JobOrigin.UI_EDITOR, **kwargs):
+    circuit = tmp_path / name
+    if not circuit.exists():
+        circuit.write_text(".title Lifecycle fixture\nV1 out 0 1\nR1 out 0 1k\n.op\n.end\n", encoding="utf-8")
     return manager.submit(
         circuit_file=name,
         project_root=str(tmp_path),
@@ -600,6 +607,10 @@ def test_late_cancel_cannot_override_an_already_persisted_success_bundle(
 def test_agent_same_circuit_dedup_is_atomic_under_concurrent_submit(
     manager_factory, tmp_path
 ):
+    (tmp_path / "amp.cir").write_text(
+        ".title Concurrent fixture\nV1 out 0 1\nR1 out 0 1k\n.op\n.end\n",
+        encoding="utf-8",
+    )
     service = _FakeService(wait_for_cancel=True)
     manager = manager_factory(service, max_workers=2)
     gate = threading.Barrier(3)

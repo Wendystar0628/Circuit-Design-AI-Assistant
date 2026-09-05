@@ -5,18 +5,19 @@ import {
   cancelSimulation,
   deleteSimulationResult,
   fetchSimulationJob,
-  fetchSimulationResult,
+  fetchWorkbench,
   fetchSimulationExportBlob,
   fetchSimulationSnapshot,
-  fetchSurfaceData,
   requestCanonicalJsonExport,
   startSimulation,
+  replaySimulation,
   subscribeToSimulationEvents,
   type NormalizedSimulationEvent,
 } from './simulationApi'
 import { buildResultViewModel, isSupportedCircuitPath } from './simulationModel'
 import type {
   ResultViewModel,
+  ExperimentSpec,
   SimulationFeatureProps,
   SimulationJobDto,
   SimulationJsonExportResponse,
@@ -44,7 +45,8 @@ export interface SimulationController {
   notice: SimulationNotice | null
   canRun: boolean
   refresh(): Promise<void>
-  run(): Promise<void>
+  run(experiment: ExperimentSpec): Promise<void>
+  replay(): Promise<void>
   cancel(): Promise<void>
   selectResult(resultId: string, expectedJobId: string | null): Promise<ResultViewModel | null>
   deleteSelected(): Promise<void>
@@ -224,10 +226,7 @@ export function useSimulationController({
     resultRequestRef.current = request
     setResultLoading(true)
     try {
-      const [resultResponse, surfaceResponse] = await Promise.all([
-        fetchSimulationResult(expectedProjectId, resultId),
-        fetchSurfaceData(expectedProjectId, resultId),
-      ])
+      const resultResponse = await fetchWorkbench(expectedProjectId, resultId)
       if (
         generationRef.current !== generation
         || resultRequestRef.current !== request
@@ -236,7 +235,7 @@ export function useSimulationController({
       if (resultResponse.job_id !== expectedJobId) {
         throw new Error('The selected history row no longer points to the same simulation job.')
       }
-      const view = buildResultViewModel(resultResponse, surfaceResponse)
+      const view = buildResultViewModel(resultResponse)
       selectedRef.current = view
       setSelected(view)
       return view
@@ -314,7 +313,7 @@ export function useSimulationController({
     void refreshForProject(expectedProjectId, generation).catch(() => undefined)
   }), [loadResultForIdentity, publishNotice, refreshForProject])
 
-  const run = useCallback(async () => {
+  const run = useCallback(async (experiment: ExperimentSpec) => {
     if (
       !projectId
       || !activeDocumentPath
@@ -335,7 +334,7 @@ export function useSimulationController({
     setSelected(null)
     selectedRef.current = null
     try {
-      const response = await startSimulation(projectId, activeDocumentPath)
+      const response = await startSimulation(projectId, activeDocumentPath, experiment)
       if (
         generationRef.current !== generation
         || projectIdRef.current !== projectId
@@ -387,6 +386,25 @@ export function useSimulationController({
       }
     }
   }, [activeDocumentPath, busyAction, jobs, loadResultForIdentity, loading, projectId, publishNotice, refreshForProject, resultLoading])
+
+  const replay = useCallback(async () => {
+    const current = selectedRef.current
+    if (!projectId || !current || !current.provenance.available || activeJobIdRef.current || busyAction !== null) return
+    const generation = generationRef.current
+    setBusyAction('replay')
+    try {
+      const response = await replaySimulation(projectId, current.identity.resultId)
+      if (generationRef.current !== generation || projectIdRef.current !== projectId) return
+      setJobs((items) => replaceJob(items, response.job))
+      setActiveJobId(response.job.job_id)
+      activeJobIdRef.current = response.job.job_id
+      publishNotice('info', 'Replaying the saved inputs and experiment.')
+    } catch (error) {
+      if (generationRef.current === generation) publishNotice('error', errorText(error))
+    } finally {
+      if (generationRef.current === generation) setBusyAction(null)
+    }
+  }, [busyAction, projectId, publishNotice])
 
   const cancel = useCallback(async () => {
     const expectedProjectId = projectId
@@ -609,6 +627,7 @@ export function useSimulationController({
     canRun,
     refresh,
     run,
+    replay,
     cancel,
     selectResult,
     deleteSelected,

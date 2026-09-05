@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import copy
 import logging
 import os
 import threading
@@ -22,6 +23,8 @@ from domain.simulation.models.simulation_job import (
     SimulationJob,
 )
 from domain.simulation.models.simulation_result import SimulationResult
+from domain.simulation.models.experiment import ExperimentSpec
+from domain.simulation.spice.source_closure import capture_spice_source_snapshot
 from shared.event_types import EVENT_SIM_COMPLETE, EVENT_SIM_ERROR, EVENT_SIM_STARTED
 from shared.models.load_result import LoadResult
 from shared.sim_event_payload import validate_sim_payload
@@ -41,6 +44,8 @@ class _SimulationService(Protocol):
         cancel_signal: threading.Event,
         version: int,
         session_id: str,
+        experiment: ExperimentSpec,
+        source_snapshot: dict,
     ) -> str: ...
 
 
@@ -111,6 +116,7 @@ class SimulationJobManager:
         self._futures: Dict[str, concurrent.futures.Future[None]] = {}
         self._done_events: Dict[str, threading.Event] = {}
         self._cancel_events: Dict[str, threading.Event] = {}
+        self._inputs: Dict[str, tuple[ExperimentSpec, dict]] = {}
         self._async_waiters: Dict[
             str, List[Tuple[asyncio.AbstractEventLoop, asyncio.Future[SimulationJob]]]
         ] = {}
@@ -125,6 +131,8 @@ class SimulationJobManager:
         project_root: str,
         version: int = 1,
         session_id: str = "",
+        experiment: Optional[ExperimentSpec] = None,
+        source_snapshot: Optional[dict] = None,
     ) -> SimulationJob:
         """Atomically register and schedule one simulation.
 
@@ -138,6 +146,17 @@ class SimulationJobManager:
         canonical_project, canonical_circuit = _canonical_submission_paths(
             project_root,
             circuit_file,
+        )
+        experiment = experiment or ExperimentSpec()
+        if not isinstance(experiment, ExperimentSpec):
+            raise TypeError("experiment must be an ExperimentSpec")
+        experiment = ExperimentSpec.from_dict(experiment.to_dict())
+        # Capture before publishing the job. Neither queue delay nor later
+        # edits may change the input accepted by this submission.
+        snapshot = (
+            copy.deepcopy(source_snapshot)
+            if source_snapshot is not None
+            else capture_spice_source_snapshot(canonical_circuit)
         )
 
         job = SimulationJob(
@@ -169,6 +188,7 @@ class SimulationJobManager:
             self._jobs[job.job_id] = job
             self._done_events[job.job_id] = done_event
             self._cancel_events[job.job_id] = cancel_event
+            self._inputs[job.job_id] = (experiment, snapshot)
             self._async_waiters[job.job_id] = []
             if origin is JobOrigin.AGENT_TOOL:
                 self._active_agent_jobs[active_key] = job.job_id
@@ -398,12 +418,16 @@ class SimulationJobManager:
 
         start = time.monotonic()
         try:
+            with self._lock:
+                experiment, source_snapshot = self._inputs[job_id]
             result_path = self._service.run_simulation(
                 file_path=current.circuit_file,
                 project_root=current.project_root,
                 cancel_signal=cancel_event,
                 version=current.version,
                 session_id=current.session_id,
+                experiment=experiment,
+                source_snapshot=source_snapshot,
             )
         except Exception as exc:
             _LOGGER.exception("Simulation service failed for job %s", job_id)
@@ -595,6 +619,7 @@ class SimulationJobManager:
         self._jobs.pop(job.job_id, None)
         self._done_events.pop(job.job_id, None)
         self._cancel_events.pop(job.job_id, None)
+        self._inputs.pop(job.job_id, None)
         self._async_waiters.pop(job.job_id, None)
         if job.origin is JobOrigin.AGENT_TOOL:
             key = _circuit_key(job.project_root, job.circuit_file)
@@ -615,6 +640,7 @@ class SimulationJobManager:
             waiters = self._async_waiters.pop(job.job_id, [])
             done_event = self._done_events.pop(job.job_id, None)
             self._cancel_events.pop(job.job_id, None)
+            self._inputs.pop(job.job_id, None)
         if done_event is not None:
             done_event.set()
         for loop, future in waiters:

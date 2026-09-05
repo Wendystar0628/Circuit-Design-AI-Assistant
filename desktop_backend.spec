@@ -40,6 +40,7 @@ datas = [
 # Chroma resolves these embedded-client components from configuration strings.
 # Uvicorn's standard PyInstaller hook owns its protocol/loop imports.
 hiddenimports = [
+    "domain.simulation.executor.spice_worker",
     "chromadb.api.rust",
     "chromadb.quota.simple_quota_enforcer",
     "chromadb.rate_limit.simple_rate_limit",

@@ -1,1001 +1,324 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-
-import {
-  getWorkSession,
-  sameProjectRoot,
-  updateSimulationSession,
-  type SimulationSession,
-} from '../../lib/workSession'
-
+import { getWorkSession, sameProjectRoot, updateSimulationSession, type SimulationSession } from '../../lib/workSession'
 import { buildPlotSvg, SeriesChart } from './SeriesChart'
-import {
-  buildPlotCsv,
-  buildRawColumns,
-  downloadBlob,
-  downloadContent,
-  resultFileName,
-} from './exportUtils'
-import {
-  buildNoiseTotalRows,
-  collectCursorSamples,
-  displayAnalysisType,
-  formatEngineering,
-  isSupportedCircuitPath,
-  nearestSampleIndex,
-  snapCursorValue,
-} from './simulationModel'
-import { buildSchematicLayout } from './schematicLayout'
-import type {
-  PlotModel,
-  ResultViewModel,
-  SchematicDocumentDto,
-  SimulationFeatureProps,
-  SimulationJobDto,
-  SimulationResultSummaryDto,
-  SimulationTabId,
-} from './types'
+import { TopologyInspector } from './TopologyInspector'
+import { RunProvenance } from './RunProvenance'
+import { OutputPanel } from './SimulationOutput'
+import { downloadBlob, downloadContent } from './exportUtils'
+import { buildResultViewModel, compatibleCatalogs, experimentFromForm, formFromExperiment, formatEngineering, supportedTraces, tracesForSelectedResult, traceKey, type ExperimentForm } from './simulationModel'
+import { exportTraceCsv, fetchExperimentInputs, fetchWorkbench, queryTraceMeasurements, queryTraceTable, queryTraces } from './simulationApi'
 import { useSimulationController } from './useSimulationController'
+import type { ResultViewModel, SimulationFeatureProps, SimulationResultSummaryDto, SimulationTabId, TraceCatalog, TraceComponent, TraceMeasurements, TraceQuery, TraceSpec, TraceTable } from './types'
 import './styles.css'
 
-const PAGE_SIZE = 200
-const LOG_PAGE_SIZE = 500
+const TABS: Array<[SimulationTabId, string]> = [['experiment', 'Experiment'], ['waveforms', 'Waveforms'], ['measurements', 'Measurements'], ['topology', 'Topology'], ['raw', 'Raw samples'], ['log', 'Output']]
+const COMPONENT_LABELS: Record<TraceComponent, string> = {real: 'Real', imaginary: 'Imaginary', magnitude: 'Magnitude', db: 'Decibels', phase: 'Unwrapped phase'}
+const COLORS = ['#4f7cff', '#ec795d', '#34b6a3', '#b58bff', '#dfae47', '#6bb8e8']
+const PAGE_SIZE = 100
+const shortId = (id: string) => id.slice(0, 10)
+const errorText = (error: unknown) => error instanceof Error ? error.message : 'The operation failed.'
+const dateText = (value: string) => new Date(value).toLocaleString()
 
-const TAB_LABELS: Record<SimulationTabId, string> = {
-  runs: 'Runs',
-  metrics: 'Metrics',
-  chart: 'Chart',
-  waveform: 'Waveform',
-  schematic: 'Schematic',
-  analysis: 'Analysis',
-  raw: 'Raw',
-  log: 'Log',
-  export: 'Export',
-}
+function Empty({children}: {children: React.ReactNode}) { return <div className="simulation-empty">{children}</div> }
+function ErrorMessage({message}: {message: string | null}) { return message ? <div className="simulation-inline-error" role="alert">{message}</div> : null }
 
-function formatDate(value: string | null | undefined): string {
-  if (!value) return '—'
-  const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString()
-}
-
-function fileName(path: string | null): string {
-  if (!path) return 'No active circuit'
-  const segments = path.split(/[\\/]/)
-  return segments[segments.length - 1] || path
-}
-
-function emptySimulationViewSession(): SimulationSession {
-  return {
-    selectedResultPath: null,
-    activeTab: 'runs',
-    visibleSeriesIds: [],
-    cursorA: null,
-    cursorB: null,
-    cursorTarget: 'a',
-  }
-}
-
-function tabsForResult(view: ResultViewModel | null): SimulationTabId[] {
-  if (!view) return ['runs']
-  const tabs: SimulationTabId[] = ['runs', 'metrics', 'schematic']
-  if (view.plot) tabs.push('chart', 'waveform')
-  tabs.push('analysis', 'raw', 'log', 'export')
-  return tabs
-}
-
-function defaultTabForResult(view: ResultViewModel): SimulationTabId {
-  if (!view.result.success) return view.outputLog ? 'log' : 'analysis'
-  return view.result.analysis_type === 'op' ? 'analysis' : 'metrics'
-}
-
-function allSeriesIds(view: ResultViewModel): string[] {
-  return view.plot?.series.map((series) => series.id) ?? []
-}
-
-function cursorSamplesForResult(view: ResultViewModel, seriesIds: readonly string[]): number[] {
-  if (!view.plot) return []
-  return collectCursorSamples(view.plot, new Set(seriesIds))
-}
-
-function defaultSimulationViewSession(view: ResultViewModel): SimulationSession {
-  const visibleSeriesIds = allSeriesIds(view)
-  const samples = cursorSamplesForResult(view, visibleSeriesIds)
-  return {
-    selectedResultPath: view.resultPath,
-    activeTab: defaultTabForResult(view),
-    visibleSeriesIds,
-    cursorA: samples.length ? samples[Math.floor((samples.length - 1) * 0.25)] : null,
-    cursorB: samples.length ? samples[Math.floor((samples.length - 1) * 0.75)] : null,
-    cursorTarget: 'a',
-  }
-}
-
-function restoreCursor(
-  samples: readonly number[],
-  value: number | null,
-  logarithmic: boolean,
-): number | null {
-  if (value === null || !Number.isFinite(value) || !samples.length) return null
-  if (value < samples[0] || value > samples[samples.length - 1]) return null
-  return snapCursorValue(samples, value, logarithmic)
-}
-
-function restoredSimulationViewSession(
-  view: ResultViewModel,
-  saved: SimulationSession,
-): SimulationSession {
-  const availableSeriesIds = allSeriesIds(view)
-  const availableSeriesSet = new Set(availableSeriesIds)
-  const matchingSeriesIds = saved.visibleSeriesIds.filter((id) => availableSeriesSet.has(id))
-  const visibleSeriesIds = saved.visibleSeriesIds.length === 0
-    ? []
-    : matchingSeriesIds.length
-      ? matchingSeriesIds
-      : availableSeriesIds
-  const cursorSamples = cursorSamplesForResult(view, availableSeriesIds)
-  const availableTabs = tabsForResult(view)
-  return {
-    selectedResultPath: view.resultPath,
-    activeTab: availableTabs.includes(saved.activeTab as SimulationTabId)
-      ? saved.activeTab as SimulationTabId
-      : defaultTabForResult(view),
-    visibleSeriesIds,
-    cursorA: restoreCursor(cursorSamples, saved.cursorA, view.plot?.logX ?? false),
-    cursorB: restoreCursor(cursorSamples, saved.cursorB, view.plot?.logX ?? false),
-    cursorTarget: saved.cursorTarget,
-  }
-}
-
-function StatusBadge({ status }: { status: SimulationJobDto['status'] }) {
-  return <span className={`simulation-status simulation-status--${status}`}>{status}</span>
-}
-
-function Notice({
-  level,
-  message,
-  onClose,
-}: {
-  level: string
-  message: string
-  onClose(): void
-}) {
-  return (
-    <div className={`simulation-notice simulation-notice--${level}`} role="status" aria-live="polite">
-      <span>{message}</span>
-      <button type="button" className="simulation-icon-button" onClick={onClose} aria-label="Dismiss notification">×</button>
-    </div>
-  )
-}
-
-function EmptyState({ title, detail }: { title: string; detail: string }) {
-  return (
-    <div className="simulation-empty">
-      <strong>{title}</strong>
-      <span>{detail}</span>
-    </div>
-  )
-}
-
-function RunHistory({
-  jobs,
-  results,
-  selectedResultId,
-  resultLoading,
-  onSelectResult,
-}: {
-  jobs: SimulationJobDto[]
-  results: SimulationResultSummaryDto[]
-  selectedResultId: string | null
-  resultLoading: boolean
-  onSelectResult(result: SimulationResultSummaryDto): void
-}) {
-  const orderedJobs = useMemo(
-    () => [...jobs].sort((left, right) => right.submitted_at.localeCompare(left.submitted_at)),
-    [jobs],
-  )
-  const orderedResults = useMemo(
-    () => [...results].sort((left, right) => right.timestamp.localeCompare(left.timestamp)),
-    [results],
-  )
-  return (
-    <div className="simulation-history-grid">
-      <section className="simulation-card">
-        <div className="simulation-card__header">
-          <div>
-            <h2>Jobs</h2>
-            <p>Project-scoped execution lifecycle</p>
-          </div>
-          <span className="simulation-count">{orderedJobs.length}</span>
-        </div>
-        <div className="simulation-list">
-          {orderedJobs.length ? orderedJobs.map((job) => (
-            <article className="simulation-job-row" key={job.job_id}>
-              <div className="simulation-row__primary">
-                <span className="simulation-mono simulation-ellipsis" title={job.circuit_file}>{job.circuit_file}</span>
-                <StatusBadge status={job.status} />
-              </div>
-              <div className="simulation-row__meta">
-                <span title={job.job_id}>Job {job.job_id.slice(0, 10)} · {job.origin === 'ui_editor' ? 'Editor' : 'Agent'}</span>
-                <span>{formatDate(job.submitted_at)}</span>
-              </div>
-              {job.error_message ? <div className="simulation-row__error">{job.error_message}</div> : null}
-            </article>
-          )) : <EmptyState title="No jobs" detail="Run the active circuit to create one." />}
-        </div>
-      </section>
-
-      <section className="simulation-card">
-        <div className="simulation-card__header">
-          <div>
-            <h2>Results</h2>
-            <p>Immutable simulation history</p>
-          </div>
-          <span className="simulation-count">{orderedResults.length}</span>
-        </div>
-        <div className="simulation-list">
-          {orderedResults.length ? orderedResults.map((result) => (
-            <button
-              type="button"
-              key={result.result_id}
-              className={`simulation-result-row${selectedResultId === result.result_id ? ' simulation-result-row--selected' : ''}`}
-              disabled={resultLoading}
-              onClick={() => onSelectResult(result)}
-            >
-              <span className="simulation-row__primary">
-                <span className="simulation-mono simulation-ellipsis" title={result.circuit_file}>{result.circuit_file}</span>
-                <span className={`simulation-result-outcome simulation-result-outcome--${result.success ? 'success' : 'error'}`}>
-                  {result.success ? 'success' : 'failed'}
-                </span>
-              </span>
-              <span className="simulation-row__meta">
-                <span>{displayAnalysisType(result.analysis_type)}</span>
-                <span>{formatDate(result.timestamp)}</span>
-              </span>
-              <span className="simulation-row__identity" title={result.result_id}>Result {result.result_id.slice(0, 12)}</span>
-            </button>
-          )) : <EmptyState title="No results" detail="Completed and failed result bundles appear here." />}
-        </div>
-      </section>
-    </div>
-  )
-}
-
-function MetricsPanel({ view }: { view: ResultViewModel }) {
-  const noiseTotals = buildNoiseTotalRows(view)
-  return (
-    <div className="simulation-panel-stack">
-      {noiseTotals.length ? (
-        <section className="simulation-card">
-          <div className="simulation-card__header">
-            <div>
-              <h2>Integrated noise</h2>
-              <p>RMS integrated only across this .noise sweep range; density curves remain separate.</p>
-            </div>
-          </div>
-          <div className="simulation-stat-grid">
-            {noiseTotals.map((row) => (
-              <div className="simulation-stat" key={row.label}>
-                <span>{row.label}</span>
-                <strong>{formatEngineering(row.value, row.unit)}</strong>
-              </div>
-            ))}
-          </div>
-        </section>
-      ) : null}
-      <section className="simulation-card simulation-card--fill">
-        <div className="simulation-card__header">
-          <div>
-            <h2>Measurements</h2>
-            <p>Source .measure statements, including failed and parse-error outcomes</p>
-          </div>
-          <span className="simulation-count">{view.metrics.length}</span>
-        </div>
-        {view.metrics.length ? (
-          <div className="simulation-table-wrap">
-            <table className="simulation-table">
-              <thead><tr><th>Name</th><th>Value</th><th>Status</th><th>Statement / error</th></tr></thead>
-              <tbody>
-                {view.metrics.map((metric, index) => (
-                  <tr key={`${metric.name}-${index}`}>
-                    <td className="simulation-mono">{metric.name}</td>
-                    <td className="simulation-mono">{formatEngineering(metric.value)}</td>
-                    <td><span className={`simulation-metric-status simulation-metric-status--${metric.status.toLowerCase()}`}>{metric.status.replace('_', ' ')}</span></td>
-                    <td className="simulation-detail-cell">{metric.error_message || metric.statement || '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : <EmptyState title="No .measure results" detail="This result contains no source measurements." />}
-      </section>
-    </div>
-  )
-}
-
-interface CursorReadout {
-  id: string
-  label: string
-  unit: string
-  a: number | null
-  b: number | null
-}
-
-function buildCursorReadouts(
-  model: PlotModel,
-  visibleSeriesIds: ReadonlySet<string>,
-  cursorA: number | null,
-  cursorB: number | null,
-): CursorReadout[] {
-  return model.series.filter((series) => visibleSeriesIds.has(series.id)).map((series) => {
-    const indexA = cursorA === null ? null : nearestSampleIndex(series.x, cursorA)
-    const indexB = cursorB === null ? null : nearestSampleIndex(series.x, cursorB)
-    return {
-      id: series.id,
-      label: series.label,
-      unit: series.unit,
-      a: indexA === null ? null : (series.y[indexA] ?? null),
-      b: indexB === null ? null : (series.y[indexB] ?? null),
-    }
-  })
-}
-
-function PlotPanel({
-  view,
-  mode,
-  visibleSeriesIds,
-  onToggleSeries,
-  cursorA,
-  cursorB,
-  cursorTarget,
-  onCursorTarget,
-  onCursorChange,
-}: {
-  view: ResultViewModel
-  mode: 'chart' | 'waveform'
-  visibleSeriesIds: ReadonlySet<string>
-  onToggleSeries(id: string): void
-  cursorA: number | null
-  cursorB: number | null
-  cursorTarget: 'a' | 'b'
-  onCursorTarget(cursor: 'a' | 'b'): void
-  onCursorChange(cursor: 'a' | 'b', value: number | null): void
-}) {
-  const model = view.plot
-  if (!model) return <EmptyState title="No plotted sweep" detail="Operating-point results are shown as scalar values." />
-  const readouts = buildCursorReadouts(model, visibleSeriesIds, cursorA, cursorB)
-  const cursorReadoutId = `simulation-cursor-readout-${view.identity.resultId}`
-  return (
-    <div className={`simulation-plot-layout simulation-plot-layout--${mode}`}>
-      <aside className="simulation-series-rail">
-        <div className="simulation-series-rail__header">
-          <strong>{mode === 'waveform' ? 'Signals' : 'Series'}</strong>
-          <span>{visibleSeriesIds.size}/{model.series.length}</span>
-        </div>
-        <div className="simulation-series-list">
-          {model.series.map((series) => (
-            <label className="simulation-series-row" key={series.id}>
-              <input
-                type="checkbox"
-                checked={visibleSeriesIds.has(series.id)}
-                onChange={() => onToggleSeries(series.id)}
-              />
-              <span className="simulation-series-swatch" style={{ backgroundColor: series.color }} />
-              <span className="simulation-series-name" title={series.label}>{series.label}</span>
-              <span className="simulation-series-unit">{series.unit}</span>
-            </label>
-          ))}
-        </div>
-      </aside>
-      <section className="simulation-chart-card">
-        <div className="simulation-chart-toolbar">
-          <div>
-            <strong>{model.title}</strong>
-            <span>{model.logX ? 'log X' : 'linear X'}{model.logLeftY ? ' · log Y' : ''}</span>
-          </div>
-          <div className="simulation-cursor-toggle" aria-label="Active measurement cursor">
-            <button type="button" aria-pressed={cursorTarget === 'a'} className={cursorTarget === 'a' ? 'is-active' : ''} onClick={() => onCursorTarget('a')}>Cursor A</button>
-            <button type="button" aria-pressed={cursorTarget === 'b'} className={cursorTarget === 'b' ? 'is-active' : ''} onClick={() => onCursorTarget('b')}>Cursor B</button>
-            <button
-              type="button"
-              aria-label={`Clear cursor ${cursorTarget.toUpperCase()}`}
-              disabled={cursorTarget === 'a' ? cursorA === null : cursorB === null}
-              onClick={() => onCursorChange(cursorTarget, null)}
-            >Clear {cursorTarget.toUpperCase()}</button>
-            <button
-              type="button"
-              aria-label="Clear both measurement cursors"
-              disabled={cursorA === null && cursorB === null}
-              onClick={() => {
-                onCursorChange('a', null)
-                onCursorChange('b', null)
-              }}
-            >Clear all</button>
-          </div>
-        </div>
-        <SeriesChart
-          model={model}
-          identity={view.identity}
-          visibleSeriesIds={visibleSeriesIds}
-          cursorA={cursorA}
-          cursorB={cursorB}
-          cursorTarget={cursorTarget}
-          onCursorTarget={onCursorTarget}
-          onCursorChange={onCursorChange}
-          readoutId={cursorReadoutId}
-        />
-        <div id={cursorReadoutId} className="simulation-measurement-strip" role="region" aria-label="Cursor measurements">
-          <div className="simulation-measurement-axis">
-            <span>X(A): {formatEngineering(cursorA, model.xUnit)}</span>
-            <span>X(B): {formatEngineering(cursorB, model.xUnit)}</span>
-            <strong>ΔX (B − A): {formatEngineering(cursorA === null || cursorB === null ? null : cursorB - cursorA, model.xUnit)}</strong>
-          </div>
-          <div className="simulation-measurement-values">
-            <div className="simulation-measurement-values__header">
-              <span>Signal</span>
-              <code>Y(A)</code>
-              <code>Y(B)</code>
-              <strong>ΔY (B − A)</strong>
-            </div>
-            {readouts.map((row) => (
-              <div key={row.id}>
-                <span title={row.label}>{row.label}</span>
-                <code>{formatEngineering(row.a, row.unit)}</code>
-                <code>{formatEngineering(row.b, row.unit)}</code>
-                <strong>{formatEngineering(row.a === null || row.b === null ? null : row.b - row.a, row.unit)}</strong>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-    </div>
-  )
-}
-
-function SchematicIssues({ schematic }: { schematic: SchematicDocumentDto }) {
-  if (!schematic.parse_errors.length) return null
-  return (
-    <div className="simulation-inline-error">
-      <strong>{schematic.parse_errors.length} schematic parse issue(s)</strong>
-      <span>{schematic.parse_errors.map((error) => {
-        const location = error.line_index >= 0
-          ? `${error.source_file}:${error.line_index + 1}`
-          : error.source_file
-        return `${location ? `${location} ` : ''}${error.message}`
-      }).join('\n')}</span>
-    </div>
-  )
-}
-
-function SchematicPanel({ schematic }: { schematic: SchematicDocumentDto | null }) {
-  const layout = useMemo(() => schematic ? buildSchematicLayout(schematic) : null, [schematic])
-  if (!schematic) {
-    return (
-      <EmptyState
-        title="No result-bound schematic snapshot"
-        detail="This API result does not contain an immutable schematic document. The current editor file is not substituted because it may differ from the simulated source closure."
-      />
-    )
-  }
-  if (!layout || !schematic.has_schematic) {
-    return (
-      <div className="simulation-panel-stack">
-        <EmptyState title="No drawable schematic components" detail="The verified semantic document contains no drawable components." />
-        <SchematicIssues schematic={schematic} />
+function TraceEditor({catalog, traces, onChange}: {catalog: TraceCatalog; traces: TraceSpec[]; onChange(value: TraceSpec[]): void}) {
+  const update = (index: number, patch: Partial<TraceSpec>) => onChange(traces.map((item, position) => position === index ? {...item, ...patch} : item))
+  return <section className="simulation-trace-editor" aria-label="Trace definitions">
+    <div className="simulation-section-heading"><strong>Traces</strong><button type="button" disabled={!catalog.signals.length || traces.length >= 16} onClick={() => {
+      const signal = catalog.signals.find((item) => !traces.some((trace) => trace.signal === item.name)) ?? catalog.signals[0]
+      onChange([...traces, {signal: signal.name, component: signal.is_complex ? 'magnitude' : 'real'}])
+    }}>+ Add trace</button></div>
+    {traces.map((trace, index) => {
+      const signal = catalog.signals.find((item) => item.name === trace.signal)
+      return <div className="simulation-trace-row" key={index}>
+        <span className="simulation-series-swatch" style={{backgroundColor: COLORS[index % COLORS.length]}} />
+        <select aria-label={`Trace ${index + 1} signal`} value={trace.signal} onChange={(event) => {
+          const next = catalog.signals.find((item) => item.name === event.target.value)
+          update(index, {signal: event.target.value, reference: null, component: next?.is_complex ? 'magnitude' : 'real'})
+        }}>{catalog.signals.map((item) => <option key={item.name} value={item.name}>{item.name} [{item.unit || '1'}]</option>)}</select>
+        <select aria-label={`Trace ${index + 1} component`} value={trace.component} onChange={(event) => {
+          const component = event.target.value as TraceComponent
+          const reference = catalog.signals.find((item) => item.name === trace.reference)
+          update(index, {component, ...(component === 'db' && reference?.unit !== signal?.unit ? {reference: null} : {})})
+        }}>{signal?.components.map((component) => <option value={component} key={component}>{COMPONENT_LABELS[component]}</option>)}</select>
+        <select aria-label={`Trace ${index + 1} reference`} value={trace.reference ?? ''} onChange={(event) => update(index, {reference: event.target.value || null})}>
+          <option value="">Absolute signal</option>
+          {catalog.signals.filter((item) => item.unit && signal?.unit && (trace.component !== 'db' || item.unit === signal.unit) && item.name !== signal.name).map((item) => <option key={item.name} value={item.name}>÷ {item.name} [{item.unit}]</option>)}
+        </select>
+        <button type="button" aria-label={`Remove trace ${index + 1}`} onClick={() => onChange(traces.filter((_, position) => position !== index))}>×</button>
       </div>
-    )
-  }
-  return (
-    <section className="simulation-card simulation-card--schematic">
-      <div className="simulation-card__header">
-        <div><h2>{schematic.title || 'Schematic snapshot'}</h2><p>Deterministic React layout of result-bound SPICE semantics · read only</p></div>
-        <span className="simulation-count">{schematic.components.length}</span>
+    })}
+    <small>V/I gives impedance; I/V gives admittance. Decibels use dBV/dBA for absolute signals and require a reference with the same unit for a transfer ratio.</small>
+  </section>
+}
+
+function ExperimentPanel({form, onChange, view, onReuse, onReplay, onInputs, disabled}: {
+  form: ExperimentForm; onChange(value: ExperimentForm): void; view: ResultViewModel | null
+  onReuse(): void; onReplay(): void; onInputs(): void; disabled: boolean
+}) {
+  const field = (name: keyof ExperimentForm, value: string) => onChange({...form, [name]: value})
+  return <div className="simulation-panel-stack">
+    <section className="simulation-card">
+      <div className="simulation-card__header"><div><h2>Experiment configuration</h2><p>Run a saved circuit with explicit analysis and overrides. The run retains its own inputs.</p></div></div>
+      <div className="simulation-experiment-grid">
+        <label className="simulation-field simulation-field--wide"><span>Analysis command <small>blank uses the circuit's analysis</small></span><input value={form.analysis} onChange={(event) => field('analysis', event.target.value)} placeholder=".tran 1u 10m · .ac dec 100 10 1Meg · .op" /></label>
+        <label className="simulation-field"><span>Parameter overrides <small>one name=value per line</small></span><textarea rows={4} value={form.parameters} onChange={(event) => field('parameters', event.target.value)} placeholder={'Rload=10k\nCfilter=100n'} /></label>
+        <label className="simulation-field"><span>Solver options <small>one name=value per line</small></span><textarea rows={4} value={form.solver} onChange={(event) => field('solver', event.target.value)} placeholder={'reltol=1e-4\nmethod=gear'} /></label>
+        <label className="simulation-field"><span>Temperature (°C)</span><input type="number" value={form.temperature} onChange={(event) => field('temperature', event.target.value)} placeholder="Use circuit default" /></label>
+        <label className="simulation-field"><span>Timeout (seconds)</span><input type="number" min="1" step="1" value={form.timeout} onChange={(event) => field('timeout', event.target.value)} /></label>
       </div>
-      <div className="simulation-schematic-frame">
-        <svg viewBox={`${layout.viewBox.x} ${layout.viewBox.y} ${layout.viewBox.width} ${layout.viewBox.height}`} role="img" aria-label={schematic.title || 'Schematic snapshot'}>
-          {layout.nets.map((net) => (
-            <g key={net.id}>
-              {net.paths.map((path, index) => <path key={index} d={path} className="simulation-schematic__net" />)}
-              <circle cx={net.hub.x} cy={net.hub.y} r={2.7} className="simulation-schematic__junction" />
-              <text x={net.hub.x + 5} y={net.hub.y - 5} className="simulation-schematic__net-label">{net.name}</text>
-            </g>
-          ))}
-          {layout.components.map((item) => (
-            <g key={item.component.id} data-symbol-kind={item.component.symbol_kind}>
-              <rect x={item.x - item.width / 2} y={item.y - item.height / 2} width={item.width} height={item.height} rx={4} className="simulation-schematic__component" />
-              <text x={item.x} y={item.y - 7} textAnchor="middle" className="simulation-schematic__reference">{item.component.instance_name}</text>
-              <text x={item.x} y={item.y + 10} textAnchor="middle" className="simulation-schematic__value">{item.component.display_value || item.component.display_name || item.component.kind}</text>
-              {item.pins.map((pin) => (
-                <g key={pin.pin.name}>
-                  <circle cx={pin.x} cy={pin.y} r={3} className="simulation-schematic__pin" />
-                  <text
-                    x={pin.x + (pin.side === 'left' ? 6 : pin.side === 'right' ? -6 : 0)}
-                    y={pin.y + (pin.side === 'top' ? 11 : pin.side === 'bottom' ? -6 : 3)}
-                    textAnchor={pin.side === 'left' ? 'start' : pin.side === 'right' ? 'end' : 'middle'}
-                    className="simulation-schematic__pin-label"
-                  >{pin.pin.name}</text>
-                </g>
-              ))}
-            </g>
-          ))}
-        </svg>
-      </div>
-      <SchematicIssues schematic={schematic} />
     </section>
-  )
-}
-
-function AnalysisPanel({ view }: { view: ResultViewModel }) {
-  const noiseTotals = buildNoiseTotalRows(view)
-  const rows = [
-    ['Analysis', displayAnalysisType(view.result.analysis_type)],
-    ['Command', view.result.analysis_command || '—'],
-    ['Executor', view.result.executor],
-    ['Circuit at run time', view.result.file_path],
-    ['Timestamp', formatDate(view.result.timestamp)],
-    ['Duration', formatEngineering(view.result.duration_seconds, 's')],
-    ['Schema', String(view.result.schema_version)],
-    ['Source closure digest', view.result.source_digest ?? 'Not available for failed result'],
-    ['Result identity', view.identity.resultId],
-    ['Job identity', view.identity.jobId ?? 'Historical result (no active job)'],
-    ...noiseTotals.map((item) => [item.label, formatEngineering(item.value, item.unit)]),
-  ]
-  return (
-    <section className="simulation-card simulation-card--fill">
-      <div className="simulation-card__header"><div><h2>Analysis information</h2><p>Persisted provenance, not the current editor state</p></div></div>
+    {view ? <section className="simulation-card">
+      <div className="simulation-card__header"><div><h2>Selected run</h2><p>{view.result.analysis_command || view.result.analysis_type.toUpperCase()} · {dateText(view.result.timestamp)}</p></div><span className={`simulation-result-outcome simulation-result-outcome--${view.result.success ? 'success' : 'error'}`}>{view.result.success ? 'Completed' : 'Failed'}</span></div>
       <dl className="simulation-detail-grid">
-        {rows.map(([label, value]) => <div key={label}><dt>{label}</dt><dd className={label.includes('identity') || label === 'Command' || label.includes('digest') ? 'simulation-mono' : ''}>{value}</dd></div>)}
+        <div><dt>Circuit</dt><dd>{view.result.file_path}</dd></div><div><dt>Duration</dt><dd>{formatEngineering(view.result.duration_seconds, 's')}</dd></div>
+        <div><dt>Result</dt><dd><code>{view.identity.resultId}</code></dd></div><div><dt>Input snapshot</dt><dd>{view.provenance.available ? view.provenance.execution_inputs_available === false ? 'Submitted inputs; worker did not return execution inputs' : `${view.provenance.files.length} execution input files` : 'Unavailable for this historical result'}</dd></div>
       </dl>
-      {view.result.error ? <div className="simulation-inline-error"><strong>{view.result.error.code} · {view.result.error.severity}</strong><span>{view.result.error.message}{view.result.error.recovery_suggestion ? ` ${view.result.error.recovery_suggestion}` : ''}</span></div> : null}
-    </section>
-  )
+      <RunProvenance provenance={view.provenance} />
+      <div className="simulation-button-row"><button type="button" disabled={!view.provenance.experiment} onClick={onReuse}>Use this configuration</button><button type="button" disabled={disabled || !view.provenance.available} onClick={onReplay}>Replay saved inputs</button><button type="button" disabled={disabled || !view.provenance.available} onClick={onInputs}>Download input bundle</button></div>
+      {view.result.error ? <ErrorMessage message={`${view.result.error.code}: ${view.result.error.message}${view.result.error.recovery_suggestion ? ` ${view.result.error.recovery_suggestion}` : ''}`} /> : null}
+    </section> : null}
+  </div>
 }
 
-function OpPanel({ view }: { view: ResultViewModel }) {
-  return (
-    <section className="simulation-card simulation-card--fill">
-      <div className="simulation-card__header"><div><h2>Operating point</h2><p>Scalar node voltages and branch currents</p></div><span className="simulation-count">{view.opRows.length}</span></div>
-      {view.opRows.length ? (
-        <div className="simulation-table-wrap"><table className="simulation-table"><thead><tr><th>Signal</th><th>Value</th></tr></thead><tbody>
-          {view.opRows.map((row) => <tr key={row.signal}><td className="simulation-mono">{row.signal}</td><td className="simulation-mono">{formatEngineering(row.value, row.unit)}</td></tr>)}
-        </tbody></table></div>
-      ) : <EmptyState title="No operating-point values" detail="The persisted result contains no scalar signals." />}
-    </section>
-  )
+function RawTable({table, page, onPage}: {table: TraceTable | null; page: number; onPage(value: number): void}) {
+  if (!table) return <Empty>Loading original samples…</Empty>
+  return <section className="simulation-card simulation-card--fill">
+    <div className="simulation-card__header"><div><h2>Original samples</h2><p>Full-resolution values for the selected traces. Display rounding does not affect CSV precision.</p></div><div className="simulation-button-row"><button type="button" disabled={!page} onClick={() => onPage(page - 1)}>Previous</button><span>{table.total_rows ? `${table.offset + 1}–${Math.min(table.offset + table.limit, table.total_rows)} / ${table.total_rows}` : '0 samples'}</span><button type="button" disabled={table.offset + table.limit >= table.total_rows} onClick={() => onPage(page + 1)}>Next</button></div></div>
+    <div className="simulation-table-wrap"><table className="simulation-table"><thead><tr><th>Sample</th><th>Branch</th><th>{table.x_axis.label} {table.x_axis.unit ? `(${table.x_axis.unit})` : ''}</th>{table.columns.map((item) => <th key={item.id}>{item.label} ({item.unit || '1'})</th>)}</tr></thead><tbody>{table.rows.map((row) => <tr key={`${row.branch_id}-${row.index}`}><td>{row.index}</td><td>{row.branch_id}{row.outer_value === null ? '' : ` · ${formatEngineering(row.outer_value)}`}</td><td>{formatEngineering(row.x)}</td>{row.values.map((value, index) => <td key={index}>{formatEngineering(value)}</td>)}</tr>)}</tbody></table></div>
+  </section>
 }
 
-function RawDataPanel({ view }: { view: ResultViewModel }) {
-  const columns = useMemo(() => buildRawColumns(view), [view])
-  const noiseTotals = buildNoiseTotalRows(view)
-  const [page, setPage] = useState(0)
-  useEffect(() => setPage(0), [view.identity.resultId])
-  const rowCount = columns.reduce((maximum, column) => Math.max(maximum, column.values.length), 0)
-  const pageCount = Math.max(1, Math.ceil(rowCount / PAGE_SIZE))
-  const start = Math.min(page, pageCount - 1) * PAGE_SIZE
-  const end = Math.min(rowCount, start + PAGE_SIZE)
-  if (!columns.length) return <EmptyState title="No raw data" detail="This result has no canonical signal arrays." />
-  return (
-    <section className="simulation-card simulation-card--fill">
-      <div className="simulation-card__header">
-        <div><h2>Raw result data</h2><p>{rowCount.toLocaleString()} samples · {columns.length} columns</p></div>
-        <div className="simulation-pagination">
-          <button type="button" disabled={page <= 0} onClick={() => setPage((value) => Math.max(0, value - 1))}>Previous</button>
-          <span>{start + 1}–{end}</span>
-          <button type="button" disabled={end >= rowCount} onClick={() => setPage((value) => Math.min(pageCount - 1, value + 1))}>Next</button>
-        </div>
-      </div>
-      {noiseTotals.length ? (
-        <div className="simulation-raw-scalars" aria-label="Integrated noise scalars">
-          {noiseTotals.map((row) => <span key={row.label}><small>{row.label}</small><strong>{formatEngineering(row.value, row.unit)}</strong></span>)}
-          <em>Integrated across the .noise sweep range; not an extra frequency sample.</em>
-        </div>
-      ) : null}
-      <div className="simulation-table-wrap simulation-table-wrap--raw">
-        <table className="simulation-table simulation-table--raw">
-          <thead><tr><th>#</th>{columns.map((column) => <th key={column.id}>{column.label}{column.unit ? <small>{column.unit}</small> : null}</th>)}</tr></thead>
-          <tbody>{Array.from({ length: Math.max(0, end - start) }, (_, offset) => start + offset).map((row) => (
-            <tr key={row}><td>{row}</td>{columns.map((column) => <td className="simulation-mono" key={column.id}>{formatEngineering(column.values[row] ?? null)}</td>)}</tr>
-          ))}</tbody>
-        </table>
-      </div>
-    </section>
-  )
+function MeasurementTable({data, label}: {data: TraceMeasurements | null; label: string}) {
+  if (!data) return null
+  return <section className="simulation-card">
+    <div className="simulation-card__header"><div><h2>{label}</h2><p>Measurements use original samples in the visible X range. Cursor interpolation stays within each sweep branch.</p></div></div>
+    <div className="simulation-table-wrap"><table className="simulation-table"><thead><tr><th>Trace / branch</th><th>A: X / Y</th><th>B: X / Y</th><th>ΔX / ΔY</th><th>Min / Max</th><th>Peak-to-peak</th><th>Time mean / RMS</th><th>Samples</th></tr></thead><tbody>{data.measurements.map((row, index) => <tr key={index}>
+      <td>{row.label}<small>Branch {row.branch_id}{row.outer_value == null ? '' : ` · ${formatEngineering(row.outer_value)}`}</small></td>
+      <td>{row.cursor_a ? <>{formatEngineering(row.cursor_a.x, data.x_axis.unit)}<small>{formatEngineering(row.cursor_a.y, row.unit)}{row.cursor_a.interpolated ? ' (interpolated)' : ''}</small></> : '—'}</td>
+      <td>{row.cursor_b ? <>{formatEngineering(row.cursor_b.x, data.x_axis.unit)}<small>{formatEngineering(row.cursor_b.y, row.unit)}{row.cursor_b.interpolated ? ' (interpolated)' : ''}</small></> : '—'}</td>
+      <td>{formatEngineering(row.delta_x, data.x_axis.unit)}<small>{formatEngineering(row.delta_y, row.unit)}</small></td>
+      <td>{formatEngineering(row.min, row.unit)}<small>{formatEngineering(row.max, row.unit)}</small></td><td>{formatEngineering(row.peak_to_peak, row.unit)}</td>
+      <td title={row.statistics_basis}>{formatEngineering(row.time_mean, row.unit)}<small>{formatEngineering(row.time_rms, row.unit)}</small></td><td>{row.sample_count}</td>
+    </tr>)}</tbody></table></div>
+  </section>
 }
 
-function OutputLogPanel({ view }: { view: ResultViewModel }) {
-  const [query, setQuery] = useState('')
-  const [level, setLevel] = useState<'all' | 'error' | 'warning'>('all')
-  const [page, setPage] = useState(0)
-  useEffect(() => { setQuery(''); setLevel('all'); setPage(0) }, [view.identity.resultId])
-  const lines = useMemo(() => view.outputLog.split(/\r?\n/).map((text, index) => ({ number: index + 1, text })), [view.outputLog])
-  const filtered = useMemo(() => lines.filter((line) => {
-    const normalized = line.text.toLowerCase()
-    if (level === 'error' && !/error|fatal|failed/.test(normalized)) return false
-    if (level === 'warning' && !/warn|caution/.test(normalized)) return false
-    return !query || normalized.includes(query.toLowerCase())
-  }), [level, lines, query])
-  useEffect(() => setPage(0), [level, query])
-  const pageCount = Math.max(1, Math.ceil(filtered.length / LOG_PAGE_SIZE))
-  const safePage = Math.min(page, pageCount - 1)
-  const visibleLines = filtered.slice(safePage * LOG_PAGE_SIZE, (safePage + 1) * LOG_PAGE_SIZE)
-  return (
-    <section className="simulation-card simulation-card--fill">
-      <div className="simulation-log-toolbar">
-        <div><strong>Simulator output</strong><span>{filtered.length}/{lines.length} lines</span></div>
-        <select value={level} onChange={(event) => setLevel(event.target.value as typeof level)} aria-label="Log severity filter"><option value="all">All lines</option><option value="error">Errors</option><option value="warning">Warnings</option></select>
-        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search output" aria-label="Search simulator output" />
-        <div className="simulation-log-pagination">
-          <button type="button" disabled={safePage <= 0} onClick={() => setPage((value) => Math.max(0, value - 1))} aria-label="Previous log page">‹</button>
-          <span>{filtered.length ? `${safePage + 1}/${pageCount}` : '0/0'}</span>
-          <button type="button" disabled={safePage >= pageCount - 1} onClick={() => setPage((value) => Math.min(pageCount - 1, value + 1))} aria-label="Next log page">›</button>
-        </div>
-        <button type="button" disabled={!visibleLines.length} onClick={() => void navigator.clipboard.writeText(visibleLines.map((line) => line.text).join('\n'))}>Copy page</button>
-      </div>
-      {view.outputLog ? <div className="simulation-log" role="log">{visibleLines.map((line) => <div key={line.number}><span>{line.number}</span><code>{line.text || ' '}</code></div>)}</div> : <EmptyState title="No simulator output" detail="The exact result contains an empty output log." />}
-    </section>
-  )
+function SourceMeasurements({view, baseline}: {view: ResultViewModel; baseline: ResultViewModel | null}) {
+  return <section className="simulation-card"><div className="simulation-card__header"><div><h2>SPICE .measure results</h2><p>Source measurements retain failed and parse-error outcomes.</p></div></div>
+    {view.metrics.length ? <div className="simulation-table-wrap"><table className="simulation-table"><thead><tr><th>Name</th><th>Current</th><th>Status</th>{baseline ? <><th>Baseline</th><th>Δ current − baseline</th></> : null}<th>Definition / error</th></tr></thead><tbody>{view.metrics.map((metric, index) => {
+      const previous = baseline?.metrics.find((item) => item.name === metric.name && item.statement === metric.statement)
+      return <tr key={index}><td>{metric.name}</td><td>{formatEngineering(metric.value)}</td><td className={metric.status === 'OK' ? '' : 'simulation-text-error'}>{metric.status}</td>{baseline ? <><td>{formatEngineering(previous?.value)}</td><td>{metric.status === 'OK' && previous?.status === 'OK' && metric.value !== null && previous.value !== null ? formatEngineering(metric.value - previous.value) : '—'}</td></> : null}<td><code>{metric.statement}</code>{metric.error_message ? <small className="simulation-text-error">{metric.error_message}</small> : null}</td></tr>
+    })}</tbody></table></div> : <Empty>No source .measure statements were recorded.</Empty>}
+  </section>
 }
 
-function ExportPanel({
-  view,
-  visibleSeriesIds,
-  busy,
-  onCanonicalJson,
-  onDelete,
-}: {
-  view: ResultViewModel
-  visibleSeriesIds: ReadonlySet<string>
-  busy: boolean
-  onCanonicalJson(): Promise<void>
-  onDelete(): Promise<void>
-}) {
-  const [error, setError] = useState<string | null>(null)
-  const [confirmDelete, setConfirmDelete] = useState(false)
-  useEffect(() => { setError(null); setConfirmDelete(false) }, [view.identity.resultId])
-  const execute = (action: () => void) => {
-    try {
-      setError(null)
-      action()
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Export failed.')
-    }
-  }
-  return (
-    <div className="simulation-panel-stack">
-      <section className="simulation-card">
-        <div className="simulation-card__header"><div><h2>Bound export identity</h2><p>Every export below is tied to this immutable result.</p></div></div>
-        <div className="simulation-identity-grid">
-          <div><span>Project</span><code>{view.identity.projectId}</code></div>
-          <div><span>Job</span><code>{view.identity.jobId ?? 'historical / none'}</code></div>
-          <div><span>Result</span><code>{view.identity.resultId}</code></div>
-        </div>
-      </section>
-      <section className="simulation-card simulation-card--fill">
-        <div className="simulation-card__header"><div><h2>Export result</h2><p>CSV and SVG use the same visible series arrays as this screen.</p></div></div>
-        <div className="simulation-export-grid">
-          <button type="button" className="simulation-export-option" disabled={busy || (!view.plot && !view.opRows.length)} onClick={() => execute(() => downloadContent(resultFileName(view, 'csv', 'data'), 'text/csv;charset=utf-8', buildPlotCsv(view, visibleSeriesIds)))}>
-            <strong>Visible data CSV</strong><span>Current series selection, full sample precision</span>
-          </button>
-          <button type="button" className="simulation-export-option" disabled={busy || !view.plot || !visibleSeriesIds.size} onClick={() => execute(() => downloadContent(resultFileName(view, 'svg', 'chart'), 'image/svg+xml;charset=utf-8', buildPlotSvg(view.plot as PlotModel, view.identity, visibleSeriesIds)))}>
-            <strong>Visible chart SVG</strong><span>Pure vector rendering with embedded identity</span>
-          </button>
-          <button type="button" className="simulation-export-option" disabled={busy} onClick={() => void onCanonicalJson()}>
-            <strong>Canonical result-data JSON</strong><span>Backend-authoritative axes, signals, and noise totals</span>
-          </button>
-        </div>
-        {error ? <div className="simulation-inline-error">{error}</div> : null}
-      </section>
-      <section className="simulation-card simulation-danger-zone">
-        <div><strong>Delete this result</strong><span>This removes only result {view.identity.resultId} from the current project.</span></div>
-        {confirmDelete ? (
-          <div className="simulation-confirm-actions">
-            <button type="button" onClick={() => setConfirmDelete(false)}>Keep result</button>
-            <button type="button" className="simulation-button--danger" disabled={busy} onClick={() => void onDelete()}>Delete permanently</button>
-          </div>
-        ) : <button type="button" className="simulation-button--danger-ghost" onClick={() => setConfirmDelete(true)}>Delete result…</button>}
-      </section>
-    </div>
-  )
-}
-
-export function SimulationFeature(props: SimulationFeatureProps) {
+function Workbench(props: SimulationFeatureProps) {
   const controller = useSimulationController(props)
-  const activeDocumentIsCircuit = isSupportedCircuitPath(props.activeDocumentPath)
-  const handledRunRequestRef = useRef(props.runRequestId ?? 0)
-  const projectScopeRef = useRef<string | null | undefined>(undefined)
-  const restoreAttemptRef = useRef<string | null>(null)
-  const [activeTab, setActiveTab] = useState<SimulationTabId>('runs')
-  const [visibleSeriesIds, setVisibleSeriesIds] = useState<Set<string>>(new Set())
+  const [tab, setTab] = useState<SimulationTabId>('experiment')
+  const [form, setForm] = useState<ExperimentForm>(() => formFromExperiment({}))
+  const [traces, setTraces] = useState<TraceSpec[]>([])
+  const [traceResultId, setTraceResultId] = useState<string | null>(null)
+  const [range, setRange] = useState<[number, number] | null>(null)
   const [cursorA, setCursorA] = useState<number | null>(null)
   const [cursorB, setCursorB] = useState<number | null>(null)
   const [cursorTarget, setCursorTarget] = useState<'a' | 'b'>('a')
-  const [hydratedProjectId, setHydratedProjectId] = useState<string | null>(null)
-  const [configuredResultId, setConfiguredResultId] = useState<string | null>(null)
-  const selectedId = controller.selected?.identity.resultId ?? null
-  const selectedResultPath = controller.selected?.resultPath ?? null
-  const projectScope = props.projectId && props.projectRoot
-    ? `${props.projectId}\u0000${props.projectRoot}`
-    : null
-  const hydrated = props.projectId !== null && hydratedProjectId === props.projectId
+  const [baseline, setBaseline] = useState<ResultViewModel | null>(null)
+  const [baselineLoading, setBaselineLoading] = useState(false)
+  const [query, setQuery] = useState<TraceQuery | null>(null)
+  const [baselineQuery, setBaselineQuery] = useState<TraceQuery | null>(null)
+  const [measurements, setMeasurements] = useState<TraceMeasurements | null>(null)
+  const [baselineMeasurements, setBaselineMeasurements] = useState<TraceMeasurements | null>(null)
+  const [table, setTable] = useState<TraceTable | null>(null)
+  const [page, setPage] = useState(0)
+  const [error, setError] = useState<string | null>(null)
+  const [queryError, setQueryError] = useState<string | null>(null)
+  const [actionBusy, setActionBusy] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [restored, setRestored] = useState(false)
+  const restoreRef = useRef<SimulationSession | null>(null)
+  const restoringRef = useRef(false)
+  const handledRunRequest = useRef(props.runRequestId ?? 0)
+  const baselineRequest = useRef(0)
+  const alive = useRef(true)
+  useEffect(() => { alive.current = true; return () => { alive.current = false; baselineRequest.current += 1 } }, [])
+  const selected = controller.selected
+  const resultId = selected?.identity.resultId ?? null
+  const catalog = selected?.catalog ?? null
+  const activeTraces = useMemo(() => tracesForSelectedResult(selected, traceResultId, traces), [selected, traceResultId, traces])
 
-  const applyViewSession = useCallback((session: SimulationSession) => {
-    setActiveTab(session.activeTab as SimulationTabId)
-    setVisibleSeriesIds(new Set(session.visibleSeriesIds))
-    setCursorA(session.cursorA)
-    setCursorB(session.cursorB)
-    setCursorTarget(session.cursorTarget)
-  }, [])
-
-  useEffect(() => {
-    if (projectScopeRef.current === projectScope) return
-    projectScopeRef.current = projectScope
-    restoreAttemptRef.current = null
-    setHydratedProjectId(null)
-    setConfiguredResultId(null)
-    applyViewSession(emptySimulationViewSession())
-  }, [applyViewSession, projectScope])
-
-  useEffect(() => {
-    const projectId = props.projectId
-    const projectRoot = props.projectRoot
-    if (
-      !projectId
-      || !projectRoot
-      || !projectScope
-      || projectScopeRef.current !== projectScope
-      || !controller.snapshotReady
-      || restoreAttemptRef.current === projectScope
-    ) return
-
-    restoreAttemptRef.current = projectScope
-    const workSession = getWorkSession()
-    const saved = sameProjectRoot(workSession.projectRoot, projectRoot)
-      ? workSession.simulation
-      : null
-
-    const clearAndFinish = () => {
-      const empty = emptySimulationViewSession()
-      applyViewSession(empty)
-      setConfiguredResultId(null)
-      setHydratedProjectId(projectId)
-      if (saved) updateSimulationSession(projectRoot, empty)
-    }
-
-    if (!saved?.selectedResultPath) {
-      clearAndFinish()
-      return
-    }
-
-    const summary = controller.results.find(
-      (result) => result.result_path === saved.selectedResultPath,
-    )
-    if (!summary) {
-      clearAndFinish()
-      return
-    }
-
-    void controller.selectResult(summary.result_id, summary.job_id).then((view) => {
-      if (projectScopeRef.current !== projectScope) return
-      if (!view || view.resultPath !== saved.selectedResultPath) {
-        clearAndFinish()
-        return
-      }
-      applyViewSession(restoredSimulationViewSession(view, saved))
-      setConfiguredResultId(view.identity.resultId)
-      setHydratedProjectId(projectId)
-    })
-  }, [
-    applyViewSession,
-    controller.results,
-    controller.selectResult,
-    controller.snapshotReady,
-    projectScope,
-    props.projectId,
-    props.projectRoot,
-  ])
+  const loadBaseline = useCallback(async (summary: SimulationResultSummaryDto) => {
+    if (!props.projectId) return
+    const request = ++baselineRequest.current
+    setBaseline(null); setBaselineLoading(true)
+    try {
+      const response = await fetchWorkbench(props.projectId, summary.result_id)
+      if (response.job_id !== summary.job_id) throw new Error('Baseline history identity changed.')
+      if (alive.current && request === baselineRequest.current) setBaseline(buildResultViewModel(response))
+    } catch (caught) { if (alive.current && request === baselineRequest.current) setError(errorText(caught)) }
+    finally { if (alive.current && request === baselineRequest.current) setBaselineLoading(false) }
+  }, [props.projectId])
 
   useEffect(() => {
-    if (!hydrated || configuredResultId === selectedId) return
-    const session = controller.selected
-      ? defaultSimulationViewSession(controller.selected)
-      : emptySimulationViewSession()
-    applyViewSession(session)
-    setConfiguredResultId(selectedId)
-  }, [
-    applyViewSession,
-    configuredResultId,
-    controller.selected,
-    hydrated,
-    selectedId,
-  ])
+    if (!controller.snapshotReady || restoringRef.current) return
+    restoringRef.current = true
+    const stored = getWorkSession()
+    const saved = props.projectRoot && sameProjectRoot(stored.projectRoot, props.projectRoot) ? stored.simulation : null
+    restoreRef.current = saved
+    const summary = controller.results.find((item) => item.result_path === saved?.selectedResultPath)
+    const reference = controller.results.find((item) => item.result_path === saved?.baselineResultPath)
+    if (reference) void loadBaseline(reference)
+    if (summary) void controller.selectResult(summary.result_id, summary.job_id).finally(() => { if (alive.current) setRestored(true) })
+    else setRestored(true)
+  }, [controller.results, controller.selectResult, controller.snapshotReady, loadBaseline, props.projectRoot])
 
   useEffect(() => {
-    if (
-      !hydrated
-      || !props.projectId
-      || !props.projectRoot
-      || configuredResultId !== selectedId
-    ) return
-    updateSimulationSession(props.projectRoot, {
-      selectedResultPath,
-      activeTab,
-      visibleSeriesIds: [...visibleSeriesIds],
-      cursorA,
-      cursorB,
-      cursorTarget,
-    })
-  }, [
-    activeTab,
-    configuredResultId,
-    cursorA,
-    cursorB,
-    cursorTarget,
-    hydrated,
-    props.projectId,
-    props.projectRoot,
-    selectedId,
-    selectedResultPath,
-    visibleSeriesIds,
-  ])
-
-  const availableTabs = useMemo(
-    () => tabsForResult(controller.selected),
-    [controller.selected],
-  )
-
-  const toggleSeries = (id: string) => setVisibleSeriesIds((current) => {
-    const next = new Set(current)
-    if (next.has(id)) next.delete(id)
-    else next.add(id)
-    return next
-  })
-
-  const runStatus = controller.activeJob
-    ? controller.activeJob.status
-    : controller.blockingJob
-      ? controller.blockingJob.status
-    : controller.selected
-      ? (controller.selected.result.success ? 'completed' : 'failed')
-      : 'idle'
-
-  const activeFileLabel = fileName(props.activeDocumentPath)
-  const runSourceDescription = controller.activeJob
-    ? `Tracking editor job for ${controller.activeJob.circuit_file}; new runs wait for its exact terminal state.`
-    : activeDocumentIsCircuit
-      ? controller.blockingJob
-        ? `An ${controller.blockingJob.origin === 'agent_tool' ? 'agent' : 'editor'} job already runs this circuit; it is observed read-only and a duplicate run is blocked.`
-        : 'Runs the saved project file; save editor changes before starting.'
-      : props.activeDocumentPath
-        ? 'Choose a supported SPICE netlist (.cir, .sp, .spice, .net, or .ckt) before running.'
-        : 'Select a SPICE circuit to run.'
-  const runControlTitle = controller.busyAction === 'run'
-    ? 'Starting simulation…'
-    : controller.activeJob
-      ? 'A simulation started from the editor is already running.'
-      : controller.blockingJob
-        ? 'A project job for this circuit is already active.'
-        : activeDocumentIsCircuit
-          ? 'Run the saved circuit file.'
-          : props.activeDocumentPath
-            ? 'Select a supported SPICE netlist first.'
-            : 'Select a SPICE circuit to run.'
-  const resultDescription = controller.selected
-    ? `${displayAnalysisType(controller.selected.result.analysis_type)} result ${controller.selected.identity.resultId}`
-    : 'No simulation result is selected.'
-  const toolbarDescription = [
-    props.activeDocumentPath ?? 'No active circuit file.',
-    runSourceDescription,
-    resultDescription,
-  ].join('\n')
+    setTraceResultId(selected?.identity.resultId ?? null)
+    if (!selected) { setTraces([]); return }
+    const saved = restoreRef.current?.selectedResultPath === selected.resultPath ? restoreRef.current : null
+    restoreRef.current = null
+    setTraces(saved && selected.catalog ? supportedTraces(saved.traces, selected.catalog) : selected.catalog?.default_traces.slice(0, 4) ?? [])
+    setRange(saved?.xRange ?? null); setCursorA(saved?.cursorA ?? null); setCursorB(saved?.cursorB ?? null)
+    setCursorTarget(saved?.cursorTarget ?? 'a')
+    setTab(saved?.activeTab ?? (selected.result.success ? selected.result.analysis_type === 'op' ? 'measurements' : 'waveforms' : 'log'))
+    setConfirmDelete(false); setPage(0); setError(null)
+  }, [selected])
 
   useEffect(() => {
-    props.onRunControlChange?.({
-      canRun: controller.canRun,
-      busy: controller.busyAction === 'run',
-      title: runControlTitle,
-    })
-  }, [controller.busyAction, controller.canRun, props.onRunControlChange, runControlTitle])
+    if (!restored || !props.projectRoot || traceResultId !== resultId) return
+    updateSimulationSession(props.projectRoot, {selectedResultPath: selected?.resultPath ?? null, baselineResultPath: baseline?.resultPath ?? null, activeTab: tab, traces, cursorA, cursorB, cursorTarget, xRange: range})
+  }, [baseline?.resultPath, cursorA, cursorB, cursorTarget, props.projectRoot, range, restored, selected?.resultPath, tab, traces, traceResultId, resultId])
+
+  const run = useCallback(async () => {
+    try { setError(null); await controller.run(experimentFromForm(form)) }
+    catch (caught) { setError(errorText(caught)); setTab('experiment') }
+  }, [controller.run, form])
+  const configurationError = useMemo(() => { try { experimentFromForm(form); return null } catch (caught) { return errorText(caught) } }, [form])
+  const canRun = controller.canRun && !configurationError
+  const runTitle = configurationError ?? (controller.activeJob ? 'A simulation is running.' : 'Run the saved active circuit with this experiment configuration.')
+  useEffect(() => props.onRunControlChange?.({canRun, busy: controller.busyAction === 'run', title: runTitle}), [canRun, controller.busyAction, props.onRunControlChange, runTitle])
+  useEffect(() => {
+    const request = props.runRequestId ?? 0
+    if (request === handledRunRequest.current) return
+    handledRunRequest.current = request
+    if (canRun) void run()
+  }, [canRun, props.runRequestId, run])
+
+  const baselineCompatible = Boolean(catalog && baseline?.catalog && resultId !== baseline.identity.resultId && selected?.result.analysis_type === baseline.result.analysis_type && compatibleCatalogs(catalog, baseline.catalog))
+  const baselineTraces = useMemo(() => baselineCompatible && baseline?.catalog ? supportedTraces(activeTraces, baseline.catalog).filter((trace) => (
+    catalog?.signals.find((signal) => signal.name === trace.signal)?.unit === baseline.catalog?.signals.find((signal) => signal.name === trace.signal)?.unit
+    && (!trace.reference || catalog?.signals.find((signal) => signal.name === trace.reference)?.unit === baseline.catalog?.signals.find((signal) => signal.name === trace.reference)?.unit)
+  )) : [], [activeTraces, baseline, baselineCompatible, catalog])
+  const request = useMemo(() => ({traces: activeTraces, x_min: range?.[0] ?? null, x_max: range?.[1] ?? null, max_points: 1800}), [activeTraces, range])
 
   useEffect(() => {
-    const requestId = props.runRequestId ?? 0
-    if (handledRunRequestRef.current === requestId) return
-    handledRunRequestRef.current = requestId
-    if (controller.canRun) void controller.run()
-  }, [controller.canRun, controller.run, props.runRequestId])
+    setQuery(null); setBaselineQuery(null); setQueryError(null)
+    if (!selected?.result.success || !props.projectId || !resultId || !catalog || !activeTraces.length) return
+    let cancelled = false
+    const timer = window.setTimeout(() => {
+      void Promise.allSettled([
+        queryTraces(props.projectId!, resultId, request),
+        baseline && baselineTraces.length ? queryTraces(props.projectId!, baseline.identity.resultId, {...request, traces: baselineTraces}) : Promise.resolve(null),
+      ]).then(([current, reference]) => {
+        if (cancelled) return
+        if (current.status === 'fulfilled') setQuery(current.value)
+        else setQueryError(errorText(current.reason))
+        if (reference.status === 'fulfilled') setBaselineQuery(reference.value)
+        else setQueryError(`Baseline: ${errorText(reference.reason)}`)
+      })
+    }, 120)
+    return () => { cancelled = true; window.clearTimeout(timer) }
+  }, [baseline, baselineTraces, catalog, props.projectId, request, resultId, activeTraces.length, selected?.result.success])
 
-  const exportCanonicalJson = async () => {
-    const exported = await controller.exportCanonicalJson()
-    if (exported) downloadBlob(exported.metadata.file_name, exported.blob)
+  useEffect(() => {
+    setMeasurements(null); setBaselineMeasurements(null)
+    if (!selected?.result.success || !props.projectId || !resultId || !catalog || !activeTraces.length || (tab !== 'waveforms' && tab !== 'measurements')) return
+    let cancelled = false
+    const timer = window.setTimeout(() => {
+      const measurementRequest = {...request, cursor_a: cursorA, cursor_b: cursorB}
+      void Promise.allSettled([
+        queryTraceMeasurements(props.projectId!, resultId, measurementRequest),
+        baseline && baselineTraces.length ? queryTraceMeasurements(props.projectId!, baseline.identity.resultId, {...measurementRequest, traces: baselineTraces}) : Promise.resolve(null),
+      ]).then(([current, reference]) => {
+        if (cancelled) return
+        if (current.status === 'fulfilled') setMeasurements(current.value)
+        else setQueryError(errorText(current.reason))
+        if (reference.status === 'fulfilled') setBaselineMeasurements(reference.value)
+        else setQueryError(`Baseline measurements: ${errorText(reference.reason)}`)
+      })
+    }, 140)
+    return () => { cancelled = true; window.clearTimeout(timer) }
+  }, [baseline, baselineTraces, catalog, cursorA, cursorB, props.projectId, request, resultId, tab, activeTraces.length, selected?.result.success])
+
+  useEffect(() => setPage(0), [resultId, traces])
+  useEffect(() => {
+    setTable(null)
+    if (!selected?.result.success || tab !== 'raw' || !props.projectId || !resultId || !activeTraces.length) return
+    let cancelled = false
+    void queryTraceTable(props.projectId, resultId, {traces: activeTraces, offset: page * PAGE_SIZE, limit: PAGE_SIZE}).then((value) => { if (!cancelled) setTable(value) }).catch((caught) => { if (!cancelled) setQueryError(errorText(caught)) })
+    return () => { cancelled = true }
+  }, [activeTraces, page, props.projectId, resultId, selected?.result.success, tab])
+
+  const chartData = useMemo(() => query && traceResultId === resultId && selected?.result.success ? {x_axis: query.x_axis, series: [
+    ...query.series.map((series, index) => ({...series, id: `current:${series.id}`, source_result_id: resultId!, label: `${series.label} · current`, color: COLORS[index % COLORS.length]})),
+    ...(baselineQuery?.series.map((series, index) => ({...series, id: `baseline:${series.id}`, source_result_id: baseline!.identity.resultId, label: `${series.label} · baseline ${shortId(baseline!.identity.resultId)}`, color: COLORS[(index + 3) % COLORS.length]})) ?? []),
+  ]} : null, [baseline, baselineQuery, query, resultId, traceResultId, selected?.result.success])
+
+  const act = async (operation: () => Promise<void>) => {
+    setActionBusy(true); setError(null)
+    try { await operation() } catch (caught) { if (alive.current) setError(errorText(caught)) }
+    finally { if (alive.current) setActionBusy(false) }
   }
+  const exportCsv = () => act(async () => {
+    if (!selected?.result.success || !activeTraces.length) return
+    const blob = await exportTraceCsv(selected.identity.projectId, selected.identity.resultId, {traces: activeTraces})
+    if (alive.current) downloadBlob(`${selected.identity.resultId}_traces.csv`, blob)
+  })
+  const exportJson = () => act(async () => { const result = await controller.exportCanonicalJson(); if (result && alive.current) downloadBlob(result.metadata.file_name, result.blob) })
+  const inputs = () => act(async () => { if (!selected) return; const blob = await fetchExperimentInputs(selected.identity.projectId, selected.identity.resultId); if (alive.current) downloadBlob(`${selected.identity.resultId}_inputs.zip`, blob) })
 
   let content
-  if (!props.projectId) {
-    content = <EmptyState title="Open a project" detail="Simulation history and execution are strictly project-scoped." />
-  } else if (!controller.snapshotReady || !hydrated) {
-    content = <EmptyState title="Restoring simulation state" detail="Loading project results and the last simulation view." />
-  } else if (controller.resultLoading) {
-    content = <EmptyState title="Loading exact result" detail="Result and surface identities are being verified." />
-  } else if (activeTab === 'runs' || !controller.selected) {
-    content = (
-      <RunHistory
-        jobs={controller.jobs}
-        results={controller.results}
-        selectedResultId={selectedId}
-        resultLoading={controller.resultLoading}
-        onSelectResult={(result) => {
-          void controller.selectResult(result.result_id, result.job_id).then((view) => {
-            if (!view || view.identity.projectId !== props.projectId) return
-            applyViewSession(defaultSimulationViewSession(view))
-            setConfiguredResultId(view.identity.resultId)
-          })
-        }}
-      />
-    )
-  } else if (activeTab === 'metrics') {
-    content = controller.selected.result.analysis_type === 'op'
-      ? <div className="simulation-panel-stack"><OpPanel view={controller.selected} /><MetricsPanel view={controller.selected} /></div>
-      : <MetricsPanel view={controller.selected} />
-  } else if (activeTab === 'chart' || activeTab === 'waveform') {
-    content = (
-      <PlotPanel
-        view={controller.selected}
-        mode={activeTab}
-        visibleSeriesIds={visibleSeriesIds}
-        onToggleSeries={toggleSeries}
-        cursorA={cursorA}
-        cursorB={cursorB}
-        cursorTarget={cursorTarget}
-        onCursorTarget={setCursorTarget}
-        onCursorChange={(cursor, value) => cursor === 'a' ? setCursorA(value) : setCursorB(value)}
-      />
-    )
-  } else if (activeTab === 'schematic') {
-    content = <SchematicPanel schematic={controller.selected.schematic} />
-  } else if (activeTab === 'analysis') {
-    content = controller.selected.result.analysis_type === 'op'
-      ? <div className="simulation-panel-stack"><OpPanel view={controller.selected} /><AnalysisPanel view={controller.selected} /></div>
-      : <AnalysisPanel view={controller.selected} />
-  } else if (activeTab === 'raw') {
-    content = <RawDataPanel view={controller.selected} />
-  } else if (activeTab === 'log') {
-    content = <OutputLogPanel view={controller.selected} />
-  } else {
-    content = (
-      <ExportPanel
-        view={controller.selected}
-        visibleSeriesIds={visibleSeriesIds}
-        busy={controller.busyAction !== null}
-        onCanonicalJson={exportCanonicalJson}
-        onDelete={controller.deleteSelected}
-      />
-    )
-  }
+  if (tab === 'experiment') content = <ExperimentPanel form={form} onChange={setForm} view={selected} disabled={controller.busyAction !== null || actionBusy || Boolean(controller.activeJob || controller.blockingJob)} onReuse={() => selected?.provenance.experiment && setForm(formFromExperiment(selected.provenance.experiment))} onReplay={() => void controller.replay()} onInputs={() => void inputs()} />
+  else if (!selected) content = <Empty>Select a run from the history, or configure and run a circuit.</Empty>
+  else if (controller.resultLoading || traceResultId !== resultId) content = <Empty>Loading selected run…</Empty>
+  else if (tab === 'topology') content = <TopologyInspector schematic={selected.schematic} />
+  else if (tab === 'log') content = <OutputPanel key={resultId} view={selected} />
+  else content = <div className="simulation-panel-stack">
+    {catalog ? <TraceEditor catalog={catalog} traces={traces} onChange={(next) => setTraces(next.filter((trace, index) => next.findIndex((item) => traceKey(item) === traceKey(trace)) === index))} /> : null}
+    {baseline ? <div className="simulation-baseline-strip"><span>Baseline: {shortId(baseline.identity.resultId)} · {baseline.result.analysis_command}</span><span>{resultId === baseline.identity.resultId ? 'Pinned for comparison with the next run' : baselineCompatible ? `${baselineTraces.length}/${traces.length} matching traces` : 'Different analysis or axis: waveform overlay unavailable'}</span><button type="button" onClick={() => { ++baselineRequest.current; setBaseline(null) }}>Clear baseline</button></div> : null}
+    {selected.noiseTotals.applicable ? <section className="simulation-card"><div className="simulation-card__header"><div><h2>Integrated noise</h2><p>Native ngspice RMS totals across the original noise-analysis frequency range.</p></div></div><dl className="simulation-detail-grid">{selected.noiseTotals.available ? selected.noiseTotals.items.map((item) => <div key={item.key}><dt>{item.key === 'output_rms' ? 'Output noise RMS' : 'Input-referred noise RMS'}</dt><dd>{formatEngineering(item.value, item.unit)}</dd></div>) : <div><dt>Noise totals</dt><dd>Unavailable for this result</dd></div>}</dl></section> : null}
+    <ErrorMessage message={queryError} />
+    {tab === 'raw' ? traces.length ? <RawTable table={table} page={page} onPage={setPage} /> : <Empty>Add a trace to inspect its original samples.</Empty> : <>
+      {tab === 'waveforms' ? <section className="simulation-card">
+        <div className="simulation-card__header"><div><h2>{selected.result.analysis_type.toUpperCase()} response</h2><p>Wheel to zoom · drag to pan · click to position a cursor · double-click to fit</p></div><div className="simulation-button-row"><button type="button" onClick={() => setRange(null)}>Fit all</button><button type="button" aria-pressed={cursorTarget === 'a'} onClick={() => setCursorTarget('a')}>Cursor A</button><button type="button" aria-pressed={cursorTarget === 'b'} onClick={() => setCursorTarget('b')}>Cursor B</button><button type="button" onClick={() => {setCursorA(null); setCursorB(null)}}>Clear cursors</button></div></div>
+        <div className="simulation-cursor-inputs"><label>A ({catalog?.x_axis.unit || 'X'})<input type="number" step="any" value={cursorA ?? ''} onChange={(event) => setCursorA(event.target.value === '' ? null : Number(event.target.value))} /></label><label>B ({catalog?.x_axis.unit || 'X'})<input type="number" step="any" value={cursorB ?? ''} onChange={(event) => setCursorB(event.target.value === '' ? null : Number(event.target.value))} /></label><span>{query ? query.series.map((series) => `${series.point_count}/${series.visible_point_count} display samples`).join(' · ') : ''}</span></div>
+        {chartData ? <SeriesChart data={chartData} range={range} onRangeChange={setRange} cursorA={cursorA} cursorB={cursorB} cursorTarget={cursorTarget} onCursorChange={(which, value) => which === 'a' ? setCursorA(value) : setCursorB(value)} /> : <Empty>{traces.length && catalog ? 'Loading waveform window…' : 'Add a trace to plot.'}</Empty>}
+      </section> : <SourceMeasurements view={selected} baseline={baseline} />}
+      <MeasurementTable data={measurements} label="Current run measurements" /><MeasurementTable data={baselineMeasurements} label="Baseline measurements" />
+    </>}
+  </div>
 
-  return (
-    <section className="simulation-feature" hidden={!props.active} aria-label="Circuit simulation">
-      <header className="simulation-header">
-        <div className="simulation-header__identity" title={toolbarDescription} aria-label={toolbarDescription}>
-          <strong className="simulation-header__label">Simulation</strong>
-          <span className="simulation-header__file simulation-mono">{activeFileLabel}</span>
-          <span className={`simulation-runtime-status simulation-runtime-status--${runStatus}`}>{runStatus}</span>
-        </div>
+  return <section className="simulation-feature" hidden={!props.active} aria-label="Circuit simulation workbench">
+    <header className="simulation-header"><div className="simulation-header__identity"><strong>Simulation workbench</strong><span className="simulation-header__file" title={props.activeDocumentPath ?? ''}>{props.activeDocumentPath?.split(/[\\/]/).pop() ?? 'Select a SPICE circuit'}</span></div><div className="simulation-button-row"><span className="simulation-run-state">{controller.activeJob?.status ?? controller.blockingJob?.status ?? 'Ready'}</span><button type="button" disabled={!canRun} title={runTitle} className="simulation-primary" onClick={() => void run()}>Run saved source</button>{controller.activeJob ? <button type="button" disabled={controller.activeJob.cancel_requested || controller.busyAction !== null} onClick={() => void controller.cancel()}>{controller.activeJob.cancel_requested ? 'Cancelling…' : 'Cancel'}</button> : null}</div></header>
+    {controller.notice ? <div className={`simulation-notice simulation-notice--${controller.notice.level}`} role="status"><span>{controller.notice.message}</span><button type="button" aria-label="Dismiss notification" onClick={controller.clearNotice}>×</button></div> : null}
+    <ErrorMessage message={error} />
+    <div className="simulation-workbench-layout">
+      <aside className="simulation-run-history" aria-label="Simulation run history"><div className="simulation-section-heading"><strong>Run history</strong><button type="button" disabled={controller.loading} onClick={() => void controller.refresh()}>Refresh</button></div>
+        {controller.jobs.filter((job) => job.status === 'pending' || job.status === 'running').map((job) => <div className="simulation-live-job" key={job.job_id}><strong>{job.status} · {job.origin === 'ui_editor' ? 'Editor' : 'Agent'}</strong><small>{job.circuit_file}</small></div>)}
+        {!controller.results.length ? <Empty>No completed runs yet.</Empty> : [...controller.results].sort((left, right) => right.timestamp.localeCompare(left.timestamp)).map((summary) => <article key={summary.result_id} className={`simulation-history-entry${resultId === summary.result_id ? ' is-selected' : ''}`}>
+          <button type="button" className="simulation-history-select" disabled={controller.resultLoading} onClick={() => { restoreRef.current = null; void controller.selectResult(summary.result_id, summary.job_id) }}><strong>{summary.circuit_file.split(/[\\/]/).pop()}</strong><span>{summary.analysis_type.toUpperCase()} · <b className={summary.success ? '' : 'simulation-text-error'}>{summary.success ? 'Completed' : 'Failed'}</b></span><small>{dateText(summary.timestamp)}</small><code>{shortId(summary.result_id)}</code></button>
+          <button type="button" className="simulation-baseline-button" disabled={!summary.success || baselineLoading} aria-pressed={baseline?.identity.resultId === summary.result_id} onClick={() => void loadBaseline(summary)}>{baseline?.identity.resultId === summary.result_id ? 'Pinned baseline' : 'Set baseline'}</button>
+        </article>)}
+      </aside>
+      <div className="simulation-workbench-main"><nav className="simulation-tabs" aria-label="Simulation workbench sections">{TABS.map(([id, label]) => <button key={id} type="button" className={tab === id ? 'is-active' : ''} aria-current={tab === id ? 'page' : undefined} onClick={() => setTab(id)}>{label}</button>)}</nav>
+        {selected ? <div className="simulation-result-toolbar"><span title={selected.identity.resultId}>{selected.result.analysis_command || selected.result.analysis_type.toUpperCase()} · {shortId(selected.identity.resultId)}</span><div className="simulation-button-row"><button type="button" disabled={actionBusy || !activeTraces.length || !catalog} onClick={() => void exportCsv()}>Full-resolution CSV</button><button type="button" disabled={!chartData || actionBusy} onClick={() => { try { if (chartData) downloadContent(`${resultId}_view.svg`, 'image/svg+xml', buildPlotSvg(chartData, selected.identity, range)) } catch (caught) { setError(errorText(caught)) } }}>View SVG</button><button type="button" disabled={actionBusy} onClick={() => void exportJson()}>Result JSON</button>{confirmDelete ? <><button type="button" onClick={() => setConfirmDelete(false)}>Keep</button><button type="button" className="simulation-text-error" disabled={controller.busyAction !== null} onClick={() => void controller.deleteSelected()}>Delete permanently</button></> : <button type="button" onClick={() => setConfirmDelete(true)}>Delete…</button>}</div></div> : null}
+        <main className="simulation-content">{!props.projectId ? <Empty>Open a project to configure simulations.</Empty> : !restored ? <Empty>Loading simulation history…</Empty> : content}</main>
+      </div>
+    </div>
+  </section>
+}
 
-        <nav className="simulation-tabs" aria-label="Simulation result sections">
-          {availableTabs.map((tab) => (
-            <button key={tab} type="button" className={activeTab === tab ? 'is-active' : ''} aria-current={activeTab === tab ? 'page' : undefined} onClick={() => setActiveTab(tab)}>{TAB_LABELS[tab]}</button>
-          ))}
-        </nav>
-
-        <div className="simulation-header__actions">
-          <button type="button" className="simulation-button simulation-button--secondary" disabled={!props.projectId || controller.loading} onClick={() => void controller.refresh()}>{controller.loading ? 'Refreshing…' : 'Refresh'}</button>
-          {controller.activeJob ? (
-            <button type="button" className="simulation-button simulation-button--danger-ghost" disabled={controller.activeJob.cancel_requested || controller.busyAction !== null} onClick={() => void controller.cancel()}>{controller.activeJob.cancel_requested ? 'Cancelling…' : 'Cancel'}</button>
-          ) : null}
-        </div>
-      </header>
-
-      {controller.notice ? <Notice level={controller.notice.level} message={controller.notice.message} onClose={controller.clearNotice} /> : null}
-
-      <main className="simulation-content">{content}</main>
-    </section>
-  )
+export function SimulationFeature(props: SimulationFeatureProps) {
+  return <Workbench key={`${props.projectId ?? ''}\u0000${props.projectRoot ?? ''}`} {...props} />
 }

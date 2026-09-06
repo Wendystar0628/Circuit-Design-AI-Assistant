@@ -26,7 +26,7 @@ _RUN_FIELDS = frozenset({
     "schema_version", "experiment", "original_source", "effective_source",
     "runtime", "omitted_measurements",
 })
-_RUN_OPTIONAL_FIELDS = frozenset({"engine"})
+_RUN_OPTIONAL_FIELDS = frozenset({"engine", "models"})
 _RESERVED_NAMES = re.compile(r"^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$)", re.I)
 
 
@@ -144,7 +144,7 @@ def validate_run_archive(
             raise ValueError("run.json engine metadata has invalid values")
     from domain.simulation.spice.source_closure import restore_spice_source_graph
 
-    restore_spice_source_graph(archive["original_source"])
+    original = restore_spice_source_graph(archive["original_source"])
     effective_payload = archive["effective_source"]
     runtime = archive["runtime"]
     if effective_payload is None or runtime is None:
@@ -152,9 +152,17 @@ def validate_run_archive(
             raise ValueError("Captured execution source and runtime must both be present or absent")
         if result is not None and result.success:
             raise ValueError("Successful runs require captured effective source and runtime inputs")
+        if "models" in archive:
+            from domain.simulation.models.model_manifest import validate_model_manifest
+
+            archive["models"] = validate_model_manifest(archive["models"], graph=original)
         _validate_omitted_measurements(archive["omitted_measurements"])
         return archive
     effective = restore_spice_source_graph(effective_payload)
+    if "models" in archive:
+        from domain.simulation.models.model_manifest import validate_model_manifest
+
+        archive["models"] = validate_model_manifest(archive["models"], graph=effective)
     if result is not None and effective.digest != result.source_digest:
         raise ValueError("run.json effective source digest does not match result.json")
     if not isinstance(runtime, dict) or set(runtime) != {"entry_path", "files", "paths_rebased"}:
@@ -246,6 +254,7 @@ def summarize_run_archive(archive: dict[str, Any] | None) -> dict[str, Any]:
             "files": [],
             "omitted_measurements": [],
             "engine": None,
+            "models": [],
         }
     runtime = archive["runtime"]
     effective = archive["effective_source"]
@@ -261,6 +270,7 @@ def summarize_run_archive(archive: dict[str, Any] | None) -> dict[str, Any]:
         "files": [{"path": item["path"]} for item in (runtime["files"] if runtime else archive["original_source"]["sources"])],
         "omitted_measurements": archive["omitted_measurements"],
         "engine": archive.get("engine"),
+        "models": archive.get("models", []),
     }
 
 

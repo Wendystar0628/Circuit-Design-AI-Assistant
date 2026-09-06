@@ -89,6 +89,20 @@ class ProcessSpiceExecutor:
                     "execution_mode": "isolated_process",
                 },
             }
+            # Inventory the accepted snapshot, even when no native result came
+            # back. It records declarations only, never claims native loading.
+            from domain.simulation.models.model_manifest import capture_model_manifest
+            from domain.simulation.spice.source_closure import restore_spice_source_graph
+
+            try:
+                result.provenance["models"] = capture_model_manifest(
+                    restore_spice_source_graph(source_snapshot),
+                    experiment.model_bindings if experiment is not None else [],
+                )
+            except ValueError:
+                # A malformed internal snapshot must not replace the original
+                # worker timeout/cancellation/error with a provenance exception.
+                pass
         return result
 
     def _execute(

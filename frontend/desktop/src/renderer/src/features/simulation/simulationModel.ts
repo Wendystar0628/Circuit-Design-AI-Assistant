@@ -1,4 +1,4 @@
-import type { ExperimentSpec, ResultViewModel, TraceCatalog, TraceSpec, WorkbenchResponse } from './types'
+import type { AcceptanceConstraint, CornerAxis, ExperimentSpec, ModelBinding, NumericalConfiguration, ResultViewModel, TraceCatalog, TraceSpec, WorkbenchResponse } from './types'
 
 const CIRCUIT_EXTENSIONS = new Set(['cir', 'sp', 'spice', 'net', 'ckt'])
 export function isSupportedCircuitPath(path: string | null): boolean {
@@ -43,19 +43,86 @@ export function parseAssignments(text: string, label: string): Record<string, st
   }
   return values
 }
-export interface ExperimentForm { analysis: string; parameters: string; temperature: string; solver: string; timeout: string }
+export interface ExperimentForm { analysis: string; parameters: string; temperature: string; solver: string; timeout: string; acceptance?: AcceptanceConstraint[]; models?: ModelBinding[] }
 export function experimentFromForm(form: ExperimentForm): ExperimentSpec {
   const timeout = Number(form.timeout)
   const temperature = form.temperature.trim() ? Number(form.temperature) : null
   if (!Number.isFinite(timeout) || timeout <= 0) throw new Error('Timeout must be a positive number of seconds.')
   if (temperature !== null && !Number.isFinite(temperature)) throw new Error('Temperature must be a finite Celsius value.')
+  const identifiers = new Set<string>()
+  for (const constraint of form.acceptance ?? []) {
+    const label = `Acceptance ${constraint.metric || 'constraint'}`
+    if (!constraint.metric.trim() || !constraint.unit.trim()) throw new Error(`${label}: metric and unit are required.`)
+    const id = (constraint.id || constraint.metric).trim().toLowerCase()
+    if (identifiers.has(id)) throw new Error(`${label}: duplicate constraint identity.`)
+    identifiers.add(id)
+    if (constraint.lower == null && constraint.upper == null) throw new Error(`${label}: enter at least one bound.`)
+    if ([constraint.lower, constraint.upper, constraint.conditions?.temperature].some((value) => value != null && !Number.isFinite(value))) throw new Error(`${label}: bounds and temperature must be finite numbers.`)
+    if (constraint.lower != null && constraint.upper != null && constraint.lower > constraint.upper) throw new Error(`${label}: lower bound must not exceed upper bound.`)
+    for (const [name, value] of Object.entries(constraint.conditions?.parameters ?? {})) {
+      if (!/^[A-Za-z_][\w.]*$/.test(name) || !String(value).trim()) throw new Error(`${label}: condition parameters require a valid name and value.`)
+    }
+  }
+  for (const model of form.models ?? []) {
+    if (!model.name.trim()) throw new Error('Model metadata requires a model or subcircuit name.')
+    for (const range of [model.voltage_range, model.frequency_range, model.temperature_range]) {
+      if (range && [range.min, range.max].some((value) => value != null && !Number.isFinite(value))) throw new Error(`Model ${model.name}: range values must be finite.`)
+      if (range?.min != null && range.max != null && range.min > range.max) throw new Error(`Model ${model.name}: minimum must not exceed maximum.`)
+    }
+  }
   return { analysis_command: form.analysis.trim(), parameters: parseAssignments(form.parameters, 'Parameters'),
-    solver_options: parseAssignments(form.solver, 'Solver options'), temperature, timeout_seconds: timeout }
+    solver_options: parseAssignments(form.solver, 'Solver options'), temperature, timeout_seconds: timeout,
+    ...(form.acceptance?.length ? {acceptance_constraints: structuredClone(form.acceptance)} : {}),
+    ...(form.models?.length ? {model_bindings: structuredClone(form.models)} : {}) }
 }
 export function formFromExperiment(spec: ExperimentSpec): ExperimentForm {
   const assignments = (values: Record<string, string | number> | undefined) => Object.entries(values ?? {}).map(([key, value]) => `${key}=${value}`).join('\n')
   return { analysis: spec.analysis_command ?? '', parameters: assignments(spec.parameters),
-    temperature: spec.temperature == null ? '' : String(spec.temperature), solver: assignments(spec.solver_options), timeout: String(spec.timeout_seconds ?? 120) }
+    temperature: spec.temperature == null ? '' : String(spec.temperature), solver: assignments(spec.solver_options), timeout: String(spec.timeout_seconds ?? 120),
+    ...(spec.acceptance_constraints?.length ? {acceptance: structuredClone(spec.acceptance_constraints)} : {}),
+    ...(spec.model_bindings?.length ? {models: structuredClone(spec.model_bindings)} : {}) }
+}
+
+export interface CornerAxisForm {kind: CornerAxis['kind']; parameter: string; values: string}
+export function cornerAxesFromForm(rows: CornerAxisForm[]): CornerAxis[] {
+  if (!rows.length) throw new Error('Add at least one corner axis.')
+  const names = new Set<string>()
+  let cases = 1
+  return rows.map((row) => {
+    const parameter = row.parameter.trim()
+    const name = row.kind === 'temperature' ? 'temperature' : parameter.toLowerCase()
+    if (row.kind !== 'temperature' && !/^[A-Za-z_][\w.]*$/.test(parameter)) throw new Error('Each parameter, supply or load axis requires an existing .param name.')
+    if (names.has(name)) throw new Error(`Duplicate corner axis: ${name}.`)
+    names.add(name)
+    const tokens = row.values.split(/[,\s]+/).filter(Boolean)
+    if (!tokens.length) throw new Error('Each corner axis needs at least one value.')
+    if (new Set(tokens.map((value) => value.toLowerCase())).size !== tokens.length) throw new Error(`Duplicate values in corner axis ${name}.`)
+    const values = row.kind === 'temperature' ? tokens.map((value) => {
+      const parsed = Number(value)
+      if (!Number.isFinite(parsed)) throw new Error('Corner temperatures must be finite Celsius numbers.')
+      return parsed
+    }) : tokens
+    cases *= values.length
+    if (cases > 64) throw new Error('A corner matrix may contain at most 64 cases.')
+    return {kind: row.kind, ...(row.kind !== 'temperature' ? {parameter} : {}), values}
+  })
+}
+export interface NumericalForm {toleranceFactor: string; timestepFactor: string; metrics: Array<{name: string; unit: string; absolute: string; relative: string}>}
+export function numericalFromForm(form: NumericalForm): NumericalConfiguration {
+  const toleranceFactor = Number(form.toleranceFactor), timestepFactor = Number(form.timestepFactor)
+  if (!(toleranceFactor > 0 && toleranceFactor < 1 && timestepFactor > 0 && timestepFactor < 1)) throw new Error('Refinement factors must be greater than 0 and less than 1.')
+  if (!form.metrics.length) throw new Error('Add at least one numerical comparison metric.')
+  const names = new Set<string>()
+  const metrics = form.metrics.map((metric) => {
+    const name = metric.name.trim(), unit = metric.unit.trim()
+    if (!name || !unit) throw new Error('Each numerical metric requires a name and unit.')
+    if (names.has(name.toLowerCase())) throw new Error(`Duplicate numerical metric: ${name}.`)
+    names.add(name.toLowerCase())
+    const absolute = Number(metric.absolute), relative = Number(metric.relative)
+    if (!metric.absolute.trim() || !metric.relative.trim() || !Number.isFinite(absolute) || !Number.isFinite(relative) || absolute < 0 || relative < 0) throw new Error('Numerical thresholds must be explicit finite nonnegative numbers.')
+    return {name, unit, absolute_tolerance: absolute, relative_tolerance: relative}
+  })
+  return {metrics, tolerance_factor: toleranceFactor, max_timestep_factor: timestepFactor}
 }
 /** Presentation formatting only. Circuit transforms and measurements belong to the backend. */
 export function formatEngineering(value: number | null | undefined, unit = ''): string {

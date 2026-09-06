@@ -44,6 +44,17 @@
 .simulation-result-toolbar button { font-size:10px; padding:4px 7px; }
 .simulation-content { flex:1; min-width:0; min-height:0; overflow:auto; padding:12px; }
 .simulation-panel-stack { display:grid; gap:12px; align-content:start; }
+.simulation-panel-stack[hidden] { display:none; }
+.simulation-study-axis { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; margin:0; padding:12px; border:1px solid var(--sim-border); border-radius:5px; min-width:0; }
+.simulation-study-axis legend { color:var(--sim-muted); padding:0 5px; }
+.simulation-study-axis > button { justify-self:start; }
+.simulation-study-note { padding:8px 14px; color:var(--sim-muted); }
+.simulation-study-counts { padding:10px 14px; display:flex; flex-wrap:wrap; gap:16px; }
+.simulation-feature .simulation-case-link { display:block; border:0; padding:3px 0; font-size:10px; color:var(--sim-accent); }
+.simulation-verdict { display:inline-block; padding:3px 8px; border-radius:10px; font-size:11px; }
+.simulation-verdict--pass { background:#eaf7f0; color:#28734c; }
+.simulation-verdict--fail { background:#fff0ee; color:#ad392e; }
+.simulation-verdict--unknown { background:#fff8e8; color:#886315; }
 .simulation-card { min-width:0; background:var(--sim-surface); border:1px solid var(--sim-border); border-radius:7px; overflow:hidden; }
 .simulation-card__header { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; padding:12px 14px; border-bottom:1px solid var(--sim-border); }
 .simulation-card__header > div:first-child { min-width:0; }

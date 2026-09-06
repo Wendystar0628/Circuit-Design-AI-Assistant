@@ -7,10 +7,12 @@ import concurrent.futures
 import copy
 import logging
 import os
+import re
 import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Protocol, Tuple
+from typing import Any, Callable, Dict, List, Optional, Protocol, Tuple
 
 from domain.simulation.models.simulation_error import (
     SimulationError,
@@ -33,6 +35,7 @@ from shared.sim_event_payload import validate_sim_payload
 _LOGGER = logging.getLogger(__name__)
 _DEFAULT_MAX_WORKERS = 4
 _CANCELLED_ERROR_MESSAGE = "Simulation cancelled"
+_STUDY_IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
 
 
 class _SimulationService(Protocol):
@@ -112,15 +115,18 @@ class SimulationJobManager:
         # RLock is intentional because a headless EventBus may run handlers
         # synchronously and a handler can call close/request_cancel.
         self._publish_lock = threading.RLock()
+        self._publication_context = threading.local()
         self._jobs: Dict[str, SimulationJob] = {}
         self._futures: Dict[str, concurrent.futures.Future[None]] = {}
         self._done_events: Dict[str, threading.Event] = {}
         self._cancel_events: Dict[str, threading.Event] = {}
         self._inputs: Dict[str, tuple[ExperimentSpec, dict]] = {}
+        self._contexts: Dict[str, Tuple[str, str]] = {}
+        self._terminal_listeners: List[Callable[[SimulationJob], None]] = []
         self._async_waiters: Dict[
             str, List[Tuple[asyncio.AbstractEventLoop, asyncio.Future[SimulationJob]]]
         ] = {}
-        self._active_agent_jobs: Dict[Tuple[str, str], str] = {}
+        self._active_agent_jobs: Dict[Tuple[str, str, str, str], str] = {}
         self._closed = False
 
     def submit(
@@ -133,16 +139,20 @@ class SimulationJobManager:
         session_id: str = "",
         experiment: Optional[ExperimentSpec] = None,
         source_snapshot: Optional[dict] = None,
+        study_id: str = "",
+        case_id: str = "",
     ) -> SimulationJob:
         """Atomically register and schedule one simulation.
 
-        Concurrent agent submissions for the same canonical project circuit
-        are rejected inside this method. UI jobs remain explicit user actions
-        and may coexist with an agent job or another UI job.
+        Ordinary agent submissions are deduplicated by canonical project and
+        circuit. Explicit study cases additionally use study and case identity,
+        allowing distinct cases to run concurrently on the same source file.
+        UI jobs remain explicit user actions and may coexist with other jobs.
         """
 
         if not isinstance(origin, JobOrigin):
             raise TypeError(f"origin must be JobOrigin, got {type(origin).__name__}")
+        _validate_study_identity(study_id, case_id)
         canonical_project, canonical_circuit = _canonical_submission_paths(
             project_root,
             circuit_file,
@@ -168,7 +178,7 @@ class SimulationJobManager:
         )
         done_event = threading.Event()
         cancel_event = threading.Event()
-        active_key = _circuit_key(canonical_project, canonical_circuit)
+        active_key = (*_circuit_key(canonical_project, canonical_circuit), study_id, case_id)
 
         with self._lock:
             if self._closed:
@@ -189,6 +199,7 @@ class SimulationJobManager:
             self._done_events[job.job_id] = done_event
             self._cancel_events[job.job_id] = cancel_event
             self._inputs[job.job_id] = (experiment, snapshot)
+            self._contexts[job.job_id] = (study_id, case_id)
             self._async_waiters[job.job_id] = []
             if origin is JobOrigin.AGENT_TOOL:
                 self._active_agent_jobs[active_key] = job.job_id
@@ -215,6 +226,36 @@ class SimulationJobManager:
 
         with self._lock:
             return self._jobs.get(job_id)
+
+    def query_context(self, job_id: str) -> Optional[Dict[str, str]]:
+        """Return the submitted study identity, retained after completion."""
+
+        with self._lock:
+            context = self._contexts.get(job_id)
+        if context is None:
+            return None
+        return {"study_id": context[0], "case_id": context[1]}
+
+    def add_terminal_listener(self, callback: Callable[[SimulationJob], None]) -> None:
+        """Subscribe to future terminal snapshots, once per registered callback.
+
+        Listeners run synchronously after the terminal event, outside manager
+        locks. They may query jobs or submit follow-up work. Listener errors do
+        not prevent delivery to other listeners or completion waiters.
+        """
+
+        if not callable(callback):
+            raise TypeError("callback must be callable")
+        with self._lock:
+            if callback not in self._terminal_listeners:
+                self._terminal_listeners.append(callback)
+
+    def remove_terminal_listener(self, callback: Callable[[SimulationJob], None]) -> None:
+        """Unsubscribe; a callback already captured for delivery may still run."""
+
+        with self._lock:
+            if callback in self._terminal_listeners:
+                self._terminal_listeners.remove(callback)
 
     def list(
         self,
@@ -293,7 +334,7 @@ class SimulationJobManager:
         """Cancel queued work immediately or signal a running executor."""
 
         terminal: Optional[SimulationJob] = None
-        with self._publish_lock:
+        with self._publication():
             with self._lock:
                 current = self._jobs.get(job_id)
                 if current is None or current.is_terminal:
@@ -315,7 +356,8 @@ class SimulationJobManager:
                     cancelled=True,
                     duration_seconds=0.0,
                 )
-                self._notify_terminal(terminal)
+        if terminal is not None:
+            self._notify_terminal(terminal)
         return True
 
     def close(self, timeout: float = 0.0) -> bool:
@@ -328,7 +370,7 @@ class SimulationJobManager:
 
         cancelled: List[SimulationJob] = []
         first_close = False
-        with self._publish_lock:
+        with self._publication():
             with self._lock:
                 if not self._closed:
                     first_close = True
@@ -356,7 +398,9 @@ class SimulationJobManager:
                     duration_seconds=0.0,
                     allow_closed=True,
                 )
-                self._notify_terminal(terminal)
+
+        for terminal in cancelled:
+            self._notify_terminal(terminal)
 
         if first_close:
             self._pool.shutdown(wait=False, cancel_futures=True)
@@ -387,7 +431,7 @@ class SimulationJobManager:
         job_id: str,
         cancel_event: threading.Event,
     ) -> None:
-        with self._publish_lock:
+        with self._publication():
             with self._lock:
                 current = self._jobs[job_id]
                 if current.is_terminal:
@@ -406,9 +450,12 @@ class SimulationJobManager:
                     cancelled=True,
                     duration_seconds=0.0,
                 )
-                self._notify_terminal(terminal)
-                return
-            self._publish_started(current)
+            else:
+                self._publish_started(current)
+
+        if terminal is not None:
+            self._notify_terminal(terminal)
+            return
 
         if cancel_event.is_set():
             # Cancellation may have arrived from a synchronous STARTED
@@ -444,7 +491,7 @@ class SimulationJobManager:
             self._finalize_service_exception(job_id, exc, duration)
             return
 
-        with self._publish_lock:
+        with self._publication():
             with self._lock:
                 latest = self._jobs[job_id]
                 if result.success:
@@ -481,7 +528,7 @@ class SimulationJobManager:
                     cancelled=terminal.status is JobStatus.CANCELLED,
                     duration_seconds=duration,
                 )
-            self._notify_terminal(terminal)
+        self._notify_terminal(terminal)
 
     def _load_persisted_result(
         self,
@@ -539,7 +586,7 @@ class SimulationJobManager:
         duration: float,
     ) -> None:
         message = f"Simulation service failed before producing a valid bundle: {exc}"
-        with self._publish_lock:
+        with self._publication():
             with self._lock:
                 current = self._jobs[job_id]
                 if current.is_terminal:
@@ -559,11 +606,11 @@ class SimulationJobManager:
                 cancelled=terminal.status is JobStatus.CANCELLED,
                 duration_seconds=duration,
             )
-            self._notify_terminal(terminal)
+        self._notify_terminal(terminal)
 
     def _finalize_internal_failure(self, job_id: str, exc: BaseException) -> None:
         message = f"Simulation job worker failed: {type(exc).__name__}: {exc}"
-        with self._publish_lock:
+        with self._publication():
             with self._lock:
                 current = self._jobs.get(job_id)
                 if current is None or current.is_terminal:
@@ -586,10 +633,10 @@ class SimulationJobManager:
                 cancelled=terminal.status is JobStatus.CANCELLED,
                 duration_seconds=0.0,
             )
-            self._notify_terminal(terminal)
+        self._notify_terminal(terminal)
 
     def _finalize_cancelled_without_bundle(self, job_id: str, duration: float) -> None:
-        with self._publish_lock:
+        with self._publication():
             with self._lock:
                 current = self._jobs[job_id]
                 if current.is_terminal:
@@ -602,7 +649,7 @@ class SimulationJobManager:
                 cancelled=True,
                 duration_seconds=duration,
             )
-            self._notify_terminal(terminal)
+        self._notify_terminal(terminal)
 
     # ------------------------------------------------------------------
     # State/index helpers
@@ -611,7 +658,7 @@ class SimulationJobManager:
     def _store_job_locked(self, job: SimulationJob) -> None:
         self._jobs[job.job_id] = job
         if job.is_terminal and job.origin is JobOrigin.AGENT_TOOL:
-            key = _circuit_key(job.project_root, job.circuit_file)
+            key = self._active_key_locked(job)
             if self._active_agent_jobs.get(key) == job.job_id:
                 self._active_agent_jobs.pop(key, None)
 
@@ -622,9 +669,14 @@ class SimulationJobManager:
         self._inputs.pop(job.job_id, None)
         self._async_waiters.pop(job.job_id, None)
         if job.origin is JobOrigin.AGENT_TOOL:
-            key = _circuit_key(job.project_root, job.circuit_file)
+            key = self._active_key_locked(job)
             if self._active_agent_jobs.get(key) == job.job_id:
                 self._active_agent_jobs.pop(key, None)
+        self._contexts.pop(job.job_id, None)
+
+    def _active_key_locked(self, job: SimulationJob) -> Tuple[str, str, str, str]:
+        study_id, case_id = self._contexts[job.job_id]
+        return (*_circuit_key(job.project_root, job.circuit_file), study_id, case_id)
 
     def _forget_future(
         self,
@@ -636,13 +688,25 @@ class SimulationJobManager:
                 self._futures.pop(job_id, None)
 
     def _notify_terminal(self, job: SimulationJob) -> None:
+        # A synchronous event subscriber may cancel/close recursively while
+        # the outer publication still owns its lock. Defer hooks until that
+        # outer event has returned, so listeners always run without locks.
+        if getattr(self._publication_context, "depth", 0):
+            pending = getattr(self._publication_context, "pending", None)
+            if pending is None:
+                pending = []
+                self._publication_context.pending = pending
+            pending.append(job)
+            return
         with self._lock:
             waiters = self._async_waiters.pop(job.job_id, [])
             done_event = self._done_events.pop(job.job_id, None)
+            if done_event is None:
+                return
             self._cancel_events.pop(job.job_id, None)
             self._inputs.pop(job.job_id, None)
-        if done_event is not None:
-            done_event.set()
+            listeners = tuple(self._terminal_listeners)
+        done_event.set()
         for loop, future in waiters:
             if future.done():
                 continue
@@ -650,6 +714,11 @@ class SimulationJobManager:
                 loop.call_soon_threadsafe(self._complete_future, future, job)
             except RuntimeError:
                 continue
+        for callback in listeners:
+            try:
+                callback(job)
+            except Exception:
+                _LOGGER.exception("Terminal listener failed for simulation job %s", job.job_id)
 
     @staticmethod
     def _complete_future(
@@ -662,6 +731,23 @@ class SimulationJobManager:
     # ------------------------------------------------------------------
     # Event helpers
     # ------------------------------------------------------------------
+
+    @contextmanager
+    def _publication(self):
+        depth = getattr(self._publication_context, "depth", 0)
+        try:
+            with self._publish_lock:
+                self._publication_context.depth = depth + 1
+                try:
+                    yield
+                finally:
+                    self._publication_context.depth = depth
+        finally:
+            if depth == 0:
+                pending = getattr(self._publication_context, "pending", [])
+                self._publication_context.pending = []
+                for job in pending:
+                    self._notify_terminal(job)
 
     @staticmethod
     def _identity(job: SimulationJob) -> Dict[str, Any]:
@@ -776,6 +862,17 @@ def _canonical_submission_paths(project_root: str, circuit_file: str) -> Tuple[s
 
 def _circuit_key(project_root: str, circuit_file: str) -> Tuple[str, str]:
     return os.path.normcase(project_root), os.path.normcase(circuit_file)
+
+
+def _validate_study_identity(study_id: str, case_id: str) -> None:
+    if not isinstance(study_id, str) or not isinstance(case_id, str):
+        raise ValueError("study_id and case_id must be strings")
+    if not study_id and not case_id:
+        return
+    if not study_id or not case_id:
+        raise ValueError("study_id and case_id must both be supplied")
+    if not _STUDY_IDENTIFIER.fullmatch(study_id) or not _STUDY_IDENTIFIER.fullmatch(case_id):
+        raise ValueError("study_id and case_id must be simple identifiers of 1-128 characters")
 
 
 def _validate_persisted_result_identity(

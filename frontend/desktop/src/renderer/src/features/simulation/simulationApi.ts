@@ -19,6 +19,8 @@ import type {
   TraceQuery,
   TraceTable,
   TraceMeasurements,
+  SimulationStudy,
+  StudyRequest,
 } from './types'
 
 const JOB_STATUSES = new Set<JobStatus>([
@@ -453,6 +455,40 @@ export async function requestCanonicalJsonExport(
 
 export function fetchSimulationExportBlob(downloadUrl: string): Promise<Blob> {
   return api.getBlob(downloadUrl)
+}
+
+function studyValue(value: unknown, expectedId?: string): SimulationStudy {
+  const study = objectValue(value, 'simulation study')
+  const id = stringValue(study.study_id, 'simulation study.study_id')
+  if (expectedId && id !== expectedId) throw new Error('Simulation study belongs to another study.')
+  if (!['corner', 'numerical'].includes(String(study.kind)) || !JOB_STATUSES.has(study.status as JobStatus) || !Array.isArray(study.cases)) throw new Error('Invalid simulation study response.')
+  for (const raw of study.cases) {
+    const item = objectValue(raw, 'simulation study case')
+    stringValue(item.case_id, 'study case.case_id')
+    if (!JOB_STATUSES.has(item.status as JobStatus)) throw new Error('Invalid simulation study case status.')
+  }
+  return study as unknown as SimulationStudy
+}
+export async function fetchSimulationStudies(projectId: string): Promise<SimulationStudy[]> {
+  const record = objectValue(await api.get(`${projectPath(projectId)}/simulation-studies`), 'simulation studies')
+  exactProject(record, projectId, 'simulation studies')
+  if (!Array.isArray(record.studies)) throw new Error('Simulation studies must contain an array.')
+  return record.studies.map((study) => studyValue(study))
+}
+export async function createSimulationStudy(projectId: string, request: StudyRequest): Promise<SimulationStudy> {
+  const record = objectValue(await api.post(`${projectPath(projectId)}/simulation-studies`, request), 'created simulation study')
+  exactProject(record, projectId, 'created simulation study')
+  return studyValue(record.study)
+}
+export async function fetchSimulationStudy(projectId: string, studyId: string): Promise<SimulationStudy> {
+  const record = objectValue(await api.get(`${projectPath(projectId)}/simulation-studies/${encodeURIComponent(studyId)}`), 'simulation study')
+  exactProject(record, projectId, 'simulation study')
+  return studyValue(record.study, studyId)
+}
+export async function cancelSimulationStudy(projectId: string, studyId: string, caseId?: string): Promise<SimulationStudy> {
+  const record = objectValue(await api.post(`${projectPath(projectId)}/simulation-studies/${encodeURIComponent(studyId)}/cancel`, {case_id: caseId ?? null}), 'cancel simulation study')
+  exactProject(record, projectId, 'cancel simulation study')
+  return studyValue(record.study, studyId)
 }
 
 export function normalizeSimulationEvent(event: SimulationBackendEvent): NormalizedSimulationEvent | null {

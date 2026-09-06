@@ -171,6 +171,11 @@ def compile_experiment_graph(
 
     raw_by_key = {}
     for blob in graph.blobs:
+        if not any(key == blob.key for key, _line in replacements) and (
+            blob.key != graph.main_key or not additions
+        ):
+            raw_by_key[blob.key] = blob.raw_bytes
+            continue
         lines = blob.source_text.splitlines()
         rewritten = []
         inserted = False

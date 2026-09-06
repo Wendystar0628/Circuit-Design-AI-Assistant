@@ -73,3 +73,40 @@ test('result switches block stale traces and failed results never provide a wave
   assert.deepEqual(model.tracesForSelectedResult(failed,'failed',[opTrace]),[])
   assert.deepEqual(model.tracesForSelectedResult(null,'op',[opTrace]),[])
 })
+
+test('acceptance bounds preserve zero, block absent or invalid limits and reuse frozen criteria independently', () => {
+  const form = {...model.formFromExperiment({}),acceptance:[{metric:'vout',unit:'V',lower:0,upper:5,conditions:{parameters:{VDD:'5'},temperature:25}}],models:[{name:'Dfast',kind:'model',version:'v1',simplified:true,voltage_range:{min:0,max:10}}]}
+  const experiment = model.experimentFromForm(form)
+  assert.equal(experiment.acceptance_constraints[0].lower,0)
+  form.acceptance[0].lower = 1
+  form.models[0].version = 'v2'
+  assert.equal(experiment.acceptance_constraints[0].lower,0)
+  assert.equal(experiment.model_bindings[0].version,'v1')
+  const reused = model.formFromExperiment(experiment)
+  reused.acceptance[0].lower = 2
+  assert.equal(experiment.acceptance_constraints[0].lower,0)
+  const bad = (constraint) => ({...form,acceptance:[{metric:'vout',unit:'V',...constraint}]})
+  assert.throws(() => model.experimentFromForm(bad({})),/at least one bound/)
+  assert.throws(() => model.experimentFromForm(bad({lower:NaN})),/finite/)
+  assert.throws(() => model.experimentFromForm(bad({lower:4,upper:3})),/lower bound/)
+  assert.throws(() => model.experimentFromForm(bad({lower:0,unit:''})),/unit/)
+  assert.throws(() => model.experimentFromForm(bad({lower:0,conditions:{temperature:Infinity}})),/finite/)
+  assert.throws(() => model.experimentFromForm({...form,models:[{name:'Dfast',kind:'model',voltage_range:{min:2,max:1}}]}),/minimum/)
+})
+
+test('corner matrix editing preserves SPICE values, requires explicit supply/load parameters and caps Cartesian size', () => {
+  const axes = model.cornerAxesFromForm([{kind:'temperature',parameter:'',values:'-40, 0, 85'},{kind:'load',parameter:'Rload',values:'1k 10k'}])
+  assert.deepEqual(axes,[{kind:'temperature',values:[-40,0,85]},{kind:'load',parameter:'Rload',values:['1k','10k']}])
+  assert.throws(() => model.cornerAxesFromForm([{kind:'supply',parameter:'',values:'3.3,5'}]),/existing .param/)
+  assert.throws(() => model.cornerAxesFromForm([{kind:'temperature',parameter:'',values:'NaN'}]),/finite/)
+  assert.throws(() => model.cornerAxesFromForm([{kind:'temperature',parameter:'',values:'0 1 2 3 4 5 6 7 8'},{kind:'parameter',parameter:'R',values:'0 1 2 3 4 5 6 7'}]),/64/)
+})
+
+test('numerical thresholds never interpret blank as zero or allow a non-refining factor', () => {
+  const form = {toleranceFactor:'0.1',timestepFactor:'0.5',metrics:[{name:'vout',unit:'mV',absolute:'0',relative:'0.01'}]}
+  assert.deepEqual(model.numericalFromForm(form).metrics,[{name:'vout',unit:'mV',absolute_tolerance:0,relative_tolerance:0.01}])
+  assert.throws(() => model.numericalFromForm({...form,timestepFactor:'1'}),/factors/)
+  assert.throws(() => model.numericalFromForm({...form,metrics:[{...form.metrics[0],absolute:''}]}),/explicit/)
+  assert.throws(() => model.numericalFromForm({...form,metrics:[{...form.metrics[0],relative:'NaN'}]}),/finite/)
+  assert.throws(() => model.numericalFromForm({...form,metrics:[{...form.metrics[0],unit:''}]}),/unit/)
+})

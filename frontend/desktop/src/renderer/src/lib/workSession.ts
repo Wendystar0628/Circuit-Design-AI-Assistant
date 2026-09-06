@@ -3,6 +3,7 @@ export const WORK_SESSION_VERSION = 1 as const
 
 export const WORK_SESSION_SIMULATION_TABS = [
   'experiment',
+  'studies',
   'waveforms',
   'measurements',
   'topology',

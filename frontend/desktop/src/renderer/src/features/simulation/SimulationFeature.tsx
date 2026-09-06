@@ -3,6 +3,9 @@ import { getWorkSession, sameProjectRoot, updateSimulationSession, type Simulati
 import { buildPlotSvg, SeriesChart } from './SeriesChart'
 import { TopologyInspector } from './TopologyInspector'
 import { RunProvenance } from './RunProvenance'
+import { AcceptanceEditor, AcceptanceResults } from './AcceptanceConstraints'
+import { ModelBindingsEditor } from './ModelBindings'
+import { SimulationStudies } from './SimulationStudies'
 import { OutputPanel } from './SimulationOutput'
 import { downloadBlob, downloadContent } from './exportUtils'
 import { buildResultViewModel, compatibleCatalogs, experimentFromForm, formFromExperiment, formatEngineering, supportedTraces, tracesForSelectedResult, traceKey, type ExperimentForm } from './simulationModel'
@@ -11,7 +14,7 @@ import { useSimulationController } from './useSimulationController'
 import type { ResultViewModel, SimulationFeatureProps, SimulationResultSummaryDto, SimulationTabId, TraceCatalog, TraceComponent, TraceMeasurements, TraceQuery, TraceSpec, TraceTable } from './types'
 import './styles.css'
 
-const TABS: Array<[SimulationTabId, string]> = [['experiment', 'Experiment'], ['waveforms', 'Waveforms'], ['measurements', 'Measurements'], ['topology', 'Topology'], ['raw', 'Raw samples'], ['log', 'Output']]
+const TABS: Array<[SimulationTabId, string]> = [['experiment', 'Experiment'], ['studies', 'Studies'], ['waveforms', 'Waveforms'], ['measurements', 'Measurements'], ['topology', 'Topology'], ['raw', 'Raw samples'], ['log', 'Output']]
 const COMPONENT_LABELS: Record<TraceComponent, string> = {real: 'Real', imaginary: 'Imaginary', magnitude: 'Magnitude', db: 'Decibels', phase: 'Unwrapped phase'}
 const COLORS = ['#4f7cff', '#ec795d', '#34b6a3', '#b58bff', '#dfae47', '#6bb8e8']
 const PAGE_SIZE = 100
@@ -69,6 +72,8 @@ function ExperimentPanel({form, onChange, view, onReuse, onReplay, onInputs, dis
         <label className="simulation-field"><span>Timeout (seconds)</span><input type="number" min="1" step="1" value={form.timeout} onChange={(event) => field('timeout', event.target.value)} /></label>
       </div>
     </section>
+    <AcceptanceEditor constraints={form.acceptance ?? []} onChange={(acceptance) => onChange({...form, acceptance})} />
+    <ModelBindingsEditor bindings={form.models ?? []} onChange={(models) => onChange({...form, models})} />
     {view ? <section className="simulation-card">
       <div className="simulation-card__header"><div><h2>Selected run</h2><p>{view.result.analysis_command || view.result.analysis_type.toUpperCase()} · {dateText(view.result.timestamp)}</p></div><span className={`simulation-result-outcome simulation-result-outcome--${view.result.success ? 'success' : 'error'}`}>{view.result.success ? 'Completed' : 'Failed'}</span></div>
       <dl className="simulation-detail-grid">
@@ -76,6 +81,7 @@ function ExperimentPanel({form, onChange, view, onReuse, onReplay, onInputs, dis
         <div><dt>Result</dt><dd><code>{view.identity.resultId}</code></dd></div><div><dt>Input snapshot</dt><dd>{view.provenance.available ? view.provenance.execution_inputs_available === false ? 'Submitted inputs; worker did not return execution inputs' : `${view.provenance.files.length} execution input files` : 'Unavailable for this historical result'}</dd></div>
       </dl>
       <RunProvenance provenance={view.provenance} />
+      <AcceptanceResults acceptance={view.provenance.acceptance} />
       <div className="simulation-button-row"><button type="button" disabled={!view.provenance.experiment} onClick={onReuse}>Use this configuration</button><button type="button" disabled={disabled || !view.provenance.available} onClick={onReplay}>Replay saved inputs</button><button type="button" disabled={disabled || !view.provenance.available} onClick={onInputs}>Download input bundle</button></div>
       {view.result.error ? <ErrorMessage message={`${view.result.error.code}: ${view.result.error.message}${view.result.error.recovery_suggestion ? ` ${view.result.error.recovery_suggestion}` : ''}`} /> : null}
     </section> : null}
@@ -280,6 +286,7 @@ function Workbench(props: SimulationFeatureProps) {
 
   let content
   if (tab === 'experiment') content = <ExperimentPanel form={form} onChange={setForm} view={selected} disabled={controller.busyAction !== null || actionBusy || Boolean(controller.activeJob || controller.blockingJob)} onReuse={() => selected?.provenance.experiment && setForm(formFromExperiment(selected.provenance.experiment))} onReplay={() => void controller.replay()} onInputs={() => void inputs()} />
+  else if (tab === 'studies') content = null
   else if (!selected) content = <Empty>Select a run from the history, or configure and run a circuit.</Empty>
   else if (controller.resultLoading || traceResultId !== resultId) content = <Empty>Loading selected run…</Empty>
   else if (tab === 'topology') content = <TopologyInspector schematic={selected.schematic} />
@@ -294,7 +301,7 @@ function Workbench(props: SimulationFeatureProps) {
         <div className="simulation-card__header"><div><h2>{selected.result.analysis_type.toUpperCase()} response</h2><p>Wheel to zoom · drag to pan · click to position a cursor · double-click to fit</p></div><div className="simulation-button-row"><button type="button" onClick={() => setRange(null)}>Fit all</button><button type="button" aria-pressed={cursorTarget === 'a'} onClick={() => setCursorTarget('a')}>Cursor A</button><button type="button" aria-pressed={cursorTarget === 'b'} onClick={() => setCursorTarget('b')}>Cursor B</button><button type="button" onClick={() => {setCursorA(null); setCursorB(null)}}>Clear cursors</button></div></div>
         <div className="simulation-cursor-inputs"><label>A ({catalog?.x_axis.unit || 'X'})<input type="number" step="any" value={cursorA ?? ''} onChange={(event) => setCursorA(event.target.value === '' ? null : Number(event.target.value))} /></label><label>B ({catalog?.x_axis.unit || 'X'})<input type="number" step="any" value={cursorB ?? ''} onChange={(event) => setCursorB(event.target.value === '' ? null : Number(event.target.value))} /></label><span>{query ? query.series.map((series) => `${series.point_count}/${series.visible_point_count} display samples`).join(' · ') : ''}</span></div>
         {chartData ? <SeriesChart data={chartData} range={range} onRangeChange={setRange} cursorA={cursorA} cursorB={cursorB} cursorTarget={cursorTarget} onCursorChange={(which, value) => which === 'a' ? setCursorA(value) : setCursorB(value)} /> : <Empty>{traces.length && catalog ? 'Loading waveform window…' : 'Add a trace to plot.'}</Empty>}
-      </section> : <SourceMeasurements view={selected} baseline={baseline} />}
+      </section> : <><AcceptanceResults acceptance={selected.provenance.acceptance} /><SourceMeasurements view={selected} baseline={baseline} /></>}
       <MeasurementTable data={measurements} label="Current run measurements" /><MeasurementTable data={baselineMeasurements} label="Baseline measurements" />
     </>}
   </div>
@@ -303,6 +310,7 @@ function Workbench(props: SimulationFeatureProps) {
     <header className="simulation-header"><div className="simulation-header__identity"><strong>Simulation workbench</strong><span className="simulation-header__file" title={props.activeDocumentPath ?? ''}>{props.activeDocumentPath?.split(/[\\/]/).pop() ?? 'Select a SPICE circuit'}</span></div><div className="simulation-button-row"><span className="simulation-run-state">{controller.activeJob?.status ?? controller.blockingJob?.status ?? 'Ready'}</span><button type="button" disabled={!canRun} title={runTitle} className="simulation-primary" onClick={() => void run()}>Run saved source</button>{controller.activeJob ? <button type="button" disabled={controller.activeJob.cancel_requested || controller.busyAction !== null} onClick={() => void controller.cancel()}>{controller.activeJob.cancel_requested ? 'Cancelling…' : 'Cancel'}</button> : null}</div></header>
     {controller.notice ? <div className={`simulation-notice simulation-notice--${controller.notice.level}`} role="status"><span>{controller.notice.message}</span><button type="button" aria-label="Dismiss notification" onClick={controller.clearNotice}>×</button></div> : null}
     <ErrorMessage message={error} />
+    {tab === 'experiment' ? <ErrorMessage message={configurationError} /> : null}
     <div className="simulation-workbench-layout">
       <aside className="simulation-run-history" aria-label="Simulation run history"><div className="simulation-section-heading"><strong>Run history</strong><button type="button" disabled={controller.loading} onClick={() => void controller.refresh()}>Refresh</button></div>
         {controller.jobs.filter((job) => job.status === 'pending' || job.status === 'running').map((job) => <div className="simulation-live-job" key={job.job_id}><strong>{job.status} · {job.origin === 'ui_editor' ? 'Editor' : 'Agent'}</strong><small>{job.circuit_file}</small></div>)}
@@ -313,7 +321,7 @@ function Workbench(props: SimulationFeatureProps) {
       </aside>
       <div className="simulation-workbench-main"><nav className="simulation-tabs" aria-label="Simulation workbench sections">{TABS.map(([id, label]) => <button key={id} type="button" className={tab === id ? 'is-active' : ''} aria-current={tab === id ? 'page' : undefined} onClick={() => setTab(id)}>{label}</button>)}</nav>
         {selected ? <div className="simulation-result-toolbar"><span title={selected.identity.resultId}>{selected.result.analysis_command || selected.result.analysis_type.toUpperCase()} · {shortId(selected.identity.resultId)}</span><div className="simulation-button-row"><button type="button" disabled={actionBusy || !activeTraces.length || !catalog} onClick={() => void exportCsv()}>Full-resolution CSV</button><button type="button" disabled={!chartData || actionBusy} onClick={() => { try { if (chartData) downloadContent(`${resultId}_view.svg`, 'image/svg+xml', buildPlotSvg(chartData, selected.identity, range)) } catch (caught) { setError(errorText(caught)) } }}>View SVG</button><button type="button" disabled={actionBusy} onClick={() => void exportJson()}>Result JSON</button>{confirmDelete ? <><button type="button" onClick={() => setConfirmDelete(false)}>Keep</button><button type="button" className="simulation-text-error" disabled={controller.busyAction !== null} onClick={() => void controller.deleteSelected()}>Delete permanently</button></> : <button type="button" onClick={() => setConfirmDelete(true)}>Delete…</button>}</div></div> : null}
-        <main className="simulation-content">{!props.projectId ? <Empty>Open a project to configure simulations.</Empty> : !restored ? <Empty>Loading simulation history…</Empty> : content}</main>
+        <main className="simulation-content">{!props.projectId ? <Empty>Open a project to configure simulations.</Empty> : !restored ? <Empty>Loading simulation history…</Empty> : content}<SimulationStudies projectId={props.projectId} circuitPath={props.activeDocumentPath} experimentForm={form} visible={tab === 'studies' && restored && Boolean(props.projectId)} onSelectResult={controller.selectResult} /></main>
       </div>
     </div>
   </section>

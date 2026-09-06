@@ -12,6 +12,13 @@ const output = ts.transpileModule(await readFile(path,'utf8'),{fileName:path,com
 const loaded = new Module(path)
 loaded.filename = path
 loaded.paths = Module._nodeModulePaths(dirname(path))
+const modelsPath = join(dirname(path), 'ModelBindings.tsx')
+const models = new Module(modelsPath)
+models.filename = modelsPath
+models.paths = loaded.paths
+models._compile(ts.transpileModule(await readFile(modelsPath, 'utf8'), {fileName: modelsPath, compilerOptions: {module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX}}).outputText, modelsPath)
+const originalRequire = loaded.require.bind(loaded)
+loaded.require = (name) => name === './ModelBindings' ? models.exports : originalRequire(name)
 loaded._compile(output,path)
 const render = (provenance) => renderToStaticMarkup(React.createElement(loaded.exports.RunProvenance,{provenance}))
 
@@ -30,4 +37,15 @@ test('historical missing engine metadata is explicit and empty omission lists do
   const html = render({engine:null,omitted_measurements:[]})
   assert.match(html,/Not recorded for this result/)
   assert.doesNotMatch(html,/<details/)
+})
+
+test('captured models show immutable digests and unknown applicability without laundering unmatched declarations', () => {
+  const html = render({models:[{name:'Dfast',kind:'model',identity:null,source_path:'models/diode.lib',source_id:'file-1',source:'Vendor declared',version:'v2',definition_digest:'sha256:definition',file_digest:'sha256:file',metadata_origin:'user_declared',binding_status:'unmatched',simplified:null,temperature_range:{min:0,max:85}}]})
+  assert.match(html,/sha256:definition/)
+  assert.match(html,/sha256:file/)
+  assert.match(html,/Metadata binding requires attention/)
+  assert.match(html,/Vendor declared/)
+  assert.match(html,/user declared/)
+  assert.match(html,/0 to 85 °C/)
+  assert.match(html,/Unknown \/ not declared/)
 })

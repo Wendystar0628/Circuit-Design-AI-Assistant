@@ -72,6 +72,7 @@ from domain.simulation.spice.source_closure import (
     export_spice_source_graph,
 )
 from domain.simulation.models.experiment import ExperimentSpec
+from domain.simulation.models.model_manifest import capture_model_manifest
 from domain.simulation.spice.experiment_deck import (
     compile_experiment_graph,
     source_solver_options,
@@ -664,6 +665,7 @@ class SpiceExecutor:
             "engine": {"name": "ngspice", "version": getattr(self._ngspice, "engine_version", None), "platform": platform.platform(),
                        "execution_mode": "in_process"},
             "omitted_measurements": omitted,
+            "models": capture_model_manifest(source_closure.graph, experiment.model_bindings),
         }
     
     # ============================================================

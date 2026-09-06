@@ -138,6 +138,16 @@ class SimulationStartRequest(StrictModel):
     experiment: Optional[Dict[str, Any]] = None
 
 
+class SimulationStudyRequest(SimulationStartRequest):
+    kind: Literal["corner", "numerical"] = "corner"
+    axes: list[Dict[str, Any]] = Field(default_factory=list)
+    numerical: Optional[Dict[str, Any]] = None
+
+
+class SimulationStudyCancelRequest(StrictModel):
+    case_id: Optional[str] = None
+
+
 class TraceSpecRequest(StrictModel):
     signal: str = Field(min_length=1, max_length=512)
     reference: Optional[str] = Field(default=None, min_length=1, max_length=512)
@@ -546,6 +556,24 @@ def create_app(
         }
 
     # Simulation
+    @app.post("/api/v1/projects/{project_id}/simulation-studies", status_code=202, dependencies=protected)
+    def start_simulation_study(project_id: str, request: SimulationStudyRequest) -> Dict[str, Any]:
+        return app_runtime.start_simulation_study(project_id, **request.model_dump())
+
+    @app.get("/api/v1/projects/{project_id}/simulation-studies", dependencies=protected)
+    def simulation_studies(project_id: str) -> Dict[str, Any]:
+        return app_runtime.list_simulation_studies(project_id)
+
+    @app.get("/api/v1/projects/{project_id}/simulation-studies/{study_id}", dependencies=protected)
+    def simulation_study(project_id: str, study_id: str) -> Dict[str, Any]:
+        return app_runtime.get_simulation_study(project_id, study_id)
+
+    @app.post("/api/v1/projects/{project_id}/simulation-studies/{study_id}/cancel", dependencies=protected)
+    def cancel_simulation_study(
+        project_id: str, study_id: str, request: SimulationStudyCancelRequest,
+    ) -> Dict[str, Any]:
+        return app_runtime.cancel_simulation_study(project_id, study_id, request.case_id)
+
     @app.get("/api/v1/projects/{project_id}/simulations", dependencies=protected)
     async def simulation_snapshot(project_id: str) -> Dict[str, Any]:
         return app_runtime.simulation_snapshot(project_id)

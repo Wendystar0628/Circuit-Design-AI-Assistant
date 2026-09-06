@@ -121,6 +121,10 @@ def test_api_v1_route_inventory_is_one_modern_contract() -> None:
         ("POST", "/api/v1/projects/{project_id}/rag/searches"),
         ("GET", "/api/v1/projects/{project_id}/simulations"),
         ("POST", "/api/v1/projects/{project_id}/simulations"),
+        ("GET", "/api/v1/projects/{project_id}/simulation-studies"),
+        ("POST", "/api/v1/projects/{project_id}/simulation-studies"),
+        ("GET", "/api/v1/projects/{project_id}/simulation-studies/{study_id}"),
+        ("POST", "/api/v1/projects/{project_id}/simulation-studies/{study_id}/cancel"),
         ("GET", "/api/v1/projects/{project_id}/simulations/jobs/{job_id}"),
         (
             "POST",

@@ -126,6 +126,7 @@ class ApplicationRuntime:
         self.project_service = None
         self.simulation_result_repository = None
         self.simulation_job_manager = None
+        self.simulation_study_service = None
         self.rag_manager = None
         self.document_watcher = None
         self.file_watcher = None
@@ -335,6 +336,9 @@ class ApplicationRuntime:
                 await self.context_compression_service.shutdown()
             if self.simulation_job_manager is not None:
                 self.simulation_job_manager.close(timeout=2.0)
+            if self.simulation_study_service is not None:
+                self.simulation_study_service.close()
+                self.simulation_study_service = None
             if self.project_service is not None and self.project_service.is_project_open():
                 self.project_service.close_project()
             if self.file_watcher is not None:
@@ -1681,6 +1685,84 @@ class ApplicationRuntime:
     # Simulation
     # ------------------------------------------------------------------
 
+    def _simulation_studies(self):
+        from domain.simulation.service.experiment_study_service import ExperimentStudyService
+
+        if self.simulation_study_service is None:
+            self.simulation_study_service = ExperimentStudyService(
+                job_manager=self.simulation_job_manager,
+                result_repository=self.simulation_result_repository,
+            )
+        return self.simulation_study_service
+
+    def _study_dict(self, study: Dict[str, Any]) -> Dict[str, Any]:
+        # Captured file contents remain on disk; cases use the same result handles
+        # as ordinary runs so all waveform/history operations stay authoritative.
+        import copy
+
+        payload = copy.deepcopy(study)
+        payload.pop("source_snapshot", None)
+        for case in payload.get("cases", []):
+            case.pop("source_snapshot", None)
+            case["result_id"] = (
+                self._register_result(case["result_path"], case.get("job_id"))
+                if case.get("result_path") else None
+            )
+        return _json_safe(payload)
+
+    def start_simulation_study(
+        self, project_id: str, circuit_path: str, experiment: Optional[Dict[str, Any]] = None,
+        kind: str = "corner", axes: Optional[list[Dict[str, Any]]] = None,
+        numerical: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        from domain.simulation.models.experiment import ExperimentSpec
+        from domain.simulation.models.simulation_job import JobOrigin
+
+        project = self.require_project(project_id)
+        circuit = self.resolve_project_path(project_id, circuit_path, must_exist=True)
+        if not circuit.is_file():
+            raise RuntimeErrorResponse(422, "circuit_path must identify a file")
+        try:
+            study = self._simulation_studies().create(
+                project_root=project.root, circuit_file=str(circuit),
+                experiment=ExperimentSpec.from_dict(experiment or {}), kind=kind,
+                axes=axes or [], numerical=numerical, origin=JobOrigin.UI_EDITOR,
+                session_id=self.session_state_manager.get_current_session_id(),
+            )
+        except (ValueError, TypeError, OSError) as exc:
+            raise RuntimeErrorResponse(422, str(exc)) from exc
+        return {"project_id": project_id, "study": self._study_dict(study)}
+
+    def list_simulation_studies(self, project_id: str) -> Dict[str, Any]:
+        project = self.require_project(project_id)
+        try:
+            studies = self._simulation_studies().list(project.root)
+        except (ValueError, OSError) as exc:
+            raise RuntimeErrorResponse(422, str(exc)) from exc
+        return {"project_id": project_id, "studies": [self._study_dict(study) for study in studies]}
+
+    def get_simulation_study(self, project_id: str, study_id: str) -> Dict[str, Any]:
+        project = self.require_project(project_id)
+        try:
+            study = self._simulation_studies().get(project.root, study_id)
+        except FileNotFoundError as exc:
+            raise RuntimeErrorResponse(404, "Simulation study was not found") from exc
+        except (ValueError, OSError) as exc:
+            raise RuntimeErrorResponse(422, str(exc)) from exc
+        return {"project_id": project_id, "study": self._study_dict(study)}
+
+    def cancel_simulation_study(
+        self, project_id: str, study_id: str, case_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        project = self.require_project(project_id)
+        try:
+            study = self._simulation_studies().cancel(project.root, study_id, case_id=case_id)
+        except FileNotFoundError as exc:
+            raise RuntimeErrorResponse(404, "Simulation study was not found") from exc
+        except (ValueError, OSError) as exc:
+            raise RuntimeErrorResponse(422, str(exc)) from exc
+        return {"project_id": project_id, "study": self._study_dict(study)}
+
     def start_simulation(
         self, project_id: str, circuit_path: str, experiment: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
@@ -1854,6 +1936,12 @@ class ApplicationRuntime:
             except (ValueError, OSError) as exc:
                 archive_error = str(exc)
         provenance = summarize_run_archive(archive)
+        from domain.simulation.models.acceptance import evaluate_acceptance
+        from domain.simulation.models.experiment import ExperimentSpec
+
+        provenance["acceptance"] = evaluate_acceptance(
+            result, ExperimentSpec.from_dict(archive["experiment"]) if archive else ExperimentSpec(),
+        )
         if archive_error:
             provenance["error"] = archive_error
         return {

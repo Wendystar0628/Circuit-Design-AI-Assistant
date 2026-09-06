@@ -12,7 +12,7 @@ const source = await readFile(path, 'utf8')
 const output = ts.transpileModule(source, {compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022},fileName:path}).outputText
 const calls = []
 let response = null
-const api = {post: async (url, body) => {calls.push({url, body}); return response}}
+const api = {post: async (url, body) => {calls.push({url, body}); return response}, get: async (url) => {calls.push({url}); return response}}
 const loaded = new Module(path)
 loaded.filename = path
 loaded.paths = Module._nodeModulePaths(dirname(path))
@@ -40,4 +40,22 @@ test('whole-range measurement requests use explicit null bounds without renderin
   response = {}
   await endpoints.queryTraceMeasurements('p','r',{traces,cursor_a:null,cursor_b:null,max_points:1800})
   assert.deepEqual(calls.pop().body,{traces,x_min:null,x_max:null,cursor_a:null,cursor_b:null})
+})
+
+test('study calls preserve circuit, project, study and case identities', async () => {
+  const study = {study_id:'study/1',kind:'corner',status:'running',cases:[{case_id:'c1',status:'pending'}],summary:{}}
+  const request = {circuit_path:'filter.cir',experiment:{acceptance_constraints:[{metric:'vout',unit:'V',lower:0}]},kind:'corner',axes:[{kind:'temperature',values:[-40,25,85]}]}
+  response = {project_id:'p',study}
+  assert.deepEqual(await endpoints.createSimulationStudy('p',request), study)
+  assert.deepEqual(calls.pop(),{url:'/api/v1/projects/p/simulation-studies',body:request})
+  await endpoints.cancelSimulationStudy('p','study/1','c1')
+  assert.deepEqual(calls.pop(),{url:'/api/v1/projects/p/simulation-studies/study%2F1/cancel',body:{case_id:'c1'}})
+  await endpoints.cancelSimulationStudy('p','study/1')
+  assert.equal(calls.pop().body.case_id,null)
+  response = {project_id:'other',study}
+  await assert.rejects(() => endpoints.fetchSimulationStudy('p','study/1'),/another project/)
+  response = {project_id:'p',study:{...study,study_id:'other'}}
+  await assert.rejects(() => endpoints.fetchSimulationStudy('p','study/1'),/another study/)
+  response = {project_id:'p',studies:[study]}
+  assert.deepEqual(await endpoints.fetchSimulationStudies('p'),[study])
 })

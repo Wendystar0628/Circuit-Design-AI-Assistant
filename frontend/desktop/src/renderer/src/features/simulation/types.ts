@@ -213,6 +213,50 @@ export interface ExperimentSpec {
   temperature?: number | null
   solver_options?: Record<string, string | number>
   timeout_seconds?: number
+  acceptance_constraints?: AcceptanceConstraint[]
+  model_bindings?: ModelBinding[]
+}
+
+export type AcceptanceStatus = 'PASS' | 'FAIL' | 'NOT_MEASURED'
+export interface AcceptanceConstraint {
+  id?: string; source?: 'measurement' | 'op_signal'; metric: string; unit: string
+  lower?: number | null; upper?: number | null
+  conditions?: {parameters?: Record<string, string | number>; temperature?: number | null}
+}
+export interface AcceptanceResult {
+  status: AcceptanceStatus
+  rows: Array<AcceptanceConstraint & {status: AcceptanceStatus; value: number | null; observed_unit: string; reason: string; margin: number | null}>
+  counts: Record<AcceptanceStatus, number>
+}
+export interface ModelRange { min: number | null; max: number | null }
+export interface ModelBinding {
+  name: string; kind: 'model' | 'subcircuit'; source_id?: string; source?: string; version?: string
+  voltage_range?: ModelRange | null; frequency_range?: ModelRange | null; temperature_range?: ModelRange | null
+  simplified?: boolean | null; assumptions?: string[]
+}
+export interface CapturedModel extends ModelBinding {
+  identity: string | null; source_path: string; library_section?: string | null; line_number?: number | null
+  definition_digest: string | null; file_digest: string | null
+  metadata_origin: 'user_declared' | 'bundled_source' | 'unspecified'
+  binding_status: 'matched' | 'unmatched' | 'ambiguous' | 'none'
+}
+export interface CornerAxis {kind: 'parameter' | 'temperature' | 'supply' | 'load'; parameter?: string; values: Array<string | number>}
+export interface NumericalMetric {name: string; unit: string; absolute_tolerance: number; relative_tolerance: number}
+export interface NumericalConfiguration {metrics: NumericalMetric[]; tolerance_factor: number; max_timestep_factor: number}
+export interface StudyRequest {circuit_path: string; experiment: ExperimentSpec; kind: 'corner' | 'numerical'; axes?: CornerAxis[]; numerical?: NumericalConfiguration}
+export interface StudyCase {
+  case_id: string; label: string; coordinates: Record<string, string | number>; experiment: ExperimentSpec
+  job_id: string | null; status: JobStatus; result_id: string | null; result_path: string | null
+  metrics: SimulationMeasurement[]; acceptance?: AcceptanceResult | null; error: string | null; duration_seconds: number | null
+}
+export interface NumericalComparison {
+  status: 'stable' | 'unstable' | 'inconclusive'; stable: boolean; reason: string
+  metrics: Array<{name: string; unit: string; baseline_value: number | null; refined_value: number | null; absolute_delta: number | null; relative_delta: number | null; allowed_delta: number | null; stable: boolean; status: string; reason: string}>
+  cost: {baseline_seconds: number | null; refined_seconds: number | null; total_seconds: number | null; ratio: number | null}
+}
+export interface SimulationStudy {
+  study_id: string; kind: 'corner' | 'numerical'; status: JobStatus; created_at?: string; circuit_file?: string; cases: StudyCase[]
+  summary: {metrics?: Array<{name: string; unit: string; min: number | null; max: number | null; min_case_id: string | null; max_case_id: string | null; delta: number | null; measured_cases: number; unmeasured_cases: number}>; counts?: Record<string, number>; numerical?: NumericalComparison; acceptance_status?: AcceptanceStatus; worst_constraints?: Array<{id: string; metric: string; unit: string; lower: number | null; upper: number | null; minimum_margin: number | null; worst_case_id: string | null; counts: Record<AcceptanceStatus, number>}>; [key: string]: unknown}
 }
 
 export interface SimulationResult {
@@ -264,6 +308,8 @@ export interface SimulationProvenance {
   engine?: {name: string; version: string | null; platform: string; execution_mode: string} | null
   omitted_measurements?: Array<{source_id: string; line_number: number; statement: string; reason: string}>
   files: Array<{path: string}>; [key: string]: unknown
+  acceptance?: AcceptanceResult | null
+  models?: CapturedModel[]
 }
 export interface NoiseTotalsView { applicable: boolean; available: boolean; source: string; items: Array<{key: 'output_rms' | 'input_referred_rms'; value: number; unit: 'V' | 'A'}> }
 export interface WorkbenchResponse {
@@ -276,7 +322,7 @@ export interface ResultViewModel {
   catalog: TraceCatalog | null; metrics: SimulationMeasurement[]
   schematic: SchematicDocumentDto | null; provenance: SimulationProvenance; noiseTotals: NoiseTotalsView
 }
-export type SimulationTabId = 'experiment' | 'waveforms' | 'measurements' | 'topology' | 'raw' | 'log'
+export type SimulationTabId = 'experiment' | 'studies' | 'waveforms' | 'measurements' | 'topology' | 'raw' | 'log'
 
 export interface SimulationFeatureProps {
   active: boolean

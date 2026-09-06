@@ -13,7 +13,10 @@ from domain.simulation.spice.numeric import parse_spice_number
 
 
 _NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-_FIELDS = frozenset({"analysis_command", "parameters", "temperature", "solver_options", "timeout_seconds"})
+_FIELDS = frozenset({
+    "analysis_command", "parameters", "temperature", "solver_options", "timeout_seconds",
+    "acceptance_constraints", "model_bindings",
+})
 # Product-supported solver controls. Ranges reject native clamping and zero tolerances.
 SOLVER_OPTION_RANGES = {
     "reltol": (1e-15, 0.1), "abstol": (1e-30, 1.0),
@@ -70,6 +73,8 @@ class ExperimentSpec:
     temperature: float | None = None
     solver_options: dict[str, str] = field(default_factory=dict)
     timeout_seconds: float = 300.0
+    acceptance_constraints: list[dict[str, Any]] = field(default_factory=list)
+    model_bindings: list[dict[str, Any]] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if not isinstance(self.analysis_command, str):
@@ -118,12 +123,21 @@ class ExperimentSpec:
         if not math.isfinite(timeout) or timeout <= 0:
             raise ValueError("timeout_seconds must be a positive finite number")
         object.__setattr__(self, "timeout_seconds", timeout)
+        from domain.simulation.models.acceptance import validate_acceptance_constraints
+        from domain.simulation.models.model_manifest import validate_model_bindings
+
+        object.__setattr__(self, "acceptance_constraints", validate_acceptance_constraints(self.acceptance_constraints))
+        object.__setattr__(self, "model_bindings", validate_model_bindings(self.model_bindings))
 
     def to_dict(self) -> dict[str, Any]:
+        import copy
+
         return {
             "analysis_command": self.analysis_command,
             "parameters": dict(self.parameters), "temperature": self.temperature,
             "solver_options": dict(self.solver_options), "timeout_seconds": self.timeout_seconds,
+            "acceptance_constraints": copy.deepcopy(self.acceptance_constraints),
+            "model_bindings": copy.deepcopy(self.model_bindings),
         }
 
     @classmethod
